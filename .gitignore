@@ -1,0 +1,103 @@
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+
+# Virtual Environment
+*venv/
+env/
+
+# IDEs and Editors
+.vscode/
+
+# Compiled Python
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Unit test / coverage reports
+htmlcov/
+.coverage
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+.Pipfile.lock
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Files that might appear on external disk
+.Spotlight-V100
+.Trashes
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Images and other binary files 
+*.tif*
+*.pdf
+*.swp 
+*.log
+*.bbl
+*.blg 
+*.jpg
+*.jpeg
