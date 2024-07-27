@@ -1,21 +1,20 @@
 # %% ---------------------------------------------------------------------------
-from scipy.stats import dirichlet
+from utils import matplotlib_style
 import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 from functools import partial
 import bayesflow as bf
-import pandas as pd
-from utils import matplotlib_style
+import tensorflow as tf
+# Set TensorFlow to use only the CPU
+tf.config.set_visible_devices([], 'GPU')
+
 cor, pal = matplotlib_style()
 
 # %% ---------------------------------------------------------------------------
 
 # Define number of genes
-n_genes = 100
-
-# Define range of number of cells
-n_cells = [100, 1000]
+n_genes = 4
 
 # %% ---------------------------------------------------------------------------
 
@@ -59,7 +58,7 @@ def prior_fn():
     # Prior on p_hat for negative binomial parameter
     p_hat = RNG.beta(1, 10)
     # Prior on r parameters for each gene
-    r_vec = RNG.lognormal(-1, 0.5, n_genes)
+    r_vec = RNG.lognormal(-1, 1, n_genes)
     # Sort r_vec
     r_vec = np.sort(r_vec)[::-1]
 
@@ -131,9 +130,10 @@ def likelihood_fn(params, n_obs=100):
     # Sample from Negative Binomial distribution the total number of UMI counts
     U = RNG.negative_binomial(r_o, p_hat)
     # Sample probabilities from Dirichlet distribution
-    dirichlet_probs = RNG.dirichlet(r_vec)
-    # Sample counts from Multinomial distribution using the Dirichlet probabilities
-    u_vec = RNG.multinomial(U, dirichlet_probs, size=n_obs)
+    dirichlet_probs = RNG.dirichlet(r_vec, size=n_obs)
+    # Sample counts from Multinomial distribution using the Dirichlet
+    # probabilities
+    u_vec = np.array([RNG.multinomial(U, probs) for probs in dirichlet_probs])
 
     return np.float32(u_vec)
 
@@ -154,8 +154,8 @@ model_draws = model(500)
 # Plot the distribution of prior draws for p_hat and a few r parameters
 
 # Define number of rows and columns
-rows = 3
-cols = 3
+rows = 2
+cols = 2
 
 # Initialize figure
 fig, ax = plt.subplots(rows, cols, figsize=(4, 4))
@@ -193,16 +193,42 @@ fig.tight_layout()
 # Set up summary network
 
 # Define summary network as a Deepset
-summary_net = bf.networks.DeepSet(summary_dim=125)
+# summary_net = bf.networks.DeepSet(
+#     summary_dim=np.floor(n_genes * 1.25).astype(int)
+# )
+
+# Define summary network as a SetTransformer
+summary_net = bf.networks.SetTransformer(
+    input_dim=n_genes,
+    summary_dim=np.floor(n_genes * 1.25).astype(int),
+    dense_settings={"units": 128, "activation": "relu"},
+)
 
 # Simulate a pass through the summary network
 summary_pass = summary_net(model_draws["sim_data"])
 
+summary_pass.shape
+
 # %% ---------------------------------------------------------------------------
 
-# Define the conditional invertible network
+# Define the conditional invertible network with affine coupling layers
+# inference_net = bf.inference_networks.InvertibleNetwork(
+#     num_params=prior(1)["prior_draws"].shape[-1],
+#     num_coupling_layers=8,
+#     coupling_design="affine",
+#     permutation="learnable",
+#     use_act_norm=True,
+#     coupling_settings={
+#         "mc_dropout": True,
+#         "dense_args": dict(units=128, activation="elu"),
+#     }
+# )
+
+# Define conditional invertible network with spline coupling layers
 inference_net = bf.inference_networks.InvertibleNetwork(
     num_params=prior(1)["prior_draws"].shape[-1],
+    coupling_design="spline",
+    coupling_settings={"dropout_prob": 0.2, "bins": 32, }
 )
 
 # Perform a forward pass through the network given the summary network embedding
@@ -214,16 +240,72 @@ print(f"Log Jacobian Determinant: {log_det_J.numpy()}")
 
 # Assemble the amoratizer that combines the summary network and inference
 # network
-amortizer = bf.amortizers.AmortizedPosterior(inference_net, summary_net)
+amortizer = bf.amortizers.AmortizedPosterior(
+    inference_net, summary_net,
+    # set summary loss function to Maximum Mean Discrepancy
+    summary_loss_fun='MMD'
+)
 
 # Assemble the trainer with the amortizer and generative model
 trainer = bf.trainers.Trainer(amortizer=amortizer, generative_model=model)
 # %% ---------------------------------------------------------------------------
 
-history = trainer.train_online(
-    epochs=5,
-    iterations_per_epoch=1000,
-    batch_size=32,
-    validation_sims=200
+# Define number of epochs
+n_epoch = 1
+# Define number of iterations per epoch
+n_iter = 500
+
+# Define initial learning rate
+initial_learning_rate = 1e-6
+
+# Set up the Adam optimizer with a fixed learning rate
+optimizer = tf.keras.optimizers.legacy.Adam(
+    learning_rate=initial_learning_rate
 )
-# %%
+
+# Define learning rate schedule. This is the same as the default optimizer in
+# BayesFlow
+# lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+#     initial_learning_rate=initial_learning_rate,
+#     decay_steps=n_epoch * n_iter,
+#     alpha=0.0
+# )
+# Define optimizer
+# optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=lr_schedule)
+
+# Train the model
+history = trainer.train_online(
+    epochs=1,
+    iterations_per_epoch=500,
+    batch_size=128,
+    validation_sims=200,
+    optimizer=optimizer,
+)
+# %% ---------------------------------------------------------------------------
+
+# Plot the training history
+fig, ax = plt.subplots(1, 1, figsize=(3, 2))
+ax.plot(history["train_losses"].Loss, 'k-')
+# ax.plot(history["train_losses"]["Default.Loss"], 'k-')
+# Seet x-axis label
+ax.set_xlabel('training step', fontsize=6)
+# Set y-axis label
+ax.set_ylabel('training loss', fontsize=6)
+# Set y-axis scale to log
+# ax.set_yscale('log')
+# %% ---------------------------------------------------------------------------
+
+# Plot the training and validation losses
+fig = bf.diagnostics.plot_losses(
+    history["train_losses"],
+    history["val_losses"],
+    moving_average=True
+)
+# Get the axes
+ax = fig.get_axes()
+ax[0].set_yscale('log')
+ax[1].set_yscale('log')
+fig.set_figwidth(6)
+fig.set_figheight(4)
+
+# %% ---------------------------------------------------------------------------
