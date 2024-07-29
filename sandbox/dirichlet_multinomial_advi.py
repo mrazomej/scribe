@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 n_genes = 10
 
 # Define number of cells
-n_cells = 10
+n_cells = 10_000
 # %% ---------------------------------------------------------------------------
 
 # Initialize random number generator
