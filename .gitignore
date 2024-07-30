@@ -101,3 +101,7 @@ Temporary Items
 *.blg 
 *.jpg
 *.jpeg
+
+# Hidden files
+.github/
+.devcontainer/
