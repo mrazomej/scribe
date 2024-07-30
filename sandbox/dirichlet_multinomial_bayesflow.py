@@ -14,7 +14,7 @@ cor, pal = matplotlib_style()
 # %% ---------------------------------------------------------------------------
 
 # Define number of genes
-n_genes = 4
+n_genes = 10
 
 # %% ---------------------------------------------------------------------------
 
@@ -58,7 +58,7 @@ def prior_fn():
     # Prior on p_hat for negative binomial parameter
     p_hat = RNG.beta(1, 10)
     # Prior on r parameters for each gene
-    r_vec = RNG.lognormal(-1, 1, n_genes)
+    r_vec = RNG.gamma(3, 1/5, n_genes)
     # Sort r_vec
     r_vec = np.sort(r_vec)[::-1]
 
@@ -154,8 +154,8 @@ model_draws = model(500)
 # Plot the distribution of prior draws for p_hat and a few r parameters
 
 # Define number of rows and columns
-rows = 2
-cols = 2
+rows = 3
+cols = 3
 
 # Initialize figure
 fig, ax = plt.subplots(rows, cols, figsize=(4, 4))
@@ -193,16 +193,16 @@ fig.tight_layout()
 # Set up summary network
 
 # Define summary network as a Deepset
-# summary_net = bf.networks.DeepSet(
-#     summary_dim=np.floor(n_genes * 1.25).astype(int)
-# )
+summary_net = bf.networks.DeepSet(
+    summary_dim=np.floor(n_genes * 1.5).astype(int)
+)
 
 # Define summary network as a SetTransformer
-summary_net = bf.networks.SetTransformer(
-    input_dim=n_genes,
-    summary_dim=np.floor(n_genes * 1.25).astype(int),
-    dense_settings={"units": 128, "activation": "relu"},
-)
+# summary_net = bf.networks.SetTransformer(
+#     input_dim=n_genes,
+#     summary_dim=np.floor(n_genes * 1.25).astype(int),
+#     dense_settings={"units": 128, "activation": "relu"},
+# )
 
 # Simulate a pass through the summary network
 summary_pass = summary_net(model_draws["sim_data"])
@@ -212,24 +212,24 @@ summary_pass.shape
 # %% ---------------------------------------------------------------------------
 
 # Define the conditional invertible network with affine coupling layers
-# inference_net = bf.inference_networks.InvertibleNetwork(
-#     num_params=prior(1)["prior_draws"].shape[-1],
-#     num_coupling_layers=8,
-#     coupling_design="affine",
-#     permutation="learnable",
-#     use_act_norm=True,
-#     coupling_settings={
-#         "mc_dropout": True,
-#         "dense_args": dict(units=128, activation="elu"),
-#     }
-# )
-
-# Define conditional invertible network with spline coupling layers
 inference_net = bf.inference_networks.InvertibleNetwork(
     num_params=prior(1)["prior_draws"].shape[-1],
-    coupling_design="spline",
-    coupling_settings={"dropout_prob": 0.2, "bins": 32, }
+    # num_coupling_layers=8,
+    # coupling_design="affine",
+    # permutation="learnable",
+    # use_act_norm=True,
+    # coupling_settings={
+    #     "mc_dropout": True,
+    #     "dense_args": dict(units=128, activation="elu"),
+    # }
 )
+
+# Define conditional invertible network with spline coupling layers
+# inference_net = bf.inference_networks.InvertibleNetwork(
+#     num_params=prior(1)["prior_draws"].shape[-1],
+#     coupling_design="spline",
+#     coupling_settings={"dropout_prob": 0.2, "bins": 32, }
+# )
 
 # Perform a forward pass through the network given the summary network embedding
 z, log_det_J = inference_net(model_draws['prior_draws'], summary_pass)
@@ -243,7 +243,7 @@ print(f"Log Jacobian Determinant: {log_det_J.numpy()}")
 amortizer = bf.amortizers.AmortizedPosterior(
     inference_net, summary_net,
     # set summary loss function to Maximum Mean Discrepancy
-    summary_loss_fun='MMD'
+    # summary_loss_fun='MMD'
 )
 
 # Assemble the trainer with the amortizer and generative model
@@ -251,17 +251,17 @@ trainer = bf.trainers.Trainer(amortizer=amortizer, generative_model=model)
 # %% ---------------------------------------------------------------------------
 
 # Define number of epochs
-n_epoch = 1
+n_epoch = 20
 # Define number of iterations per epoch
-n_iter = 500
+n_iter = 128
 
 # Define initial learning rate
-initial_learning_rate = 1e-6
+# initial_learning_rate = 1e-6
 
 # Set up the Adam optimizer with a fixed learning rate
-optimizer = tf.keras.optimizers.legacy.Adam(
-    learning_rate=initial_learning_rate
-)
+# optimizer = tf.keras.optimizers.legacy.Adam(
+#     learning_rate=initial_learning_rate
+# )
 
 # Define learning rate schedule. This is the same as the default optimizer in
 # BayesFlow
@@ -275,11 +275,11 @@ optimizer = tf.keras.optimizers.legacy.Adam(
 
 # Train the model
 history = trainer.train_online(
-    epochs=1,
-    iterations_per_epoch=500,
+    epochs=n_epoch,
+    iterations_per_epoch=n_iter,
     batch_size=128,
     validation_sims=200,
-    optimizer=optimizer,
+    # optimizer=optimizer,
 )
 # %% ---------------------------------------------------------------------------
 
@@ -303,9 +303,65 @@ fig = bf.diagnostics.plot_losses(
 )
 # Get the axes
 ax = fig.get_axes()
-ax[0].set_yscale('log')
+# ax[0].set_yscale('log')
 ax[1].set_yscale('log')
 fig.set_figwidth(6)
 fig.set_figheight(4)
+
+# %% ---------------------------------------------------------------------------
+
+# Plot the training and validation losses
+fig = bf.diagnostics.plot_losses(
+    history["train_losses"],
+    history["val_losses"],
+    moving_average=True
+)
+# Get the axes
+ax = fig.get_axes()
+# ax[0].set_yscale('log')
+ax[1].set_yscale('log')
+fig.set_figwidth(6)
+fig.set_figheight(4)
+
+# %% ---------------------------------------------------------------------------
+
+# Generate samples not seen during training
+test_sims = trainer.configurator(model(500))
+
+# %% ---------------------------------------------------------------------------
+
+# Generate samples from latent variables by running data through model
+z_samples, _ = amortizer(test_sims)
+# Plot corner plot of latent variables
+f = bf.diagnostics.plot_latent_space_2d(z_samples)
+
+# %% ---------------------------------------------------------------------------
+
+# Obtain 100 posterior samples for each simulated data set in test_sims
+posterior_samples = amortizer.sample(test_sims, n_samples=1000)
+
+# Show simulation-based calibration histograms
+f = bf.diagnostics.plot_sbc_histograms(
+    posterior_samples, test_sims["parameters"], num_bins=10
+)
+
+# %% ---------------------------------------------------------------------------
+
+# Plot fractional rank ECDFs
+f = bf.diagnostics.plot_sbc_ecdf(
+    posterior_samples, test_sims["parameters"], difference=True
+)
+
+# %% ---------------------------------------------------------------------------
+
+# Plot parameter recovery
+f = bf.diagnostics.plot_recovery(posterior_samples, test_sims["parameters"])
+
+# %% ---------------------------------------------------------------------------
+
+# Plot z-score contraction
+f = bf.diagnostics.plot_z_score_contraction(
+    posterior_samples, test_sims["parameters"]
+)
 
 # %% ---------------------------------------------------------------------------
