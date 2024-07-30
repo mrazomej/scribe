@@ -1,6 +1,7 @@
 # %% ---------------------------------------------------------------------------
 from utils import matplotlib_style
 import numpy as np
+import numba as nb
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 from functools import partial
@@ -21,6 +22,7 @@ n_genes = 5_000
 # Set the random number generator to be used
 RNG = np.random.default_rng(42)
 
+@nb.njit
 def prior_fn():
     """
     Generates prior parameter samples for the scRNA-seq model
@@ -54,15 +56,20 @@ def prior_fn():
         `numpy.random.default_rng()`) and `n_genes` is defined in the scope
         where this function is called.
     """
-    # Prior on p_hat for negative binomial parameter
-    p_hat = RNG.beta(1, 10)
-    # Prior on r parameters for each gene
-    r_vec = RNG.gamma(3, 1/5, n_genes)
-    # Sort r_vec
+    # Sample p_hat from a beta distribution
+    p_hat = np.random.beta(1, 10)
+    # Sample r_vec from a gamma distribution
+    r_vec = np.random.gamma(3, 1/5, n_genes)
+    # Sort r_vec in descending order
     r_vec = np.sort(r_vec)[::-1]
-
-    # Return the prior
-    return np.float32(np.concatenate(([p_hat], r_vec)))
+    # Initialize result array as float32
+    result = np.empty(n_genes + 1, dtype=np.float32)
+    # append p_hat to result array
+    result[0] = p_hat
+    # append r_vec to result array
+    result[1:] = r_vec
+    
+    return result
 
 # %% ---------------------------------------------------------------------------
 
@@ -80,8 +87,8 @@ prior(10)
 
 # %% ---------------------------------------------------------------------------
 
-
-def likelihood_fn(params, n_obs=100_000):
+@nb.njit
+def likelihood_fn(params, n_obs=10_000):
     """
     Computes the likelihood of the parameters given the Dirichlet-Multinomial
     model.
@@ -124,17 +131,23 @@ def likelihood_fn(params, n_obs=100_000):
     # Unpack parameters
     p_hat = params[0]
     r_vec = params[1:]
-    # Compute sum of r parameters
+    # Sum of r parameters
     r_o = np.sum(r_vec)
-    # Sample from Negative Binomial distribution the total number of UMI counts
-    U = RNG.negative_binomial(r_o, p_hat)
-    # Sample probabilities from Dirichlet distribution
-    dirichlet_probs = RNG.dirichlet(r_vec, size=n_obs)
-    # Sample counts from Multinomial distribution using the Dirichlet
-    # probabilities
-    u_vec = np.array([RNG.multinomial(U, probs) for probs in dirichlet_probs])
-
-    return np.float32(u_vec)
+    # Sample total number of UMIs from Negative Binomial. NOTE: Numba takes the
+    # integer part of the parameters, so we need to cast r_o to int. That does
+    # not make sense to me, but it is what it is.
+    U = np.random.negative_binomial(int(r_o), float(p_hat))
+    # Sample probabilities from Dirichlet distribution for each observation
+    dirichlet_probs = np.random.dirichlet(r_vec, size=n_obs)
+    # Initialize array to store counts as float32
+    u_vec = np.empty((n_obs, len(r_vec)), dtype=np.float32)
+    # Loop through each observation
+    for i in range(n_obs):
+        # Sample observations from Multinomial distribution
+        u_vec[i] = np.random.multinomial(U, dirichlet_probs[i])
+    
+    # Return counts
+    return u_vec
 
 # %% ---------------------------------------------------------------------------
 

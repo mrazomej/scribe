@@ -1,13 +1,11 @@
 # %% ---------------------------------------------------------------------------
 from utils import matplotlib_style
 import numpy as np
-import scipy.stats as stats
 import matplotlib.pyplot as plt
 from functools import partial
 import bayesflow as bf
 import tensorflow as tf
-# Set TensorFlow to use only the CPU
-# tf.config.set_visible_devices([], 'GPU')
+import tensorflow_probability as tfp
 
 cor, pal = matplotlib_style()
 
@@ -37,17 +35,6 @@ def prior_fn():
         element is `p_hat`, a float representing the probability of success. The
         second element is `r_vec`, a sorted numpy array of shape parameters for
         each gene.
-
-    Raises:
-        NameError: If `RNG` or `n_genes` is not defined in the scope where this
-        function is called.
-
-    Example:
-        >>> p_hat, r_vec = prior_fn()
-        >>> print(p_hat)
-        0.5
-        >>> print(r_vec)
-        [0.1, 0.2, 0.3, ...]
 
     Note:
         Ensure that `RNG` is an instance of a random number generator (e.g.,
@@ -81,60 +68,44 @@ prior(10)
 # %% ---------------------------------------------------------------------------
 
 
-def likelihood_fn(params, n_obs=100_000):
+def likelihood_fn(params, n_obs=10_000):
     """
     Computes the likelihood of the parameters given the Dirichlet-Multinomial
-    model.
-
-    This function simulates the observed counts from a Dirichlet-Multinomial
-    distribution using the provided parameters. The Dirichlet-Multinomial
-    distribution is a compound distribution where the probabilities of the
-    Multinomial distribution are drawn from a Dirichlet distribution.
-
+    model using TensorFlow Probability for GPU acceleration.
+    
     Args:
         params (np.ndarray): Array containing the parameters. The first element
         is `p_hat`, which is the parameter for the Negative Binomial
         distribution. The remaining elements are `r_vec`, which are the
-        parameters for the Dirichlet distribution.  n_obs (int, optional): The
-        number of observations to generate. Defaults to 1.
-
+        parameters for the Dirichlet distribution.
+        n_obs (int, optional): The number of observations to generate. Defaults to 10,000.
+    
     Returns:
         np.ndarray: A sample from the Dirichlet-Multinomial distribution. The
-        shape of the returned array is (n_obs, len(r_vec)) if n_obs > 1,
-        otherwise (len(r_vec),).
-
-    Example:
-        >>> params = np.array([0.5, 1.0, 2.0, 3.0])
-        >>> likelihood_fn(params, n_obs=5)
-        array([[10., 20., 30.],
-               [12., 18., 25.],
-               [11., 19., 29.],
-               [13., 21., 31.],
-               [14., 22., 32.]], dtype=float32)
-
-    Notes:
-        - The first element of `params` is `p_hat`, which is used to sample the
-          total number of counts `U` from a Negative Binomial distribution.
-        - The remaining elements of `params` form `r_vec`, which are used as
-          parameters for the Dirichlet distribution to sample the probabilities
-          for the Multinomial distribution.
-        - The function returns the counts sampled from the Multinomial
-          distribution as a `float32` numpy array.
+        shape of the returned array is (n_obs, len(r_vec)).
     """
+    # Ensure params is a TensorFlow tensor
+    params = tf.convert_to_tensor(params, dtype=tf.float32)
+    
     # Unpack parameters
     p_hat = params[0]
     r_vec = params[1:]
-    # Compute sum of r parameters
-    r_o = np.sum(r_vec)
-    # Sample from Negative Binomial distribution the total number of UMI counts
-    U = RNG.negative_binomial(r_o, p_hat)
-    # Sample probabilities from Dirichlet distribution
-    dirichlet_probs = RNG.dirichlet(r_vec, size=n_obs)
-    # Sample counts from Multinomial distribution using the Dirichlet
-    # probabilities
-    u_vec = np.array([RNG.multinomial(U, probs) for probs in dirichlet_probs])
-
-    return np.float32(u_vec)
+    
+    # Sum of r parameters
+    r_o = tf.reduce_sum(r_vec)
+    
+    # Sample total number of UMIs from Negative Binomial
+    neg_binom = tfp.distributions.NegativeBinomial(total_count=r_o, probs=p_hat)
+    U = neg_binom.sample(n_obs)
+    
+    # Sample individual UMI counts from Dirichlet-Multinomial
+    dirichlet_multinomial = tfp.distributions.DirichletMultinomial(
+        total_count=U, concentration=r_vec
+    )
+    u_vec = dirichlet_multinomial.sample()
+    
+    # Convert to numpy array and return
+    return u_vec.numpy()
 
 # %% ---------------------------------------------------------------------------
 
