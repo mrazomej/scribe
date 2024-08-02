@@ -105,3 +105,6 @@ Temporary Items
 # Hidden files
 .github/
 .devcontainer/
+
+# Data files
+data/**
