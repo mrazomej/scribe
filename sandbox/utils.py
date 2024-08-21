@@ -3,6 +3,8 @@ import seaborn as sns
 import numpy as np
 import mpmath
 import scipy
+from scipy.integrate import quad
+from scipy.special import gammaln, logsumexp
 
 
 def get_colors(all_palettes=False):
@@ -295,6 +297,63 @@ def log_large_a_b_kummer(a, b, z, n_terms=20, coefficients=g_k_dict):
 
 # ------------------------------------------------------------------------------
 
+def log_kummer_integral(a, b, z):
+    """
+    Computes the logarithm of the Kummer function M(a, b, z) using an integral
+    representation.
+
+    This function calculates log(M(a, b, z)) where M is the Kummer function
+    (confluent hypergeometric function of the first kind) using the integral
+    representation:
+
+    M(a, b, z) = [Γ(b) / (Γ(a) * Γ(b-a))] * 
+                 ∫[0 to 1] e^(zt) * t^(b-a-1) * (1-t)^(a-1) dt
+
+    The function computes this integral in log space to avoid numerical overflow
+    for large parameter values.
+
+    Parameters:
+    -----------
+    a : float
+        The first parameter of the Kummer function.
+    b : float
+        The second parameter of the Kummer function. Must be greater than a.
+    z : float or complex
+        The argument of the Kummer function.
+
+    Returns:
+    --------
+    float or complex
+        The logarithm of the Kummer function M(a, b, z).
+
+    Notes:
+    ------
+    - This method can be numerically stable for a wider range of parameters
+      compared to direct computation.
+    - The function uses scipy's quad for numerical integration and special
+      functions for log-gamma calculations.
+    - Care should be taken when b - a is not a positive integer, as the integral
+      might not converge.
+    """
+    # Define the log of the integrand for the integral
+    def log_integrand(t):
+        log_term1 = z * t  # log(e^(zt)) = zt
+        log_term2 = (a - 1) * np.log(t)
+        log_term3 = (b - a - 1) * np.log(1 - t)
+        return log_term1 + log_term2 + log_term3
+
+    # Perform the integration over the interval [0, 1]
+    integral, error = quad(lambda t: np.exp(log_integrand(t)), 0, 1)
+    log_integral = np.log(integral)
+    
+    # Calculate the log of the prefactor: log(Gamma(b) / (Gamma(a) * Gamma(b-a)))
+    log_prefactor = gammaln(b) - (gammaln(a) + gammaln(b - a))
+    
+    # Return the log of the result
+    return log_prefactor + log_integral
+
+# ------------------------------------------------------------------------------
+
 
 def log_p_m(mRNA, kp_on, kp_off, rm, gm=1, log_M_func=np_log_hyp):
     '''
@@ -347,7 +406,7 @@ def two_state_log_probability(
     kp_off,
     rm,
     log_M_func=np_log_hyp,
-    log_M_approx=log_large_a_b_kummer,
+    log_M_approx=log_kummer_integral,
     gm=1,
 ):
     """
@@ -389,7 +448,7 @@ def two_state_log_probability(
                 )
 
                 # Check if the result is infinity or NaN
-                if np.isinf(log_prob) or np.isnan(log_prob):
+                if np.isinf(log_prob) or np.isnan(log_prob) or log_prob > 0:
                     raise ValueError("Result is infinity or NaN")
 
             except:
