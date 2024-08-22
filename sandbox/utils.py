@@ -179,7 +179,7 @@ def matplotlib_style(return_colors=True, return_palette=True, **kwargs):
 
 # define a np.frompyfunc that allows us to evaluate the sympy.mp.math.hyp1f1
 np_log_hyp = np.frompyfunc(
-    lambda x, y, z: mpmath.ln(mpmath.hyp1f1(x, y, z, zeroprec=128)), 3, 1
+    lambda x, y, z: mpmath.ln(mpmath.hyp1f1(x, y, z, zeroprec=1024)), 3, 1
 )
 
 # ------------------------------------------------------------------------------
@@ -461,3 +461,47 @@ def two_state_log_probability(
         log_probs.append(log_prob)
 
     return log_probs
+
+# ------------------------------------------------------------------------------
+
+def two_state_neg_binom_log_probability(
+    mRNA_values,
+    kp_on,
+    kp_off,
+    rm,
+    gm=1,
+):
+    """
+    Compute the log probability of the negative binomial approximation of the
+    two-state promoter model.
+
+    Parameters
+    ----------
+    mRNA_values : array-like
+        The range of mRNA values to evaluate.
+    kp_on : float
+        Rate of activation of the promoter.
+    kp_off : float
+        Rate of deactivation of the promoter.
+    rm : float
+        Production rate of the mRNA.
+    gm : float, optional
+        1 / half-life time for the mRNA. Default is 1.
+
+    Returns
+    -------
+    numpy.ndarray
+        The computed log probabilities for the range of mRNA values.
+
+    Notes
+    -----
+    This function uses the negative binomial approximation of the two-state
+    promoter model, which is valid when kp_off >> 1.
+    """
+    # Define the parameters
+    n = mRNA_values
+    k = kp_on / gm
+    p = 1 / (1 + rm / kp_off)
+    # Compute the log probability using scipy.stats.nbinom
+    log_prob = scipy.stats.nbinom.logpmf(n, k, p)
+    return log_prob
