@@ -81,9 +81,9 @@ def matplotlib_style(return_colors=True, return_palette=True, **kwargs):
     # Define the matplotlib styles.
     rc = {
         # Axes formatting
-        "axes.facecolor": "#f0f3f7",
-        "axes.edgecolor": "#ffffff",  # 5b5b5b",
-        "axes.labelcolor": "#5b5b5b",
+        "axes.facecolor": "#E6E6EF",
+        "axes.edgecolor": "#ffffff",  # 5b5b5b" ,
+        "axes.labelcolor": "#000000",
         "axes.spines.right": False,
         "axes.spines.top": False,
         "axes.spines.left": True,
@@ -96,7 +96,7 @@ def matplotlib_style(return_colors=True, return_palette=True, **kwargs):
         "lines.linewidth": 0.5,
         "lines.dash_capstyle": "butt",
         "patch.linewidth": 0.25,
-        "lines.markeredgecolor": '#f0f3f7',
+        "lines.markeredgecolor": '#E6E6EF',
         "lines.markeredgewidth": 0.5,
 
         # Grid formatting
@@ -106,13 +106,13 @@ def matplotlib_style(return_colors=True, return_palette=True, **kwargs):
 
         # Title formatting
         "axes.titlesize": 8,
-        "axes.titleweight": 700,
+        # "axes.titleweight": 700,
         "axes.titlepad": 3,
-        "axes.titlelocation": "left",
+        "axes.titlelocation": "center",
 
         # Axes label formatting.
         "axes.labelpad": 0,
-        "axes.labelweight": 700,
+        # "axes.labelweight": 700,
         "xaxis.labellocation": "center",
         "yaxis.labellocation": "center",
         "axes.labelsize": 8,
@@ -127,8 +127,8 @@ def matplotlib_style(return_colors=True, return_palette=True, **kwargs):
         "legend.edgecolor": "#5b5b5b",
 
         # Tick formatting
-        "xtick.color": "#5b5b5b",
-        "ytick.color": "#5b5b5b",
+        "xtick.color": "#000000",
+        "ytick.color": "#000000",
         "xtick.labelsize": 6,
         "ytick.labelsize": 6,
         "xtick.major.size": 0,
@@ -141,11 +141,9 @@ def matplotlib_style(return_colors=True, return_palette=True, **kwargs):
         "ytick.minor.size": 0,
 
         # General Font styling
-        "font.family": "sans-serif",
-        "font.family": "Lato",
-        "font.weight": 400,  # Weight of all fonts unless overriden.
+        "font.family": "Roboto",
+        # "font.weight": 400,  # Weight of all fonts unless overriden.
         "font.style": "normal",
-        "text.color": "#3d3d3d",  # "#5b5b5b",
 
         # Higher-order things
         "pdf.fonttype": 42,
@@ -297,6 +295,7 @@ def log_large_a_b_kummer(a, b, z, n_terms=20, coefficients=g_k_dict):
 
 # ------------------------------------------------------------------------------
 
+
 def log_kummer_integral(a, b, z):
     """
     Computes the logarithm of the Kummer function M(a, b, z) using an integral
@@ -345,10 +344,10 @@ def log_kummer_integral(a, b, z):
     # Perform the integration over the interval [0, 1]
     integral, error = quad(lambda t: np.exp(log_integrand(t)), 0, 1)
     log_integral = np.log(integral)
-    
+
     # Calculate the log of the prefactor: log(Gamma(b) / (Gamma(a) * Gamma(b-a)))
     log_prefactor = gammaln(b) - (gammaln(a) + gammaln(b - a))
-    
+
     # Return the log of the result
     return log_prefactor + log_integral
 
@@ -463,6 +462,7 @@ def two_state_log_probability(
     return log_probs
 
 # ------------------------------------------------------------------------------
+
 
 def two_state_neg_binom_log_probability(
     mRNA_values,
