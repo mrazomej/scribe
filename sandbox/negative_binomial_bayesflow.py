@@ -41,7 +41,7 @@ prior = bf.simulation.Prior(
 # %% ---------------------------------------------------------------------------
 
 
-def likelihood_fn(params, n_obs=100):
+def likelihood_fn(params, n_obs=10_000):
     # Unpack parameters
     p_hat = params[0]
     r = params[1]
@@ -94,7 +94,7 @@ fig.tight_layout()
 # Set up summary network
 
 # Define summary network as a Deepset
-summary_net = bf.networks.DeepSet(summary_dim=4)
+summary_net = bf.networks.DeepSet(summary_dim=128)
 
 # Simulate a pass through the summary network
 summary_pass = summary_net(model_draws["sim_data"])
@@ -131,16 +131,20 @@ amortizer = bf.amortizers.AmortizedPosterior(
 )
 
 # Assemble the trainer with the amortizer and generative model
-trainer = bf.trainers.Trainer(amortizer=amortizer, generative_model=model)
+trainer = bf.trainers.Trainer(
+    amortizer=amortizer,
+    generative_model=model,
+    checkpoint_path="./negbinom_single_bayesflow"
+)
 
 # %% ---------------------------------------------------------------------------
 
 # Train the model
 history = trainer.train_online(
-    epochs=20,
-    iterations_per_epoch=128,
-    batch_size=64,
-    validation_sims=200,
+    epochs=100,
+    iterations_per_epoch=32,
+    batch_size=128,
+    validation_sims=128,
 )
 # %% ---------------------------------------------------------------------------
 
