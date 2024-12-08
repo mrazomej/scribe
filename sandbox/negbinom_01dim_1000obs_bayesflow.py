@@ -108,6 +108,7 @@ summary_pass.shape
 # Define the conditional invertible network with affine coupling layers
 inference_net = bf.inference_networks.InvertibleNetwork(
     num_params=prior(1)["prior_draws"].shape[-1],
+    num_coupling_layers=10,
 )
 
 # Perform a forward pass through the network given the summary network embedding
