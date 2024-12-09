@@ -10,6 +10,8 @@ from numpyro.distributions import constraints
 from numpyro.infer import Predictive, SVI, Trace_ELBO, TraceMeanField_ELBO
 # Import numpy for array manipulation
 import numpy as np
+# Import scipy for statistical functions
+import scipy.stats as stats
 # Import pandas for data manipulation
 import pandas as pd
 # Import plotting libraries
@@ -17,13 +19,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import arviz as az
 # Import the utils file
-from utils import matplotlib_style
-matplotlib_style()
+# from utils import matplotlib_style
+# matplotlib_style()
 
 # %% ---------------------------------------------------------------------------
 
-# Set the number of devices (threads) to use
-numpyro.set_host_device_count(8)
+# Set platform to use CUDA GPU
+numpyro.set_platform("gpu")
 # %% ---------------------------------------------------------------------------
 
 print("Defining model...")
@@ -158,7 +160,7 @@ print("Setting up the simulation...")
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define number of cells and genes
-n_cells = 10_000
+n_cells = 1_000
 n_genes = 20_000
 
 # Define parameters for prior
@@ -238,6 +240,99 @@ ax.set_ylabel('ELBO loss')
 ax.set_yscale('log')
 
 plt.tight_layout()
+
+# %% ---------------------------------------------------------------------------
+
+def plot_parameter_posteriors(svi_result, p_true, r_true, n_r_examples=5, n_rows=2, n_cols=3):
+    """
+    Plot posterior distributions vs ground truth for p and selected r parameters
+    
+    Args:
+        svi_result: SVI results containing alpha and beta parameters
+        p_true: True value of p parameter
+        r_true: Array of true r parameters
+        n_r_examples: Number of r parameters to plot (default 5)
+        n_rows, n_cols: Grid dimensions for the subplot
+    """
+    
+    # Create figure
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 4*n_rows))
+    axes = axes.flatten()
+    
+    # Plot p posterior
+
+    # Extract alpha and beta parameters from svi_result
+    alpha_p = svi_result.params['alpha_p']
+    beta_p = svi_result.params['beta_p']
+    # Define x values for plotting
+    x_p = np.linspace(0, 1, 200)
+    # Define posterior p
+    posterior_p = stats.beta.pdf(x_p, alpha_p, beta_p)
+    
+    # Plot posterior p
+    axes[0].plot(x_p, posterior_p, 'b-', label='Posterior')
+    # Plot true p
+    axes[0].axvline(p_true, color='r', linestyle='--', label='True Value')
+    # Set title
+    axes[0].set_title('p parameter')
+    # Set x label
+    axes[0].set_xlabel('Value')
+    # Set y label
+    axes[0].set_ylabel('Density')
+    # Add legend
+    axes[0].legend()
+    
+    # Extract alpha and beta parameters from svi_result
+    alpha_r = svi_result.params['alpha_r']
+    beta_r = svi_result.params['beta_r']
+    
+    # Randomly select r parameters to plot
+    r_indices = np.random.choice(len(r_true), size=n_r_examples, replace=False)
+    
+    # Loop through r parameters
+    for i, idx in enumerate(r_indices, 1):
+        if i >= len(axes):  # Skip if we run out of subplot space
+            break
+
+        # Define x values for plotting
+        x_r = np.linspace(0, r_true[idx]*2, 1000)  # Range from 0 to 2x true value
+        # Define posterior r
+        posterior_r = stats.gamma.pdf(x_r, alpha_r[idx], scale=1/beta_r[idx])
+        
+        # Plot posterior r
+        axes[i].plot(x_r, posterior_r, 'b-', label='posterior')
+        # Plot true r
+        axes[i].axvline(
+            r_true[idx], color='r', linestyle='--', label='ground truth'
+        )
+        # Set title
+        axes[i].set_title(f'r parameter {idx}')
+        # Set x label
+        axes[i].set_xlabel('parameter value')
+        # Set y label
+        axes[i].set_ylabel('density')
+        # Add legend
+        axes[i].legend()
+    
+    # Remove any unused subplots
+    for i in range(n_r_examples + 1, len(axes)):
+        fig.delaxes(axes[i])
+
+    plt.tight_layout()
+
+    return fig
+
+# %% ---------------------------------------------------------------------------
+
+fig = plot_parameter_posteriors(
+    svi_result,
+    p_true,
+    r_true,
+    n_r_examples=5,
+    n_rows=2,
+    n_cols=3
+)
+plt.show()
 
 # %% ---------------------------------------------------------------------------
 
