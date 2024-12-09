@@ -24,9 +24,6 @@ import arviz as az
 
 # %% ---------------------------------------------------------------------------
 
-# Set platform to use CUDA GPU
-numpyro.set_platform("gpu")
-# %% ---------------------------------------------------------------------------
 
 print("Defining model...")
 
@@ -40,6 +37,42 @@ def model(
     total_counts=None,
     batch_size=None,
 ):
+    """
+    Numpyro model for Dirichlet-Multinomial single-cell RNA sequencing data.
+
+    This model assumes a hierarchical structure where:
+    1. Each cell has a total count drawn from a Negative Binomial distribution
+    2. The counts for individual genes are drawn from a Dirichlet-Multinomial
+    distribution conditioned on the total count.
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    p_prior : tuple of float, optional
+        Parameters (alpha, beta) for the Beta prior on p parameter.
+        Default is (1, 1) for a uniform prior.
+    r_prior : tuple of float, optional
+        Parameters (shape, rate) for the Gamma prior on r parameters.
+        Default is (2, 2).
+    counts : array-like, optional
+        Observed counts matrix of shape (n_cells, n_genes).
+        If None, generates samples from the prior.
+    total_counts : array-like, optional
+        Total counts per cell of shape (n_cells,).
+        Required if counts is provided.
+    batch_size : int, optional
+        Mini-batch size for stochastic variational inference.
+        If None, uses full dataset.
+
+    Returns
+    -------
+    None
+        The function defines a probabilistic model but does not return anything.
+        Samples are drawn using numpyro's sampling mechanisms.
+    """
     # Define the prior on the p parameter
     p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
 
@@ -120,6 +153,39 @@ def guide(
     total_counts=None,
     batch_size=None,
 ):
+    """
+    
+    Define the variational distribution for stochastic variational inference.
+    
+    This guide function specifies the form of the variational distribution that
+    will be optimized to approximate the true posterior. It defines a mean-field
+    variational family where: - The success probability p follows a Beta
+    distribution - Each gene's overdispersion parameter r follows an independent
+    Gamma distribution
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    p_prior : tuple of float, optional
+        Parameters (alpha, beta) for the Beta prior on p (default: (1,1))
+    r_prior : tuple of float, optional
+        Parameters (alpha, beta) for the Gamma prior on r (default: (2,2))
+    counts : array_like, optional
+        Observed counts matrix of shape (n_cells, n_genes)
+    total_counts : array_like, optional
+        Total counts per cell of shape (n_cells,)
+    batch_size : int, optional
+        Mini-batch size for stochastic optimization
+        
+    Notes
+    -----
+    The variational parameters (alpha_p, beta_p) for p and (alpha_r, beta_r) for
+    each r are initialized using the prior parameters but will be optimized
+    during inference.
+    """
     # register alpha_p and beta_p parameters for the Beta distribution in the
     # variational posterior
     alpha_p = numpyro.param(
@@ -161,7 +227,7 @@ rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define number of cells and genes
 n_cells = 1_000
-n_genes = 20_000
+n_genes = 5_000
 
 # Define parameters for prior
 r_alpha = 5
@@ -243,20 +309,72 @@ plt.tight_layout()
 
 # %% ---------------------------------------------------------------------------
 
-def plot_parameter_posteriors(svi_result, p_true, r_true, n_r_examples=5, n_rows=2, n_cols=3):
+def plot_parameter_posteriors(
+    svi_result,
+    p_true=None,
+    r_true=None,
+    n_r_examples=5,
+    n_rows=2,
+    n_cols=3,
+    n_points=200,
+    figsize=None
+):
     """
-    Plot posterior distributions vs ground truth for p and selected r parameters
-    
-    Args:
-        svi_result: SVI results containing alpha and beta parameters
-        p_true: True value of p parameter
-        r_true: Array of true r parameters
-        n_r_examples: Number of r parameters to plot (default 5)
-        n_rows, n_cols: Grid dimensions for the subplot
+    Plot posterior distributions versus ground truth values for model
+    parameters.
+
+    This function creates a grid of plots showing: 1. The Beta posterior
+    distribution for the p parameter (success probability) 2. Multiple Gamma
+    posterior distributions for randomly selected r parameters
+       (overdispersion parameters)
+
+    For each parameter, the posterior distribution is plotted along with a
+    vertical line indicating the true value (if provided).
+
+    Parameters
+    ----------
+    svi_result : numpyro.infer.SVI
+        Results from stochastic variational inference containing the optimized
+        variational parameters (alpha and beta) for both p and r distributions.
+    p_true : float, optional
+        True value of the p parameter (success probability). If provided, will
+        be shown as a vertical line on the plot.
+    r_true : array-like, optional
+        Array of true values for the r parameters (overdispersion). If provided,
+        will be shown as vertical lines on the respective plots.
+    n_r_examples : int, default=5
+        Number of r parameters to randomly sample and plot. Should be less than
+        the total number of subplots available (n_rows * n_cols - 1).
+    n_rows : int, default=2
+        Number of rows in the subplot grid.
+    n_cols : int, default=3
+        Number of columns in the subplot grid.
+    n_points : int, default=200
+        Number of points to use when plotting the posterior distributions.
+        Higher values give smoother curves but increase computation time.
+    figsize : tuple of float, optional
+        Figure dimensions (width, height) in inches. If None, defaults to
+        (4*n_cols, 4*n_rows).
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure object containing the grid of posterior plots.
+
+    Notes
+    -----
+    - The first subplot always shows the p parameter posterior
+    - Subsequent subplots show randomly selected r parameter posteriors
+    - Unused subplots (if any) are removed from the figure
+    - The posterior distributions are colored blue
+    - Ground truth values (if provided) are shown as red dashed lines
     """
-    
+    # Set figure size if not provided
+    if figsize is None:
+        figsize = (4*n_cols, 4*n_rows)
+
     # Create figure
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 4*n_rows))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     axes = axes.flatten()
     
     # Plot p posterior
@@ -265,20 +383,21 @@ def plot_parameter_posteriors(svi_result, p_true, r_true, n_r_examples=5, n_rows
     alpha_p = svi_result.params['alpha_p']
     beta_p = svi_result.params['beta_p']
     # Define x values for plotting
-    x_p = np.linspace(0, 1, 200)
+    x_p = np.linspace(0, 1, n_points)
     # Define posterior p
     posterior_p = stats.beta.pdf(x_p, alpha_p, beta_p)
     
     # Plot posterior p
-    axes[0].plot(x_p, posterior_p, 'b-', label='Posterior')
-    # Plot true p
-    axes[0].axvline(p_true, color='r', linestyle='--', label='True Value')
+    axes[0].plot(x_p, posterior_p, 'b-', label='posterior')
+    if p_true is not None:  
+        # Plot true p
+        axes[0].axvline(p_true, color='r', linestyle='--', label='ground truth')
     # Set title
     axes[0].set_title('p parameter')
     # Set x label
-    axes[0].set_xlabel('Value')
+    axes[0].set_xlabel('value')
     # Set y label
-    axes[0].set_ylabel('Density')
+    axes[0].set_ylabel('density')
     # Add legend
     axes[0].legend()
     
@@ -294,17 +413,21 @@ def plot_parameter_posteriors(svi_result, p_true, r_true, n_r_examples=5, n_rows
         if i >= len(axes):  # Skip if we run out of subplot space
             break
 
-        # Define x values for plotting
-        x_r = np.linspace(0, r_true[idx]*2, 1000)  # Range from 0 to 2x true value
+        # Define x range based on the posterior mean if r_true not provided
+        r_mean = alpha_r[idx] / beta_r[idx]
+        x_max = r_true[idx]*2 if r_true is not None else r_mean*2
+        x_r = np.linspace(0, x_max, n_points)
+
         # Define posterior r
         posterior_r = stats.gamma.pdf(x_r, alpha_r[idx], scale=1/beta_r[idx])
         
         # Plot posterior r
         axes[i].plot(x_r, posterior_r, 'b-', label='posterior')
-        # Plot true r
-        axes[i].axvline(
-            r_true[idx], color='r', linestyle='--', label='ground truth'
-        )
+        if r_true is not None:
+            # Plot true r
+            axes[i].axvline(
+                r_true[idx], color='r', linestyle='--', label='ground truth'
+            )
         # Set title
         axes[i].set_title(f'r parameter {idx}')
         # Set x label
@@ -321,15 +444,14 @@ def plot_parameter_posteriors(svi_result, p_true, r_true, n_r_examples=5, n_rows
     plt.tight_layout()
 
     return fig
-
 # %% ---------------------------------------------------------------------------
 
 fig = plot_parameter_posteriors(
     svi_result,
     p_true,
     r_true,
-    n_r_examples=5,
-    n_rows=2,
+    n_r_examples=8,
+    n_rows=3,
     n_cols=3
 )
 plt.show()
