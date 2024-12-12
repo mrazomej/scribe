@@ -410,7 +410,7 @@ class ScribeResults:
     -------
     from_anndata(adata, params, loss_history, **kwargs)
         Class method to create ScribeResults from an AnnData object
-    ppc_samples(rng_key, n_samples=100, batch_size=None)
+    ppc_samples(rng_key, n_samples=98, batch_size=None)
         Generate posterior predictive check samples
     """
     # Core inference results
@@ -426,6 +426,10 @@ class ScribeResults:
     
     # Optional results
     posterior_samples: Optional[Dict] = None
+    
+    # --------------------------------------------------------------------------
+    # Create ScribeResults from AnnData object
+    # --------------------------------------------------------------------------
     
     @classmethod
     def from_anndata(
@@ -472,10 +476,14 @@ class ScribeResults:
             **kwargs
         )
     
+    # --------------------------------------------------------------------------
+    # Posterior predictive check samples
+    # --------------------------------------------------------------------------
+    
     def ppc_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
-        n_samples: int = 100,
+        rng_key: random.PRNGKey = random.PRNGKey(41),
+        n_samples: int = 99,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> Dict:
@@ -491,6 +499,8 @@ class ScribeResults:
             If True, stores the generated samples in the posterior_samples
             attribute. Default is True.
         """
+        from .svi import generate_ppc_samples
+
         samples = generate_ppc_samples(
             self.params,
             self.n_cells,
@@ -504,6 +514,73 @@ class ScribeResults:
             self.posterior_samples = samples
             
         return samples
+
+    # --------------------------------------------------------------------------
+    # Enable indexing of ScribeResults object
+    # --------------------------------------------------------------------------
+
+    def __getitem__(self, index):
+        """
+        Enable indexing of ScribeResults object.
+        
+        Parameters
+        ----------
+        index : str, bool array, int array, int, or slice
+            Index specification. Can be:
+            - A boolean mask
+            - A list of integer positions
+            - A string that matches a column in cell_metadata or gene_metadata
+            - An integer for single gene selection
+            - A slice object for range selection
+            
+        Returns
+        -------
+        ScribeResults
+            A new ScribeResults object with the subset of data
+        """
+        # Handle integer indexing
+        if isinstance(index, int):
+            # Initialize boolean index for all genes
+            bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            # Set the gene at the specified index to True
+            bool_index = bool_index.at[index].set(True)
+            # Use the boolean index for subsetting
+            index = bool_index
+        
+        # Handle slice indexing
+        elif isinstance(index, slice):
+            # Create array of indices
+            indices = jnp.arange(self.n_genes)[index]
+            # Create boolean mask
+            bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
+            index = bool_index
+        
+        # Handle list/array indexing
+        elif not isinstance(index, (bool, jnp.bool_)) and not isinstance(index[-1], (bool, jnp.bool_)):
+            indices = jnp.array(index)
+            bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            bool_index = jnp.where(jnp.isin(jnp.arange(self.n_genes), indices), True, bool_index)
+            index = bool_index
+        
+        # Create new params dict with subset of r parameters
+        new_params = dict(self.params)
+        new_params['alpha_r'] = self.params['alpha_r'][index]
+        new_params['beta_r'] = self.params['beta_r'][index]
+        
+        # Create new metadata if available
+        new_gene_metadata = self.gene_metadata.iloc[index] if self.gene_metadata is not None else None
+        
+        return ScribeResults(
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=None  # Reset posterior samples as they're no longer valid
+        )
 
 # ------------------------------------------------------------------------------
 # SCRIBE inference pipeline
