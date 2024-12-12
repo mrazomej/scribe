@@ -2,11 +2,13 @@
 Plotting functions
 """
 
-import matplotlib
+import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import scipy.stats as stats
 
 from .stats import compute_histogram_credible_regions, compute_ecdf_credible_regions
+from .svi import ScribeResults
 
 # ------------------------------------------------------------------------------
 # General plotting functions
@@ -79,13 +81,13 @@ def matplotlib_style():
 # ------------------------------------------------------------------------------
 
 def plot_parameter_posteriors(
-    svi_result,
+    scribe_result: ScribeResults,
     p_true=None,
     r_true=None,
-    n_r_examples=5,
-    n_rows=2,
+    n_rows=3,
     n_cols=3,
     n_points=200,
+    plot_quantiles=(0.001, 0.999),
     figsize=None
 ):
     """
@@ -102,7 +104,7 @@ def plot_parameter_posteriors(
 
     Parameters
     ----------
-    svi_result : numpyro.infer.SVI
+    scribe_result : ScribeResults
         Results from stochastic variational inference containing the optimized
         variational parameters (alpha and beta) for both p and r distributions.
     p_true : float, optional
@@ -121,6 +123,8 @@ def plot_parameter_posteriors(
     n_points : int, default=200
         Number of points to use when plotting the posterior distributions.
         Higher values give smoother curves but increase computation time.
+    plot_quantiles : tuple of float, optional
+        Quantiles to use when plotting the posterior distributions.
     figsize : tuple of float, optional
         Figure dimensions (width, height) in inches. If None, defaults to
         (4*n_cols, 4*n_rows).
@@ -146,11 +150,14 @@ def plot_parameter_posteriors(
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     axes = axes.flatten()
     
+    # Calculate number of r examples based on grid size
+    n_r_examples = n_rows * n_cols - 1
+    
     # Plot p posterior
 
     # Extract alpha and beta parameters from svi_result
-    alpha_p = svi_result.params['alpha_p']
-    beta_p = svi_result.params['beta_p']
+    alpha_p = scribe_result.params['alpha_p']
+    beta_p = scribe_result.params['beta_p']
     # Define x values for plotting
     x_p = np.linspace(0, 1, n_points)
     # Define posterior p
@@ -171,21 +178,26 @@ def plot_parameter_posteriors(
     axes[0].legend()
     
     # Extract alpha and beta parameters from svi_result
-    alpha_r = svi_result.params['alpha_r']
-    beta_r = svi_result.params['beta_r']
+    alpha_r = scribe_result.params['alpha_r']
+    beta_r = scribe_result.params['beta_r']
     
-    # Randomly select r parameters to plot
-    r_indices = np.random.choice(len(r_true), size=n_r_examples, replace=False)
-    
-    # Loop through r parameters
-    for i, idx in enumerate(r_indices, 1):
-        if i >= len(axes):  # Skip if we run out of subplot space
-            break
+    # Randomly select r parameters to plot.
+    n_r_examples = min(n_r_examples, len(alpha_r))  
+    r_indices = np.random.choice(len(alpha_r), size=n_r_examples, replace=False)
 
-        # Define x range based on the posterior mean if r_true not provided
-        r_mean = alpha_r[idx] / beta_r[idx]
-        x_max = r_true[idx]*2 if r_true is not None else r_mean*2
-        x_r = np.linspace(0, x_max, n_points)
+    # Loop through r parameters (now using all remaining panels)
+    for i, idx in enumerate(r_indices, 1):
+        # Define x range using quantiles of the gamma distribution
+        alpha, beta = alpha_r[idx], beta_r[idx]
+        lower_bound = stats.gamma.ppf(plot_quantiles[0], alpha, scale=1/beta)
+        upper_bound = stats.gamma.ppf(plot_quantiles[1], alpha, scale=1/beta)
+        
+        # Override with r_true if provided
+        if r_true is not None:
+            lower_bound = min(lower_bound, r_true[idx] * 0.5)
+            upper_bound = max(upper_bound, r_true[idx] * 1.5)
+            
+        x_r = np.linspace(lower_bound, upper_bound, n_points)
 
         # Define posterior r
         posterior_r = stats.gamma.pdf(x_r, alpha_r[idx], scale=1/beta_r[idx])
@@ -216,7 +228,7 @@ def plot_parameter_posteriors(
 
 # ------------------------------------------------------------------------------
 
-def plot_credible_regions(
+def plot_histogram_credible_regions(
     ax,
     hist_results,
     colors=None,
@@ -308,6 +320,109 @@ def plot_credible_regions(
             alpha=median_alpha,
             linewidth=median_linewidth,
             label=f'{label_prefix}median'
+        )
+    
+    return ax
+
+# ------------------------------------------------------------------------------
+
+def plot_ecdf_credible_regions(
+    ax,
+    ecdf_results,
+    colors=None,
+    cmap=None,
+    alpha=0.2,
+    plot_median=True,
+    median_color='black',
+    median_alpha=0.2,
+    median_linewidth=1.5,
+    label_prefix='',
+    drawstyle='steps-post'
+):
+    """
+    Plot ECDF credible regions as fill_between on a given axis.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axis to plot on
+    ecdf_results : dict
+        Results dictionary from compute_ecdf_credible_regions
+    colors : list, optional
+        List of colors for each credible region. Must match length of credible
+        regions. If None and cmap is None, defaults to grays.
+    cmap : str or matplotlib.colors.Colormap, optional
+        Colormap to generate colors from. Ignored if colors is provided.
+    alpha : float or list, optional
+        Transparency for fill_between plots. If float, same alpha used for all
+        regions. If list, must match length of credible regions.
+    plot_median : bool, optional
+        Whether to plot the median line (default: True)
+    median_color : str, optional
+        Color for median line (default: 'black')
+    median_alpha : float, optional
+        Transparency for median line (default: 0.2)
+    median_linewidth : float, optional
+        Line width for median line (default: 1.5)
+    label_prefix : str, optional
+        Prefix for legend labels (default: '')
+    drawstyle : str, optional
+        Style for drawing steps, either 'steps-post' or 'steps-pre' (default:
+        'steps-post')
+        
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axis with plots added
+    """
+    x = ecdf_results['x_values']
+    
+    # Sort credible regions from largest to smallest for proper layering
+    cr_values = sorted(ecdf_results['regions'].keys(), reverse=True)
+    n_regions = len(cr_values)
+    
+    # Handle colors
+    if colors is None:
+        if cmap is None:
+            # Default to grays if no colors specified
+            colors = [f'gray' for _ in range(n_regions)][::-1]
+        else:
+            # Generate colors from colormap
+            if isinstance(cmap, str):
+                cmap = plt.get_cmap(cmap)
+            colors = [cmap(i / (n_regions - 1)) for i in range(n_regions)][::-1]
+    
+    # Handle alpha
+    if isinstance(alpha, (int, float)):
+        alphas = [alpha] * n_regions
+    else:
+        alphas = alpha
+        
+    # Plot credible regions
+    for cr, color, alpha in zip(cr_values, colors, alphas):
+        region = ecdf_results['regions'][cr]
+        ax.fill_between(
+            x,
+            region['lower'],
+            region['upper'],
+            color=color,
+            alpha=alpha,
+            label=f'{label_prefix}{cr}% CR',
+            step=drawstyle
+        )
+    
+    # Plot median
+    if plot_median:
+        # Use the median from any region (they're all the same)
+        median = ecdf_results['regions'][cr_values[0]]['median']
+        ax.plot(
+            x,
+            median,
+            color=median_color,
+            alpha=median_alpha,
+            linewidth=median_linewidth,
+            label=f'{label_prefix}median',
+            drawstyle=drawstyle
         )
     
     return ax
