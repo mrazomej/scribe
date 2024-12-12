@@ -371,7 +371,7 @@ def generate_ppc_samples(
     
     return {
         'parameter_samples': posterior_param_samples,
-        'predictive_samples': predictive_samples
+        'predictive_samples': predictive_samples["counts"]
     }
 
 # ------------------------------------------------------------------------------
@@ -570,6 +570,28 @@ class ScribeResults:
         
         # Create new metadata if available
         new_gene_metadata = self.gene_metadata.iloc[index] if self.gene_metadata is not None else None
+
+        # Create new posterior samples if available
+        if self.posterior_samples is not None:
+            # Extract r parameter samples from posterior samples
+            new_r_param_samples = self.posterior_samples["parameter_samples"]["r"][:, index]
+            # create new posterior samples with the new r parameter samples
+            new_param_samples = {
+                "parameter_samples": {
+                    "p": self.posterior_samples["parameter_samples"]["p"],
+                    "r": new_r_param_samples
+                }
+            }
+            # Extract predictive samples from posterior samples
+            new_predictive_samples = self.posterior_samples["predictive_samples"][:, :, index]
+            # create new posterior samples with the new predictive samples
+            new_posterior_samples = {
+                "parameter_samples": new_param_samples,
+                "predictive_samples": new_predictive_samples
+            }
+        else:
+            new_posterior_samples = None
+            
         
         return ScribeResults(
             params=new_params,
@@ -579,7 +601,7 @@ class ScribeResults:
             cell_metadata=self.cell_metadata,
             gene_metadata=new_gene_metadata,
             uns=self.uns,
-            posterior_samples=None  # Reset posterior samples as they're no longer valid
+            posterior_samples=new_posterior_samples
         )
 
 # ------------------------------------------------------------------------------
