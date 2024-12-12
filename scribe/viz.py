@@ -1,11 +1,26 @@
+"""
+Plotting functions
+"""
+
 import matplotlib
 import seaborn as sns
 import numpy as np
+
+from .stats import compute_histogram_credible_regions, compute_ecdf_credible_regions
+
+# ------------------------------------------------------------------------------
+# General plotting functions
+# ------------------------------------------------------------------------------
 
 def matplotlib_style():
     """
     Sets plotting defaults to personal style for matplotlib.
     """
+    # Check if Roboto is available
+    import matplotlib.font_manager as fm
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+    font_family = ["Roboto", "sans-serif"] if "Roboto" in available_fonts else ["sans-serif"]
+    
     # Define the matplotlib styles.
     rc = {
         # Axes formatting
@@ -43,8 +58,8 @@ def matplotlib_style():
         "xtick.bottom": False,
         "ytick.left": False,
 
-        # Font styling
-        "font.family": "Roboto",
+        # Font styling - with fallbacks
+        "font.family": font_family,
         "font.style": "normal",
         "axes.titleweight": "bold",
 
@@ -59,6 +74,8 @@ def matplotlib_style():
     sns.set_style(rc)
     sns.set_palette("colorblind")
 
+# ------------------------------------------------------------------------------
+# Posterior diagnostic plots
 # ------------------------------------------------------------------------------
 
 def plot_parameter_posteriors(
@@ -196,3 +213,101 @@ def plot_parameter_posteriors(
     plt.tight_layout()
 
     return fig
+
+# ------------------------------------------------------------------------------
+
+def plot_credible_regions(
+    ax,
+    hist_results,
+    colors=None,
+    cmap=None,
+    alpha=0.2,
+    plot_median=True,
+    median_color='black',
+    median_alpha=0.2,
+    median_linewidth=1.5,
+    label_prefix='',
+):
+    """
+    Plot credible regions as fill_between on a given axis.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axis to plot on
+    hist_results : dict
+        Results dictionary from compute_histogram_credible_regions
+    colors : list, optional
+        List of colors for each credible region. Must match length of 
+        credible regions. If None and cmap is None, defaults to grays.
+    cmap : str or matplotlib.colors.Colormap, optional
+        Colormap to generate colors from. Ignored if colors is provided.
+    alpha : float or list, optional
+        Transparency for fill_between plots. If float, same alpha used for all
+        regions. If list, must match length of credible regions.
+    plot_median : bool, optional
+        Whether to plot the median line (default: True)
+    median_color : str, optional
+        Color for median line (default: 'black')
+    median_alpha : float, optional
+        Transparency for median line (default: 0.8)
+    median_linewidth : float, optional
+        Line width for median line (default: 1.5)
+    label_prefix : str, optional
+        Prefix for legend labels (default: '')
+        
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axis with plots added
+    """
+    bin_edges = hist_results['bin_edges']
+    x = bin_edges[:-1]  # Use left edges for plotting
+    
+    # Sort credible regions from largest to smallest for proper layering
+    cr_values = sorted(hist_results['regions'].keys(), reverse=True)
+    n_regions = len(cr_values)
+    
+    # Handle colors
+    if colors is None:
+        if cmap is None:
+            # Default to grays if no colors specified
+            colors = [f'gray' for _ in range(n_regions)][::-1]
+        else:
+            # Generate colors from colormap
+            if isinstance(cmap, str):
+                cmap = plt.get_cmap(cmap)
+            colors = [cmap(i / (n_regions - 1)) for i in range(n_regions)][::-1]
+    
+    # Handle alpha
+    if isinstance(alpha, (int, float)):
+        alphas = [alpha] * n_regions
+    else:
+        alphas = alpha
+        
+    # Plot credible regions
+    for cr, color, alpha in zip(cr_values, colors, alphas):
+        region = hist_results['regions'][cr]
+        ax.fill_between(
+            x,
+            region['lower'],
+            region['upper'],
+            color=color,
+            alpha=alpha,
+            label=f'{label_prefix}{cr}% CR'
+        )
+    
+    # Plot median
+    if plot_median:
+        # Use the median from any region (they're all the same)
+        median = hist_results['regions'][cr_values[0]]['median']
+        ax.plot(
+            x,
+            median,
+            color=median_color,
+            alpha=median_alpha,
+            linewidth=median_linewidth,
+            label=f'{label_prefix}median'
+        )
+    
+    return ax

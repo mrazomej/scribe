@@ -12,7 +12,13 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
 from numpyro.infer import Predictive, SVI, TraceMeanField_ELBO
+from dataclasses import dataclass
+from typing import NamedTuple, Dict, Optional, Union
+import pandas as pd
+import scipy.sparse
 
+# ------------------------------------------------------------------------------
+# Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
 
 def model(
@@ -121,6 +127,8 @@ def model(
 
 
 # ------------------------------------------------------------------------------
+# Beta-Gamma Variational Posterior
+# ------------------------------------------------------------------------------
 
 def guide(
     n_cells: int,
@@ -189,6 +197,8 @@ def guide(
     numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
 
 # ------------------------------------------------------------------------------
+# Stochastic Variational Inference with Numpyro
+# ------------------------------------------------------------------------------
 
 def create_svi_instance(
     n_cells: int,
@@ -231,7 +241,8 @@ def run_inference(
     n_steps: int = 100_000,
     batch_size: int = 512,
     p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 2),
+    r_prior: tuple = (2, 0.1),
+    cells_axis: int = 0,
 ) -> numpyro.infer.svi.SVIRunResult:
     """
     Run stochastic variational inference on the provided count data.
@@ -243,7 +254,8 @@ def run_inference(
     rng_key : jax.random.PRNGKey
         Random number generator key
     counts : jax.numpy.ndarray
-        Count matrix of shape (n_cells, n_genes)
+        Count matrix. If cells_axis=0 (default), shape is (n_cells, n_genes).
+        If cells_axis=1, shape is (n_genes, n_cells).
     n_steps : int, optional
         Number of optimization steps. Default is 100,000
     batch_size : int, optional
@@ -252,6 +264,9 @@ def run_inference(
         Parameters (alpha, beta) for Beta prior on p. Default is (1, 1)
     r_prior : tuple of float, optional
         Parameters (shape, rate) for Gamma prior on r. Default is (2, 2)
+    cells_axis : int, optional
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns.
 
     Returns
     -------
@@ -259,9 +274,14 @@ def run_inference(
         Results from the SVI run containing optimized parameters and loss
         history
     """
-    # Extract dimensions and compute total counts
-    n_cells, n_genes = counts.shape
-    total_counts = counts.sum(axis=1)
+    # Extract dimensions and compute total counts based on cells axis
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+        total_counts = counts.sum(axis=1)
+    else:
+        n_genes, n_cells = counts.shape
+        total_counts = counts.sum(axis=0)
+        counts = counts.T  # Transpose to make cells rows for model
 
     # Run the inference algorithm
     return svi_instance.run(
@@ -277,32 +297,243 @@ def run_inference(
     )
 
 # ------------------------------------------------------------------------------
+# Posterior predictive samples
+# ------------------------------------------------------------------------------
+
+def generate_ppc_samples(
+    params: Dict,
+    n_cells: int,
+    n_genes: int,
+    rng_key: random.PRNGKey,
+    n_samples: int = 100,
+    batch_size: Optional[int] = None,
+) -> Dict:
+    """
+    Generate posterior predictive check samples.
+    
+    Parameters
+    ----------
+    params : Dict
+        Dictionary containing optimized variational parameters
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    rng_key : random.PRNGKey
+        JAX random number generator key
+    n_samples : int, optional
+        Number of posterior samples to generate (default: 100)
+    batch_size : int, optional
+        Batch size for generating samples. If None, uses full dataset.
+        
+    Returns
+    -------
+    Dict
+        Dictionary containing:
+        - 'parameter_samples': Samples from the variational posterior
+        - 'predictive_samples': Samples from the predictive distribution
+    """
+    # Split RNG key for parameter sampling and predictive sampling
+    key_params, key_pred = random.split(rng_key)
+    
+    # Create predictive object for posterior parameter samples
+    predictive_param = Predictive(
+        guide,
+        params=params,
+        num_samples=n_samples
+    )
+    
+    # Sample parameters from the variational posterior
+    posterior_param_samples = predictive_param(
+        key_params,
+        n_cells,
+        n_genes,
+        counts=None,
+        total_counts=None
+    )
+    
+    # Create predictive object for generating new data
+    predictive = Predictive(
+        model,
+        posterior_param_samples,
+        num_samples=n_samples
+    )
+    
+    # Generate predictive samples
+    predictive_samples = predictive(
+        key_pred,
+        n_cells,
+        n_genes,
+        counts=None,
+        total_counts=None,
+        batch_size=batch_size
+    )
+    
+    return {
+        'parameter_samples': posterior_param_samples,
+        'predictive_samples': predictive_samples
+    }
+
+# ------------------------------------------------------------------------------
+# ScribeResults class
+# ------------------------------------------------------------------------------
+
+@dataclass
+class ScribeResults:
+    """
+    Container for SCRIBE inference results and associated metadata.
+
+    This class stores the results from SCRIBE's variational inference procedure,
+    including model parameters, training history, and dataset dimensions. It can
+    optionally store metadata from an AnnData object and posterior samples.
+
+    Attributes
+    ----------
+    params : Dict
+        Dictionary of inferred model parameters from SCRIBE
+    loss_history : jnp.ndarray
+        Array containing the ELBO loss values during training
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    cell_metadata : Optional[pd.DataFrame]
+        Cell-level metadata from adata.obs, if provided
+    gene_metadata : Optional[pd.DataFrame]
+        Gene-level metadata from adata.var, if provided
+    uns : Optional[Dict]
+        Unstructured metadata from adata.uns, if provided
+    posterior_samples : Optional[Dict]
+        Samples from the posterior distribution, if generated
+
+    Methods
+    -------
+    from_anndata(adata, params, loss_history, **kwargs)
+        Class method to create ScribeResults from an AnnData object
+    ppc_samples(rng_key, n_samples=100, batch_size=None)
+        Generate posterior predictive check samples
+    """
+    # Core inference results
+    params: Dict
+    loss_history: jnp.ndarray
+    n_cells: int
+    n_genes: int
+    
+    # Standard metadata from AnnData object
+    cell_metadata: Optional[pd.DataFrame] = None    # from adata.obs
+    gene_metadata: Optional[pd.DataFrame] = None    # from adata.var
+    uns: Optional[Dict] = None                      # from adata.uns
+    
+    # Optional results
+    posterior_samples: Optional[Dict] = None
+    
+    @classmethod
+    def from_anndata(
+        cls,
+        adata: "AnnData",
+        params: Dict,
+        loss_history: jnp.ndarray,
+        **kwargs
+    ):
+        """
+        Create ScribeResults from AnnData object.
+
+        Parameters
+        ----------
+        adata : AnnData
+            AnnData object containing single-cell data
+        params : Dict
+            Dictionary of model parameters from SCRIBE inference
+        loss_history : jnp.ndarray
+            Array containing the loss values during training
+        **kwargs : dict
+            Additional keyword arguments to pass to ScribeResults constructor
+
+        Returns
+        -------
+        ScribeResults
+            New ScribeResults instance containing inference results and metadata
+
+        Example
+        -------
+        >>> # Assume `adata` is an AnnData object with your single-cell data
+        >>> params = {...}  # Your model parameters  
+        >>> loss_history = jnp.array([...])  # Your loss history
+        >>> results = ScribeResults.from_anndata(adata, params, loss_history)
+        """
+        return cls(
+            params=params,
+            loss_history=loss_history,
+            n_cells=adata.n_obs,
+            n_genes=adata.n_vars,
+            cell_metadata=adata.obs.copy(),
+            gene_metadata=adata.var.copy(),
+            uns=adata.uns.copy(),
+            **kwargs
+        )
+    
+    def ppc_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
+        batch_size: Optional[int] = None,
+        store_samples: bool = True,
+    ) -> Dict:
+        """
+        Generate posterior predictive check samples.
+        
+        This is a method wrapper around the generate_ppc_samples function. See
+        generate_ppc_samples for full documentation.
+
+        Parameters
+        ----------
+        store_samples : bool, optional
+            If True, stores the generated samples in the posterior_samples
+            attribute. Default is True.
+        """
+        samples = generate_ppc_samples(
+            self.params,
+            self.n_cells,
+            self.n_genes,
+            rng_key,
+            n_samples=n_samples,
+            batch_size=batch_size
+        )
+        
+        if store_samples:
+            self.posterior_samples = samples
+            
+        return samples
+
+# ------------------------------------------------------------------------------
+# SCRIBE inference pipeline
+# ------------------------------------------------------------------------------
 
 def run_scribe(
-    counts: jnp.ndarray,
-    rng_key: random.PRNGKey = random.PRNGKey(0),
+    counts: Union[jnp.ndarray, "AnnData"],
+    rng_key: random.PRNGKey = random.PRNGKey(42),
     n_steps: int = 100_000,
     batch_size: int = 512,
     p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 2),
-    step_size: float = 0.001,
+    r_prior: tuple = (2, 0.1),
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
-) -> numpyro.infer.svi.SVIRunResult:
+    cells_axis: int = 0,
+    layer: Optional[str] = None,
+) -> ScribeResults:
     """
-    Run the complete SCRIBE inference pipeline on count data.
-
-    This function handles the entire process of:
-    1. Setting up the SVI instance
-    2. Running the inference
-    3. Returning the optimized results
+    Run the complete SCRIBE inference pipeline and return a ScribeResults
+    object.
 
     Parameters
     ----------
-    counts : jax.numpy.ndarray
-        Count matrix of shape (n_cells, n_genes)
+    counts : Union[jax.numpy.ndarray, AnnData]
+        Either a count matrix or an AnnData object: - If ndarray and
+        cells_axis=0 (default), shape is (n_cells, n_genes) - If ndarray and
+        cells_axis=1, shape is (n_genes, n_cells) - If AnnData, will use .X or
+        specified layer
     rng_key : jax.random.PRNGKey, optional
-        Random number generator key. Default is PRNGKey(0)
+        Random number generator key. Default is PRNGKey(42)
     n_steps : int, optional
         Number of optimization steps. Default is 100,000
     batch_size : int, optional
@@ -310,19 +541,49 @@ def run_scribe(
     p_prior : tuple of float, optional
         Parameters (alpha, beta) for Beta prior on p. Default is (1, 1)
     r_prior : tuple of float, optional
-        Parameters (shape, rate) for Gamma prior on r. Default is (2, 2)
-    step_size : float, optional
-        Learning rate for the Adam optimizer. Default is 0.001
+        Parameters (shape, rate) for Gamma prior on r. Default is (2, 0.1)
     loss : numpyro.infer.elbo, optional
         Loss function to use for the SVI. Default is TraceMeanField_ELBO
+    optimizer : numpyro.optim.optimizers, optional
+        Optimizer to use for SVI. Default is Adam with step_size=0.001
+    cells_axis : int, optional
+        Axis along which cells are arranged. 0 means cells are rows (default), 1
+        means cells are columns.
+    layer : str, optional
+        If counts is AnnData, specifies which layer to use. If None, uses .X
 
     Returns
     -------
-    numpyro.infer.svi.SVIRunResult
-        Results from the SVI run containing optimized parameters and loss history
+    ScribeResults
+        Results container with inference results and optional metadata
     """
-    # Extract dimensions
-    n_cells, n_genes = counts.shape
+    # Check if input is AnnData
+    is_anndata = False
+    try:
+        import anndata
+        is_anndata = isinstance(counts, anndata.AnnData)
+    except ImportError:
+        pass
+
+    # Handle AnnData input
+    if is_anndata:
+        adata = counts
+        # Get counts from specified layer or .X
+        count_data = adata.layers[layer] if layer else adata.X
+        # Convert to dense array if sparse
+        if scipy.sparse.issparse(count_data):
+            count_data = count_data.toarray()
+        count_data = jnp.array(count_data)
+    else:
+        count_data = counts
+        adata = None
+
+    # Extract dimensions based on cells axis
+    if cells_axis == 0:
+        n_cells, n_genes = count_data.shape
+    else:
+        n_genes, n_cells = count_data.shape
+        count_data = count_data.T  # Transpose to make cells rows
 
     # Create SVI instance
     svi = create_svi_instance(
@@ -333,12 +594,30 @@ def run_scribe(
     )
 
     # Run inference
-    return run_inference(
+    svi_results = run_inference(
         svi,
         rng_key,
-        counts,
+        count_data,
         n_steps=n_steps,
         batch_size=batch_size,
         p_prior=p_prior,
-        r_prior=r_prior
+        r_prior=r_prior,
+        cells_axis=0  # Already transposed if needed
     )
+
+    # Create ScribeResults object
+    if is_anndata:
+        results = ScribeResults.from_anndata(
+            adata=adata,
+            params=svi_results.params,
+            loss_history=svi_results.losses
+        )
+    else:
+        results = ScribeResults(
+            params=svi_results.params,
+            loss_history=svi_results.losses,
+            n_cells=n_cells,
+            n_genes=n_genes
+        )
+
+    return results
