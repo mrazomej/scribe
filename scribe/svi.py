@@ -193,7 +193,8 @@ def guide(
 def create_svi_instance(
     n_cells: int,
     n_genes: int,
-    optimizer: numpyro.optim.Optimizer = numpyro.optim.Adam(step_size=0.001),
+    optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
+    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ):
     """
     Create an SVI instance with the defined model and guide.
@@ -206,6 +207,8 @@ def create_svi_instance(
         Number of genes in the dataset
     step_size : float, optional
         Learning rate for the Adam optimizer. Default is 0.001.
+    loss : numpyro.infer.elbo, optional
+        Loss function to use for the SVI. Default is TraceMeanField_ELBO.
 
     Returns
     -------
@@ -216,5 +219,126 @@ def create_svi_instance(
         model,
         guide,
         optimizer,
-        loss=TraceMeanField_ELBO()
+        loss=loss
+    )
+
+# ------------------------------------------------------------------------------
+
+def run_inference(
+    svi_instance: SVI,
+    rng_key: random.PRNGKey,
+    counts: jnp.ndarray,
+    n_steps: int = 100_000,
+    batch_size: int = 512,
+    p_prior: tuple = (1, 1),
+    r_prior: tuple = (2, 2),
+) -> numpyro.infer.svi.SVIRunResult:
+    """
+    Run stochastic variational inference on the provided count data.
+
+    Parameters
+    ----------
+    svi_instance : numpyro.infer.SVI
+        Configured SVI instance for running inference
+    rng_key : jax.random.PRNGKey
+        Random number generator key
+    counts : jax.numpy.ndarray
+        Count matrix of shape (n_cells, n_genes)
+    n_steps : int, optional
+        Number of optimization steps. Default is 100,000
+    batch_size : int, optional
+        Mini-batch size for stochastic optimization. Default is 512
+    p_prior : tuple of float, optional
+        Parameters (alpha, beta) for Beta prior on p. Default is (1, 1)
+    r_prior : tuple of float, optional
+        Parameters (shape, rate) for Gamma prior on r. Default is (2, 2)
+
+    Returns
+    -------
+    numpyro.infer.svi.SVIRunResult
+        Results from the SVI run containing optimized parameters and loss
+        history
+    """
+    # Extract dimensions and compute total counts
+    n_cells, n_genes = counts.shape
+    total_counts = counts.sum(axis=1)
+
+    # Run the inference algorithm
+    return svi_instance.run(
+        rng_key,
+        n_steps,
+        n_cells,
+        n_genes,
+        p_prior=p_prior,
+        r_prior=r_prior,
+        counts=counts,
+        total_counts=total_counts,
+        batch_size=batch_size
+    )
+
+# ------------------------------------------------------------------------------
+
+def run_scribe(
+    counts: jnp.ndarray,
+    rng_key: random.PRNGKey = random.PRNGKey(0),
+    n_steps: int = 100_000,
+    batch_size: int = 512,
+    p_prior: tuple = (1, 1),
+    r_prior: tuple = (2, 2),
+    step_size: float = 0.001,
+    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
+    optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
+) -> numpyro.infer.svi.SVIRunResult:
+    """
+    Run the complete SCRIBE inference pipeline on count data.
+
+    This function handles the entire process of:
+    1. Setting up the SVI instance
+    2. Running the inference
+    3. Returning the optimized results
+
+    Parameters
+    ----------
+    counts : jax.numpy.ndarray
+        Count matrix of shape (n_cells, n_genes)
+    rng_key : jax.random.PRNGKey, optional
+        Random number generator key. Default is PRNGKey(0)
+    n_steps : int, optional
+        Number of optimization steps. Default is 100,000
+    batch_size : int, optional
+        Mini-batch size for stochastic optimization. Default is 512
+    p_prior : tuple of float, optional
+        Parameters (alpha, beta) for Beta prior on p. Default is (1, 1)
+    r_prior : tuple of float, optional
+        Parameters (shape, rate) for Gamma prior on r. Default is (2, 2)
+    step_size : float, optional
+        Learning rate for the Adam optimizer. Default is 0.001
+    loss : numpyro.infer.elbo, optional
+        Loss function to use for the SVI. Default is TraceMeanField_ELBO
+
+    Returns
+    -------
+    numpyro.infer.svi.SVIRunResult
+        Results from the SVI run containing optimized parameters and loss history
+    """
+    # Extract dimensions
+    n_cells, n_genes = counts.shape
+
+    # Create SVI instance
+    svi = create_svi_instance(
+        n_cells,
+        n_genes,
+        optimizer=optimizer,
+        loss=loss
+    )
+
+    # Run inference
+    return run_inference(
+        svi,
+        rng_key,
+        counts,
+        n_steps=n_steps,
+        batch_size=batch_size,
+        p_prior=p_prior,
+        r_prior=r_prior
     )
