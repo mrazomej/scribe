@@ -560,33 +560,119 @@ class ScribeResults:
     # Posterior predictive check samples
     # --------------------------------------------------------------------------
     
+    def sample_posterior(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
+        store_samples: bool = True,
+    ) -> Dict:
+        """
+        Sample parameters from the variational posterior distribution.
+        
+        Parameters
+        ----------
+        rng_key : random.PRNGKey
+            JAX random number generator key
+        n_samples : int, optional
+            Number of posterior samples to generate (default: 100)
+        store_samples : bool, optional
+            If True, stores the generated samples in the posterior_samples
+            attribute under 'parameter_samples'. Default is True.
+            
+        Returns
+        -------
+        Dict
+            Dictionary containing samples from the variational posterior
+        """
+        # Sample from variational posterior
+        posterior_samples = sample_variational_posterior(
+            self.params,
+            self.n_cells,
+            self.n_genes,
+            rng_key,
+            n_samples
+        )
+        
+        # Store samples if requested
+        if store_samples:
+            # Store only parameter samples if they exist
+            if self.posterior_samples is not None:
+                self.posterior_samples['parameter_samples'] = posterior_samples
+            else:
+                self.posterior_samples = {'parameter_samples': posterior_samples}
+            
+        return posterior_samples
+
     def ppc_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
+        resample_parameters: bool = False,
     ) -> Dict:
         """
         Generate posterior predictive check samples.
         
-        This is a method wrapper around the generate_ppc_samples function. See
-        generate_ppc_samples for full documentation.
+        If parameter samples already exist, this method will reuse them unless
+        resample_parameters=True. Otherwise, it will first sample from the
+        variational posterior and then generate predictive samples.
 
         Parameters
         ----------
+        rng_key : random.PRNGKey
+            JAX random number generator key
+        n_samples : int, optional
+            Number of samples to generate (default: 100)
+        batch_size : int, optional
+            Batch size for generating samples. If None, uses full dataset.
         store_samples : bool, optional
-            If True, stores the generated samples in the posterior_samples
-            attribute. Default is True.
+            If True, stores samples in the posterior_samples attribute.
+            Default is True.
+        resample_parameters : bool, optional
+            If True, generates new parameter samples even if they already exist.
+            Default is False.
+            
+        Returns
+        -------
+        Dict
+            Dictionary containing:
+            - 'parameter_samples': Samples from the variational posterior
+            - 'predictive_samples': Samples from the predictive distribution
         """
-        samples = generate_ppc_samples(
-            self.params,
+        # Split RNG key for potential parameter sampling and predictive sampling
+        key_params, key_pred = random.split(rng_key)
+        
+        # Determine if we need to sample parameters
+        need_params = (
+            resample_parameters or 
+            self.posterior_samples is None or 
+            'parameter_samples' not in self.posterior_samples
+        )
+        
+        # Get parameter samples
+        if need_params:
+            posterior_param_samples = self.sample_posterior(
+                key_params,
+                n_samples,
+                store_samples=False  # We'll store both sets of samples together
+            )
+        else:
+            posterior_param_samples = self.posterior_samples['parameter_samples']
+        
+        # Generate predictive samples
+        predictive_samples = generate_predictive_samples(
+            posterior_param_samples,
             self.n_cells,
             self.n_genes,
-            rng_key,
-            n_samples=n_samples,
-            batch_size=batch_size
+            key_pred,
+            batch_size
         )
+        
+        samples = {
+            'parameter_samples': posterior_param_samples,
+            'predictive_samples': predictive_samples
+        }
         
         if store_samples:
             self.posterior_samples = samples
