@@ -455,6 +455,33 @@ def generate_ppc_samples(
     }
 
 # ------------------------------------------------------------------------------
+# Convert variational parameters to distributions
+# ------------------------------------------------------------------------------
+
+def params_to_dist(params: Dict) -> Dict[str, dist.Distribution]:
+    """
+    Convert variational parameters to their corresponding Numpyro distributions.
+    
+    Parameters
+    ----------
+    params : Dict
+        Dictionary containing variational parameters with keys:
+        - alpha_p, beta_p: Beta distribution parameters for p
+        - alpha_r, beta_r: Gamma distribution parameters for r
+        
+    Returns
+    -------
+    Dict[str, dist.Distribution]
+        Dictionary mapping parameter names to their distributions:
+        - 'p': Beta distribution
+        - 'r': Gamma distribution
+    """
+    return {
+        'p': dist.Beta(params['alpha_p'], params['beta_p']),
+        'r': dist.Gamma(params['alpha_r'], params['beta_r'])
+    }
+
+# ------------------------------------------------------------------------------
 # ScribeResults class
 # ------------------------------------------------------------------------------
 
@@ -603,6 +630,10 @@ class ScribeResults:
             
         return posterior_samples
 
+    # --------------------------------------------------------------------------
+    # Posterior predictive check samples
+    # --------------------------------------------------------------------------
+
     def ppc_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
@@ -678,6 +709,21 @@ class ScribeResults:
             self.posterior_samples = samples
             
         return samples
+
+    # --------------------------------------------------------------------------
+    # Get variational distributions from parameters
+    # --------------------------------------------------------------------------
+
+    def get_distributions(self) -> Dict[str, dist.Distribution]:
+        """
+        Get the variational distributions for all parameters.
+        
+        Returns
+        -------
+        Dict[str, dist.Distribution]
+            Dictionary mapping parameter names to their Numpyro distributions
+        """
+        return params_to_dist(self.params)
 
     # --------------------------------------------------------------------------
     # Enable indexing of ScribeResults object
@@ -756,7 +802,7 @@ class ScribeResults:
         else:
             new_posterior_samples = None
             
-        
+        # Create new ScribeResults object with the subset of data
         return ScribeResults(
             params=new_params,
             loss_history=self.loss_history,
