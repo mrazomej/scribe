@@ -300,6 +300,101 @@ def run_inference(
 # Posterior predictive samples
 # ------------------------------------------------------------------------------
 
+def sample_variational_posterior(
+    params: Dict,
+    n_cells: int,
+    n_genes: int,
+    rng_key: random.PRNGKey = random.PRNGKey(42),
+    n_samples: int = 100,
+) -> Dict:
+    """
+    Sample parameters from the variational posterior distribution.
+    
+    Parameters
+    ----------
+    params : Dict
+        Dictionary containing optimized variational parameters
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    rng_key : random.PRNGKey
+        JAX random number generator key
+    n_samples : int, optional
+        Number of posterior samples to generate (default: 100)
+        
+    Returns
+    -------
+    Dict
+        Dictionary containing samples from the variational posterior
+    """
+    # Create predictive object for posterior parameter samples
+    predictive_param = Predictive(
+        guide,
+        params=params,
+        num_samples=n_samples
+    )
+    
+    # Sample parameters from the variational posterior
+    return predictive_param(
+        rng_key,
+        n_cells,
+        n_genes,
+        counts=None,
+        total_counts=None
+    )
+
+# ------------------------------------------------------------------------------
+
+def generate_predictive_samples(
+    posterior_samples: Dict,
+    n_cells: int,
+    n_genes: int,
+    rng_key: random.PRNGKey,
+    batch_size: Optional[int] = None,
+) -> jnp.ndarray:
+    """
+    Generate predictive samples using posterior parameter samples.
+    
+    Parameters
+    ----------
+    posterior_samples : Dict
+        Dictionary containing samples from the variational posterior
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    rng_key : random.PRNGKey
+        JAX random number generator key
+    batch_size : int, optional
+        Batch size for generating samples. If None, uses full dataset.
+        
+    Returns
+    -------
+    jnp.ndarray
+        Array of predictive samples
+    """
+    # Create predictive object for generating new data
+    predictive = Predictive(
+        model,
+        posterior_samples,
+        num_samples=posterior_samples['p'].shape[0]
+    )
+    
+    # Generate predictive samples
+    predictive_samples = predictive(
+        rng_key,
+        n_cells,
+        n_genes,
+        counts=None,
+        total_counts=None,
+        batch_size=batch_size
+    )
+    
+    return predictive_samples["counts"]
+
+# ------------------------------------------------------------------------------
+
 def generate_ppc_samples(
     params: Dict,
     n_cells: int,
@@ -333,45 +428,30 @@ def generate_ppc_samples(
         - 'parameter_samples': Samples from the variational posterior
         - 'predictive_samples': Samples from the predictive distribution
     """
-    # Split RNG key for parameter sampling and predictive sampling
+     # Split RNG key for parameter sampling and predictive sampling
     key_params, key_pred = random.split(rng_key)
     
-    # Create predictive object for posterior parameter samples
-    predictive_param = Predictive(
-        guide,
-        params=params,
-        num_samples=n_samples
-    )
-    
-    # Sample parameters from the variational posterior
-    posterior_param_samples = predictive_param(
-        key_params,
+    # Sample from variational posterior
+    posterior_param_samples = sample_variational_posterior(
+        params,
         n_cells,
         n_genes,
-        counts=None,
-        total_counts=None
-    )
-    
-    # Create predictive object for generating new data
-    predictive = Predictive(
-        model,
-        posterior_param_samples,
-        num_samples=n_samples
+        key_params,
+        n_samples
     )
     
     # Generate predictive samples
-    predictive_samples = predictive(
-        key_pred,
+    predictive_samples = generate_predictive_samples(
+        posterior_param_samples,
         n_cells,
         n_genes,
-        counts=None,
-        total_counts=None,
-        batch_size=batch_size
+        key_pred,
+        batch_size
     )
     
     return {
         'parameter_samples': posterior_param_samples,
-        'predictive_samples': predictive_samples["counts"]
+        'predictive_samples': predictive_samples
     }
 
 # ------------------------------------------------------------------------------
@@ -482,8 +562,8 @@ class ScribeResults:
     
     def ppc_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(41),
-        n_samples: int = 99,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> Dict:
@@ -499,8 +579,6 @@ class ScribeResults:
             If True, stores the generated samples in the posterior_samples
             attribute. Default is True.
         """
-        from .svi import generate_ppc_samples
-
         samples = generate_ppc_samples(
             self.params,
             self.n_cells,
