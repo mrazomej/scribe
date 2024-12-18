@@ -77,6 +77,49 @@ def matplotlib_style():
     sns.set_palette("colorblind")
 
 # ------------------------------------------------------------------------------
+
+def colors():
+    """
+    Returns dictionary with personal color palette.
+    """
+    col = {
+        'dark_black': "#000000",
+        'black': "#000000",
+        'light_black': "#05080F",
+        'pale_black': "#1F1F1F",
+        'dark_blue': "#2957A8",
+        'blue': "#3876C0",
+        'light_blue': "#81A9DA",
+        'pale_blue': "#C0D4ED",
+        'dark_green': "#2E5C0A",
+        'green': "#468C12",
+        'light_green': "#6EBC24",
+        'pale_green': "#A9EB70",
+        'dark_red': "#912E27",
+        'red': "#CB4338",
+        'light_red': "#D57A72",
+        'pale_red': "#E8B5B0",
+        'dark_gold': "#B68816",
+        'gold': "#EBC21F",
+        'light_gold': "#F2D769",
+        'pale_gold': "#F7E6A1",
+        'dark_purple': "#5E315E",
+        'purple': "#934D93",
+        'light_purple': "#BC7FBC",
+        'pale_purple': "#D5AFD5"
+    }
+    
+    # Convert hex strings to RGB tuples
+    colors = {}
+    for key, hex_color in col.items():
+        # Convert hex to RGB (0-1 scale)
+        hex_color = hex_color.lstrip('#')
+        rgb = tuple(int(hex_color[i:i+2], 16)/255 for i in (0, 2, 4))
+        colors[key] = rgb
+        
+    return colors
+
+# ------------------------------------------------------------------------------
 # Posterior diagnostic plots
 # ------------------------------------------------------------------------------
 

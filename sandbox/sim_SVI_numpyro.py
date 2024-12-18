@@ -1,4 +1,7 @@
 # %% ---------------------------------------------------------------------------
+# Import base libraries
+import os
+import pickle
 
 # Import JAX-related libraries
 from jax import random
@@ -183,7 +186,7 @@ scribe_results_subset.ppc_samples(n_samples=200, resample_parameters=True)
 fig = scribe.viz.plot_parameter_posteriors(
     scribe_results_subset,
     p_true,
-    r_true[selected_indices],
+    r_true[selected_indices.sort()],
     n_rows=3,
     n_cols=3
 )
