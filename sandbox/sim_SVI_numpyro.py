@@ -21,6 +21,9 @@ import scribe
 # Set plotting style
 scribe.viz.matplotlib_style()
 
+# Extract colors
+colors = scribe.viz.colors()
+
 # %% ---------------------------------------------------------------------------
 
 
@@ -168,7 +171,7 @@ fig = scribe.viz.plot_parameter_posteriors(
 # %% ---------------------------------------------------------------------------
 
 # Generate variational posterior samples
-scribe_results.sample_posterior()
+scribe_results.sample_posterior(n_samples=500)
 
 # %% ---------------------------------------------------------------------------
 
@@ -239,6 +242,65 @@ for i, ax in enumerate(axes):
 
     ax.set_xlabel('counts')
     ax.set_ylabel('frequency')
+
+plt.tight_layout()
+
+# %% ---------------------------------------------------------------------------
+
+# Sample from Dirichlet distribution given the r parameter posterior samples
+frac_samples = scribe.stats.sample_dirichlet_from_parameters(
+    scribe_results.posterior_samples["parameter_samples"]["r"],
+)
+
+# %% ---------------------------------------------------------------------------
+
+# Fit Dirichlet distribution to the samples
+dirichlet_fit = scribe.stats.fit_dirichlet_mle(frac_samples)
+
+# %% ---------------------------------------------------------------------------
+
+# Single plot example
+fig, axes = plt.subplots(3, 3, figsize=(7.5, 7))
+
+# Flatten axes
+axes = axes.flatten()
+
+# Loop through each gene
+for i, ax in enumerate(axes):
+    # Plot fraction samples
+    ax.hist(
+        frac_samples[:, selected_indices.sort()[i]],
+        bins=100,
+        density=True,
+        alpha=0.5
+    )
+    # Extract dirichlet fit for this gene
+    alpha_p = dirichlet_fit[selected_indices.sort()[i]]
+    # Sum all other dirichlet fits
+    beta_p = jnp.sum(dirichlet_fit) - alpha_p
+    # Determine range of x values from quantiles
+    lower_bound = stats.beta.ppf(0.001, alpha_p, beta_p)
+    upper_bound = stats.beta.ppf(0.999, alpha_p, beta_p)
+    
+    # If the range is too small, set the bounds to 0 and 0.0002
+    if upper_bound - lower_bound < 0.0001:
+        lower_bound = 0
+        upper_bound = 0.00005
+
+    # Define x values for plotting
+    x_p = np.linspace(lower_bound, upper_bound, 100)
+    # Define posterior p
+    posterior_p = stats.beta.pdf(x_p, alpha_p, beta_p)
+    # Plot posterior p
+    ax.plot(
+        x_p,
+        posterior_p,
+        color=colors['dark_blue'],
+        label='fit'
+    )
+
+    ax.set_xlabel('fraction')
+    ax.set_ylabel('density')
 
 plt.tight_layout()
 
