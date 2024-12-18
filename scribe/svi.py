@@ -783,22 +783,24 @@ class ScribeResults:
 
         # Create new posterior samples if available
         if self.posterior_samples is not None:
-            # Extract r parameter samples from posterior samples
-            new_r_param_samples = self.posterior_samples["parameter_samples"]["r"][:, index]
-            # create new posterior samples with the new r parameter samples
-            new_param_samples = {
-                "parameter_samples": {
-                    "p": self.posterior_samples["parameter_samples"]["p"],
-                    "r": new_r_param_samples
-                }
-            }
-            # Extract predictive samples from posterior samples
-            new_predictive_samples = self.posterior_samples["predictive_samples"][:, :, index]
-            # create new posterior samples with the new predictive samples
-            new_posterior_samples = {
-                "parameter_samples": new_param_samples,
-                "predictive_samples": new_predictive_samples
-            }
+            new_posterior_samples = {}
+            
+            # Handle parameter samples if they exist
+            if "parameter_samples" in self.posterior_samples:
+                param_samples = self.posterior_samples["parameter_samples"]
+                new_param_samples = {}
+                
+                # Copy each parameter, subsetting r if it exists
+                if "p" in param_samples:
+                    new_param_samples["p"] = param_samples["p"]
+                if "r" in param_samples:
+                    new_param_samples["r"] = param_samples["r"][:, index]
+                    
+                new_posterior_samples["parameter_samples"] = new_param_samples
+            
+            # Handle predictive samples if they exist
+            if "predictive_samples" in self.posterior_samples:
+                new_posterior_samples["predictive_samples"] = self.posterior_samples["predictive_samples"][:, :, index]
         else:
             new_posterior_samples = None
             
