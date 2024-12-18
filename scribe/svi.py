@@ -6,203 +6,35 @@ This module implements a Dirichlet-Multinomial model for scRNA-seq count data
 using Numpyro for variational inference.
 """
 
+# Imports for inference
 from jax import random
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
 from numpyro.infer import Predictive, SVI, TraceMeanField_ELBO
-from dataclasses import dataclass
-from typing import NamedTuple, Dict, Optional, Union
-import pandas as pd
+
+# Imports for results
+from .results import NBDMResults, ZINBResults
+
+# Imports for data handling
+from typing import Dict, Optional, Union
 import scipy.sparse
 
-# ------------------------------------------------------------------------------
-# Negative Binomial-Dirichlet Multinomial Model
-# ------------------------------------------------------------------------------
+# Imports for AnnData
+from anndata import AnnData
 
-def model(
-    n_cells: int,
-    n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 2),
-    counts=None,
-    total_counts=None,
-    batch_size=None,
-):
-    """
-    Numpyro model for Dirichlet-Multinomial single-cell RNA sequencing data.
-
-    This model assumes a hierarchical structure where:
-    1. Each cell has a total count drawn from a Negative Binomial distribution
-    2. The counts for individual genes are drawn from a Dirichlet-Multinomial
-       distribution conditioned on the total count.
-    
-    Parameters
-    ----------
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p parameter.
-        Default is (1, 1) for a uniform prior.
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters.
-        Default is (2, 2).
-    counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes).
-        If None, generates samples from the prior.
-    total_counts : array-like, optional
-        Total counts per cell of shape (n_cells,).
-        Required if counts is provided.
-    batch_size : int, optional
-        Mini-batch size for stochastic variational inference.
-        If None, uses full dataset.
-    """
-    # Define the prior on the p parameter
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
-
-    # Define the prior on the r parameters - one for each category (gene)
-    r = numpyro.sample("r", dist.Gamma(
-        r_prior[0],
-        r_prior[1]
-    ).expand([n_genes])
-    )
-
-    # Sum of r parameters
-    r_total = numpyro.deterministic("r_total", jnp.sum(r))
-
-    # If we have observed data, condition on it
-    if counts is not None:
-        # If batch size is not provided, use the entire dataset
-        if batch_size is None:
-            # Define plate for cells total counts
-            with numpyro.plate("cells", n_cells):
-                # Likelihood for the total counts - one for each cell
-                numpyro.sample(
-                    "total_counts",
-                    dist.NegativeBinomialProbs(r_total, p),
-                    obs=total_counts
-                )
-
-            # Define plate for cells individual counts
-            with numpyro.plate("cells", n_cells, dim=-1):
-                # Likelihood for the individual counts - one for each cell
-                numpyro.sample(
-                    "counts",
-                    dist.DirichletMultinomial(r, total_count=total_counts),
-                    obs=counts
-                )
-        else:
-            # Define plate for cells total counts
-            with numpyro.plate(
-                "cells",
-                n_cells,
-                subsample_size=batch_size
-            ) as idx:
-                # Likelihood for the total counts - one for each cell
-                numpyro.sample(
-                    "total_counts",
-                    dist.NegativeBinomialProbs(r_total, p),
-                    obs=total_counts[idx]
-                )
-
-            # Define plate for cells individual counts
-            with numpyro.plate("cells", n_cells, dim=-1) as idx:
-                # Likelihood for the individual counts - one for each cell
-                numpyro.sample(
-                    "counts",
-                    dist.DirichletMultinomial(
-                        r, total_count=total_counts[idx]),
-                    obs=counts[idx]
-                )
-    else:
-        # Predictive model (no obs)
-        with numpyro.plate("cells", n_cells):
-            # Make a NegativeBinomial distribution that returns a vector of
-            # length n_genes
-            dist_nb = dist.NegativeBinomialProbs(r, p).to_event(1)
-            counts = numpyro.sample("counts", dist_nb)
-
-
-# ------------------------------------------------------------------------------
-# Beta-Gamma Variational Posterior
-# ------------------------------------------------------------------------------
-
-def guide(
-    n_cells: int,
-    n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 2),
-    counts=None,
-    total_counts=None,
-    batch_size=None,
-):
-    """
-    Define the variational distribution for stochastic variational inference.
-    
-    This guide function specifies the form of the variational distribution that
-    will be optimized to approximate the true posterior. It defines a mean-field
-    variational family where:
-    - The success probability p follows a Beta distribution
-    - Each gene's overdispersion parameter r follows an independent Gamma
-    distribution
-    
-    Parameters
-    ----------
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p (default: (1,1))
-    r_prior : tuple of float
-        Parameters (alpha, beta) for the Gamma prior on r (default: (2,2))
-    counts : array_like, optional
-        Observed counts matrix of shape (n_cells, n_genes)
-    total_counts : array_like, optional
-        Total counts per cell of shape (n_cells,)
-    batch_size : int, optional
-        Mini-batch size for stochastic optimization
-    """
-    # register alpha_p and beta_p parameters for the Beta distribution in the
-    # variational posterior
-    alpha_p = numpyro.param(
-        "alpha_p",
-        jnp.array(p_prior[0]),
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        jnp.array(p_prior[1]),
-        constraint=constraints.positive
-    )
-
-    # register one alpha_r and one beta_r parameters for the Gamma distributions
-    # for each of the n_genes categories
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones(n_genes) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones(n_genes) * r_prior[1],
-        constraint=constraints.positive
-    )
-
-    # Sample from the variational posterior parameters
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
+# Imports for model-specific functions
+from .models import get_model_and_guide, get_default_priors
 
 # ------------------------------------------------------------------------------
 # Stochastic Variational Inference with Numpyro
 # ------------------------------------------------------------------------------
 
 def create_svi_instance(
-    n_cells: int,
-    n_genes: int,
+    model_type: str = "nbdm",
+    custom_model = None,
+    custom_guide = None,
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ):
@@ -211,23 +43,46 @@ def create_svi_instance(
 
     Parameters
     ----------
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    step_size : float, optional
-        Learning rate for the Adam optimizer. Default is 0.001.
+    model_type : str, optional
+        Type of model to use. Options are:
+        - "nbdm": Negative Binomial-Dirichlet Multinomial model
+        - "zinb": Zero-Inflated Negative Binomial model
+        Ignored if custom_model and custom_guide are provided.
+    custom_model : callable, optional
+        Custom model function to use instead of built-in models
+    custom_guide : callable, optional
+        Custom guide function to use instead of built-in guides
+    optimizer : numpyro.optim.optimizers, optional
+        Optimizer to use. Default is Adam with step_size=0.001
     loss : numpyro.infer.elbo, optional
-        Loss function to use for the SVI. Default is TraceMeanField_ELBO.
+        Loss function to use. Default is TraceMeanField_ELBO
 
     Returns
     -------
     numpyro.infer.SVI
         Configured SVI instance ready for training
+
+    Raises
+    ------
+    ValueError
+        If model_type is invalid or if only one of custom_model/custom_guide is provided
     """
+    # If custom model/guide are provided, use those
+    if custom_model is not None or custom_guide is not None:
+        if custom_model is None or custom_guide is None:
+            raise ValueError(
+                "Both custom_model and custom_guide must be provided together"
+            )
+        model_fn = custom_model
+        guide_fn = custom_guide
+    
+    # Otherwise use built-in models from the registry
+    else:
+        model_fn, guide_fn = get_model_and_guide(model_type)
+
     return SVI(
-        model,
-        guide,
+        model_fn,
+        guide_fn,
         optimizer,
         loss=loss
     )
@@ -240,9 +95,10 @@ def run_inference(
     counts: jnp.ndarray,
     n_steps: int = 100_000,
     batch_size: int = 512,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
+    model_type: str = "nbdm",
+    prior_params: Optional[Dict] = None,
     cells_axis: int = 0,
+    custom_args: Optional[Dict] = None,
 ) -> numpyro.infer.svi.SVIRunResult:
     """
     Run stochastic variational inference on the provided count data.
@@ -250,7 +106,8 @@ def run_inference(
     Parameters
     ----------
     svi_instance : numpyro.infer.SVI
-        Configured SVI instance for running inference
+        Configured SVI instance for running inference. NOTE: Make sure that this
+        was created with the same model and guide as the one being used here!
     rng_key : jax.random.PRNGKey
         Random number generator key
     counts : jax.numpy.ndarray
@@ -260,13 +117,21 @@ def run_inference(
         Number of optimization steps. Default is 100,000
     batch_size : int, optional
         Mini-batch size for stochastic optimization. Default is 512
-    p_prior : tuple of float, optional
-        Parameters (alpha, beta) for Beta prior on p. Default is (1, 1)
-    r_prior : tuple of float, optional
-        Parameters (shape, rate) for Gamma prior on r. Default is (2, 2)
+    model_type : str, optional
+        Type of model being used. Built-in options are:
+        - "nbdm": Negative Binomial-Dirichlet Multinomial model
+        - "zinb": Zero-Inflated Negative Binomial model
+    prior_params : Dict, optional
+        Dictionary of prior parameters specific to the model.
+        For built-in models:
+        - "nbdm": {'p_prior': (1,1), 'r_prior': (2,0.1)}
+        - "zinb": {'p_prior': (1,1), 'r_prior': (2,0.1), 'gate_prior': (1,1)}
+        For custom models: any parameters required by the model.
     cells_axis : int, optional
-        Axis along which cells are arranged. 0 means cells are rows (default),
-        1 means cells are columns.
+        Axis along which cells are arranged. 0 means cells are rows (default), 1
+        means cells are columns.
+    custom_args : Dict, optional
+        Dictionary of additional arguments to pass to any custom model.
 
     Returns
     -------
@@ -283,182 +148,41 @@ def run_inference(
         total_counts = counts.sum(axis=0)
         counts = counts.T  # Transpose to make cells rows for model
 
+    # Set default prior parameters for built-in models if none provided
+    if prior_params is None:
+        prior_params = get_default_priors(model_type)
+
+    # Prepare base arguments that all models should receive
+    model_args = {
+        'n_cells': n_cells,
+        'n_genes': n_genes,
+        'counts': counts,
+        'batch_size': batch_size,
+    }
+
+    # Add model-specific parameters
+    if model_type == "nbdm":
+        model_args['total_counts'] = total_counts
+    
+    # Add all prior parameters to model args
+    model_args.update(prior_params)
+
+    # Add any custom arguments
+    if custom_args is not None:
+        model_args.update(custom_args)
+
     # Run the inference algorithm
     return svi_instance.run(
         rng_key,
         n_steps,
-        n_cells,
-        n_genes,
-        p_prior=p_prior,
-        r_prior=r_prior,
-        counts=counts,
-        total_counts=total_counts,
-        batch_size=batch_size
+        **model_args
     )
-
-# ------------------------------------------------------------------------------
-# Posterior predictive samples
-# ------------------------------------------------------------------------------
-
-def sample_variational_posterior(
-    params: Dict,
-    n_cells: int,
-    n_genes: int,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
-    n_samples: int = 100,
-) -> Dict:
-    """
-    Sample parameters from the variational posterior distribution.
-    
-    Parameters
-    ----------
-    params : Dict
-        Dictionary containing optimized variational parameters
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    rng_key : random.PRNGKey
-        JAX random number generator key
-    n_samples : int, optional
-        Number of posterior samples to generate (default: 100)
-        
-    Returns
-    -------
-    Dict
-        Dictionary containing samples from the variational posterior
-    """
-    # Create predictive object for posterior parameter samples
-    predictive_param = Predictive(
-        guide,
-        params=params,
-        num_samples=n_samples
-    )
-    
-    # Sample parameters from the variational posterior
-    return predictive_param(
-        rng_key,
-        n_cells,
-        n_genes,
-        counts=None,
-        total_counts=None
-    )
-
-# ------------------------------------------------------------------------------
-
-def generate_predictive_samples(
-    posterior_samples: Dict,
-    n_cells: int,
-    n_genes: int,
-    rng_key: random.PRNGKey,
-    batch_size: Optional[int] = None,
-) -> jnp.ndarray:
-    """
-    Generate predictive samples using posterior parameter samples.
-    
-    Parameters
-    ----------
-    posterior_samples : Dict
-        Dictionary containing samples from the variational posterior
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    rng_key : random.PRNGKey
-        JAX random number generator key
-    batch_size : int, optional
-        Batch size for generating samples. If None, uses full dataset.
-        
-    Returns
-    -------
-    jnp.ndarray
-        Array of predictive samples
-    """
-    # Create predictive object for generating new data
-    predictive = Predictive(
-        model,
-        posterior_samples,
-        num_samples=posterior_samples['p'].shape[0]
-    )
-    
-    # Generate predictive samples
-    predictive_samples = predictive(
-        rng_key,
-        n_cells,
-        n_genes,
-        counts=None,
-        total_counts=None,
-        batch_size=batch_size
-    )
-    
-    return predictive_samples["counts"]
-
-# ------------------------------------------------------------------------------
-
-def generate_ppc_samples(
-    params: Dict,
-    n_cells: int,
-    n_genes: int,
-    rng_key: random.PRNGKey,
-    n_samples: int = 100,
-    batch_size: Optional[int] = None,
-) -> Dict:
-    """
-    Generate posterior predictive check samples.
-    
-    Parameters
-    ----------
-    params : Dict
-        Dictionary containing optimized variational parameters
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    rng_key : random.PRNGKey
-        JAX random number generator key
-    n_samples : int, optional
-        Number of posterior samples to generate (default: 100)
-    batch_size : int, optional
-        Batch size for generating samples. If None, uses full dataset.
-        
-    Returns
-    -------
-    Dict
-        Dictionary containing:
-        - 'parameter_samples': Samples from the variational posterior
-        - 'predictive_samples': Samples from the predictive distribution
-    """
-     # Split RNG key for parameter sampling and predictive sampling
-    key_params, key_pred = random.split(rng_key)
-    
-    # Sample from variational posterior
-    posterior_param_samples = sample_variational_posterior(
-        params,
-        n_cells,
-        n_genes,
-        key_params,
-        n_samples
-    )
-    
-    # Generate predictive samples
-    predictive_samples = generate_predictive_samples(
-        posterior_param_samples,
-        n_cells,
-        n_genes,
-        key_pred,
-        batch_size
-    )
-    
-    return {
-        'parameter_samples': posterior_param_samples,
-        'predictive_samples': predictive_samples
-    }
 
 # ------------------------------------------------------------------------------
 # Convert variational parameters to distributions
 # ------------------------------------------------------------------------------
 
-def params_to_dist(params: Dict) -> Dict[str, dist.Distribution]:
+def params_to_dist(params: Dict, model: str) -> Dict[str, dist.Distribution]:
     """
     Convert variational parameters to their corresponding Numpyro distributions.
     
@@ -468,6 +192,8 @@ def params_to_dist(params: Dict) -> Dict[str, dist.Distribution]:
         Dictionary containing variational parameters with keys:
         - alpha_p, beta_p: Beta distribution parameters for p
         - alpha_r, beta_r: Gamma distribution parameters for r
+    model : str
+        Model type. Must be one of: 'nbdm', 'zinb'
         
     Returns
     -------
@@ -476,345 +202,19 @@ def params_to_dist(params: Dict) -> Dict[str, dist.Distribution]:
         - 'p': Beta distribution
         - 'r': Gamma distribution
     """
-    return {
-        'p': dist.Beta(params['alpha_p'], params['beta_p']),
-        'r': dist.Gamma(params['alpha_r'], params['beta_r'])
-    }
-
-# ------------------------------------------------------------------------------
-# ScribeResults class
-# ------------------------------------------------------------------------------
-
-@dataclass
-class ScribeResults:
-    """
-    Container for SCRIBE inference results and associated metadata.
-
-    This class stores the results from SCRIBE's variational inference procedure,
-    including model parameters, training history, and dataset dimensions. It can
-    optionally store metadata from an AnnData object and posterior samples.
-
-    Attributes
-    ----------
-    params : Dict
-        Dictionary of inferred model parameters from SCRIBE
-    loss_history : jnp.ndarray
-        Array containing the ELBO loss values during training
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    cell_metadata : Optional[pd.DataFrame]
-        Cell-level metadata from adata.obs, if provided
-    gene_metadata : Optional[pd.DataFrame]
-        Gene-level metadata from adata.var, if provided
-    uns : Optional[Dict]
-        Unstructured metadata from adata.uns, if provided
-    posterior_samples : Optional[Dict]
-        Samples from the posterior distribution, if generated
-
-    Methods
-    -------
-    from_anndata(adata, params, loss_history, **kwargs)
-        Class method to create ScribeResults from an AnnData object
-    ppc_samples(rng_key, n_samples=98, batch_size=None)
-        Generate posterior predictive check samples
-    """
-    # Core inference results
-    params: Dict
-    loss_history: jnp.ndarray
-    n_cells: int
-    n_genes: int
-    
-    # Standard metadata from AnnData object
-    cell_metadata: Optional[pd.DataFrame] = None    # from adata.obs
-    gene_metadata: Optional[pd.DataFrame] = None    # from adata.var
-    uns: Optional[Dict] = None                      # from adata.uns
-    
-    # Optional results
-    posterior_samples: Optional[Dict] = None
-    
-    # --------------------------------------------------------------------------
-    # Create ScribeResults from AnnData object
-    # --------------------------------------------------------------------------
-    
-    @classmethod
-    def from_anndata(
-        cls,
-        adata: "AnnData",
-        params: Dict,
-        loss_history: jnp.ndarray,
-        **kwargs
-    ):
-        """
-        Create ScribeResults from AnnData object.
-
-        Parameters
-        ----------
-        adata : AnnData
-            AnnData object containing single-cell data
-        params : Dict
-            Dictionary of model parameters from SCRIBE inference
-        loss_history : jnp.ndarray
-            Array containing the loss values during training
-        **kwargs : dict
-            Additional keyword arguments to pass to ScribeResults constructor
-
-        Returns
-        -------
-        ScribeResults
-            New ScribeResults instance containing inference results and metadata
-
-        Example
-        -------
-        >>> # Assume `adata` is an AnnData object with your single-cell data
-        >>> params = {...}  # Your model parameters  
-        >>> loss_history = jnp.array([...])  # Your loss history
-        >>> results = ScribeResults.from_anndata(adata, params, loss_history)
-        """
-        return cls(
-            params=params,
-            loss_history=loss_history,
-            n_cells=adata.n_obs,
-            n_genes=adata.n_vars,
-            cell_metadata=adata.obs.copy(),
-            gene_metadata=adata.var.copy(),
-            uns=adata.uns.copy(),
-            **kwargs
-        )
-    
-    # --------------------------------------------------------------------------
-    # Posterior predictive check samples
-    # --------------------------------------------------------------------------
-    
-    def sample_posterior(
-        self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
-        n_samples: int = 100,
-        store_samples: bool = True,
-    ) -> Dict:
-        """
-        Sample parameters from the variational posterior distribution.
-        
-        Parameters
-        ----------
-        rng_key : random.PRNGKey
-            JAX random number generator key
-        n_samples : int, optional
-            Number of posterior samples to generate (default: 100)
-        store_samples : bool, optional
-            If True, stores the generated samples in the posterior_samples
-            attribute under 'parameter_samples'. Default is True.
-            
-        Returns
-        -------
-        Dict
-            Dictionary containing samples from the variational posterior
-        """
-        # Sample from variational posterior
-        posterior_samples = sample_variational_posterior(
-            self.params,
-            self.n_cells,
-            self.n_genes,
-            rng_key,
-            n_samples
-        )
-        
-        # Store samples if requested
-        if store_samples:
-            # Store only parameter samples if they exist
-            if self.posterior_samples is not None:
-                self.posterior_samples['parameter_samples'] = posterior_samples
-            else:
-                self.posterior_samples = {'parameter_samples': posterior_samples}
-            
-        return posterior_samples
-
-    # --------------------------------------------------------------------------
-    # Posterior predictive check samples
-    # --------------------------------------------------------------------------
-
-    def ppc_samples(
-        self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
-        n_samples: int = 100,
-        batch_size: Optional[int] = None,
-        store_samples: bool = True,
-        resample_parameters: bool = False,
-    ) -> Dict:
-        """
-        Generate posterior predictive check samples.
-        
-        If parameter samples already exist, this method will reuse them unless
-        resample_parameters=True. Otherwise, it will first sample from the
-        variational posterior and then generate predictive samples.
-
-        Parameters
-        ----------
-        rng_key : random.PRNGKey
-            JAX random number generator key
-        n_samples : int, optional
-            Number of samples to generate (default: 100)
-        batch_size : int, optional
-            Batch size for generating samples. If None, uses full dataset.
-        store_samples : bool, optional
-            If True, stores samples in the posterior_samples attribute.
-            Default is True.
-        resample_parameters : bool, optional
-            If True, generates new parameter samples even if they already exist.
-            Default is False.
-            
-        Returns
-        -------
-        Dict
-            Dictionary containing:
-            - 'parameter_samples': Samples from the variational posterior
-            - 'predictive_samples': Samples from the predictive distribution
-        """
-        # Split RNG key for potential parameter sampling and predictive sampling
-        key_params, key_pred = random.split(rng_key)
-        
-        # Determine if we need to sample parameters
-        need_params = (
-            resample_parameters or 
-            self.posterior_samples is None or 
-            'parameter_samples' not in self.posterior_samples
-        )
-        
-        # Get parameter samples
-        if need_params:
-            posterior_param_samples = self.sample_posterior(
-                key_params,
-                n_samples,
-                store_samples=False  # We'll store both sets of samples together
-            )
-        else:
-            posterior_param_samples = self.posterior_samples['parameter_samples']
-        
-        # Generate predictive samples
-        predictive_samples = generate_predictive_samples(
-            posterior_param_samples,
-            self.n_cells,
-            self.n_genes,
-            key_pred,
-            batch_size
-        )
-        
-        samples = {
-            'parameter_samples': posterior_param_samples,
-            'predictive_samples': predictive_samples
+    if model == "nbdm":
+        return {
+            'p': dist.Beta(params['alpha_p'], params['beta_p']),
+            'r': dist.Gamma(params['alpha_r'], params['beta_r'])
         }
-        
-        if store_samples:
-            self.posterior_samples = samples
-            
-        return samples
-
-    # --------------------------------------------------------------------------
-    # Get variational distributions from parameters
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self) -> Dict[str, dist.Distribution]:
-        """
-        Get the variational distributions for all parameters.
-        
-        Returns
-        -------
-        Dict[str, dist.Distribution]
-            Dictionary mapping parameter names to their Numpyro distributions
-        """
-        return params_to_dist(self.params)
-
-    # --------------------------------------------------------------------------
-    # Enable indexing of ScribeResults object
-    # --------------------------------------------------------------------------
-
-    def __getitem__(self, index):
-        """
-        Enable indexing of ScribeResults object.
-        
-        Parameters
-        ----------
-        index : str, bool array, int array, int, or slice
-            Index specification. Can be:
-            - A boolean mask
-            - A list of integer positions
-            - A string that matches a column in cell_metadata or gene_metadata
-            - An integer for single gene selection
-            - A slice object for range selection
-            
-        Returns
-        -------
-        ScribeResults
-            A new ScribeResults object with the subset of data
-        """
-        # Handle integer indexing
-        if isinstance(index, int):
-            # Initialize boolean index for all genes
-            bool_index = jnp.zeros(self.n_genes, dtype=bool)
-            # Set the gene at the specified index to True
-            bool_index = bool_index.at[index].set(True)
-            # Use the boolean index for subsetting
-            index = bool_index
-        
-        # Handle slice indexing
-        elif isinstance(index, slice):
-            # Create array of indices
-            indices = jnp.arange(self.n_genes)[index]
-            # Create boolean mask
-            bool_index = jnp.zeros(self.n_genes, dtype=bool)
-            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
-            index = bool_index
-        
-        # Handle list/array indexing
-        elif not isinstance(index, (bool, jnp.bool_)) and not isinstance(index[-1], (bool, jnp.bool_)):
-            indices = jnp.array(index)
-            bool_index = jnp.zeros(self.n_genes, dtype=bool)
-            bool_index = jnp.where(jnp.isin(jnp.arange(self.n_genes), indices), True, bool_index)
-            index = bool_index
-        
-        # Create new params dict with subset of r parameters
-        new_params = dict(self.params)
-        new_params['alpha_r'] = self.params['alpha_r'][index]
-        new_params['beta_r'] = self.params['beta_r'][index]
-        
-        # Create new metadata if available
-        new_gene_metadata = self.gene_metadata.iloc[index] if self.gene_metadata is not None else None
-
-        # Create new posterior samples if available
-        if self.posterior_samples is not None:
-            new_posterior_samples = {}
-            
-            # Handle parameter samples if they exist
-            if "parameter_samples" in self.posterior_samples:
-                param_samples = self.posterior_samples["parameter_samples"]
-                new_param_samples = {}
-                
-                # Copy each parameter, subsetting r if it exists
-                if "p" in param_samples:
-                    new_param_samples["p"] = param_samples["p"]
-                if "r" in param_samples:
-                    new_param_samples["r"] = param_samples["r"][:, index]
-                    
-                new_posterior_samples["parameter_samples"] = new_param_samples
-            
-            # Handle predictive samples if they exist
-            if "predictive_samples" in self.posterior_samples:
-                new_posterior_samples["predictive_samples"] = self.posterior_samples["predictive_samples"][:, :, index]
-        else:
-            new_posterior_samples = None
-            
-        # Create new ScribeResults object with the subset of data
-        return ScribeResults(
-            params=new_params,
-            loss_history=self.loss_history,
-            n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
-            cell_metadata=self.cell_metadata,
-            gene_metadata=new_gene_metadata,
-            uns=self.uns,
-            posterior_samples=new_posterior_samples
-        )
+    elif model == "zinb":
+        return {
+            'p': dist.Beta(params['alpha_p'], params['beta_p']),
+            'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+            'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+        }
+    else:
+        raise ValueError(f"Invalid model type: {model}")
 
 # ------------------------------------------------------------------------------
 # SCRIBE inference pipeline
@@ -822,37 +222,34 @@ class ScribeResults:
 
 def run_scribe(
     counts: Union[jnp.ndarray, "AnnData"],
+    model_type: str = "nbdm",
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_steps: int = 100_000,
     batch_size: int = 512,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
+    prior_params: Optional[Dict] = None,
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     cells_axis: int = 0,
     layer: Optional[str] = None,
-) -> ScribeResults:
-    """
-    Run the complete SCRIBE inference pipeline and return a ScribeResults
-    object.
-
+) -> Union[NBDMResults, ZINBResults]:
+    """Run the complete SCRIBE inference pipeline.
+    
     Parameters
     ----------
     counts : Union[jax.numpy.ndarray, AnnData]
-        Either a count matrix or an AnnData object: - If ndarray and
-        cells_axis=0 (default), shape is (n_cells, n_genes) - If ndarray and
-        cells_axis=1, shape is (n_genes, n_cells) - If AnnData, will use .X or
-        specified layer
-    rng_key : jax.random.PRNGKey, optional
-        Random number generator key. Default is PRNGKey(42)
-    n_steps : int, optional
-        Number of optimization steps. Default is 100,000
-    batch_size : int, optional
-        Mini-batch size for stochastic optimization. Default is 512
-    p_prior : tuple of float, optional
-        Parameters (alpha, beta) for Beta prior on p. Default is (1, 1)
-    r_prior : tuple of float, optional
-        Parameters (shape, rate) for Gamma prior on r. Default is (2, 0.1)
+        Either a count matrix or an AnnData object. 
+        - If ndarray and cells_axis=0 (default), shape is (n_cells, n_genes)
+        - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
+        - If AnnData, will use .X or specified layer
+    model_type : str
+        Type of model to use. Options are:
+        - "nbdm": Negative Binomial-Dirichlet Multinomial model
+        - "zinb": Zero-Inflated Negative Binomial model
+    prior_params : Dict, optional
+        Dictionary of prior parameters specific to the model.
+        For built-in models:
+        - "nbdm": {'p_prior': (1,1), 'r_prior': (2,0.1)}
+        - "zinb": {'p_prior': (1,1), 'r_prior': (2,0.1), 'gate_prior': (1,1)}
     loss : numpyro.infer.elbo, optional
         Loss function to use for the SVI. Default is TraceMeanField_ELBO
     optimizer : numpyro.optim.optimizers, optional
@@ -865,19 +262,15 @@ def run_scribe(
 
     Returns
     -------
-    ScribeResults
+    Union[NBDMResults, ZINBResults]
         Results container with inference results and optional metadata
     """
-    # Check if input is AnnData
-    is_anndata = False
-    try:
-        import anndata
-        is_anndata = isinstance(counts, anndata.AnnData)
-    except ImportError:
-        pass
-
-    # Handle AnnData input
-    if is_anndata:
+    # Set default prior parameters if none provided
+    if prior_params is None:
+        prior_params = get_default_priors(model_type)
+    
+    # Handle AnnData input as before
+    if hasattr(counts, "obs"):
         adata = counts
         # Get counts from specified layer or .X
         count_data = adata.layers[layer] if layer else adata.X
@@ -889,7 +282,7 @@ def run_scribe(
         count_data = counts
         adata = None
 
-    # Extract dimensions based on cells axis
+    # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = count_data.shape
     else:
@@ -900,6 +293,7 @@ def run_scribe(
     svi = create_svi_instance(
         n_cells,
         n_genes,
+        model_type=model_type,
         optimizer=optimizer,
         loss=loss
     )
@@ -911,24 +305,29 @@ def run_scribe(
         count_data,
         n_steps=n_steps,
         batch_size=batch_size,
-        p_prior=p_prior,
-        r_prior=r_prior,
-        cells_axis=0  # Already transposed if needed
+        model_type=model_type,
+        prior_params=prior_params,
+        cells_axis=0
     )
 
-    # Create ScribeResults object
-    if is_anndata:
-        results = ScribeResults.from_anndata(
+     # Create appropriate results class
+    results_class = NBDMResults if model_type == "nbdm" else ZINBResults
+    
+    # Create results object
+    if adata is not None:
+        results = results_class.from_anndata(
             adata=adata,
             params=svi_results.params,
-            loss_history=svi_results.losses
+            loss_history=svi_results.losses,
+            model_type=model_type
         )
     else:
-        results = ScribeResults(
+        results = results_class(
             params=svi_results.params,
             loss_history=svi_results.losses,
             n_cells=n_cells,
-            n_genes=n_genes
+            n_genes=n_genes,
+            model_type=model_type
         )
 
     return results
