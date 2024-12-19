@@ -17,6 +17,9 @@ from jax import random
 # Imports for model-specific results
 from .models import get_model_and_guide
 
+# Imports for sampling
+from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
+
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
@@ -183,6 +186,7 @@ class BaseScribeResults(ABC):
             
         # Create new instance with the subset of data
         return self.__class__(
+            model_type=self.model_type,
             params=new_params,
             loss_history=self.loss_history,
             n_cells=self.n_cells,
@@ -209,18 +213,14 @@ class BaseScribeResults(ABC):
         # Get the guide function for this model type
         _, guide = get_model_and_guide(self.model_type)
         
-        # Create predictive object for posterior parameter samples
-        predictive_param = Predictive(
+        # Use the sampling utility function
+        posterior_samples = sample_variational_posterior(
             guide,
-            params=self.params,
-            num_samples=n_samples
-        )
-        
-        # Sample parameters from the variational posterior
-        posterior_samples = predictive_param(
-            rng_key,
+            self.params,
             self.n_cells,
             self.n_genes,
+            rng_key,
+            n_samples
         )
         
         # Store samples if requested
@@ -231,6 +231,8 @@ class BaseScribeResults(ABC):
                 self.posterior_samples = {'parameter_samples': posterior_samples}
             
         return posterior_samples
+
+    # --------------------------------------------------------------------------
 
     def generate_predictive_samples(
         self,
@@ -244,22 +246,17 @@ class BaseScribeResults(ABC):
         # Get the model function for this model type
         model, _ = get_model_and_guide(self.model_type)
         
-        # Create predictive object for posterior predictive samples
-        predictive = Predictive(
+        # Use the sampling utility function
+        return generate_predictive_samples(
             model,
-            posterior_samples,
-            num_samples=next(iter(posterior_samples.values())).shape[0]
-        )
-        
-        # Generate predictive samples
-        predictive_samples = predictive(
-            rng_key,
+            self.posterior_samples["parameter_samples"],
             self.n_cells,
             self.n_genes,
-            batch_size=batch_size
+            rng_key,
+            batch_size
         )
-        
-        return predictive_samples["counts"]
+
+    # --------------------------------------------------------------------------
 
     def ppc_samples(
         self,
@@ -272,8 +269,8 @@ class BaseScribeResults(ABC):
         """
         Generate posterior predictive check samples.
         """
-        # Split the RNG key for parameter sampling and predictive sampling
-        key_params, key_pred = random.split(rng_key)
+        # Get the model and guide functions
+        model, guide = get_model_and_guide(self.model_type)
         
         # Check if we need to resample parameters
         need_params = (
@@ -283,26 +280,32 @@ class BaseScribeResults(ABC):
         )
         
         if need_params:
-            # Sample parameters from the variational posterior
-            posterior_param_samples = self.sample_posterior(
-                key_params,
+            # Use generate_ppc_samples utility function
+            samples = generate_ppc_samples(
+                model,
+                guide,
+                self.params,
+                self.n_cells,
+                self.n_genes,
+                rng_key,
                 n_samples,
-                store_samples=False
+                batch_size
             )
         else:
-            # Use existing parameter samples
-            posterior_param_samples = self.posterior_samples['parameter_samples']
-        
-        predictive_samples = self.generate_predictive_samples(
-            posterior_param_samples,
-            key_pred,
-            batch_size
-        )
-        
-        samples = {
-            'parameter_samples': posterior_param_samples,
-            'predictive_samples': predictive_samples
-        }
+            # Split RNG key for predictive sampling only
+            _, key_pred = random.split(rng_key)
+            # Use existing parameter samples and generate new predictive samples
+            samples = {
+                'parameter_samples': self.posterior_samples['parameter_samples'],
+                'predictive_samples': generate_predictive_samples(
+                    model,
+                    self.posterior_samples['parameter_samples'],
+                    self.n_cells,
+                    self.n_genes,
+                    key_pred,
+                    batch_size
+                )
+            }
         
         if store_samples:
             self.posterior_samples = samples
@@ -319,9 +322,9 @@ class NBDMResults(BaseScribeResults):
     """
     Results for Negative Binomial-Dirichlet Multinomial model.
     """
-    # Set model type
     def __post_init__(self):
-        self.model_type = "nbdm"
+        # Change this to only verify the model type instead of setting it
+        assert self.model_type == "nbdm", f"Invalid model type: {self.model_type}"
 
     def get_distributions(self) -> Dict[str, dist.Distribution]:
         """
@@ -376,9 +379,9 @@ class ZINBResults(BaseScribeResults):
     """
     Results for Zero-Inflated Negative Binomial model.
     """
-    # Set model type
     def __post_init__(self):
-        self.model_type = "zinb"
+        # Change this to only verify the model type instead of setting it
+        assert self.model_type == "zinb", f"Invalid model type: {self.model_type}"
 
     def get_distributions(self) -> Dict[str, dist.Distribution]:
         """
