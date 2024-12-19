@@ -24,6 +24,9 @@ scribe.viz.matplotlib_style()
 # Extract colors
 colors = scribe.viz.colors()
 
+# Change to working directory
+os.chdir("./sandbox")
+
 # %% ---------------------------------------------------------------------------
 
 
@@ -34,8 +37,8 @@ print("Setting up the simulation...")
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define number of cells and genes
-n_cells = 1_000
-n_genes = 31_000
+n_cells = 10_000
+n_genes = 20_000
 
 # Define parameters for prior
 r_alpha = 2
@@ -53,12 +56,33 @@ p_prior = (1, 1)
 # Sample true p parameter using JAX's random
 p_true = random.beta(key2, p_prior[0], p_prior[1])
 
-# Create negative binomial distribution
-nb_dist = dist.NegativeBinomialProbs(r_true, p_true)
+# Define number of cells and genes
+n_cells = 10_000
+n_genes = 20_000
 
-# Sample from the distribution
-counts_true = nb_dist.sample(key3, sample_shape=(n_cells,))
+# Define batch size for memory-efficient sampling
+batch_size = 2000  # Adjust this based on your GPU memory
 
+# Initialize array to store counts
+counts_true = np.zeros((n_cells, n_genes))
+
+# Sample in batches
+for i in range(0, n_cells, batch_size):
+    # Get batch size for this iteration
+    current_batch_size = min(batch_size, n_cells - i)
+    
+    # Create new key for this batch
+    key3 = random.fold_in(rng_key, i)  # Generate new key for each batch
+    
+    # Sample batch
+    nb_dist = dist.NegativeBinomialProbs(r_true, p_true)
+    batch_samples = nb_dist.sample(key3, sample_shape=(current_batch_size,))
+    
+    # Store batch samples
+    counts_true[i:i+current_batch_size] = np.array(batch_samples)
+
+# Convert to jax array if needed for later operations
+counts_true = jnp.array(counts_true)
 
 # %% ---------------------------------------------------------------------------
 
@@ -111,7 +135,7 @@ ax.legend(loc='lower right', fontsize=8, title=r"$\langle U \rangle$")
 # %% ---------------------------------------------------------------------------
 
 # Define file name
-file_name = "./output/sim_scribe_result.pkl"
+file_name = "./output/sim_scribe_result_nbdm.pkl"
 
 # Check if the file exists
 if os.path.exists(file_name):
@@ -126,9 +150,11 @@ else:
     scribe_results = scribe.svi.run_scribe(
         counts=counts_true,
         n_steps=100_000,
-        batch_size=512,
-        p_prior=p_prior,
-        r_prior=r_prior
+        batch_size=1024,
+        prior_params={
+            "p_prior": p_prior,
+            "r_prior": r_prior
+        }
     )
 
     # Save the results, the true values, and the counts
@@ -180,8 +206,9 @@ scribe_results_subset = scribe_results[selected_indices]
 
 # %% ---------------------------------------------------------------------------
 
+# scribe_results_subset.sample_posterior(n_samples=250)
 # Generate predictive samples
-scribe_results_subset.ppc_samples(n_samples=200, resample_parameters=True)
+scribe_results_subset.ppc_samples(n_samples=250, resample_parameters=True)
 
 # %% ---------------------------------------------------------------------------
 
@@ -282,10 +309,11 @@ for i, ax in enumerate(axes):
     lower_bound = stats.beta.ppf(0.001, alpha_p, beta_p)
     upper_bound = stats.beta.ppf(0.999, alpha_p, beta_p)
     
+    print(upper_bound - lower_bound)
     # If the range is too small, set the bounds to 0 and 0.0002
-    if upper_bound - lower_bound < 0.0001:
+    if upper_bound - lower_bound < 0.0002:
         lower_bound = 0
-        upper_bound = 0.00005
+        upper_bound = 0.0001
 
     # Define x values for plotting
     x_p = np.linspace(lower_bound, upper_bound, 100)

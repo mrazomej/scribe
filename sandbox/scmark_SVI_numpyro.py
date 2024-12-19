@@ -10,6 +10,9 @@ import pickle
 import jax
 from jax import random
 import jax.numpy as jnp
+from numpyro.optim import Adam
+import numpyro
+
 # Import numpy for array manipulation
 import numpy as np
 # Import library to load h5ad files
@@ -18,16 +21,22 @@ import anndata as ad
 import pandas as pd
 # Import scribe
 import scribe
-
-
-
 # Import plotting libraries
 import matplotlib.pyplot as plt
 import seaborn as sns
 # Set plotting style
 scribe.viz.matplotlib_style()
 
+# Import colors
+colors = scribe.viz.colors()
+
 # %% ---------------------------------------------------------------------------
+
+# Define file index
+FILE_IDX = 1
+
+# Define group to keep
+GROUP = "train"
 
 print("Loading data...")
 
@@ -42,10 +51,13 @@ files = glob.glob(
 )
 
 # Read the data
-data = ad.read_h5ad(files[0])
+data = ad.read_h5ad(files[FILE_IDX])
 
 # Keep only cells in "test" group
-data = data[data.obs.split == "test"]
+# data = data[data.obs.split == GROUP]
+
+# Extract filename by splitting the path by / and taking the last element
+filename = os.path.basename(files[FILE_IDX]).split("/")[-1].split(".")[0]
 
 # %% ---------------------------------------------------------------------------
 
@@ -104,8 +116,10 @@ ax.legend(loc='lower right', fontsize=8, title=r"$\langle U \rangle$")
 
 # %% ---------------------------------------------------------------------------
 
+# %% ---------------------------------------------------------------------------
+
 # Define file name
-file_name = "./output/scmark_scribe_result.pkl"
+file_name = f"./output/{filename}_{GROUP}_scribe_zinb.pkl"
 
 # Check if the file exists
 if os.path.exists(file_name):
@@ -115,7 +129,17 @@ if os.path.exists(file_name):
 else:
     # Run SCRIBE
     scribe_result = scribe.svi.run_scribe(
-        counts=data, n_steps=100_000
+        model_type="zinb",
+        counts=data, 
+        n_steps=100_000,
+        batch_size=1_024,
+        optimizer=Adam(step_size=0.001),
+        loss=numpyro.infer.TraceMeanField_ELBO(),
+        prior_params={
+            "p_prior": (1, 1),
+            "r_prior": (2, 0.01),
+            "gate_prior": (1, 1)
+        }
     )
 
     # Clear JAX caches
@@ -126,3 +150,26 @@ else:
     # Save the results
     with open(file_name, "wb") as f:
         pickle.dump(scribe_result, f)
+
+# %% ---------------------------------------------------------------------------
+
+# Plot loss_history
+
+# Initialize figure
+fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
+
+# Plot loss history
+plt.plot(scribe_result.loss_history)
+
+# Add axis labels
+ax.set_xlabel('iteration')
+ax.set_ylabel('ELBO')
+
+# Set y-scale to log
+ax.set_yscale('log')
+
+# %% ---------------------------------------------------------------------------
+
+# Generate PPC samples
+with scribe.utils.use_cpu():
+    ppc_samples = scribe_result.ppc_samples(n_samples=500)
