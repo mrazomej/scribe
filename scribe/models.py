@@ -104,7 +104,12 @@ def nbdm_model(
                 )
 
             # Define plate for cells individual counts
-            with numpyro.plate("cells", n_cells, dim=-2) as idx:
+            with numpyro.plate(
+                "cells",
+                n_cells,
+                dim=-2,
+                subsample_size=batch_size
+            ) as idx:
                 # Likelihood for the individual counts - one for each cell
                 numpyro.sample(
                     "counts",
@@ -259,7 +264,8 @@ def zinb_model(
             with numpyro.plate(
                 "cells",
                 n_cells,
-                subsample_size=batch_size
+                subsample_size=batch_size,
+                dim=-2
             ) as idx:
                 # Likelihood for the counts - one for each cell
                 numpyro.sample("counts", zinb, obs=counts[idx])
@@ -267,7 +273,7 @@ def zinb_model(
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Make the distribution return a vector of length n_genes
-            dist_zinb = zinb.to_event(0)
+            dist_zinb = zinb.to_event(1)
             counts = numpyro.sample("counts", dist_zinb)
 
 # ------------------------------------------------------------------------------
