@@ -236,7 +236,6 @@ class BaseScribeResults(ABC):
 
     def generate_predictive_samples(
         self,
-        posterior_samples: Dict,
         rng_key: random.PRNGKey,
         batch_size: Optional[int] = None,
     ) -> jnp.ndarray:

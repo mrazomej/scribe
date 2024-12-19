@@ -117,7 +117,7 @@ def nbdm_model(
         with numpyro.plate("cells", n_cells):
             # Make a NegativeBinomial distribution that returns a vector of
             # length n_genes
-            dist_nb = dist.NegativeBinomialProbs(r, p).to_event(0)
+            dist_nb = dist.NegativeBinomialProbs(r, p).to_event(1)
             counts = numpyro.sample("counts", dist_nb)
 
 

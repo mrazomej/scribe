@@ -149,7 +149,7 @@ def generate_ppc_samples(
         variational posterior - 'predictive_samples': Samples from the
         predictive distribution
     """
-     # Split RNG key for parameter sampling and predictive sampling
+    # Split RNG key for parameter sampling and predictive sampling
     key_params, key_pred = random.split(rng_key)
     
     # Sample from variational posterior
