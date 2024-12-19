@@ -2,13 +2,18 @@
 Plotting functions
 """
 
+# Import matplotlib for plotting
 import matplotlib.pyplot as plt
+# Import seaborn for plotting
 import seaborn as sns
+# Import numpy for array manipulation
 import numpy as np
 import scipy.stats as stats
+# Import typing
+from typing import Union
 
 from .stats import compute_histogram_credible_regions, compute_ecdf_credible_regions
-from .svi import ScribeResults
+from .results import NBDMResults, ZINBResults
 
 # ------------------------------------------------------------------------------
 # General plotting functions
@@ -124,7 +129,7 @@ def colors():
 # ------------------------------------------------------------------------------
 
 def plot_parameter_posteriors(
-    scribe_result: ScribeResults,
+    scribe_result: Union[NBDMResults, ZINBResults],
     p_true=None,
     r_true=None,
     n_rows=3,

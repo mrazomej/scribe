@@ -291,8 +291,6 @@ def run_scribe(
 
     # Create SVI instance
     svi = create_svi_instance(
-        n_cells,
-        n_genes,
         model_type=model_type,
         optimizer=optimizer,
         loss=loss

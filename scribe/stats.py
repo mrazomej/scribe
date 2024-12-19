@@ -2,16 +2,19 @@
 Statistics functions
 """
 
+# Import numpy for array manipulation
 import numpy as np
+# Import typing
 from typing import Union
+# Import JAX-related libraries
 import jax.numpy as jnp
 import jax.random as random
 from jax import scipy as jsp
 from numpyro.distributions import Dirichlet
 
-# %% ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Histogram functions
-# %% ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 def compute_histogram_percentiles(
     samples,

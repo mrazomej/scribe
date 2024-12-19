@@ -43,9 +43,6 @@ def sample_variational_posterior(
     Dict
         Dictionary containing samples from the variational posterior
     """
-    # Get the guide function - either directly or from SVI instance
-    guide = guide.guide if isinstance(guide, SVI) else guide
-    
     # Create predictive object for posterior parameter samples
     predictive_param = Predictive(
         guide,
@@ -93,9 +90,6 @@ def generate_predictive_samples(
     jnp.ndarray
         Array of predictive samples
     """
-    # Get the model function - either directly or from SVI instance
-    model = model.model if isinstance(model, SVI) else model
-    
     # Create predictive object for generating new data
     predictive = Predictive(
         model,

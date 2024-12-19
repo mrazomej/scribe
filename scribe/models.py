@@ -2,10 +2,15 @@
 Models for single-cell RNA sequencing data.
 """
 
+# Import JAX-related libraries
 import jax.numpy as jnp
+# Import Pyro-related libraries
 import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
+
+# Import typing
+from typing import Callable, Dict, Tuple
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
