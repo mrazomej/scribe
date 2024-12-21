@@ -16,6 +16,7 @@ from typing import Callable, Dict, Tuple
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
 
+
 def nbdm_model(
     n_cells: int,
     n_genes: int,
@@ -32,7 +33,7 @@ def nbdm_model(
     0. Each cell has a total count drawn from a Negative Binomial distribution
     1. The counts for individual genes are drawn from a Dirichlet-Multinomial
        distribution conditioned on the total count.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -56,14 +57,10 @@ def nbdm_model(
         If None, uses full dataset.
     """
     # Define the prior on the p parameter
-    p = numpyro.sample("p", dist.Beta(p_prior[-1], p_prior[1]))
+    p = numpyro.sample("p", dist.Beta(p_prior...))
 
     # Define the prior on the r parameters - one for each category (gene)
-    r = numpyro.sample("r", dist.Gamma(
-        r_prior[-1],
-        r_prior[0]
-    ).expand([n_genes])
-    )
+    r = numpyro.sample("r", dist.Gamma(r_prior...).expand([n_genes]))
 
     # Sum of r parameters
     r_total = numpyro.deterministic("r_total", jnp.sum(r))
@@ -133,7 +130,7 @@ def nbdm_model(
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (0, 1),
+    p_prior: tuple = (1, 1),
     r_prior: tuple = (1, 2),
     counts=None,
     total_counts=None,
@@ -141,14 +138,14 @@ def nbdm_guide(
 ):
     """
     Define the variational distribution for stochastic variational inference.
-    
+
     This guide function specifies the form of the variational distribution that
     will be optimized to approximate the true posterior. It defines a mean-field
     variational family where:
     - The success probability p follows a Beta distribution
     - Each gene's overdispersion parameter r follows an independent Gamma
     distribution
-    
+
     Parameters
     ----------
     n_cells : int
@@ -170,12 +167,12 @@ def nbdm_guide(
     # variational posterior
     alpha_p = numpyro.param(
         "alpha_p",
-        jnp.array(p_prior[-1]),
+        jnp.array(p_prior[0]),
         constraint=constraints.positive
     )
     beta_p = numpyro.param(
         "beta_p",
-        jnp.array(p_prior[0]),
+        jnp.array(p_prior[1]),
         constraint=constraints.positive
     )
 
@@ -183,12 +180,12 @@ def nbdm_guide(
     # for each of the n_genes categories
     alpha_r = numpyro.param(
         "alpha_r",
-        jnp.ones(n_genes) * r_prior[-1],
+        jnp.ones(n_genes) * r_prior[0],
         constraint=constraints.positive
     )
     beta_r = numpyro.param(
         "beta_r",
-        jnp.ones(n_genes) * r_prior[0],
+        jnp.ones(n_genes) * r_prior[1],
         constraint=constraints.positive
     )
 
@@ -199,6 +196,7 @@ def nbdm_guide(
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Model
 # ------------------------------------------------------------------------------
+
 
 def zinb_model(
     n_cells: int,
@@ -212,7 +210,7 @@ def zinb_model(
     """
     Numpyro model for Zero-Inflated Negative Binomial single-cell RNA sequencing
     data. Uses a single shared p parameter across all genes.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -232,13 +230,13 @@ def zinb_model(
     """
     # Single shared p parameter for all genes
     p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
-    
+
     # Sample r parameters for all genes simultaneously
     r = numpyro.sample(
         "r",
         dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes])
     )
-    
+
     # Sample gate (dropout) parameters for all genes simultaneously
     gate = numpyro.sample(
         "gate",
@@ -247,7 +245,7 @@ def zinb_model(
 
     # Create base negative binomial distribution
     base_dist = dist.NegativeBinomialProbs(r, p)
-    
+
     # Create zero-inflated distribution
     zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
 
@@ -280,6 +278,7 @@ def zinb_model(
 # Beta-Gamma-Beta Variational Posterior
 # ------------------------------------------------------------------------------
 
+
 def zinb_guide(
     n_cells: int,
     n_genes: int,
@@ -303,7 +302,7 @@ def zinb_guide(
         p_prior[1],
         constraint=constraints.positive
     )
-    
+
     # Variational parameters for r (one per gene)
     alpha_r = numpyro.param(
         "alpha_r",
@@ -315,7 +314,7 @@ def zinb_guide(
         jnp.ones(n_genes) * r_prior[1],
         constraint=constraints.positive
     )
-    
+
     # Variational parameters for gate (one per gene)
     alpha_gate = numpyro.param(
         "alpha_gate",
@@ -336,6 +335,7 @@ def zinb_guide(
 # ------------------------------------------------------------------------------
 # Model registry
 # ------------------------------------------------------------------------------
+
 
 def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
     """
@@ -366,13 +366,13 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         # Import model and guide functions locally to avoid circular imports
         from .models import nbdm_model, nbdm_guide
         return nbdm_model, nbdm_guide
-    
+
     # Handle Zero-Inflated Negative Binomial model
     elif model_type == "zinb":
         # Import model and guide functions locally to avoid circular imports
         from .models import zinb_model, zinb_guide
         return zinb_model, zinb_guide
-    
+
     # Raise error for unsupported model types
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -380,6 +380,7 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
 # ------------------------------------------------------------------------------
 # Model default priors
 # ------------------------------------------------------------------------------
+
 
 def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
     """
