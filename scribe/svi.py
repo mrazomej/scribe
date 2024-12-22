@@ -14,7 +14,7 @@ import numpyro.distributions as dist
 from numpyro.infer import SVI, TraceMeanField_ELBO
 
 # Imports for results
-from .results import NBDMResults, ZINBResults, NBVCPResults
+from .results import *
 
 # Imports for data handling
 from typing import Dict, Optional, Union
@@ -212,6 +212,23 @@ def params_to_dist(params: Dict, model: str) -> Dict[str, dist.Distribution]:
             'r': dist.Gamma(params['alpha_r'], params['beta_r']),
             'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
         }
+    elif model == "nbvcp":
+        return {
+            'p': dist.Beta(params['alpha_p'], params['beta_p']),
+            'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+            'p_capture': dist.Beta(
+                params['alpha_p_capture'], params['beta_p_capture']
+            )
+        }
+    elif model == "zinbvcp":
+        return {
+            'p': dist.Beta(params['alpha_p'], params['beta_p']),
+            'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+            'p_capture': dist.Beta(
+                params['alpha_p_capture'], params['beta_p_capture']
+            ),
+            'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+        }
     else:
         raise ValueError(f"Invalid model type: {model}")
 
@@ -312,7 +329,8 @@ def run_scribe(
     results_class = {
         "nbdm": NBDMResults,
         "zinb": ZINBResults,
-        "nbvcp": NBVCPResults
+        "nbvcp": NBVCPResults,
+        "zinbvcp": ZINBVCPResults
     }.get(model_type)
     
     if results_class is None:

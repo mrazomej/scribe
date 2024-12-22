@@ -489,3 +489,112 @@ class NBVCPResults(BaseScribeResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][:, :, index]
             
         return new_posterior_samples
+
+# ------------------------------------------------------------------------------
+# Zero-Inflated Negative Binomial with variable capture probability
+# ------------------------------------------------------------------------------
+
+@dataclass
+class ZINBVCPResults(BaseScribeResults):
+    """
+    Results for Zero-Inflated Negative Binomial model with variable capture probability.
+    
+    This class extends BaseScribeResults to handle the specific parameters and
+    structure of the ZINBVCP model, which includes:
+    - A shared success probability (p)
+    - Gene-specific dispersion parameters (r)
+    - Cell-specific capture probabilities (p_capture)
+    - Gene-specific dropout probabilities (gate)
+    """
+    def __post_init__(self):
+        assert self.model_type == "zinbvcp", f"Invalid model type: {self.model_type}"
+
+    def get_distributions(self) -> Dict[str, dist.Distribution]:
+        """
+        Get the variational distributions for ZINBVCP parameters.
+        
+        Returns
+        -------
+        Dict[str, dist.Distribution]
+            Dictionary mapping parameter names to their Numpyro distributions:
+            - 'p': Beta distribution for success probability
+            - 'r': Gamma distribution for gene-specific dispersion
+            - 'p_capture': Beta distribution for cell-specific capture
+            probabilities
+            - 'gate': Beta distribution for gene-specific dropout probabilities
+        """
+        return {
+            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+            'p_capture': dist.Beta(
+                self.params['alpha_p_capture'], 
+                self.params['beta_p_capture']
+            ),
+            'gate': dist.Beta(self.params['alpha_gate'], self.params['beta_gate'])
+        }
+
+    def _subset_params(self, params: Dict, index) -> Dict:
+        """
+        Create new parameter dictionary for ZINBVCP model.
+        
+        Parameters
+        ----------
+        params : Dict
+            Original parameter dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New parameter dictionary with subset of gene-specific parameters
+        """
+        new_params = dict(params)
+        # r and gate parameters are gene-specific
+        new_params['alpha_r'] = params['alpha_r'][index]
+        new_params['beta_r'] = params['beta_r'][index]
+        new_params['alpha_gate'] = params['alpha_gate'][index]
+        new_params['beta_gate'] = params['beta_gate'][index]
+        # p and p_capture parameters are shared or cell-specific, so keep as is
+        return new_params
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create new posterior samples dictionary for ZINBVCP model.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Original samples dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New samples dictionary with subset of gene-specific samples
+        """
+        new_posterior_samples = {}
+        
+        if "parameter_samples" in samples:
+            param_samples = samples["parameter_samples"]
+            new_param_samples = {}
+            
+            # p is shared across genes
+            if "p" in param_samples:
+                new_param_samples["p"] = param_samples["p"]
+            # p_capture is cell-specific
+            if "p_capture" in param_samples:
+                new_param_samples["p_capture"] = param_samples["p_capture"]
+            # r and gate are gene-specific
+            if "r" in param_samples:
+                new_param_samples["r"] = param_samples["r"][:, index]
+            if "gate" in param_samples:
+                new_param_samples["gate"] = param_samples["gate"][:, index]
+                
+            new_posterior_samples["parameter_samples"] = new_param_samples
+        
+        if "predictive_samples" in samples:
+            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][:, :, index]
+            
+        return new_posterior_samples
