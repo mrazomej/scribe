@@ -11,11 +11,10 @@ from jax import random
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
-from numpyro.distributions import constraints
-from numpyro.infer import Predictive, SVI, TraceMeanField_ELBO
+from numpyro.infer import SVI, TraceMeanField_ELBO
 
 # Imports for results
-from .results import NBDMResults, ZINBResults
+from .results import NBDMResults, ZINBResults, NBVCPResults
 
 # Imports for data handling
 from typing import Dict, Optional, Union
@@ -308,8 +307,16 @@ def run_scribe(
         cells_axis=0
     )
 
-     # Create appropriate results class
-    results_class = NBDMResults if model_type == "nbdm" else ZINBResults
+    # Create appropriate results class
+    # Create appropriate results class
+    results_class = {
+        "nbdm": NBDMResults,
+        "zinb": ZINBResults,
+        "nbvcp": NBVCPResults
+    }.get(model_type)
+    
+    if results_class is None:
+        raise ValueError(f"Unknown model type: {model_type}")
     
     # Create results object
     if adata is not None:

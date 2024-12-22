@@ -19,8 +19,8 @@ from typing import Callable, Dict, Tuple
 def nbdm_model(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (0, 1),
-    r_prior: tuple = (1, 2),
+    p_prior: tuple = (1, 1),
+    r_prior: tuple = (2, 0.1),
     counts=None,
     total_counts=None,
     batch_size=None,
@@ -31,7 +31,7 @@ def nbdm_model(
     This model assumes a hierarchical structure where:
     0. Each cell has a total count drawn from a Negative Binomial distribution
     1. The counts for individual genes are drawn from a Dirichlet-Multinomial
-       distribution conditioned on the total count.
+    distribution conditioned on the total count.
     
     Parameters
     ----------
@@ -41,10 +41,10 @@ def nbdm_model(
         Number of genes in the dataset
     p_prior : tuple of float
         Parameters (alpha, beta) for the Beta prior on p parameter.
-        Default is (0, 1) for a uniform prior.
+        Default is (1, 1) for a uniform prior.
     r_prior : tuple of float
         Parameters (shape, rate) for the Gamma prior on r parameters.
-        Default is (1, 2).
+        Default is (2, 0.1).
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes).
         If None, generates samples from the prior.
@@ -56,14 +56,10 @@ def nbdm_model(
         If None, uses full dataset.
     """
     # Define the prior on the p parameter
-    p = numpyro.sample("p", dist.Beta(p_prior[-1], p_prior[1]))
+    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
 
     # Define the prior on the r parameters - one for each category (gene)
-    r = numpyro.sample("r", dist.Gamma(
-        r_prior[-1],
-        r_prior[0]
-    ).expand([n_genes])
-    )
+    r = numpyro.sample("r", dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes]))
 
     # Sum of r parameters
     r_total = numpyro.deterministic("r_total", jnp.sum(r))
@@ -127,14 +123,14 @@ def nbdm_model(
 
 
 # ------------------------------------------------------------------------------
-# Beta-Gamma Variational Posterior
+# Beta-Gamma Variational Posterior for Negative Binomial-Dirichlet Multinomial
 # ------------------------------------------------------------------------------
 
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (0, 1),
-    r_prior: tuple = (1, 2),
+    p_prior: tuple = (1, 1),
+    r_prior: tuple = (2, 0.1),
     counts=None,
     total_counts=None,
     batch_size=None,
@@ -170,12 +166,12 @@ def nbdm_guide(
     # variational posterior
     alpha_p = numpyro.param(
         "alpha_p",
-        jnp.array(p_prior[-1]),
+        jnp.array(p_prior[0]),
         constraint=constraints.positive
     )
     beta_p = numpyro.param(
         "beta_p",
-        jnp.array(p_prior[0]),
+        jnp.array(p_prior[1]),
         constraint=constraints.positive
     )
 
@@ -183,12 +179,12 @@ def nbdm_guide(
     # for each of the n_genes categories
     alpha_r = numpyro.param(
         "alpha_r",
-        jnp.ones(n_genes) * r_prior[-1],
+        jnp.ones(n_genes) * r_prior[0],
         constraint=constraints.positive
     )
     beta_r = numpyro.param(
         "beta_r",
-        jnp.ones(n_genes) * r_prior[0],
+        jnp.ones(n_genes) * r_prior[1],
         constraint=constraints.positive
     )
 
@@ -234,16 +230,11 @@ def zinb_model(
     p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
     
     # Sample r parameters for all genes simultaneously
-    r = numpyro.sample(
-        "r",
-        dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes])
-    )
+    r = numpyro.sample("r", dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes]))
     
     # Sample gate (dropout) parameters for all genes simultaneously
     gate = numpyro.sample(
-        "gate",
-        dist.Beta(gate_prior[0], gate_prior[1]).expand([n_genes])
-    )
+        "gate", dist.Beta(gate_prior[0], gate_prior[1]).expand([n_genes]))
 
     # Create base negative binomial distribution
     base_dist = dist.NegativeBinomialProbs(r, p)
@@ -277,7 +268,7 @@ def zinb_model(
             counts = numpyro.sample("counts", dist_zinb)
 
 # ------------------------------------------------------------------------------
-# Beta-Gamma-Beta Variational Posterior
+# Beta-Gamma-Beta Variational Posterior for Zero-Inflated Negative Binomial
 # ------------------------------------------------------------------------------
 
 def zinb_guide(
@@ -334,6 +325,170 @@ def zinb_guide(
     numpyro.sample("gate", dist.Beta(alpha_gate, beta_gate))
 
 # ------------------------------------------------------------------------------
+# Negative Binomial with variable capture probability
+# ------------------------------------------------------------------------------
+
+def nbvcp_model(
+    n_cells: int,
+    n_genes: int,
+    p_prior: tuple = (1, 1),
+    r_prior: tuple = (2, 0.1),
+    p_capture_prior: tuple = (1, 1),
+    counts=None,
+    batch_size=None,
+):
+    """
+    Numpyro model for Negative Binomial with variable mRNA capture probability.
+
+    This model assumes that each gene's mRNA count follow a Negative Binomial
+    distribution, but with a cell-specific mRNA capture probability that
+    modifies the success probability parameter. The model structure is:
+    1. Each gene has a base success probability p and dispersion r
+    2. Each cell has a capture probability p_capture
+    3. The effective success probability for each gene in each cell is computed
+    as p_hat = p_capture * (1-p) / (p_capture + p * (1-p_capture)).
+    This comes from the composition of a negative binomial distribution
+    with a binomial distribution.
+    4. Counts are drawn from NB(r, p_hat)
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    p_prior : tuple of float
+        Parameters (alpha, beta) for the Beta prior on base success probability
+        p. Default is (1, 1) for a uniform prior.
+    r_prior : tuple of float
+        Parameters (shape, rate) for the Gamma prior on dispersion parameters.
+        Default is (2, 0.1).
+    p_capture_prior : tuple of float
+        Parameters (alpha, beta) for the Beta prior on capture probabilities.
+        Default is (1, 1) for a uniform prior.
+    counts : array-like, optional
+        Observed counts matrix of shape (n_cells, n_genes).
+        If None, generates samples from the prior.
+    batch_size : int, optional
+        Mini-batch size for stochastic variational inference.
+        If None, uses full dataset.
+    """
+    # Define the prior on the p parameter
+    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
+
+    # Define the prior on the r parameters - one for each category (gene)
+    r = numpyro.sample(
+        "r", 
+        dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes])
+    )
+
+    # Define the prior on the p_capture parameters - one for each cell
+    p_capture = numpyro.sample(
+        "p_capture",
+        dist.Beta(p_capture_prior[0], p_capture_prior[1]).expand([n_cells])
+    )
+
+    # Reshape p_capture to [n_cells, 1] for broadcasting
+    p_capture_reshaped = p_capture[:, None]
+    # Compute the effective p (p_hat) for each gene
+    p_hat = numpyro.deterministic(
+        "p_hat",
+        p_capture_reshaped * (1 - p) / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+    )
+
+    # If we have observed data, condition on it
+    if counts is not None:
+        # If batch size is not provided, use the entire dataset
+        if batch_size is None:
+            # Define plate for cells
+            with numpyro.plate("cells", n_cells):
+                # Likelihood for the counts - one for each cell
+                numpyro.sample(
+                    "counts", 
+                    dist.NegativeBinomialProbs(r, p_hat), 
+                    obs=counts
+                )
+        else:
+            # Define plate for cells
+            with numpyro.plate(
+                "cells",
+                n_cells,
+                subsample_size=batch_size,
+                dim=-2
+            ) as idx:
+                # Likelihood for the counts - one for each cell
+                numpyro.sample(
+                    "counts", 
+                    dist.NegativeBinomialProbs(r, p_hat[idx]), 
+                    obs=counts[idx]
+                )
+    else:
+        # Predictive model (no obs)
+        with numpyro.plate("cells", n_cells):
+            # Make the distribution return a vector of length n_genes
+            dist_nb = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+            counts = numpyro.sample("counts", dist_nb)
+
+# ------------------------------------------------------------------------------
+# Beta-Gamma-Beta Variational Posterior for Negative Binomial with variable
+# capture probability
+# ------------------------------------------------------------------------------
+
+def nbvcp_guide(
+    n_cells: int,
+    n_genes: int,
+    p_prior: tuple = (1, 1),
+    r_prior: tuple = (2, 0.1),
+    p_capture_prior: tuple = (1, 1),
+    counts=None,
+    batch_size=None,
+):
+    """
+    Variational distribution for the Negative Binomial with variable capture
+    probability model.
+    """
+    # Variational parameters for base success probability p
+    alpha_p = numpyro.param(
+        "alpha_p",
+        p_prior[0],
+        constraint=constraints.positive
+    )
+    beta_p = numpyro.param(
+        "beta_p",
+        p_prior[1],
+        constraint=constraints.positive
+    )
+
+    # Variational parameters for r (one per gene)
+    alpha_r = numpyro.param(
+        "alpha_r",
+        jnp.ones(n_genes) * r_prior[0],
+        constraint=constraints.positive
+    )
+    beta_r = numpyro.param(
+        "beta_r",
+        jnp.ones(n_genes) * r_prior[1],
+        constraint=constraints.positive
+    )
+
+    # Variational parameters for capture probability p_capture (one per cell)
+    alpha_p_capture = numpyro.param(
+        "alpha_p_capture",
+        jnp.ones(n_cells) * p_capture_prior[0],
+        constraint=constraints.positive
+    )
+    beta_p_capture = numpyro.param(
+        "beta_p_capture",
+        jnp.ones(n_cells) * p_capture_prior[1],
+        constraint=constraints.positive
+    )
+
+    # Sample from variational posterior parameters
+    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
+    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
+    numpyro.sample("p_capture", dist.Beta(alpha_p_capture, beta_p_capture))
+
+# ------------------------------------------------------------------------------
 # Model registry
 # ------------------------------------------------------------------------------
 
@@ -349,12 +504,14 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
     Parameters
     ----------
     model_type : str
-        The type of model to retrieve functions for. Must be one of ["nbdm", "zinb"].
+        The type of model to retrieve functions for. Must be one of ["nbdm",
+        "zinb"].
 
     Returns
     -------
     Tuple[Callable, Callable]
-        A tuple containing (model_function, guide_function) for the requested model type.
+        A tuple containing (model_function, guide_function) for the requested
+        model type.
 
     Raises
     ------
@@ -373,6 +530,12 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         from .models import zinb_model, zinb_guide
         return zinb_model, zinb_guide
     
+    # Handle Negative Binomial with variable mRNA capture probability model
+    elif model_type == "nbvcp":
+        # Import model and guide functions locally to avoid circular imports
+        from .models import nbvcp_model, nbvcp_guide
+        return nbvcp_model, nbvcp_guide
+    
     # Raise error for unsupported model types
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -389,12 +552,13 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
     requested model type. Currently supports:
     - "nbdm": Negative Binomial-Dirichlet Multinomial model
     - "zinb": Zero-Inflated Negative Binomial model
+    - "nbvcp": Negative Binomial with variable mRNA capture probability model
 
     Parameters
     ----------
     model_type : str
         The type of model to get default priors for. Must be one of ["nbdm",
-        "zinb"]. For custom models, returns an empty dictionary.
+        "zinb", "nbvcp"]. For custom models, returns an empty dictionary.
 
     Returns
     -------
@@ -407,6 +571,12 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
             - 'p_prior': (alpha, beta) for Beta prior on p parameter  
             - 'r_prior': (shape, rate) for Gamma prior on r parameter
             - 'gate_prior': (alpha, beta) for Beta prior on gate parameter
+        - For "nbvcp":
+            - 'p_prior': (alpha, beta) for Beta prior on base success
+            probability p
+            - 'r_prior': (shape, rate) for Gamma prior on dispersion parameters
+            - 'p_capture_prior': (alpha, beta) for Beta prior on capture
+            probabilities
         - For custom models: empty dictionary
     """
     if model_type == "nbdm":
@@ -419,6 +589,12 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
             'p_prior': (1, 1),
             'r_prior': (2, 0.1),
             'gate_prior': (1, 1)
+        }
+    elif model_type == "nbvcp":
+        prior_params = {
+            'p_prior': (1, 1),
+            'r_prior': (2, 0.1),
+            'p_capture_prior': (1, 1)
         }
     else:
         prior_params = {}  # Empty dict for custom models if none provided

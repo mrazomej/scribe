@@ -429,3 +429,63 @@ class ZINBResults(BaseScribeResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][:, :, index]
             
         return new_posterior_samples
+
+# ------------------------------------------------------------------------------
+# Negative Binomial with variable capture probability model
+# ------------------------------------------------------------------------------
+
+@dataclass
+class NBVCPResults(BaseScribeResults):
+    """
+    Results for Negative Binomial with variable capture probability model.
+    """
+    def __post_init__(self):
+        assert self.model_type == "nbvcp", f"Invalid model type: {self.model_type}"
+
+    def get_distributions(self) -> Dict[str, dist.Distribution]:
+        """
+        Get the variational distributions for NBVCP parameters.
+        """
+        return {
+            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+            'p_capture': dist.Beta(self.params['alpha_p_capture'], self.params['beta_p_capture'])
+        }
+
+    def _subset_params(self, params: Dict, index) -> Dict:
+        """
+        Create new parameter dictionary for NBVCP model.
+        """
+        new_params = dict(params)
+        # Only r parameters are gene-specific
+        new_params['alpha_r'] = params['alpha_r'][index]
+        new_params['beta_r'] = params['beta_r'][index]
+        # p and p_capture parameters are shared across genes
+        return new_params
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create new posterior samples dictionary for NBVCP model.
+        """
+        new_posterior_samples = {}
+        
+        if "parameter_samples" in samples:
+            param_samples = samples["parameter_samples"]
+            new_param_samples = {}
+            
+            # p is shared across genes
+            if "p" in param_samples:
+                new_param_samples["p"] = param_samples["p"]
+            # r is gene-specific
+            if "r" in param_samples:
+                new_param_samples["r"] = param_samples["r"][:, index]
+            # p_capture is cell-specific
+            if "p_capture" in param_samples:
+                new_param_samples["p_capture"] = param_samples["p_capture"]
+                
+            new_posterior_samples["parameter_samples"] = new_param_samples
+        
+        if "predictive_samples" in samples:
+            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][:, :, index]
+            
+        return new_posterior_samples
