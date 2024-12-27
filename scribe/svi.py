@@ -44,8 +44,11 @@ def create_svi_instance(
     ----------
     model_type : str, optional
         Type of model to use. Options are:
-        - "nbdm": Negative Binomial-Dirichlet Multinomial model
-        - "zinb": Zero-Inflated Negative Binomial model
+            - "nbdm": Negative Binomial-Dirichlet Multinomial model.
+            - "zinb": Zero-Inflated Negative Binomial model.
+            - "nbvcp": Negative Binomial with variable capture probability.
+            - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
+              probability. 
         Ignored if custom_model and custom_guide are provided.
     custom_model : callable, optional
         Custom model function to use instead of built-in models
@@ -64,7 +67,8 @@ def create_svi_instance(
     Raises
     ------
     ValueError
-        If model_type is invalid or if only one of custom_model/custom_guide is provided
+        If model_type is invalid or if only one of custom_model/custom_guide is
+        provided
     """
     # If custom model/guide are provided, use those
     if custom_model is not None or custom_guide is not None:
