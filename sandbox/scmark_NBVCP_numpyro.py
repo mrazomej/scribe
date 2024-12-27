@@ -1,141 +1,111 @@
 # %% ---------------------------------------------------------------------------
+
 # Import base libraries
 import os
+import glob
+import gc
 import pickle
 
 # Import JAX-related libraries
+import jax
 from jax import random
 import jax.numpy as jnp
-# Import Pyro-related libraries
-import numpyro.distributions as dist
+from numpyro.optim import Adam
+import numpyro
+
 # Import numpy for array manipulation
 import numpy as np
-# Import scipy for statistical functions
 import scipy.stats as stats
+# Import library to load h5ad files
+import anndata as ad
+# Import pandas for data manipulation
+import pandas as pd
+# Import scribe
+import scribe
 # Import plotting libraries
 import matplotlib.pyplot as plt
 import seaborn as sns
-# Import scribe
-import scribe
-
 # Set plotting style
 scribe.viz.matplotlib_style()
 
-# Extract colors
+# Import colors
 colors = scribe.viz.colors()
 
-# Change to working directory if not already in it
-if os.getcwd() != "/app/sandbox":
+# Change to sandbox directory if not already there
+if os.path.basename(os.getcwd()) != "/app/sandbox":
     os.chdir("./sandbox")
 
 # %% ---------------------------------------------------------------------------
 
+# Define file index
+FILE_IDX = 1
 
-print("Setting up the simulation...")
+# Define group to keep
+GROUP = "train"
 
+print("Loading data...")
 
-# Setup the PRNG key
-rng_key = random.PRNGKey(42)  # Set random seed
+# Get the repository root directory (assuming the script is anywhere in the repo)
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Define number of cells and genes
-n_cells = 10_000
-n_genes = 20_000
+# List all files in the data directory
+files = glob.glob(
+    os.path.join(
+        repo_root, "scrappy", "data", "scmark_v2", "scmark_v2", "*.h5ad"
+    )
+)
 
-# Define parameters for prior
-r_alpha = 2
-r_beta = 1
-r_prior = (r_alpha, r_beta)
+# Read the data
+data = ad.read_h5ad(files[FILE_IDX])
 
-# Split keys for different random operations
-key1, key2, key3 = random.split(rng_key, 3)
+# Keep only cells in "test" group
+# data = data[data.obs.split == GROUP]
 
-# Sample true r parameters using JAX's random
-r_true = random.gamma(key1, r_alpha, shape=(n_genes,)) / r_beta
-
-# Define prior for p parameter
-p_prior = (1, 1)
-# Sample true p parameter using JAX's random
-p_true = random.beta(key2, p_prior[0], p_prior[1])
-
-# Define number of cells and genes
-n_cells = 10_000
-n_genes = 20_000
-
-# Define batch size for memory-efficient sampling
-batch_size = 2000  # Adjust this based on your GPU memory
-
-# Initialize array to store counts
-counts_true = np.zeros((n_cells, n_genes))
-
-# Sample in batches
-for i in range(0, n_cells, batch_size):
-    # Get batch size for this iteration
-    current_batch_size = min(batch_size, n_cells - i)
-    
-    # Create new key for this batch
-    key3 = random.fold_in(rng_key, i)  # Generate new key for each batch
-    
-    # Sample batch
-    nb_dist = dist.NegativeBinomialProbs(r_true, p_true)
-    batch_samples = nb_dist.sample(key3, sample_shape=(current_batch_size,))
-    
-    # Store batch samples
-    counts_true[i:i+current_batch_size] = np.array(batch_samples)
-
-# Convert to jax array if needed for later operations
-counts_true = jnp.array(counts_true)
+# Extract filename by splitting the path by / and taking the last element
+filename = os.path.basename(files[FILE_IDX]).split("/")[-1].split(".")[0]
 
 # %% ---------------------------------------------------------------------------
 
-# Plot the histogram of total counts per cell
-fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
-# Plot histogram
-sns.histplot(
-    data=,
-    ax=ax,
-    bins=100,
-    color=colors['dark_blue'],
-    log_scale=True
+# Extract the counts into a pandas dataframe
+df_counts = pd.DataFrame(
+    data.X.toarray(),
+    columns=data.var.gene,
+    index=data.obs.index
 )
-
-# Add axis labels
-ax.set_xlabel('total counts')
-ax.set_ylabel('frequency')
-
 # %% ---------------------------------------------------------------------------
 
 # Define number of genes to select
 n_genes = 9
 
 # Compute the mean expression of each gene and sort them
-gene_means = counts_true.mean(axis=0)
-sorted_indices = np.argsort(gene_means)[::-1]  # Sort in descending order
-gene_means = gene_means[sorted_indices]
+df_mean = df_counts.mean().sort_values(ascending=False)
 
 # Remove all genes with mean expression less than 1
-mask = gene_means > 1
-gene_means = gene_means[mask]
-valid_indices = sorted_indices[mask]
+df_mean = df_mean[df_mean > 1]
 
 # Generate logarithmically spaced indices
 log_indices = np.logspace(
-    0, np.log10(len(gene_means) - 1), num=n_genes, dtype=int
+    0, np.log10(len(df_mean) - 1), num=n_genes, dtype=int
 )
 
 # Select genes using the logarithmically spaced indices
-selected_indices = valid_indices[log_indices]
+genes = df_mean.iloc[log_indices].index
 
 # Initialize figure
 fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
 
-# Loop through each selected gene
-for i, gene_idx in enumerate(selected_indices):
-    # Plot the ECDF for each gene
+# Define step size for ECDF
+step = 1
+
+# Loop throu each gene
+for (i, gene) in enumerate(genes):
+    # Plot the ECDF for each column in the DataFrame
     sns.ecdfplot(
-        data=counts_true[:, gene_idx],
+        data=df_counts,
+        x=gene,
         ax=ax,
         color=sns.color_palette('Blues', n_colors=n_genes)[i],
-        label=np.round(gene_means[log_indices[i]], 0).astype(int),
+        label=np.round(df_mean[gene], 0).astype(int),
         lw=1.5
     )
 
@@ -149,65 +119,65 @@ ax.set_ylabel('ECDF')
 # Add legend
 ax.legend(loc='lower right', fontsize=8, title=r"$\langle U \rangle$")
 
-
 # %% ---------------------------------------------------------------------------
 
 # Define file name
-file_name = "./output/sim_scribe_result_nbdm.pkl"
+file_name = f"./output/{filename}_{GROUP}_scribe_nbvcp.pkl"
 
 # Check if the file exists
 if os.path.exists(file_name):
-    # Load the results, the true values, and the counts
+    # Load the results
     with open(file_name, "rb") as f:
-        scribe_results = pickle.load(f)
-        counts_true = pickle.load(f)
-        r_true = pickle.load(f)
-        p_true = pickle.load(f)
+        scribe_result = pickle.load(f)
 else:
-    # Run scribe
-    scribe_results = scribe.svi.run_scribe(
-        counts=counts_true,
+    # Run SCRIBE
+    scribe_result = scribe.svi.run_scribe(
+        model_type="zinbvcp",
+        counts=data, 
         n_steps=100_000,
-        batch_size=1024,
+        batch_size=1_024,
+        optimizer=Adam(step_size=0.001),
+        loss=numpyro.infer.TraceMeanField_ELBO(),
         prior_params={
-            "p_prior": p_prior,
-            "r_prior": r_prior
+            "p_prior": (1, 1),
+            "r_prior": (2, 0.01),
+            "p_capture_prior": (1, 1)
         }
     )
 
-    # Save the results, the true values, and the counts
+    # Clear JAX caches
+    jax.clear_caches()
+    # Clear memory
+    gc.collect()
+
+    # Save the results
     with open(file_name, "wb") as f:
-        pickle.dump(scribe_results, f)
-        pickle.dump(counts_true, f)
-        pickle.dump(r_true, f)
-        pickle.dump(p_true, f)
+        pickle.dump(scribe_result, f)
 
 # %% ---------------------------------------------------------------------------
 
-print("Plotting the ELBO loss...")
+# Plot loss_history
 
 # Initialize figure
-fig, ax = plt.subplots(1, 1, figsize=(3.5, 2.5))
-# Plot the ELBO loss
-ax.plot(scribe_results.loss_history)
-ax.set_xlabel('iteration')
-ax.set_ylabel('ELBO loss')
+fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
 
-# Set log scale
+# Plot loss history
+plt.plot(scribe_result.loss_history)
+
+# Add axis labels
+ax.set_xlabel('iteration')
+ax.set_ylabel('ELBO')
+
+# Set y-scale to log
 ax.set_yscale('log')
 
-plt.tight_layout()
-
 # %% ---------------------------------------------------------------------------
-
 
 print("Plotting parameter posteriors...")
 
 # Plot parameter posteriors
 fig = scribe.viz.plot_parameter_posteriors(
-    scribe_results,
-    p_true,
-    r_true,
+    scribe_result,
     n_rows=4,
     n_cols=4
 )
@@ -215,26 +185,24 @@ fig = scribe.viz.plot_parameter_posteriors(
 # %% ---------------------------------------------------------------------------
 
 # Generate variational posterior samples
-scribe_results.sample_posterior(n_samples=500)
+scribe_result.sample_posterior(n_samples=500)
 
 # %% ---------------------------------------------------------------------------
 
 # Keep subset of inference from log_indices
-scribe_results_subset = scribe_results[selected_indices]
+scribe_result_subset = scribe_result[log_indices]
 
 # %% ---------------------------------------------------------------------------
 
 # scribe_results_subset.sample_posterior(n_samples=250)
 # Generate predictive samples
-scribe_results_subset.ppc_samples(n_samples=250, resample_parameters=True)
+scribe_result_subset.ppc_samples(n_samples=250, resample_parameters=True)
 
 # %% ---------------------------------------------------------------------------
 
 # Plot parameter posteriors
 fig = scribe.viz.plot_parameter_posteriors(
-    scribe_results_subset,
-    p_true,
-    r_true[selected_indices.sort()],
+    scribe_result_subset,
     n_rows=3,
     n_cols=3
 )
@@ -251,23 +219,20 @@ axes = axes.flatten()
 for i, ax in enumerate(axes):
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        scribe_results_subset.posterior_samples["predictive_samples"][:, :, i],
-        credible_regions=[95, 68, 50]
+        scribe_result_subset.posterior_samples["predictive_samples"][:, :, i],
+        credible_regions=[99.5, 95, 68, 50]
     )
 
     # Plot credible regions
-    scribe.viz.plot_histogram_credible_regions(
+    scribe.viz.plot_histogram_credible_regions_stairs(
         ax, 
         credible_regions,
         cmap='Blues',
-        alpha=0.5
+        alpha=0.75
     )
 
-    # Extract index for this gene
-    gene_idx = selected_indices.sort()[i]
-
     # Extract true counts for this gene
-    true_counts = counts_true[:, gene_idx]
+    true_counts = data.X[:, log_indices[i]].toarray().flatten()
 
     # Compute histogram of the real data
     hist_results = np.histogram(
@@ -283,10 +248,16 @@ for i, ax in enumerate(axes):
         where='post',
         label='data',
         color='black',
+        lw=1
     )
 
     ax.set_xlabel('counts')
     ax.set_ylabel('frequency')
+
+    # Set x-ax limit
+    ax.set_xlim(7e-1, 1e1)
+    # Set x-ax on log scale
+    ax.set_xscale('log')
 
 plt.tight_layout()
 
@@ -294,7 +265,7 @@ plt.tight_layout()
 
 # Sample from Dirichlet distribution given the r parameter posterior samples
 frac_samples = scribe.stats.sample_dirichlet_from_parameters(
-    scribe_results.posterior_samples["parameter_samples"]["r"],
+    scribe_result.posterior_samples["parameter_samples"]["r"],
 )
 
 # %% ---------------------------------------------------------------------------
@@ -314,24 +285,27 @@ axes = axes.flatten()
 for i, ax in enumerate(axes):
     # Plot fraction samples
     ax.hist(
-        frac_samples[:, selected_indices.sort()[i]],
+        frac_samples[:, log_indices[i]],
         bins=100,
         density=True,
         alpha=0.5
     )
     # Extract dirichlet fit for this gene
-    alpha_p = dirichlet_fit[selected_indices.sort()[i]]
+    alpha_p = dirichlet_fit[log_indices[i]]
     # Sum all other dirichlet fits
     beta_p = jnp.sum(dirichlet_fit) - alpha_p
     # Determine range of x values from quantiles
-    lower_bound = stats.beta.ppf(0.001, alpha_p, beta_p)
-    upper_bound = stats.beta.ppf(0.999, alpha_p, beta_p)
+    # lower_bound = stats.beta.ppf(0.001, alpha_p, beta_p)
+    # upper_bound = stats.beta.ppf(0.999, alpha_p, beta_p)
+    lower_bound = 0
+    upper_bound = 5e-6
     
-    print(upper_bound - lower_bound)
-    # If the range is too small, set the bounds to 0 and 0.0002
-    if upper_bound - lower_bound < 0.0002:
-        lower_bound = 0
-        upper_bound = 0.0001
+    # print(upper_bound - lower_bound)
+    # # If the range is too small, set the bounds to 0 and 0.0002
+    # if upper_bound - lower_bound < 1e-5:
+    #     lower_bound = 0
+    #     upper_bound = 1e-6
+
 
     # Define x values for plotting
     x_p = np.linspace(lower_bound, upper_bound, 100)
