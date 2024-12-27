@@ -35,7 +35,7 @@ COPY uv.lock* ./
 # Install dependencies into the system Python environment
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system numpyro && \
-    uv pip install --system -e .
+    uv pip install --system -e ".[dev]"
 
 # Copy the rest of your project
 COPY . .
