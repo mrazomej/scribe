@@ -1,5 +1,32 @@
+"""
+Utility functions for SCRIBE.
+"""
+
+import os
 import jax
 from contextlib import contextmanager
+
+def git_root(current_path=None):
+    """
+    Finds the root directory of a Git repository.
+    
+    Args:
+        current_path (str, optional): The starting path. If None, uses the current working directory.
+    
+    Returns:
+        str: The path to the Git root directory, or None if not found.
+    """
+    if current_path is None:
+        current_path = os.getcwd()
+    
+    while current_path and current_path != os.path.dirname(current_path):
+        if os.path.isdir(os.path.join(current_path, '.git')):
+            return current_path
+        current_path = os.path.dirname(current_path)  # Move up one directory level
+    
+    return None  # Git root not found
+
+# ------------------------------------------------------------------------------
 
 @contextmanager
 def use_cpu():
