@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jax import random
 import numpyro
 from scribe.models import nbvcp_model, nbvcp_guide
-from scribe.svi import run_scribe
+from scribe.svi import run_scribe, rerun_scribe
 from scribe.sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
@@ -70,6 +70,25 @@ def test_parameter_ranges(example_nbvcp_results):
     # Check shapes for cell-specific parameters
     assert example_nbvcp_results.params['alpha_p_capture'].shape == (example_nbvcp_results.n_cells,)
     assert example_nbvcp_results.params['beta_p_capture'].shape == (example_nbvcp_results.n_cells,)
+
+def test_continue_training(example_nbvcp_results, small_dataset, rng_key):
+    """Test that continuing training from a previous results object works."""
+    counts, _ = small_dataset
+    n_cells, n_genes = counts.shape
+    # Run inference again
+    results = rerun_scribe(
+        results=example_nbvcp_results,
+        counts=counts,
+        rng_key=rng_key,
+        n_steps=N_STEPS,
+        batch_size=5,
+    )
+
+    assert isinstance(results, NBVCPResults)
+    assert results.n_cells == n_cells
+    assert results.n_genes == n_genes
+    assert len(results.loss_history) == N_STEPS + N_STEPS
+    assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
 
 # ------------------------------------------------------------------------------
 # Test sampling

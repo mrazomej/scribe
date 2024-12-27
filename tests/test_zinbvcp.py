@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jax import random
 import numpyro
 from scribe.models import zinbvcp_model, zinbvcp_guide
-from scribe.svi import run_scribe
+from scribe.svi import run_scribe, rerun_scribe
 from scribe.sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
@@ -76,6 +76,25 @@ def test_parameter_ranges(example_zinbvcp_results):
     # Check shapes for gene-specific parameters
     assert example_zinbvcp_results.params['alpha_gate'].shape == (example_zinbvcp_results.n_genes,)
     assert example_zinbvcp_results.params['beta_gate'].shape == (example_zinbvcp_results.n_genes,)
+
+def test_continue_training(example_zinbvcp_results, small_dataset, rng_key):
+    """Test that continuing training from a previous results object works."""
+    counts, _ = small_dataset
+    n_cells, n_genes = counts.shape
+    # Run inference again
+    results = rerun_scribe(
+        results=example_zinbvcp_results,
+        counts=counts,
+        rng_key=rng_key,
+        n_steps=N_STEPS,
+        batch_size=5,
+    )
+
+    assert isinstance(results, ZINBVCPResults)
+    assert results.n_cells == n_cells
+    assert results.n_genes == n_genes
+    assert len(results.loss_history) == N_STEPS + N_STEPS
+    assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
 
 # ------------------------------------------------------------------------------
 # Test sampling

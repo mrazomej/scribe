@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jax import random
 import numpyro
 from scribe.models import nbdm_model, nbdm_guide
-from scribe.svi import run_scribe
+from scribe.svi import run_scribe, rerun_scribe
 from scribe.sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
@@ -64,6 +64,25 @@ def test_parameter_ranges(example_nbdm_results):
     assert jnp.all(example_nbdm_results.params['beta_p'] > 0)
     assert jnp.all(example_nbdm_results.params['alpha_r'] > 0)
     assert jnp.all(example_nbdm_results.params['beta_r'] > 0)
+
+def test_continue_training(example_nbdm_results, small_dataset, rng_key):
+    """Test that continuing training from a previous results object works."""
+    counts, _ = small_dataset
+    n_cells, n_genes = counts.shape
+    # Run inference again
+    results = rerun_scribe(
+        results=example_nbdm_results,
+        counts=counts,
+        rng_key=rng_key,
+        n_steps=N_STEPS,
+        batch_size=5,
+    )
+
+    assert isinstance(results, NBDMResults)
+    assert results.n_cells == n_cells
+    assert results.n_genes == n_genes
+    assert len(results.loss_history) == N_STEPS + N_STEPS
+    assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
 
 # ------------------------------------------------------------------------------
 # Test sampling
