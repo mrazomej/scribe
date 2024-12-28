@@ -5,6 +5,12 @@ data analysis.
 This module implements a Dirichlet-Multinomial model for scRNA-seq count data
 using Numpyro for variational inference.
 """
+
+# Import base packages
+import sys
+import contextlib
+import io
+
 # Import tqdm for progress bars
 from tqdm.auto import tqdm
 
@@ -33,7 +39,7 @@ import numpy as np
 from .models import get_model_and_guide, get_default_priors
 
 # Imports for early stopping
-from .utils import EarlyStoppingCallback
+from .utils import EarlyStoppingCallback, suppress_warnings
 
 # ------------------------------------------------------------------------------
 # Stochastic Variational Inference with Numpyro
@@ -98,55 +104,55 @@ class ScribeSVI(SVI):
         else:
             state = self.init(rng_key, init_params=init_params, **kwargs)
             
-        # Initialize list to store losses
         losses = []
         
         # Get initial loss for progress tracking
-        loss = self.evaluate(state, **kwargs)
+        with contextlib.redirect_stdout(io.StringIO()):
+            loss = self.evaluate(state, **kwargs)
         
         # Create progress bar description
         desc = f"[{model_type}] init loss: {loss:.3f}"
         
-        # Setup iteration method based on progress bar preference
+        # Setup progress tracking
+        pbar = None
         if progress_bar:
-            # Use tqdm for progress bar if enabled
-            iterator = tqdm(range(n_steps), desc=desc)
-        else:
-            # Use range for no progress bar
-            iterator = range(n_steps)
+            pbar = tqdm(
+                total=n_steps,
+                desc=desc,
+                position=0,
+                leave=True,
+                ncols=100,
+                file=sys.stdout,
+                mininterval=0.1
+            )
             
-        # Run SVI loop
         try:
-            # Iterate over steps
-            for step in iterator:
-                # Update state based on stability preference
-                if stable_update:
-                    state_new, loss = self.stable_update(state, **kwargs)
-                    # Only update state if stable_update succeeded
-                    if jnp.isfinite(loss):
-                        state = state_new
-                else:
-                    # Use standard update method
-                    state, loss = self.update(state, **kwargs)
+            for step in range(n_steps):
+                # Capture stdout to prevent unwanted prints
+                with suppress_warnings():
+                    if stable_update:
+                        state_new, loss = self.stable_update(state, **kwargs)
+                        if jnp.isfinite(loss):
+                            state = state_new
+                    else:
+                        state, loss = self.update(state, **kwargs)
                     
-                # Append loss to losses list
                 losses.append(loss)
                 
                 # Update progress bar if enabled
-                if progress_bar:
-                    # Calculate moving average loss
+                if pbar is not None:
                     window_size = min(100, len(losses))
                     avg_loss = jnp.mean(jnp.array(losses[-window_size:]))
                     
-                    # Update progress bar description
-                    iterator.set_description(
+                    pbar.set_description(
                         f"[{model_type}] init loss: {losses[0]:.3f}, "
                         f"avg loss: {avg_loss:.3f}"
                     )
+                    pbar.update(1)
+                    pbar.refresh()
                     
                 # Early stopping check
                 if early_stopping is not None:
-                    # Check early stopping criteria
                     should_stop, reason = early_stopping(
                         step, 
                         loss,
@@ -154,24 +160,21 @@ class ScribeSVI(SVI):
                     )
                     
                     if should_stop:
-                        # Write early stopping message to progress bar
-                        if progress_bar:
-                            iterator.write(f"\nStopping early: {reason}")
-                            
-                        # Use best parameters if available from early stopping
-                        if early_stopping.best_params is not None:
-                            state = state._replace(optim_state=early_stopping.best_params)
+                        if pbar is not None:
+                            pbar.write(f"\nStopping early: {reason}")
                         break
+                            
+                # Use best parameters if available
+                if early_stopping is not None and early_stopping.best_params is not None:
+                    state = state._replace(optim_state=early_stopping.best_params)
                         
-        # Handle KeyboardInterrupt
         except KeyboardInterrupt:
-            if progress_bar:
-                iterator.write("\nInterrupted by user")
-
-        # Close progress bar if enabled
+            if pbar is not None:
+                pbar.write("\nInterrupted by user")
+                
         finally:
-            if progress_bar:
-                iterator.close()
+            if pbar is not None:
+                pbar.close()
                 
         # Return SVIRunResult with all required fields
         return SVIRunResult(
@@ -417,6 +420,7 @@ def run_scribe(
     init_state: Optional[SVIState] = None,
     init_params: Optional[Dict] = None,
     stable_update: bool = False,
+    early_stopping: Optional[EarlyStoppingCallback] = None,
 ) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]:
     """Run the complete SCRIBE inference pipeline.
     
@@ -459,6 +463,8 @@ def run_scribe(
         If not None, initialize params with these values
     stable_update: bool = False,
         Whether to use stable update method (default: False)
+    early_stopping: Optional[EarlyStoppingCallback] = None,
+        If not None, use this callback for early stopping
 
     Returns
     -------
@@ -509,7 +515,8 @@ def run_scribe(
         progress_bar=progress_bar,
         init_state=init_state,
         init_params=init_params,
-        stable_update=stable_update
+        stable_update=stable_update,
+        early_stopping=early_stopping
     )
 
     # Create appropriate results class
@@ -559,6 +566,7 @@ def rerun_scribe(
     layer: Optional[str] = None,
     early_stopping: Optional[EarlyStoppingCallback] = None,
     progress_bar: bool = True,
+    stable_update: bool = False,
 ) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]:
     """
     Continue training from a previous SCRIBE results object.
@@ -600,6 +608,8 @@ def rerun_scribe(
         Early stopping callback for monitoring convergence
     progress_bar : bool, optional
         Whether to display progress bar during training (default: True)
+    stable_update: bool = False,
+        Whether to use stable update method (default: False)
 
     Returns
     -------
@@ -675,6 +685,7 @@ def rerun_scribe(
         early_stopping=early_stopping,
         progress_bar=progress_bar,
         init_state=init_state,  # Pass the initialized state
+        stable_update=stable_update,
     )
 
     # Combine the loss histories

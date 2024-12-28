@@ -4,6 +4,7 @@ Utility functions for SCRIBE.
 
 import os
 import jax
+import warnings
 from contextlib import contextmanager
 from typing import Dict, Optional
 import jax.numpy as jnp
@@ -185,3 +186,12 @@ class EarlyStoppingCallback:
             return True, f"No improvement for {self.patience} checks"
         
         return False, None
+
+# ------------------------------------------------------------------------------
+
+@contextmanager
+def suppress_warnings():
+    """Context manager to temporarily suppress warnings."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        yield
