@@ -39,7 +39,7 @@ import numpy as np
 from .models import get_model_and_guide, get_default_priors
 
 # Imports for early stopping
-from .utils import EarlyStoppingCallback, suppress_warnings
+from .utils import EarlyStoppingCallback, suppress_warnings, create_progress_bar_with_early_stopping
 
 # ------------------------------------------------------------------------------
 # Stochastic Variational Inference with Numpyro
@@ -51,8 +51,7 @@ from .utils import EarlyStoppingCallback, suppress_warnings
 
 class ScribeSVI(SVI):
     """
-    Extension of Numpyro's SVI class with enhanced progress tracking and early
-    stopping.
+    Extension of Numpyro's SVI class with enhanced progress tracking and early stopping.
     """
     def run(
         self,
@@ -67,8 +66,7 @@ class ScribeSVI(SVI):
         **kwargs
     ) -> SVIRunResult:
         """
-        Run Stochastic Variational Inference with progress tracking and early
-        stopping.
+        Run Stochastic Variational Inference with progress tracking and early stopping.
         
         Parameters
         ----------
@@ -77,108 +75,97 @@ class ScribeSVI(SVI):
         n_steps : int
             Number of optimization steps
         model_type : str, optional
-            Type of model being used (e.g., "nbdm", "zinb")
+            Type of model being used (default: "nbdm")
         early_stopping : EarlyStoppingCallback, optional
             Callback for early stopping criteria
         progress_bar : bool, optional
             Whether to show progress bar (default: True)
         init_state : SVIState, optional
-            If not None, begin SVI from this state
+            Initial state for continuing training
         init_params : dict, optional
-            If not None, initialize params with these values
+            Initial parameters for starting training
+        stable_update : bool, optional
+            Whether to use stable update method (default: False)
         **kwargs : dict
             Additional arguments passed to the model/guide
-        stable_update: bool, optional
-            Whether to use stable update method (default: False)
             
         Returns
         -------
         SVIRunResult
-            Named tuple containing: - params: Dictionary of optimized parameters
-            - state: Final SVIState - losses: Array of loss values during
-            optimization
+            Named tuple containing optimized parameters, final state, and losses
         """
-        # Initialize or use provided state
-        if init_state is not None:
-            state = init_state
-        else:
-            state = self.init(rng_key, init_params=init_params, **kwargs)
-            
+        # Initialize state
+        if init_state is None:
+            init_state = self.init(rng_key, init_params=init_params, **kwargs)
+        state = init_state
         losses = []
-        
-        # Get initial loss for progress tracking
+
+        # Get initial loss
         with contextlib.redirect_stdout(io.StringIO()):
-            loss = self.evaluate(state, **kwargs)
-        
-        # Create progress bar description
-        desc = f"[{model_type}] init loss: {loss:.3f}"
-        
-        # Setup progress tracking
-        pbar = None
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                loss = self.evaluate(state, **kwargs)
+        losses.append(loss)
+
         if progress_bar:
-            pbar = tqdm(
-                total=n_steps,
-                desc=desc,
-                position=0,
-                leave=True,
-                ncols=100,
-                file=sys.stdout,
-                mininterval=0.1
+            # Create progress tracking infrastructure
+            progress_wrapper, check_stop = create_progress_bar_with_early_stopping(
+                n_steps,
+                early_stopping,
+                check_every=early_stopping.check_every if early_stopping else 100
             )
-            
-        try:
-            for step in range(n_steps):
-                # Capture stdout to prevent unwanted prints
-                with suppress_warnings():
+
+            # Define update step for progress tracking
+            def update_step(i, state):
+                if stable_update:
+                    state_new, loss = self.stable_update(state, **kwargs)
+                    if jnp.isfinite(loss):
+                        state = state_new
+                else:
+                    state, loss = self.update(state, **kwargs)
+                losses.append(loss)
+                return state, loss
+
+            # Wrap update step with progress tracking
+            wrapped_update = progress_wrapper(update_step)
+
+            # Run optimization with progress tracking
+            try:
+                for step in range(n_steps):
+                    state, loss, should_stop = wrapped_update(step, state)
+                    if should_stop:
+                        break
+            except KeyboardInterrupt:
+                print("\nTraining interrupted by user")
+
+            # Check if we stopped early
+            stopped_early, reason = check_stop()
+            if stopped_early:
+                print(f"Training stopped with reason: {reason}")
+
+        else:
+            # Run optimization without progress tracking
+            try:
+                for step in range(n_steps):
                     if stable_update:
                         state_new, loss = self.stable_update(state, **kwargs)
                         if jnp.isfinite(loss):
                             state = state_new
                     else:
                         state, loss = self.update(state, **kwargs)
-                    
-                losses.append(loss)
-                
-                # Update progress bar if enabled
-                if pbar is not None:
-                    window_size = min(100, len(losses))
-                    avg_loss = jnp.mean(jnp.array(losses[-window_size:]))
-                    
-                    pbar.set_description(
-                        f"[{model_type}] init loss: {losses[0]:.3f}, "
-                        f"avg loss: {avg_loss:.3f}"
-                    )
-                    pbar.update(1)
-                    pbar.refresh()
-                    
-                # Early stopping check
-                if early_stopping is not None:
-                    should_stop, reason = early_stopping(
-                        step, 
-                        loss,
-                        self.get_params(state)
-                    )
-                    
-                    if should_stop:
-                        if pbar is not None:
-                            pbar.write(f"\nStopping early: {reason}")
-                        break
-                            
-                # Use best parameters if available
-                if early_stopping is not None and early_stopping.best_params is not None:
-                    state = state._replace(optim_state=early_stopping.best_params)
-                        
-        except KeyboardInterrupt:
-            if pbar is not None:
-                pbar.write("\nInterrupted by user")
-                
-        finally:
-            if pbar is not None:
-                pbar.close()
-                
-        # Return SVIRunResult with all required fields
+                    losses.append(loss)
+
+                    # Check early stopping
+                    if early_stopping is not None and step % early_stopping.check_every == 0:
+                        should_stop, reason = early_stopping(step, loss, self.get_params(state))
+                        if should_stop:
+                            print(f"\nStopping early: {reason}")
+                            break
+            except KeyboardInterrupt:
+                print("\nTraining interrupted by user")
+
         return SVIRunResult(
-            params=self.get_params(state), 
+            params=self.get_params(state),
             state=state,
             losses=jnp.array(losses)
         )

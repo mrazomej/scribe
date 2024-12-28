@@ -6,9 +6,15 @@ import os
 import jax
 import warnings
 from contextlib import contextmanager
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, Callable
 import jax.numpy as jnp
 from collections import deque
+from threading import Lock
+from tqdm.auto import tqdm as tqdm_auto
+from jax import lax
+from functools import partial
+from jax.experimental import io_callback
+import time
 
 # ------------------------------------------------------------------------------
 
@@ -195,3 +201,135 @@ def suppress_warnings():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         yield
+
+# ------------------------------------------------------------------------------
+# Progress bar with early stopping
+# ------------------------------------------------------------------------------
+
+def create_progress_bar_with_early_stopping(
+    num_steps: int,
+    early_stopping=None,
+    check_every: int = 100,
+) -> Tuple[Callable, Callable]:
+    """
+    Creates progress bar infrastructure for SVI training with early stopping
+    support.
+    
+    Parameters
+    ----------
+    num_steps : int
+        Total number of optimization steps to run
+    early_stopping : Optional[EarlyStoppingCallback]
+        Callback object for early stopping criteria
+    check_every : int
+        Number of steps between early stopping checks
+        
+    Returns
+    -------
+    Tuple[Callable, Callable]
+        Returns:
+            - progress_wrapper: Function to wrap optimization step with progress
+            - should_stop_early: Function to check if early stopping was
+              triggered
+    """
+    # Calculate update rate for ~20 total updates
+    if num_steps > 20:
+        print_rate = int(num_steps / 20)
+    else:
+        print_rate = 1
+    remainder = num_steps % print_rate
+    
+    # Initialize progress bar and early stopping state
+    progress_bar = tqdm_auto(
+        range(num_steps), 
+        desc="Initializing SVI...",
+        leave=True
+    )
+    early_stop_info = {'triggered': False, 'reason': None}
+    
+    def _update_bar(increment, loss=None):
+        """Updates progress bar display"""
+        if loss is not None:
+            progress_bar.set_description(
+                f"Training - Loss: {loss:.3f}", refresh=False
+            )
+        progress_bar.update(increment)
+    
+    def _close_bar(increment, early_stop=False, reason=None):
+        """Closes progress bar"""
+        progress_bar.update(increment)
+        if early_stop and reason:
+            progress_bar.write(f"\nStopping early: {reason}")
+        progress_bar.close()
+    
+    def _check_early_stopping(step, loss, params):
+        """Checks early stopping criteria"""
+        if early_stopping is None:
+            return False
+        
+        should_stop, reason = early_stopping(step, loss, params)
+        if should_stop:
+            early_stop_info['triggered'] = True
+            early_stop_info['reason'] = reason
+        return should_stop
+    
+    def update_progress(iter_num, state, loss):
+        """Updates progress and checks early stopping"""
+        # Initialize progress bar
+        _ = lax.cond(
+            iter_num == 1,
+            lambda _: io_callback(_update_bar, jnp.array(0), loss),
+            lambda _: None,
+            operand=None,
+        )
+        
+        # Regular progress updates
+        _ = lax.cond(
+            iter_num % print_rate == 0,
+            lambda _: io_callback(_update_bar, jnp.array(print_rate), loss),
+            lambda _: None,
+            operand=None,
+        )
+        
+        # Early stopping check
+        if early_stopping is not None and iter_num % check_every == 0:
+            should_stop = io_callback(
+                _check_early_stopping,
+                None,
+                iter_num,
+                loss,
+                state
+            )
+            if should_stop:
+                io_callback(
+                    _close_bar,
+                    None,
+                    remainder,
+                    True,
+                    early_stop_info['reason']
+                )
+                return True
+        
+        # Final update
+        _ = lax.cond(
+            iter_num == num_steps,
+            lambda _: io_callback(_close_bar, None, remainder),
+            lambda _: None,
+            operand=None,
+        )
+        
+        return False
+    
+    def progress_bar_wrapper(func):
+        """Wraps optimization step with progress updates"""
+        def wrapper_progress(i, state):
+            new_state, loss = func(i, state)
+            should_stop = update_progress(i + 1, new_state, loss)
+            return new_state, loss, should_stop
+        return wrapper_progress
+    
+    def should_stop_early():
+        """Checks if early stopping was triggered"""
+        return early_stop_info['triggered'], early_stop_info['reason']
+    
+    return progress_bar_wrapper, should_stop_early
