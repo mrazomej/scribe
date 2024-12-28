@@ -1,53 +1,179 @@
-# `scrappy`-- Amortized Inference of Single-Cell RNA Seq Data
-This repository houses all the code for scrappy.
+# SCRIBE: Single-Cell RNA-seq Inference using Bayesian Estimation
+
+SCRIBE is a `Python` package for analyzing single-cell RNA sequencing
+(scRNA-seq) data using variational inference based on `Numpyro`—a `Jax`-based
+probabilistic programming library with GPU acceleration. It provides a
+collection of probabilistic models and inference tools specifically designed for
+scRNA-seq count data.
+
+## Features
+
+- Multiple probabilistic models for scRNA-seq data analysis
+- Efficient variational inference using JAX and Numpyro
+- Support for both full-batch and mini-batch inference
+- Integration with AnnData objects
+- Comprehensive visualization tools for posterior analysis
+- GPU acceleration support
+
+## Available Models
+
+SCRIBE includes several probabilistic models for scRNA-seq data:
+
+1. **Negative Binomial-Dirichlet Multinomial (NBDM)**
+   - Models both count magnitudes and proportions
+   - Accounts for overdispersion in count data
+
+2. **Zero-Inflated Negative Binomial (ZINB)**
+   - Handles excess zeros in scRNA-seq data
+   - Models technical and biological dropouts
+   - Includes gene-specific dropout rates
+
+3. **Negative Binomial with Variable Capture Probability (NBVCP)**
+   - Accounts for cell-specific mRNA capture efficiency
+   - Models technical variation in library preparation
+   - Suitable for datasets with varying sequencing depths per cell
+
+4. **Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVCP)**
+   - Combines zero-inflation and variable capture probability
+   - Most comprehensive model for technical variation
+   - Handles both dropouts and capture efficiency
 
 ## Installation
 
-1. Clone the repository:
+### Using pip
 
-    ```shell
-    git clone git@github.com:gchure/scrappy.git
-    ```
+```bash
+pip install scribe
+```
 
-2. Navigate to the project directory:
+### Development Installation
 
-    ```shell
-    cd scrappy
-    ```
+For the latest development version:
 
-3. Install [Poetry](https://python-poetry.org/docs/) following their instructions
+```bash
+git clone https://github.com/mrazomej/scribe.git
+cd scribe
+pip install -e ".[dev]"
+```
 
+### Docker Installation
 
-3. Install the project dependencies using Poetry:
+```bash
+# Build the Docker image
+docker build -t scribe .
 
-    ```shell
-    poetry install
-    ```
+# Run the container
+docker run --gpus all -it scribe
+```
+
+## Quick Start
+
+Here's a simple example of how to use SCRIBE:
+
+```python
+import scribe
+from jax import random
+
+# Load your data (using AnnData)
+import anndata as ad
+adata = ad.read_h5ad("your_data.h5ad")
+
+# Run inference
+results = scribe.run_scribe(
+    adata,
+    model_type="zinb",  # Choose your model
+    n_steps=100_000,    # Number of optimization steps
+    batch_size=512,     # Mini-batch size
+    rng_key=random.PRNGKey(0)
+)
+
+# Generate posterior predictive samples
+ppc_samples = results.ppc_samples(n_samples=100)
+
+# Visualize results
+scribe.viz.plot_parameter_posteriors(results)
+```
+
+## Advanced Usage
+
+### Model Selection
+
+Choose the appropriate model based on your data characteristics:
+
+- Use `NBDM` for well-behaved datasets with minimal technical artifacts.
+- Use `ZINB` when dropout is a significant concern.
+- Use `NBVCP` when capture efficiency varies significantly between cells.
+- Use `ZINBVCP` when both dropout and capture efficiency are concerns.
+
+### Customizing Inference
+
+```python
+# Custom prior parameters
+prior_params = {
+    'p_prior': (1.0, 1.0),
+    'r_prior': (2.0, 0.1),
+    'gate_prior': (1.0, 1.0)
+}
+
+# Run inference with custom parameters
+results = scribe.run_scribe(
+    adata,
+    model_type="zinb",
+    prior_params=prior_params,
+    n_steps=200_000,
+    batch_size=1024
+)
+```
+
+### GPU Acceleration
+
+SCRIBE automatically uses GPU if available. To explicitly control device usage:
+
+```python
+with scribe.utils.use_cpu():
+    # Force CPU execution
+    results = scribe.run_scribe(adata)
+```
+
+## Documentation
+
+For detailed documentation, please visit [our documentation
+site](https://scribe.readthedocs.io/).
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing
+Guidelines](CONTRIBUTING.md) for more information.
+
+## Citation
+
+If you use SCRIBE in your research, please cite:
+
+```bibtex
+@software{scribe2024,
+  author = {Razo, Manuel},
+  title = {SCRIBE: Single-Cell RNA-seq Inference using Bayesian Estimation},
+  year = {2024},
+  publisher = {GitHub},
+  url = {https://github.com/mrazomej/scribe}
+}
+```
 
 ## License
-This software is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-The text of the license is as follows:
 
-```
-MIT License
+This project is licensed under the terms of the [LICENSE](LICENSE) file.
 
-Copyright (c) 2024 Manuel Razo Mejia & Griffin Chure
+## Acknowledgments
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+SCRIBE builds upon several excellent libraries:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- [JAX](https://github.com/google/jax) for automatic differentiation and GPU acceleration
+- [Numpyro](https://github.com/pyro-ppl/numpyro) for probabilistic programming
+- [AnnData](https://anndata.readthedocs.io/) for data management
+- [Matplotlib](https://matplotlib.org/) and [Seaborn](https://seaborn.pydata.org/) for visualization
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+## Support
+
+For questions and support:
+
+- Create an issue in the [GitHub repository](https://github.com/mrazomej/scribe/issues)
