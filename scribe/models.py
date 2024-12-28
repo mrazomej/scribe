@@ -240,7 +240,7 @@ def zinb_model(
     base_dist = dist.NegativeBinomialProbs(r, p)
     
     # Create zero-inflated distribution
-    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
 
     # If we have observed data, condition on it
     if counts is not None:
@@ -405,7 +405,7 @@ def nbvcp_model(
                 # Likelihood for the counts - one for each cell
                 numpyro.sample(
                     "counts", 
-                    dist.NegativeBinomialProbs(r, p_hat), 
+                    dist.NegativeBinomialProbs(r, p_hat).to_event(1), 
                     obs=counts
                 )
         else:
@@ -419,7 +419,7 @@ def nbvcp_model(
                 # Likelihood for the counts - one for each cell
                 numpyro.sample(
                     "counts", 
-                    dist.NegativeBinomialProbs(r, p_hat[idx]), 
+                    dist.NegativeBinomialProbs(r, p_hat[idx]).to_event(1), 
                     obs=counts[idx]
                 )
     else:
@@ -572,7 +572,7 @@ def zinbvcp_model(
                 # Create base negative binomial distribution with adjusted probabilities
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
                 # Create zero-inflated distribution
-                zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+                zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
                 # Likelihood for the counts - one for each cell
                 numpyro.sample("counts", zinb, obs=counts)
         else:
@@ -586,7 +586,7 @@ def zinbvcp_model(
                 # Create base negative binomial distribution with adjusted probabilities
                 base_dist = dist.NegativeBinomialProbs(r, p_hat[idx])
                 # Create zero-inflated distribution
-                zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+                zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
                 # Likelihood for the counts - one for each cell
                 numpyro.sample("counts", zinb, obs=counts[idx])
     else:
