@@ -264,8 +264,7 @@ def zinb_model(
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Make the distribution return a vector of length n_genes
-            dist_zinb = zinb.to_event(1)
-            counts = numpyro.sample("counts", dist_zinb)
+            counts = numpyro.sample("counts", zinb)
 
 # ------------------------------------------------------------------------------
 # Beta-Gamma-Beta Variational Posterior for Zero-Inflated Negative Binomial

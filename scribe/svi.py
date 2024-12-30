@@ -102,6 +102,7 @@ def run_inference(
     prior_params: Optional[Dict] = None,
     cells_axis: int = 0,
     custom_args: Optional[Dict] = None,
+    stable_update: bool = True,
 ) -> numpyro.infer.svi.SVIRunResult:
     """
     Run stochastic variational inference on the provided count data.
@@ -126,15 +127,15 @@ def run_inference(
         - "zinb": Zero-Inflated Negative Binomial model
     prior_params : Dict, optional
         Dictionary of prior parameters specific to the model.
-        For built-in models:
-        - "nbdm": {'p_prior': (1,1), 'r_prior': (2,0.1)}
-        - "zinb": {'p_prior': (1,1), 'r_prior': (2,0.1), 'gate_prior': (1,1)}
-        For custom models: any parameters required by the model.
     cells_axis : int, optional
         Axis along which cells are arranged. 0 means cells are rows (default), 1
         means cells are columns.
     custom_args : Dict, optional
         Dictionary of additional arguments to pass to any custom model.
+    stable_update : bool, optional
+        Whether to use stable update method. Default is True. If true,  returns
+        the current state if the the loss or the new state contains invalid
+        values.
 
     Returns
     -------
@@ -178,6 +179,7 @@ def run_inference(
     return svi_instance.run(
         rng_key,
         n_steps,
+        stable_update=stable_update,
         **model_args
     )
 
@@ -251,6 +253,7 @@ def run_scribe(
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     cells_axis: int = 0,
     layer: Optional[str] = None,
+    stable_update: bool = True,
 ) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]:
     """Run the complete SCRIBE inference pipeline.
     
@@ -285,6 +288,10 @@ def run_scribe(
         means cells are columns.
     layer : str, optional
         If counts is AnnData, specifies which layer to use. If None, uses .X
+    stable_update : bool, optional
+        Whether to use stable update method. Default is True. If true, returns
+        the current state if the the loss or the new state contains invalid
+        values.
 
     Returns
     -------
@@ -326,12 +333,13 @@ def run_scribe(
     svi_results = run_inference(
         svi,
         rng_key,
-        count_data,
+        jnp.array(count_data),
         n_steps=n_steps,
         batch_size=batch_size,
         model_type=model_type,
         prior_params=prior_params,
-        cells_axis=0
+        cells_axis=0,
+        stable_update=stable_update
     )
 
     # Create appropriate results class
@@ -379,6 +387,7 @@ def rerun_scribe(
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     cells_axis: int = 0,
     layer: Optional[str] = None,
+    stable_update: bool = True,
 ) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]:
     """
     Continue training from a previous SCRIBE results object.
@@ -416,6 +425,10 @@ def rerun_scribe(
         1 means cells are columns
     layer : str, optional
         If counts is AnnData, specifies which layer to use. If None, uses .X
+    stable_update : bool, optional
+        Whether to use stable update method. Default is True. If true,  returns
+        the current state if the the loss or the new state contains invalid
+        values.
 
     Returns
     -------
@@ -430,15 +443,17 @@ def rerun_scribe(
             count_data = count_data.toarray()
         count_data = jnp.array(count_data)
     else:
-        count_data = counts
+        count_data = jnp.array(counts)
         adata = None
 
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = count_data.shape
+        count_data = jnp.array(count_data)
     else:
         n_genes, n_cells = count_data.shape
         count_data = count_data.T  # Transpose to make cells rows
+        count_data = jnp.array(count_data)
 
     # Verify dimensions match
     if n_genes != results.n_genes:

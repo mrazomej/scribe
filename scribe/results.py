@@ -165,9 +165,7 @@ class BaseScribeResults(ABC):
             # Get indices from list/array
             indices = jnp.array(index)
             # Initialize boolean index
-            bool_index = jnp.zeros(self.n_genes, dtype=bool)
-            # Set True for the given indices
-            bool_index = jnp.where(jnp.isin(jnp.arange(self.n_genes), indices), True, bool_index)
+            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
             # Set index to boolean index
             index = bool_index
 
