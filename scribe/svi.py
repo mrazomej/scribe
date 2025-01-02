@@ -503,6 +503,7 @@ def rerun_scribe(
         rng_key,
         n_steps,
         init_state=svi_state,
+        stable_update=stable_update,
         **model_args
     )
 
