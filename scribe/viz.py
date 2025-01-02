@@ -12,7 +12,7 @@ import scipy.stats as stats
 # Import typing
 from typing import Union
 
-from .stats import compute_histogram_credible_regions, compute_ecdf_credible_regions
+from .stats import compute_histogram_credible_regions
 from .results import NBDMResults, ZINBResults
 
 # ------------------------------------------------------------------------------
@@ -287,6 +287,7 @@ def plot_histogram_credible_regions(
     median_alpha=0.2,
     median_linewidth=1.5,
     label_prefix='',
+    max_bin=None,
 ):
     """
     Plot credible regions as fill_between on a given axis.
@@ -315,6 +316,9 @@ def plot_histogram_credible_regions(
         Line width for median line (default: 1.5)
     label_prefix : str, optional
         Prefix for legend labels (default: '')
+    max_bin : int, optional
+        Maximum bin index to plot. If provided, only bins up to this index will
+        be shown. Default is None (show all bins).
         
     Returns
     -------
@@ -323,6 +327,11 @@ def plot_histogram_credible_regions(
     """
     bin_edges = hist_results['bin_edges']
     x = bin_edges[:-1]  # Use left edges for plotting
+
+    # Apply max_bin limit if specified
+    if max_bin is not None:
+        x = x[:max_bin]
+        bin_edges = bin_edges[:max_bin+1]  # Include one more edge for proper plotting
     
     # Sort credible regions from largest to smallest for proper layering
     cr_values = sorted(hist_results['regions'].keys(), reverse=True)
@@ -350,8 +359,8 @@ def plot_histogram_credible_regions(
         region = hist_results['regions'][cr]
         ax.fill_between(
             x,
-            region['lower'],
-            region['upper'],
+            region['lower'][:max_bin] if max_bin is not None else region['lower'],
+            region['upper'][:max_bin] if max_bin is not None else region['upper'],
             color=color,
             alpha=alpha,
             label=f'{label_prefix}{cr}% CR'
@@ -363,7 +372,7 @@ def plot_histogram_credible_regions(
         median = hist_results['regions'][cr_values[0]]['median']
         ax.plot(
             x,
-            median,
+            median[:max_bin] if max_bin is not None else median,
             color=median_color,
             alpha=median_alpha,
             linewidth=median_linewidth,
@@ -385,6 +394,7 @@ def plot_histogram_credible_regions_stairs(
     median_alpha=0.2,
     median_linewidth=1.5,
     label_prefix='',
+    max_bin=None,
 ):
     """
     Plot credible regions as fill_between on a given axis.
@@ -413,6 +423,9 @@ def plot_histogram_credible_regions_stairs(
         Line width for median line (default: 1.5)
     label_prefix : str, optional
         Prefix for legend labels (default: '')
+    max_bin : int, optional
+        Maximum bin index to plot. If provided, only bins up to this index will
+        be shown. Default is None (show all bins).
 
     Returns
     -------
@@ -420,6 +433,10 @@ def plot_histogram_credible_regions_stairs(
         The axis with plots added
     """
     bin_edges = hist_results['bin_edges']
+
+    # Apply max_bin limit if specified
+    if max_bin is not None:
+        bin_edges = bin_edges[:max_bin + 1]
 
     # Sort credible regions from largest to smallest for proper layering
     cr_values = sorted(hist_results['regions'].keys(), reverse=True)
@@ -445,13 +462,18 @@ def plot_histogram_credible_regions_stairs(
 
     # Plot credible regions
     for cr, color, alpha in zip(cr_values, colors, alphas):
+        # Get region data
         region = hist_results['regions'][cr]
-        # Use stairs for the upper and lower bounds
+        # Apply max_bin limit to the data if specified
+        upper = region['upper'][:max_bin] if max_bin is not None else region['upper']
+        lower = region['lower'][:max_bin] if max_bin is not None else region['lower']
+
+        # Plot credible region
         ax.stairs(
-            region['upper'],
+            upper,
             bin_edges,
             fill=True,
-            baseline=region['lower'],
+            baseline=lower,
             color=color,
             alpha=alpha,
             label=f'{label_prefix}{cr}% CR'
@@ -460,6 +482,11 @@ def plot_histogram_credible_regions_stairs(
     # Plot median
     if plot_median:
         median = hist_results['regions'][cr_values[0]]['median']
+        # Apply max_bin limit to median if specified
+        if max_bin is not None:
+            median = median[:max_bin]
+
+        # Plot median
         ax.stairs(
             median,
             bin_edges,
