@@ -12,14 +12,33 @@ import pandas as pd
 
 # ------------------------------------------------------------------------------
 
-@partial(jit, static_argnums=(1,3))
+@partial(jit, static_argnums=(1,3,4))
 def _compute_log_liks(
     params_dict: Dict, 
     likelihood_fn: Callable, 
     counts: jnp.ndarray, 
     batch_size: Optional[int] = None,
+    replace_nans: bool = True,
+    replace_nans_value: float = -1e-7,
 ) -> jnp.ndarray:
-    """JIT-compiled log likelihood computation for multiple parameter samples."""
+    """
+    JIT-compiled log likelihood computation for multiple parameter samples.
+    
+    Parameters
+    ----------
+    params_dict : Dict
+        Dictionary of parameter samples
+    likelihood_fn : Callable
+        Function to compute log likelihood
+    counts : jnp.ndarray
+        Observed count data
+    batch_size : Optional[int], default=None
+        Size of mini-batches used for likelihood computation
+    replace_nans : bool, default=True
+        Whether to replace NaNs with minimum float32 value
+    replace_nans_value : float, default=jnp.finfo(jnp.float32).min
+        Value to replace NaNs with
+    """
     # Get number of samples
     n_samples = params_dict[next(iter(params_dict))].shape[0]
     
@@ -28,7 +47,11 @@ def _compute_log_liks(
         # Extract parameters for this sample
         params_i = {k: v[i] for k, v in params_dict.items()}
         # Compute log likelihood
-        return likelihood_fn(counts, params_i, batch_size)
+        log_liks = likelihood_fn(counts, params_i, batch_size)
+        # Replace NaNs with minimum float32 value if requested
+        if replace_nans:
+            log_liks = jnp.nan_to_num(log_liks, nan=replace_nans_value)
+        return log_liks
     
     # Vectorize over samples
     return vmap(compute_sample_lik)(jnp.arange(n_samples))
@@ -36,20 +59,136 @@ def _compute_log_liks(
 # ------------------------------------------------------------------------------
 
 @jit
-def _compute_waic_stats(log_liks: jnp.ndarray) -> Tuple[float, float, float]:
-    """JIT-compiled WAIC statistics computation."""
-    # Compute log predictive density
-    lpd = jnp.mean(log_liks, axis=0)
+def _compute_lppd(log_liks: jnp.ndarray) -> float:
+    """
+    JIT-compiled log pointwise predictive density computation. This is computed
+    as:
 
-    # Compute variance of log predictive density
-    var_lpd = jnp.var(log_liks, axis=0)
+    lppd = ∑ᵢ log(1/S ∑ⱼ exp(log p(yᵢ|θⱼ)))
 
-    # Compute effective number of parameters
-    p_eff = jnp.sum(var_lpd)
+    where i indexes cells, j indexes samples, S is number of posterior samples, 
+    yᵢ is the observed data for cell i, and θⱼ is the j-th parameter sample.
+    
+    Parameters
+    ----------
+    log_liks : jnp.ndarray
+        Log likelihoods for each sample and cell
+    """
+    # Use log-sum-exp trick for numerical stability
+    # First find the maximum log likelihood for each cell
+    max_log_liks = jnp.max(log_liks, axis=0)
+    
+    # Subtract max and exponentiate (stable)
+    exp_centered = jnp.exp(log_liks - max_log_liks)
+    
+    # Average over samples and take log, adding back the max
+    # log(mean(exp(x))) = log(sum(exp(x))/n) = log(sum(exp(x))) - log(n)
+    lppd = jnp.sum(
+        max_log_liks + jnp.log(jnp.mean(exp_centered, axis=0))
+    )
+    
+    return lppd
+
+# ------------------------------------------------------------------------------
+
+@jit
+def _compute_p_waic_1(
+    log_liks: jnp.ndarray, lppd: Optional[float] = None
+) -> float:
+    """
+    JIT-compiled effective adjustment for WAIC version 1. This is computed as:
+
+    p_waic_1 = 2 ∑ᵢ [log(1/S ∑ⱼ exp(log p(yᵢ|θⱼ))) - 1/S ∑ⱼ log(p(yᵢ|θⱼ))],
+
+    where i indexes cells, j indexes samples, S is number of posterior samples,
+    yᵢ is the observed data for cell i, and θⱼ is the j-th parameter sample.
+    
+    Parameters
+    ----------
+    log_liks : jnp.ndarray
+        Log likelihoods for each sample and cell
+    lppd : Optional[float], default=None
+        Pre-computed log pointwise predictive density. If None, will be
+        computed.
+    """
+    # Compute lppd if not provided
+    if lppd is None:
+        lppd = _compute_lppd(log_liks)
+
+    # Compute mean log likelihood for each cell
+    mean_log_liks = jnp.sum(jnp.mean(log_liks, axis=0))
+    
+    # Compute p_waic_1
+    p_waic_1 = 2 * (lppd - mean_log_liks)
+
+    return p_waic_1
+
+# ------------------------------------------------------------------------------
+
+@jit
+def _compute_p_waic_2(log_liks: jnp.ndarray) -> float:
+    """
+    JIT-compiled effective adjustment for WAIC version 2. This is computed as:
+
+    p_waic_2 = ∑ᵢ var(log p(yᵢ|θⱼ))
+
+    where i indexes cells, j indexes samples, and θⱼ is the j-th parameter
+    sample.
+
+    Parameters
+    ----------
+    log_liks : jnp.ndarray
+        Log likelihoods for each sample and cell
+    """
+    # Compute variance of log likelihoods
+    var_log_liks = jnp.var(log_liks, axis=0)
+    
+    # Compute p_waic_2
+    return jnp.sum(var_log_liks)
+
+# ------------------------------------------------------------------------------
+
+@jit
+def _compute_waic_stats(
+    log_liks: jnp.ndarray
+) -> Tuple[float, float, float, float, float]:
+    """
+    JIT-compiled computation of WAIC statistics.
+    
+    Computes the Widely Applicable Information Criterion (WAIC) statistics
+    including WAIC1, WAIC2, and their corresponding effective parameter counts
+    p_waic_1 and p_waic_2.
+    
+    Parameters
+    ----------
+    log_liks : jnp.ndarray
+        Array of shape (n_samples, n_cells) containing log likelihoods for each
+        posterior sample and cell
+        
+    Returns
+    -------
+    Tuple[float, float, float, float]
+        A tuple containing:
+            - waic_1: WAIC computed using p_waic_1 penalty
+            - waic_2: WAIC computed using p_waic_2 penalty  
+            - p_waic_1: Effective parameter count computed via mean log
+              likelihood
+            - p_waic_2: Effective parameter count computed via variance
+            - lppd: Log pointwise predictive density
+    """
+    # Compute lppd
+    lppd = _compute_lppd(log_liks)
+
+    # Compute p_waic_1
+    p_waic_1 = _compute_p_waic_1(log_liks, lppd)
+
+    # Compute p_waic_2
+    p_waic_2 = _compute_p_waic_2(log_liks)
 
     # Compute WAIC
-    waic = -2 * (jnp.sum(lpd) - p_eff)
-    return waic, p_eff, jnp.sum(lpd)
+    waic_1 = -2 * (lppd - p_waic_1)
+    waic_2 = -2 * (lppd - p_waic_2)
+    return waic_1, waic_2, p_waic_1, p_waic_2, lppd
 
 # ------------------------------------------------------------------------------
 
@@ -88,23 +227,16 @@ def compute_waic(
     -------
     Dict
         Dictionary containing:
-            waic : float
-                The computed WAIC value (-2 times the computed log pointwise
-                predictive density plus a correction for effective number of
-                parameters)
-            p_eff : float
-                The effective number of parameters (computed from the variance
-                of individual terms in the log predictive density)
-            lpd : float
-                The total log pointwise predictive density
-            pointwise : Dict
-                Dictionary containing cell-wise statistics:
-                    lpd : array
-                        Log predictive density for each observation
-                    p_eff : array
-                        Effective parameters (variance) for each observation
-                    waic : array
-                        WAIC contribution from each observation
+            waic_1 : float
+                WAIC computed using p_waic_1 penalty
+            waic_2 : float
+                WAIC computed using p_waic_2 penalty
+            p_waic_1 : float
+                Effective parameter count computed via mean log likelihood
+            p_waic_2 : float
+                Effective parameter count computed via variance
+            lppd : float
+                The log pointwise predictive density
     """
     # Get posterior samples if not already present
     if (results.posterior_samples is None or 
@@ -123,28 +255,32 @@ def compute_waic(
     log_liks = _compute_log_liks(params_dict, likelihood_fn, counts, batch_size)
     
     # Compute WAIC statistics
-    waic, p_eff, lpd_sum = _compute_waic_stats(log_liks)
-    
-    # Compute pointwise statistics
-    pointwise_lpd = jnp.mean(log_liks, axis=0)
-    pointwise_var = jnp.var(log_liks, axis=0)
+    waic_1, waic_2, p_waic_1, p_waic_2, lppd = _compute_waic_stats(log_liks)
     
     return {
-        'waic': float(waic),
-        'p_eff': float(p_eff),
-        'lpd': float(lpd_sum),
-        'pointwise': {
-            'lpd': pointwise_lpd,
-            'p_eff': pointwise_var,
-            'waic': -2 * (pointwise_lpd - pointwise_var)
-        }
+        'waic_1': float(waic_1),
+        'waic_2': float(waic_2), 
+        'p_waic_1': float(p_waic_1),
+        'p_waic_2': float(p_waic_2),
+        'lppd': float(lppd)
     }
 
 # ------------------------------------------------------------------------------
 
 @jit
-def _compute_weights(waic_values: jnp.ndarray) -> jnp.ndarray:
-    """JIT-compiled weight computation."""
+def _compute_waic_weights(waic_values: jnp.ndarray) -> jnp.ndarray:
+    """
+    JIT-compiled weight computation for WAIC. This is computed as:
+
+    wᵢ = exp(-0.5 * (WAICᵢ - min(WAIC))) / ∑ⱼ exp(-0.5 * (WAICⱼ - min(WAIC))),
+
+    where i and j index models.
+    
+    Parameters
+    ----------
+    waic_values : jnp.ndarray
+        Array of WAIC values
+    """
     # Compute minimum WAIC
     min_waic = jnp.min(waic_values)
 
@@ -156,6 +292,8 @@ def _compute_weights(waic_values: jnp.ndarray) -> jnp.ndarray:
 
     # Normalize weights
     return weights / jnp.sum(weights)
+
+# ------------------------------------------------------------------------------
 
 def compare_models(
     results_list: List[BaseScribeResults],
@@ -189,10 +327,11 @@ def compare_models(
     pd.DataFrame
         DataFrame containing model comparison metrics:
             - Model type
-            - WAIC
-            - Effective parameters
-            - Delta WAIC (difference from best model)
-            - WAIC weights
+            - WAIC1 and WAIC2
+            - Effective parameters (p_waic_1 and p_waic_2)
+            - Delta WAIC (difference from best model) for both versions
+            - WAIC weights for both versions
+            - Log pointwise predictive density (lppd)
     """
     # If cells_axis is 1, transpose counts
     if cells_axis == 1:
@@ -212,24 +351,31 @@ def compare_models(
         )
         waic_results.append({
             'model': results.model_type,
-            'waic': waic['waic'],
-            'p_eff': waic['p_eff'],
-            'lpd': waic['lpd']
+            'waic_1': waic['waic_1'],
+            'waic_2': waic['waic_2'],
+            'p_waic_1': waic['p_waic_1'],
+            'p_waic_2': waic['p_waic_2'],
+            'lppd': waic['lppd']
         })
     
     # Create DataFrame
     df = pd.DataFrame(waic_results)
     
-    # Compute weights using JIT
-    waic_values = jnp.array(df['waic'])
-    weights = _compute_weights(waic_values)
+    # Compute weights using JIT for both WAIC versions
+    waic1_values = jnp.array(df['waic_1'])
+    waic2_values = jnp.array(df['waic_2'])
+    weights1 = _compute_waic_weights(waic1_values)
+    weights2 = _compute_waic_weights(waic2_values)
     
-    # Add delta WAIC and weights to DataFrame
-    min_waic = df['waic'].min()
-    df['delta_waic'] = df['waic'] - min_waic
-    df['weight'] = weights
+    # Add delta WAIC and weights to DataFrame for both versions
+    min_waic1 = df['waic_1'].min()
+    min_waic2 = df['waic_2'].min()
+    df['delta_waic_1'] = df['waic_1'] - min_waic1
+    df['delta_waic_2'] = df['waic_2'] - min_waic2
+    df['weight_1'] = weights1
+    df['weight_2'] = weights2
     
-    # Sort by WAIC
-    df = df.sort_values('waic')
+    # Sort by WAIC1
+    df = df.sort_values('waic_1')
     
     return df
