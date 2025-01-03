@@ -5,22 +5,37 @@ Model comparison utilities for SCRIBE.
 import jax.numpy as jnp
 from jax import random, jit, vmap
 import numpy as np
-from typing import List, Dict, Union, Tuple
+from typing import List, Dict, Union, Tuple, Optional, Callable
 from functools import partial
 from .results import BaseScribeResults, NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults
 import pandas as pd
 
-@partial(jit, static_argnums=(3,))
-def _compute_log_liks(
-    params: Dict, 
-    model, 
-    counts: jnp.ndarray, 
-    batch_size: int
-) -> jnp.ndarray:
-    """JIT-compiled log likelihood computation."""
-    return model.log_prob(counts, **params, batch_size=batch_size)
+# ------------------------------------------------------------------------------
 
-@partial(jit, static_argnums=(0,))
+@partial(jit, static_argnums=(1,3))
+def _compute_log_liks(
+    params_dict: Dict, 
+    likelihood_fn: Callable, 
+    counts: jnp.ndarray, 
+    batch_size: Optional[int] = None,
+) -> jnp.ndarray:
+    """JIT-compiled log likelihood computation for multiple parameter samples."""
+    # Get number of samples
+    n_samples = params_dict[next(iter(params_dict))].shape[0]
+    
+    # Define function to compute log likelihood for a single sample
+    def compute_sample_lik(i):
+        # Extract parameters for this sample
+        params_i = {k: v[i] for k, v in params_dict.items()}
+        # Compute log likelihood
+        return likelihood_fn(counts, params_i, batch_size)
+    
+    # Vectorize over samples
+    return vmap(compute_sample_lik)(jnp.arange(n_samples))
+
+# ------------------------------------------------------------------------------
+
+@jit
 def _compute_waic_stats(log_liks: jnp.ndarray) -> Tuple[float, float, float]:
     """JIT-compiled WAIC statistics computation."""
     # Compute log predictive density
@@ -36,58 +51,76 @@ def _compute_waic_stats(log_liks: jnp.ndarray) -> Tuple[float, float, float]:
     waic = -2 * (jnp.sum(lpd) - p_eff)
     return waic, p_eff, jnp.sum(lpd)
 
+# ------------------------------------------------------------------------------
+
 def compute_waic(
     results: BaseScribeResults,
     counts: jnp.ndarray,
     n_samples: int = 1000,
     batch_size: int = 512,
-    rng_key: random.PRNGKey = random.PRNGKey(0)
+    rng_key: random.PRNGKey = random.PRNGKey(0),
+    cells_axis: int = 0,
 ) -> Dict:
     """
-    Compute WAIC (Widely Applicable Information Criterion) for a model.
+    Compute the Widely Applicable Information Criterion (WAIC) for a fitted
+    model.
     
     Parameters
     ----------
     results : BaseScribeResults
-        Results object from model fitting
+        A fitted model results object containing the posterior samples or the
+        ability to generate them
     counts : jnp.ndarray
-        Observed count data
-    n_samples : int
-        Number of posterior samples to use for estimation
-    batch_size : int
-        Batch size for likelihood computation
-    rng_key : random.PRNGKey
-        Random key for reproducibility
-    
+        The observed count data matrix used to compute the likelihood
+    n_samples : int, default=1000
+        Number of posterior samples to use for WAIC computation if samples need
+        to be generated
+    batch_size : int, default=512
+        Size of mini-batches used for likelihood computation to manage memory
+        usage
+    rng_key : random.PRNGKey, default=random.PRNGKey(0)
+        JAX random key for reproducibility when generating posterior samples
+    cells_axis : int, default=0
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
+        
     Returns
     -------
     Dict
         Dictionary containing:
-        - 'waic': WAIC value
-        - 'p_eff': Effective number of parameters
-        - 'lpd': Expected log predictive density
-        - 'pointwise': Point-wise WAIC contributions
+            waic : float
+                The computed WAIC value (-2 times the computed log pointwise
+                predictive density plus a correction for effective number of
+                parameters)
+            p_eff : float
+                The effective number of parameters (computed from the variance
+                of individual terms in the log predictive density)
+            lpd : float
+                The total log pointwise predictive density
+            pointwise : Dict
+                Dictionary containing cell-wise statistics:
+                    lpd : array
+                        Log predictive density for each observation
+                    p_eff : array
+                        Effective parameters (variance) for each observation
+                    waic : array
+                        WAIC contribution from each observation
     """
     # Get posterior samples if not already present
     if (results.posterior_samples is None or 
         'parameter_samples' not in results.posterior_samples):
         results.sample_posterior(rng_key, n_samples)
     
-    # Get model and guide functions
-    model, _ = results.get_model_and_guide()
-    
-    # Initialize array for log likelihoods
-    log_liks = jnp.zeros((n_samples, results.n_cells, results.n_genes))
-    
-    # Vectorize log likelihood computation over samples
-    vmap_log_lik = vmap(
-        lambda params: _compute_log_liks(params, model, counts, batch_size),
-        in_axes=0
-    )
-    
-    # Compute log likelihoods for all samples at once
+    # Get likelihood function and parameters
+    likelihood_fn = results.get_log_likelihood_fn()
     params_dict = results.posterior_samples['parameter_samples']
-    log_liks = vmap_log_lik(params_dict)
+    
+    # If cells_axis is 1, transpose counts
+    if cells_axis == 1:
+        counts = counts.T
+    
+    # Compute log likelihoods directly using _compute_log_liks
+    log_liks = _compute_log_liks(params_dict, likelihood_fn, counts, batch_size)
     
     # Compute WAIC statistics
     waic, p_eff, lpd_sum = _compute_waic_stats(log_liks)
@@ -107,6 +140,8 @@ def compute_waic(
         }
     }
 
+# ------------------------------------------------------------------------------
+
 @jit
 def _compute_weights(waic_values: jnp.ndarray) -> jnp.ndarray:
     """JIT-compiled weight computation."""
@@ -124,10 +159,11 @@ def _compute_weights(waic_values: jnp.ndarray) -> jnp.ndarray:
 
 def compare_models(
     results_list: List[BaseScribeResults],
-    counts: jnp.ndarray,
+    counts: Union[np.ndarray, jnp.ndarray],
     n_samples: int = 1000,
     batch_size: int = 512,
-    rng_key: random.PRNGKey = random.PRNGKey(0)
+    rng_key: random.PRNGKey = random.PRNGKey(0),
+    cells_axis: int = 0,
 ) -> pd.DataFrame:
     """
     Compare multiple models using WAIC.
@@ -144,17 +180,27 @@ def compare_models(
         Batch size for likelihood computation
     rng_key : random.PRNGKey
         Random key for reproducibility
+    cells_axis : int, default=0
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
     
     Returns
     -------
     pd.DataFrame
         DataFrame containing model comparison metrics:
-        - Model type
-        - WAIC
-        - Effective parameters
-        - Delta WAIC (difference from best model)
-        - WAIC weights
+            - Model type
+            - WAIC
+            - Effective parameters
+            - Delta WAIC (difference from best model)
+            - WAIC weights
     """
+    # If cells_axis is 1, transpose counts
+    if cells_axis == 1:
+        counts = counts.T
+    
+    # Convert counts to jnp.ndarray if necessary
+    counts = jnp.array(counts, dtype=jnp.float32)
+    
     # Split RNG key for each model
     rng_keys = random.split(rng_key, len(results_list))
     
