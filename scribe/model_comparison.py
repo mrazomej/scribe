@@ -12,17 +12,15 @@ import pandas as pd
 
 # ------------------------------------------------------------------------------
 
-@partial(jit, static_argnums=(1,3,4))
 def _compute_log_liks(
     params_dict: Dict, 
     likelihood_fn: Callable, 
     counts: jnp.ndarray, 
     batch_size: Optional[int] = None,
-    replace_nans: bool = True,
-    replace_nans_value: float = -1e-7,
+    ignore_nans: bool = False,
 ) -> jnp.ndarray:
     """
-    JIT-compiled log likelihood computation for multiple parameter samples.
+    Log likelihood computation for multiple parameter samples.
     
     Parameters
     ----------
@@ -34,27 +32,26 @@ def _compute_log_liks(
         Observed count data
     batch_size : Optional[int], default=None
         Size of mini-batches used for likelihood computation
-    replace_nans : bool, default=True
-        Whether to replace NaNs with minimum float32 value
-    replace_nans_value : float, default=jnp.finfo(jnp.float32).min
-        Value to replace NaNs with
+    ignore_nans : bool, default=False
+        If True, removes any samples that contain NaNs. 
     """
-    # Get number of samples
     n_samples = params_dict[next(iter(params_dict))].shape[0]
     
-    # Define function to compute log likelihood for a single sample
+    @partial(jit, static_argnums=(0,))
     def compute_sample_lik(i):
-        # Extract parameters for this sample
         params_i = {k: v[i] for k, v in params_dict.items()}
-        # Compute log likelihood
-        log_liks = likelihood_fn(counts, params_i, batch_size)
-        # Replace NaNs with minimum float32 value if requested
-        if replace_nans:
-            log_liks = jnp.nan_to_num(log_liks, nan=replace_nans_value)
-        return log_liks
+        return likelihood_fn(counts, params_i, batch_size)
     
-    # Vectorize over samples
-    return vmap(compute_sample_lik)(jnp.arange(n_samples))
+    # Compute log likelihoods for all samples
+    log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+    
+    if ignore_nans:
+        # Keep only samples that have no NaNs
+        valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=1)
+        # Print fraction of samples removed
+        print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
+        return log_liks[valid_samples]
+    return log_liks
 
 # ------------------------------------------------------------------------------
 
@@ -199,6 +196,7 @@ def compute_waic(
     batch_size: int = 512,
     rng_key: random.PRNGKey = random.PRNGKey(0),
     cells_axis: int = 0,
+    ignore_nans: bool = False,
 ) -> Dict:
     """
     Compute the Widely Applicable Information Criterion (WAIC) for a fitted
@@ -222,6 +220,9 @@ def compute_waic(
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
+    ignore_nans: bool = False,
+        If True, removes any samples that contain NaNs when evaluating the log
+        likelihood.
         
     Returns
     -------
@@ -252,7 +253,9 @@ def compute_waic(
         counts = counts.T
     
     # Compute log likelihoods directly using _compute_log_liks
-    log_liks = _compute_log_liks(params_dict, likelihood_fn, counts, batch_size)
+    log_liks = _compute_log_liks(
+        params_dict, likelihood_fn, counts, batch_size, ignore_nans
+    )
     
     # Compute WAIC statistics
     waic_1, waic_2, p_waic_1, p_waic_2, lppd = _compute_waic_stats(log_liks)
@@ -302,6 +305,7 @@ def compare_models(
     batch_size: int = 512,
     rng_key: random.PRNGKey = random.PRNGKey(0),
     cells_axis: int = 0,
+    ignore_nans: bool = False,
 ) -> pd.DataFrame:
     """
     Compare multiple models using WAIC.
@@ -321,6 +325,9 @@ def compare_models(
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
+    ignore_nans: bool = False,
+        If True, removes any samples that contain NaNs when evaluating the log
+        likelihood.
     
     Returns
     -------
@@ -346,8 +353,10 @@ def compare_models(
     # Compute WAIC for each model
     waic_results = []
     for results, key in zip(results_list, rng_keys):
+        print(f"Computing WAIC for {results.model_type}...")
         waic = compute_waic(
-            results, counts, n_samples, batch_size, key
+            results, counts, n_samples, batch_size, key, 
+            ignore_nans=ignore_nans
         )
         waic_results.append({
             'model': results.model_type,
