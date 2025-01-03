@@ -818,6 +818,7 @@ def nbdm_log_likelihood(
     counts: jnp.ndarray, 
     params: Dict, 
     batch_size: Optional[int] = None,
+    cells_axis: int = 0,
 ) -> jnp.ndarray:
     """Compute log likelihood for NBDM model using plates.
     
@@ -832,11 +833,14 @@ def nbdm_log_likelihood(
     batch_size : Optional[int]
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
+    cells_axis: int = 0,
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
         
     Returns
     -------
     jnp.ndarray
-        Total log likelihood value for the entire dataset
+        Array of log likelihood values for each cell
     """
     # Extract parameters from dictionary
     p = params['p']
@@ -844,20 +848,29 @@ def nbdm_log_likelihood(
     r_total = jnp.sum(r)
     n_cells = counts.shape[0]
     
-    # Get total counts for each cell
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+        counts = jnp.array(counts, dtype=jnp.float32)
+    else:
+        n_genes, n_cells = counts.shape
+        counts = counts.T  # Transpose to make cells rows
+        counts = jnp.array(counts, dtype=jnp.float32)
+       
+    # Compute total counts for each cell
     total_counts = jnp.sum(counts, axis=1)
     
     # If no batch size provided, process all cells at once
     if batch_size is None:
         log_prob_total = dist.NegativeBinomialProbs(r_total, p).log_prob(total_counts)
         log_prob_genes = dist.DirichletMultinomial(r, total_count=total_counts).log_prob(counts)
-        return jnp.sum(log_prob_total + log_prob_genes)
+        return log_prob_total + log_prob_genes
     
+    # Initialize array to store per-cell log probabilities
+    cell_log_probs = jnp.zeros(n_cells)
+
     # Process in batches
-    total_log_prob = 0.0
-    n_batches = (n_cells + batch_size - 1) // batch_size  # Ceiling division
-    
-    for i in range(n_batches):
+    for i in range((n_cells + batch_size - 1) // batch_size):
         # Get indices for current batch
         start_idx = i * batch_size
         end_idx = min((i + 1) * batch_size, n_cells)
@@ -870,10 +883,12 @@ def nbdm_log_likelihood(
         batch_log_prob_total = dist.NegativeBinomialProbs(r_total, p).log_prob(batch_total_counts)
         batch_log_prob_genes = dist.DirichletMultinomial(r, total_count=batch_total_counts).log_prob(batch_counts)
         
-        # Add to total
-        total_log_prob += jnp.sum(batch_log_prob_total + batch_log_prob_genes)
+        # Store batch results
+        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
+            batch_log_prob_total + batch_log_prob_genes
+        )
     
-    return total_log_prob
+    return cell_log_probs
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial (ZINB) likelihood
@@ -883,6 +898,7 @@ def zinb_log_likelihood(
     counts: jnp.ndarray, 
     params: Dict, 
     batch_size: Optional[int] = None,
+    cells_axis: int = 0,
 ) -> jnp.ndarray:
     """
     Compute log likelihood for Zero-Inflated Negative Binomial model.
@@ -899,32 +915,43 @@ def zinb_log_likelihood(
     batch_size : Optional[int]
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
+    cells_axis: int = 0,
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
         
     Returns
     -------
     jnp.ndarray
-        Total log likelihood value for the entire dataset
+        Array of log likelihood values for each cell
     """
     # Extract parameters from dictionary
     p = params['p']
     r = params['r']
     gate = params['gate']
-    n_cells = counts.shape[0]
-    
+       
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+        counts = jnp.array(counts, dtype=jnp.float32)
+    else:
+        n_genes, n_cells = counts.shape
+        counts = counts.T  # Transpose to make cells rows
+        counts = jnp.array(counts, dtype=jnp.float32)
+       
     # If no batch size provided, process all cells at once
     if batch_size is None:
         # Create base Negative Binomial distribution
         base_dist = dist.NegativeBinomialProbs(r, p)
         # Create Zero-Inflated distribution
         zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Return total log probability
-        return jnp.sum(zinb.log_prob(counts))
+        # Return per-cell log probabilities
+        return zinb.log_prob(counts)
     
+    # Initialize array to store per-cell log probabilities
+    cell_log_probs = jnp.zeros(n_cells)
+
     # Process in batches
-    total_log_prob = 0.0
-    n_batches = (n_cells + batch_size - 1) // batch_size
-    
-    for i in range(n_batches):
+    for i in range((n_cells + batch_size - 1) // batch_size):
         # Get indices for current batch
         start_idx = i * batch_size
         end_idx = min((i + 1) * batch_size, n_cells)
@@ -936,11 +963,13 @@ def zinb_log_likelihood(
         base_dist = dist.NegativeBinomialProbs(r, p)
         # Create Zero-Inflated distribution
         zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Add batch log probability to total
-        total_log_prob += jnp.sum(zinb.log_prob(batch_counts))
+        # Store batch log probabilities
+        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
+            zinb.log_prob(batch_counts)
+        )
     
-    return total_log_prob
-
+    return cell_log_probs
+    
 # ------------------------------------------------------------------------------
 # Negative Binomial with Variable Capture Probability (NBVC) likelihood
 # ------------------------------------------------------------------------------
@@ -974,7 +1003,7 @@ def nbvcp_log_likelihood(
     Returns
     -------
     jnp.ndarray
-        Total log likelihood value for the entire dataset
+        Array of log likelihood values for each cell
     """
     # Extract parameters from dictionary
     p = params['p']
@@ -989,7 +1018,7 @@ def nbvcp_log_likelihood(
         n_genes, n_cells = counts.shape
         counts = counts.T  # Transpose to make cells rows
         counts = jnp.array(counts, dtype=jnp.float32)
-    
+       
     # If no batch size provided, process all cells at once
     if batch_size is None:
         # Reshape capture probabilities for broadcasting
@@ -998,14 +1027,14 @@ def nbvcp_log_likelihood(
         p_hat = p_capture_reshaped * (1 - p) / (
             p_capture_reshaped + p * (1 - p_capture_reshaped)
         )
-        # Return total log probability
-        return jnp.sum(dist.NegativeBinomialProbs(r, p_hat).to_event(1).log_prob(counts))
+        # Return per-cell log probabilities
+        return dist.NegativeBinomialProbs(r, p_hat).to_event(1).log_prob(counts)
+
+    # Initialize array to store per-cell log probabilities
+    cell_log_probs = jnp.zeros(n_cells)
     
     # Process in batches
-    total_log_prob = 0.0
-    n_batches = (n_cells + batch_size - 1) // batch_size
-    
-    for i in range(n_batches):
+    for i in range((n_cells + batch_size - 1) // batch_size):
         # Get indices for current batch
         start_idx = i * batch_size
         end_idx = min((i + 1) * batch_size, n_cells)
@@ -1020,13 +1049,12 @@ def nbvcp_log_likelihood(
         p_hat = p_capture_reshaped * (1 - p) / (
             p_capture_reshaped + p * (1 - p_capture_reshaped)
         )
-        # Add batch log probability to total
-        total_log_prob += jnp.sum(
+        # Compute and store batch log probabilities
+        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
             dist.NegativeBinomialProbs(r, p_hat).to_event(1).log_prob(batch_counts)
         )
     
-    return total_log_prob
-
+    return cell_log_probs
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVC)
 # ------------------------------------------------------------------------------
@@ -1035,6 +1063,7 @@ def zinbvcp_log_likelihood(
     counts: jnp.ndarray, 
     params: Dict, 
     batch_size: Optional[int] = None,
+    cells_axis: int = 0,
 ) -> jnp.ndarray:
     """
     Compute log likelihood for Zero-Inflated Negative Binomial with Variable
@@ -1053,19 +1082,30 @@ def zinbvcp_log_likelihood(
     batch_size : Optional[int]
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
+    cells_axis: int = 0,
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
         
     Returns
     -------
     jnp.ndarray
-        Total log likelihood value for the entire dataset
+        Array of log likelihood values for each cell
     """
     # Extract parameters from dictionary
     p = params['p']
     r = params['r']
     p_capture = params['p_capture']
     gate = params['gate']
-    n_cells = counts.shape[0]
     
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+        counts = jnp.array(counts, dtype=jnp.float32)
+    else:
+        n_genes, n_cells = counts.shape
+        counts = counts.T  # Transpose to make cells rows
+        counts = jnp.array(counts, dtype=jnp.float32)
+       
     # If no batch size provided, process all cells at once
     if batch_size is None:
         # Reshape capture probabilities for broadcasting
@@ -1078,14 +1118,14 @@ def zinbvcp_log_likelihood(
         base_dist = dist.NegativeBinomialProbs(r, p_hat)
         # Create Zero-Inflated distribution
         zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Return total log probability
-        return jnp.sum(zinb.log_prob(counts))
+        # Return per-cell log probabilities
+        return zinb.log_prob(counts)
+    
+    # Initialize array to store per-cell log probabilities
+    cell_log_probs = jnp.zeros(n_cells)
     
     # Process in batches
-    total_log_prob = 0.0
-    n_batches = (n_cells + batch_size - 1) // batch_size
-    
-    for i in range(n_batches):
+    for i in range((n_cells + batch_size - 1) // batch_size):
         # Get indices for current batch
         start_idx = i * batch_size
         end_idx = min((i + 1) * batch_size, n_cells)
@@ -1104,10 +1144,12 @@ def zinbvcp_log_likelihood(
         base_dist = dist.NegativeBinomialProbs(r, p_hat)
         # Create Zero-Inflated distribution
         zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Add batch log probability to total
-        total_log_prob += jnp.sum(zinb.log_prob(batch_counts))
+        # Store batch log probabilities
+        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
+            zinb.log_prob(batch_counts)
+        )
     
-    return total_log_prob
+    return cell_log_probs
 
 # ------------------------------------------------------------------------------
 # Log Likelihood registry
