@@ -219,7 +219,7 @@ class BaseScribeResults(ABC):
     # Posterior predictive check samples
     # --------------------------------------------------------------------------
 
-    def sample_posterior(
+    def get_posterior_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
@@ -252,7 +252,7 @@ class BaseScribeResults(ABC):
 
     # --------------------------------------------------------------------------
 
-    def generate_predictive_samples(
+    def get_predictive_samples(
         self,
         rng_key: random.PRNGKey,
         batch_size: Optional[int] = None,
@@ -275,7 +275,7 @@ class BaseScribeResults(ABC):
 
     # --------------------------------------------------------------------------
 
-    def ppc_samples(
+    def get_ppc_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
