@@ -392,7 +392,7 @@ def nbvcp_model(
     # Compute the effective p (p_hat) for each gene
     p_hat = numpyro.deterministic(
         "p_hat",
-        (1 - p) / (1 - p * (1 - p_capture_reshaped))
+        p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
     )
 
     # If we have observed data, condition on it
@@ -559,7 +559,7 @@ def zinbvcp_model(
     # Compute the effective p (p_hat) for each gene
     p_hat = numpyro.deterministic(
         "p_hat",
-        p_capture_reshaped * (1 - p) / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+        p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
     )
 
     # If we have observed data, condition on it
@@ -1024,9 +1024,7 @@ def nbvcp_log_likelihood(
         # Reshape capture probabilities for broadcasting
         p_capture_reshaped = p_capture[:, None]
         # Compute adjusted success probability
-        p_hat = p_capture_reshaped * (1 - p) / (
-            p_capture_reshaped + p * (1 - p_capture_reshaped)
-        )
+        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
         # Return per-cell log probabilities
         return dist.NegativeBinomialProbs(r, p_hat).to_event(1).log_prob(counts)
 
@@ -1046,9 +1044,7 @@ def nbvcp_log_likelihood(
         # Reshape capture probabilities for broadcasting
         p_capture_reshaped = batch_p_capture[:, None]
         # Compute adjusted success probability
-        p_hat = p_capture_reshaped * (1 - p) / (
-            p_capture_reshaped + p * (1 - p_capture_reshaped)
-        )
+        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
         # Compute and store batch log probabilities
         cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
             dist.NegativeBinomialProbs(r, p_hat).to_event(1).log_prob(batch_counts)
@@ -1111,9 +1107,7 @@ def zinbvcp_log_likelihood(
         # Reshape capture probabilities for broadcasting
         p_capture_reshaped = p_capture[:, None]
         # Compute adjusted success probability
-        p_hat = p_capture_reshaped * (1 - p) / (
-            p_capture_reshaped + p * (1 - p_capture_reshaped)
-        )
+        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
         # Create base Negative Binomial distribution
         base_dist = dist.NegativeBinomialProbs(r, p_hat)
         # Create Zero-Inflated distribution
@@ -1137,9 +1131,7 @@ def zinbvcp_log_likelihood(
         # Reshape capture probabilities for broadcasting
         p_capture_reshaped = batch_p_capture[:, None]
         # Compute adjusted success probability
-        p_hat = p_capture_reshaped * (1 - p) / (
-            p_capture_reshaped + p * (1 - p_capture_reshaped)
-        )
+        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
         # Create base Negative Binomial distribution
         base_dist = dist.NegativeBinomialProbs(r, p_hat)
         # Create Zero-Inflated distribution
