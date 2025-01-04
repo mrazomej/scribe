@@ -230,7 +230,8 @@ def zinb_model(
     p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
     
     # Sample r parameters for all genes simultaneously
-    r = numpyro.sample("r", dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes]))
+    r = numpyro.sample(
+        "r", dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes]))
     
     # Sample gate (dropout) parameters for all genes simultaneously
     gate = numpyro.sample(
@@ -502,14 +503,18 @@ def zinbvcp_model(
     batch_size=None,
 ):
     """
-    Numpyro model for Zero-Inflated Negative Binomial with variable mRNA capture probability.
+    Numpyro model for Zero-Inflated Negative Binomial with variable mRNA capture
+    probability.
 
     This model combines the zero-inflation mechanism with variable capture
     probability. The model structure is:
         1. Each gene has a base success probability p and dispersion r
         2. Each cell has a capture probability p_capture
         3. Each gene has a dropout probability (gate)
-        4. The effective success probability for each gene in each cell is computed as p_hat = p / (p_capture + p * (1 - p_capture)). This comes from the composition of a negative binomial distribution with a binomial distribution.
+        4. The effective success probability for each gene in each cell is
+           computed as p_hat = p / (p_capture + p * (1 - p_capture)). This comes
+           from the composition of a negative binomial distribution with a
+           binomial distribution.  
         5. Counts are drawn from ZINB(r, p_hat, gate)
 
     Parameters
@@ -570,7 +575,8 @@ def zinbvcp_model(
                 # Create base negative binomial distribution with adjusted probabilities
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
                 # Create zero-inflated distribution
-                zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+                zinb = dist.ZeroInflatedDistribution(
+                    base_dist, gate=gate).to_event(1)
                 # Likelihood for the counts - one for each cell
                 numpyro.sample("counts", zinb, obs=counts)
         else:
@@ -594,7 +600,8 @@ def zinbvcp_model(
             # probabilities
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Create zero-inflated distribution
-            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+            zinb = dist.ZeroInflatedDistribution(
+                base_dist, gate=gate).to_event(1)
             counts = numpyro.sample("counts", zinb)
 
 
@@ -681,14 +688,17 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
 
     This function returns the appropriate model and guide functions based on the
     requested model type. Currently supports:
-    - "nbdm": Negative Binomial-Dirichlet Multinomial model
-    - "zinb": Zero-Inflated Negative Binomial model
+        - "nbdm": Negative Binomial-Dirichlet Multinomial model
+        - "zinb": Zero-Inflated Negative Binomial model
+        - "nbvcp": Negative Binomial with variable mRNA capture probability
+        - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
+          probability
 
     Parameters
     ----------
     model_type : str
         The type of model to retrieve functions for. Must be one of ["nbdm",
-        "zinb"].
+        "zinb", "nbvcp", "zinbvcp"].
 
     Returns
     -------
@@ -739,9 +749,12 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
 
     This function returns a dictionary of default prior parameters based on the
     requested model type. Currently supports:
-    - "nbdm": Negative Binomial-Dirichlet Multinomial model
-    - "zinb": Zero-Inflated Negative Binomial model
-    - "nbvcp": Negative Binomial with variable mRNA capture probability model
+        - "nbdm": Negative Binomial-Dirichlet Multinomial model
+        - "zinb": Zero-Inflated Negative Binomial model
+        - "nbvcp": Negative Binomial with variable mRNA capture probability
+          model
+        - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
+          probability model
 
     Parameters
     ----------
@@ -753,8 +766,8 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
     Returns
     -------
     Dict[str, Tuple[float, float]]
-        A dictionary mapping parameter names to prior parameter tuples:
-        - For "nbdm":
+        A dictionary mapping parameter names to prior parameter tuples: - For
+        "nbdm":
             - 'p_prior': (alpha, beta) for Beta prior on p parameter
             - 'r_prior': (shape, rate) for Gamma prior on r parameter
         - For "zinb":
@@ -763,17 +776,18 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
             - 'gate_prior': (alpha, beta) for Beta prior on gate parameter
         - For "nbvcp":
             - 'p_prior': (alpha, beta) for Beta prior on base success
-            probability p
+              probability p
             - 'r_prior': (shape, rate) for Gamma prior on dispersion parameters
             - 'p_capture_prior': (alpha, beta) for Beta prior on capture
-            probabilities
+              probabilities
         - For "zinbvcp":
             - 'p_prior': (alpha, beta) for Beta prior on base success
-            probability p
+              probability p
             - 'r_prior': (shape, rate) for Gamma prior on dispersion parameters
             - 'p_capture_prior': (alpha, beta) for Beta prior on capture
-            probabilities
-            - 'gate_prior': (alpha, beta) for Beta prior on dropout probabilities
+              probabilities
+            - 'gate_prior': (alpha, beta) for Beta prior on dropout
+              probabilities
         - For custom models: empty dictionary
     """
     if model_type == "nbdm":
@@ -896,7 +910,8 @@ def nbdm_log_likelihood(
             batch_total_counts = total_counts[start_idx:end_idx]
             
             # Compute log probability for total counts
-            batch_log_prob_total = dist.NegativeBinomialProbs(r_total, p).log_prob(batch_total_counts)
+            batch_log_prob_total = dist.NegativeBinomialProbs(
+                r_total, p).log_prob(batch_total_counts)
             # Compute log probability for each gene
             batch_log_prob_genes = dist.DirichletMultinomial(r, total_count=batch_total_counts).log_prob(batch_counts)
             
@@ -1266,7 +1281,8 @@ def zinbvcp_log_likelihood(
             # Create base Negative Binomial distribution
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Create Zero-Inflated distribution
-            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+            zinb = dist.ZeroInflatedDistribution(
+                base_dist, gate=gate).to_event(1)
             # Return per-cell log probabilities
             return zinb.log_prob(counts)
         
@@ -1289,7 +1305,8 @@ def zinbvcp_log_likelihood(
             # Create base Negative Binomial distribution
             base_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
             # Create Zero-Inflated distribution
-            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+            zinb = dist.ZeroInflatedDistribution(
+                base_dist, gate=gate).to_event(1)
             # Store batch log probabilities
             cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
                 zinb.log_prob(batch_counts)
