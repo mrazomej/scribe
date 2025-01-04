@@ -342,13 +342,13 @@ def nbvcp_model(
     This model assumes that each gene's mRNA count follow a Negative Binomial
     distribution, but with a cell-specific mRNA capture probability that
     modifies the success probability parameter. The model structure is:
-    1. Each gene has a base success probability p and dispersion r
-    2. Each cell has a capture probability p_capture
-    3. The effective success probability for each gene in each cell is computed
-    as p_hat = p_capture * (1-p) / (p_capture + p * (1-p_capture)).
-    This comes from the composition of a negative binomial distribution
-    with a binomial distribution.
-    4. Counts are drawn from NB(r, p_hat)
+        1. Each gene has a base success probability p and dispersion r
+        2. Each cell has a capture probability p_capture
+        3. The effective success probability for each gene in each cell is
+           computed as p_hat = p / (p_capture + p * (1 - p_capture)). This comes
+           from the composition of a negative binomial distribution with a
+           binomial distribution.
+        4. Counts are drawn from NB(r, p_hat)
 
     Parameters
     ----------
@@ -366,11 +366,11 @@ def nbvcp_model(
         Parameters (alpha, beta) for the Beta prior on capture probabilities.
         Default is (1, 1) for a uniform prior.
     counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes).
-        If None, generates samples from the prior.
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference.
-        If None, uses full dataset.
+        Mini-batch size for stochastic variational inference. If None, uses full
+        dataset.
     """
     # Define the prior on the p parameter
     p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
@@ -506,12 +506,11 @@ def zinbvcp_model(
 
     This model combines the zero-inflation mechanism with variable capture
     probability. The model structure is:
-    1. Each gene has a base success probability p and dispersion r
-    2. Each cell has a capture probability p_capture
-    3. Each gene has a dropout probability (gate)
-    4. The effective success probability for each gene in each cell is computed
-    as p_hat = p_capture * (1-p) / (p_capture + p * (1-p_capture))
-    5. Counts are drawn from ZINB(r, p_hat, gate)
+        1. Each gene has a base success probability p and dispersion r
+        2. Each cell has a capture probability p_capture
+        3. Each gene has a dropout probability (gate)
+        4. The effective success probability for each gene in each cell is computed as p_hat = p / (p_capture + p * (1 - p_capture)). This comes from the composition of a negative binomial distribution with a binomial distribution.
+        5. Counts are drawn from ZINB(r, p_hat, gate)
 
     Parameters
     ----------
@@ -819,8 +818,10 @@ def nbdm_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
+    return_by: str = 'cell'
 ) -> jnp.ndarray:
-    """Compute log likelihood for NBDM model using plates.
+    """
+    Compute log likelihood for NBDM model using plates.
     
     Parameters
     ----------
@@ -833,20 +834,29 @@ def nbdm_log_likelihood(
     batch_size : Optional[int]
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
-    cells_axis: int = 0,
+    cells_axis: int = 0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities using the NBDM model (default)
+            - 'gene': returns log probabilities using independent NB per gene
         
     Returns
     -------
     jnp.ndarray
-        Array of log likelihood values for each cell
+        Array of log likelihood values. Shape depends on return_by:
+            - 'cell': shape (n_cells,)
+            - 'gene': shape (n_genes,)
     """
+    # Check return_by
+    if return_by not in ['cell', 'gene']:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+
     # Extract parameters from dictionary
-    p = params['p']
-    r = params['r']
+    p = jnp.squeeze(params['p'])
+    r = jnp.squeeze(params['r'])
     r_total = jnp.sum(r)
-    n_cells = counts.shape[0]
     
     # Extract dimensions
     if cells_axis == 0:
@@ -856,39 +866,77 @@ def nbdm_log_likelihood(
         n_genes, n_cells = counts.shape
         counts = counts.T  # Transpose to make cells rows
         counts = jnp.array(counts, dtype=jnp.float32)
-       
-    # Compute total counts for each cell
-    total_counts = jnp.sum(counts, axis=1)
-    
-    # If no batch size provided, process all cells at once
-    if batch_size is None:
-        log_prob_total = dist.NegativeBinomialProbs(r_total, p).log_prob(total_counts)
-        log_prob_genes = dist.DirichletMultinomial(r, total_count=total_counts).log_prob(counts)
-        return log_prob_total + log_prob_genes
-    
-    # Initialize array to store per-cell log probabilities
-    cell_log_probs = jnp.zeros(n_cells)
 
-    # Process in batches
-    for i in range((n_cells + batch_size - 1) // batch_size):
-        # Get indices for current batch
-        start_idx = i * batch_size
-        end_idx = min((i + 1) * batch_size, n_cells)
+    if return_by == 'cell':
+        # Compute total counts for each cell
+        total_counts = jnp.sum(counts, axis=1)
         
-        # Get batch data
-        batch_counts = counts[start_idx:end_idx]
-        batch_total_counts = total_counts[start_idx:end_idx]
+        # If no batch size provided, process all cells at once
+        if batch_size is None:
+            # Compute log probability for total counts
+            log_prob_total = dist.NegativeBinomialProbs(
+                r_total, p).log_prob(total_counts)
+            # Compute log probability for each gene
+            log_prob_genes = dist.DirichletMultinomial(
+                r, total_count=total_counts).log_prob(counts)
+            # Return sum of log probabilities
+            return log_prob_total + log_prob_genes
         
-        # Compute log probabilities for current batch
-        batch_log_prob_total = dist.NegativeBinomialProbs(r_total, p).log_prob(batch_total_counts)
-        batch_log_prob_genes = dist.DirichletMultinomial(r, total_count=batch_total_counts).log_prob(batch_counts)
+        # Initialize array to store per-cell log probabilities
+        cell_log_probs = jnp.zeros(n_cells)
+
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            # Get indices for current batch
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            batch_total_counts = total_counts[start_idx:end_idx]
+            
+            # Compute log probability for total counts
+            batch_log_prob_total = dist.NegativeBinomialProbs(r_total, p).log_prob(batch_total_counts)
+            # Compute log probability for each gene
+            batch_log_prob_genes = dist.DirichletMultinomial(r, total_count=batch_total_counts).log_prob(batch_counts)
+            
+            # Store batch log probabilities
+            cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
+                batch_log_prob_total + batch_log_prob_genes
+            )
         
-        # Store batch results
-        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
-            batch_log_prob_total + batch_log_prob_genes
-        )
+        return cell_log_probs
     
-    return cell_log_probs
+    else:  # return_by == 'gene'
+        # For per-gene likelihood, use independent negative binomials
+        if batch_size is None:
+            # Compute log probabilities for all genes at once
+            return jnp.sum(
+                dist.NegativeBinomialProbs(r, p).log_prob(counts),
+                axis=0  # Sum over cells
+            )
+        
+        # Initialize array to store per-gene log probabilities
+        gene_log_probs = jnp.zeros(n_genes)
+        
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            
+            # Create NB distribution and compute log probs for each gene
+            nb_dist = dist.NegativeBinomialProbs(r, p)
+            # Shape of batch_counts is (batch_size, n_genes)
+            # We want log probs for each gene summed over the batch
+            batch_log_probs = nb_dist.log_prob(batch_counts)  # Shape: (batch_size, n_genes)
+            
+            # Add the batch contribution to the running total
+            gene_log_probs += jnp.sum(batch_log_probs, axis=0)
+        
+        return gene_log_probs
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial (ZINB) likelihood
@@ -899,6 +947,7 @@ def zinb_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
+    return_by: str = 'cell'
 ) -> jnp.ndarray:
     """
     Compute log likelihood for Zero-Inflated Negative Binomial model.
@@ -908,27 +957,36 @@ def zinb_log_likelihood(
     counts : jnp.ndarray
         Array of shape (n_cells, n_genes) containing observed counts
     params : Dict
-        Dictionary containing model parameters: 
+        Dictionary containing model parameters:
             - 'p': success probability parameter
             - 'r': dispersion parameters for each gene
             - 'gate': dropout probability parameter
     batch_size : Optional[int]
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
-    cells_axis: int = 0,
+    cells_axis: int = 0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities summed over genes (default)
+            - 'gene': returns log probabilities summed over cells
         
     Returns
     -------
     jnp.ndarray
-        Array of log likelihood values for each cell
+        Array of log likelihood values. Shape depends on return_by:
+            - 'cell': shape (n_cells,)
+            - 'gene': shape (n_genes,)
     """
+    if return_by not in ['cell', 'gene']:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+
     # Extract parameters from dictionary
-    p = params['p']
-    r = params['r']
-    gate = params['gate']
-       
+    p = jnp.squeeze(params['p'])
+    r = jnp.squeeze(params['r'])
+    gate = jnp.squeeze(params['gate'])
+    
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -938,38 +996,72 @@ def zinb_log_likelihood(
         counts = counts.T  # Transpose to make cells rows
         counts = jnp.array(counts, dtype=jnp.float32)
        
-    # If no batch size provided, process all cells at once
-    if batch_size is None:
-        # Create base Negative Binomial distribution
-        base_dist = dist.NegativeBinomialProbs(r, p)
-        # Create Zero-Inflated distribution
-        zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Return per-cell log probabilities
-        return zinb.log_prob(counts)
+    if return_by == 'cell':
+        # If no batch size provided, process all cells at once
+        if batch_size is None:
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, p)
+            # Create Zero-Inflated distribution
+            zinb = dist.ZeroInflatedDistribution(
+                base_dist, gate=gate).to_event(1)
+            # Return per-cell log probabilities
+            return zinb.log_prob(counts)
+        
+        # Initialize array to store per-cell log probabilities
+        cell_log_probs = jnp.zeros(n_cells)
+        
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            # Get indices for current batch
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, p)
+            # Create Zero-Inflated distribution
+            zinb = dist.ZeroInflatedDistribution(
+                base_dist, gate=gate).to_event(1)
+            # Store batch log probabilities
+            cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
+                zinb.log_prob(batch_counts)
+            )
+        
+        return cell_log_probs
     
-    # Initialize array to store per-cell log probabilities
-    cell_log_probs = jnp.zeros(n_cells)
+    else:  # return_by == 'gene'
+        # For per-gene likelihood
+        if batch_size is None:
+            # Create base distribution and compute all at once
+            base_dist = dist.NegativeBinomialProbs(r, p)
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+            return jnp.sum(zinb.log_prob(counts), axis=0)
+        
+        # Initialize array to store per-gene log probabilities
+        gene_log_probs = jnp.zeros(n_genes)
+        
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            # Get indices for current batch
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            
+            # Create distributions and compute log probs
+            base_dist = dist.NegativeBinomialProbs(r, p)
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+            # Shape: (batch_size, n_genes)
+            batch_log_probs = zinb.log_prob(batch_counts)  
+            
+            # Add the batch contribution to the running total
+            gene_log_probs += jnp.sum(batch_log_probs, axis=0)
+        
+        return gene_log_probs
 
-    # Process in batches
-    for i in range((n_cells + batch_size - 1) // batch_size):
-        # Get indices for current batch
-        start_idx = i * batch_size
-        end_idx = min((i + 1) * batch_size, n_cells)
-        
-        # Get batch data
-        batch_counts = counts[start_idx:end_idx]
-        
-        # Create base Negative Binomial distribution
-        base_dist = dist.NegativeBinomialProbs(r, p)
-        # Create Zero-Inflated distribution
-        zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Store batch log probabilities
-        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
-            zinb.log_prob(batch_counts)
-        )
-    
-    return cell_log_probs
-    
 # ------------------------------------------------------------------------------
 # Negative Binomial with Variable Capture Probability (NBVC) likelihood
 # ------------------------------------------------------------------------------
@@ -979,10 +1071,10 @@ def nbvcp_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
+    return_by: str = 'cell'
 ) -> jnp.ndarray:
     """
-    Compute log likelihood for Negative Binomial with Variable Capture
-    Probability model.
+    Compute log likelihood for Negative Binomial with Variable Capture Probability.
     
     Parameters
     ----------
@@ -996,17 +1088,27 @@ def nbvcp_log_likelihood(
     batch_size : Optional[int]
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
-    cells_axis: int = 0,
+    cells_axis: int = 0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities summed over genes (default)
+            - 'gene': returns log probabilities summed over cells
         
     Returns
     -------
     jnp.ndarray
-        Array of log likelihood values for each cell
+        Array of log likelihood values. Shape depends on return_by:
+            - 'cell': shape (n_cells,)
+            - 'gene': shape (n_genes,)
     """
+    # Check return_by
+    if return_by not in ['cell', 'gene']:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+
     # Extract parameters from dictionary
-    p = params['p']
+    p = jnp.squeeze(params['p'])
     r = params['r']
     p_capture = params['p_capture']
     
@@ -1018,39 +1120,80 @@ def nbvcp_log_likelihood(
         n_genes, n_cells = counts.shape
         counts = counts.T  # Transpose to make cells rows
         counts = jnp.array(counts, dtype=jnp.float32)
-       
-    # If no batch size provided, process all cells at once
-    if batch_size is None:
-        # Reshape capture probabilities for broadcasting
-        p_capture_reshaped = p_capture[:, None]
-        # Compute adjusted success probability
-        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
-        # Return per-cell log probabilities
-        return dist.NegativeBinomialProbs(r, p_hat).to_event(1).log_prob(counts)
 
-    # Initialize array to store per-cell log probabilities
-    cell_log_probs = jnp.zeros(n_cells)
-    
-    # Process in batches
-    for i in range((n_cells + batch_size - 1) // batch_size):
-        # Get indices for current batch
-        start_idx = i * batch_size
-        end_idx = min((i + 1) * batch_size, n_cells)
+    if return_by == 'cell':
+        # If no batch size provided, process all cells at once
+        if batch_size is None:
+            # Reshape p_capture to [n_cells, 1] for broadcasting
+            p_capture_reshaped = p_capture[:, None]
+            # Compute p_hat for all cells
+            p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+            # Return per-cell log probabilities
+            return dist.NegativeBinomialProbs(
+                r, p_hat).to_event(1).log_prob(counts)
         
-        # Get batch data
-        batch_counts = counts[start_idx:end_idx]
-        batch_p_capture = p_capture[start_idx:end_idx]
+        # Initialize array to store per-cell log probabilities
+        cell_log_probs = jnp.zeros(n_cells)
         
-        # Reshape capture probabilities for broadcasting
-        p_capture_reshaped = batch_p_capture[:, None]
-        # Compute adjusted success probability
-        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
-        # Compute and store batch log probabilities
-        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
-            dist.NegativeBinomialProbs(r, p_hat).to_event(1).log_prob(batch_counts)
-        )
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            batch_p_capture = p_capture[start_idx:end_idx]
+            
+            # Reshape batch_p_capture for broadcasting
+            batch_p_capture = batch_p_capture[:, None]
+            # Compute p_hat for batch
+            batch_p_hat = p / (batch_p_capture + p * (1 - batch_p_capture))
+            # Store batch log probabilities
+            cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
+                dist.NegativeBinomialProbs(
+                    r, batch_p_hat).to_event(1).log_prob(batch_counts)
+            )
+        
+        return cell_log_probs
     
-    return cell_log_probs
+    else:  # return_by == 'gene'
+        # For per-gene likelihood
+        if batch_size is None:
+            # Reshape p_capture to [n_cells, 1] for broadcasting
+            p_capture_reshaped = p_capture[:, None]
+            # Compute p_hat for all cells
+            p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+            # Compute log probabilities for each gene
+            return jnp.sum(
+                dist.NegativeBinomialProbs(r, p_hat).log_prob(counts),
+                axis=0  # Sum over cells
+            )
+        
+        # Initialize array to store per-gene log probabilities
+        gene_log_probs = jnp.zeros(n_genes)
+        
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            batch_p_capture = p_capture[start_idx:end_idx]
+            
+            # Reshape batch_p_capture for broadcasting
+            batch_p_capture = batch_p_capture[:, None]
+            # Compute p_hat for batch
+            batch_p_hat = p / (batch_p_capture + p * (1 - batch_p_capture))
+            # Compute log probabilities for batch
+            batch_log_probs = dist.NegativeBinomialProbs(
+                r, batch_p_hat).log_prob(batch_counts)
+            
+            # Add the batch contribution to the running total
+            gene_log_probs += jnp.sum(batch_log_probs, axis=0)
+        
+        return gene_log_probs
+
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVC)
 # ------------------------------------------------------------------------------
@@ -1060,6 +1203,7 @@ def zinbvcp_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
+    return_by: str = 'cell'
 ) -> jnp.ndarray:
     """
     Compute log likelihood for Zero-Inflated Negative Binomial with Variable
@@ -1078,20 +1222,30 @@ def zinbvcp_log_likelihood(
     batch_size : Optional[int]
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
-    cells_axis: int = 0,
+    cells_axis: int = 0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities summed over genes (default)
+            - 'gene': returns log probabilities summed over cells
         
     Returns
     -------
     jnp.ndarray
-        Array of log likelihood values for each cell
+        Array of log likelihood values. Shape depends on return_by:
+            - 'cell': shape (n_cells,)
+            - 'gene': shape (n_genes,)
     """
+    # Check return_by
+    if return_by not in ['cell', 'gene']:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+
     # Extract parameters from dictionary
-    p = params['p']
-    r = params['r']
-    p_capture = params['p_capture']
-    gate = params['gate']
+    p = jnp.squeeze(params['p'])
+    r = jnp.squeeze(params['r'])
+    p_capture = jnp.squeeze(params['p_capture'])
+    gate = jnp.squeeze(params['gate'])
     
     # Extract dimensions
     if cells_axis == 0:
@@ -1102,46 +1256,84 @@ def zinbvcp_log_likelihood(
         counts = counts.T  # Transpose to make cells rows
         counts = jnp.array(counts, dtype=jnp.float32)
        
-    # If no batch size provided, process all cells at once
-    if batch_size is None:
-        # Reshape capture probabilities for broadcasting
-        p_capture_reshaped = p_capture[:, None]
-        # Compute adjusted success probability
-        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
-        # Create base Negative Binomial distribution
-        base_dist = dist.NegativeBinomialProbs(r, p_hat)
-        # Create Zero-Inflated distribution
-        zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Return per-cell log probabilities
-        return zinb.log_prob(counts)
-    
-    # Initialize array to store per-cell log probabilities
-    cell_log_probs = jnp.zeros(n_cells)
-    
-    # Process in batches
-    for i in range((n_cells + batch_size - 1) // batch_size):
-        # Get indices for current batch
-        start_idx = i * batch_size
-        end_idx = min((i + 1) * batch_size, n_cells)
+    if return_by == 'cell':
+        # If no batch size provided, process all cells at once
+        if batch_size is None:
+            # Reshape capture probabilities for broadcasting
+            p_capture_reshaped = p_capture[:, None]
+            # Compute adjusted success probability
+            p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, p_hat)
+            # Create Zero-Inflated distribution
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+            # Return per-cell log probabilities
+            return zinb.log_prob(counts)
         
-        # Get batch data
-        batch_counts = counts[start_idx:end_idx]
-        batch_p_capture = p_capture[start_idx:end_idx]
+        # Initialize array to store per-cell log probabilities
+        cell_log_probs = jnp.zeros(n_cells)
         
-        # Reshape capture probabilities for broadcasting
-        p_capture_reshaped = batch_p_capture[:, None]
-        # Compute adjusted success probability
-        p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
-        # Create base Negative Binomial distribution
-        base_dist = dist.NegativeBinomialProbs(r, p_hat)
-        # Create Zero-Inflated distribution
-        zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-        # Store batch log probabilities
-        cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
-            zinb.log_prob(batch_counts)
-        )
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            batch_p_capture = p_capture[start_idx:end_idx]
+            
+            # Reshape capture probabilities for broadcasting
+            batch_p_capture = batch_p_capture[:, None]
+            # Compute adjusted success probability
+            batch_p_hat = p / (batch_p_capture + p * (1 - batch_p_capture))
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
+            # Create Zero-Inflated distribution
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+            # Store batch log probabilities
+            cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
+                zinb.log_prob(batch_counts)
+            )
+        
+        return cell_log_probs
     
-    return cell_log_probs
+    else:  # return_by == 'gene'
+        # For per-gene likelihood
+        if batch_size is None:
+            # Reshape capture probabilities for broadcasting
+            p_capture_reshaped = p_capture[:, None]
+            # Compute adjusted success probability
+            p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+            # Create base distribution and compute all at once
+            base_dist = dist.NegativeBinomialProbs(r, p_hat)
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+            return jnp.sum(zinb.log_prob(counts), axis=0)
+        
+        # Initialize array to store per-gene log probabilities
+        gene_log_probs = jnp.zeros(n_genes)
+        
+        # Process in batches
+        for i in range((n_cells + batch_size - 1) // batch_size):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_cells)
+            
+            # Get batch data
+            batch_counts = counts[start_idx:end_idx]
+            batch_p_capture = p_capture[start_idx:end_idx]
+            
+            # Reshape capture probabilities for broadcasting
+            batch_p_capture = batch_p_capture[:, None]
+            # Compute adjusted success probability
+            batch_p_hat = p / (batch_p_capture + p * (1 - batch_p_capture))
+            # Create distributions and compute log probs
+            base_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+            batch_log_probs = zinb.log_prob(batch_counts)
+            
+            # Add the batch contribution to the running total
+            gene_log_probs += jnp.sum(batch_log_probs, axis=0)
+        
+        return gene_log_probs
 
 # ------------------------------------------------------------------------------
 # Log Likelihood registry
