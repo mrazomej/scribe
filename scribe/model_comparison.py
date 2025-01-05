@@ -18,7 +18,8 @@ def _compute_log_liks(
     counts: jnp.ndarray, 
     batch_size: Optional[int] = None,
     ignore_nans: bool = False,
-    return_by: str = 'cell'
+    return_by: str = 'cell',
+    dtype: jnp.dtype = jnp.float32
 ) -> jnp.ndarray:
     """
     Log likelihood computation for multiple parameter samples.
@@ -39,29 +40,39 @@ def _compute_log_liks(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
     """
     n_samples = params_dict[next(iter(params_dict))].shape[0]
     
     @partial(jit, static_argnums=(0,))
     def compute_sample_lik(i):
         params_i = {k: v[i] for k, v in params_dict.items()}
-        return likelihood_fn(counts, params_i, batch_size, return_by=return_by)
+        return likelihood_fn(
+            counts, 
+            params_i, 
+            batch_size, 
+            return_by=return_by,
+            dtype=dtype
+        )
     
     # Compute log likelihoods for all samples
     log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
     
     if ignore_nans:
-        # Keep only samples that have no NaNs
         valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=1)
-        # Print fraction of samples removed
         print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
         return log_liks[valid_samples]
     return log_liks
 
 # ------------------------------------------------------------------------------
 
-@partial(jit, static_argnames=['aggregate'])
-def _compute_lppd(log_liks: jnp.ndarray, aggregate: bool = True) -> float:
+@partial(jit, static_argnames=['aggregate', 'dtype'])
+def _compute_lppd(
+    log_liks: jnp.ndarray, 
+    aggregate: bool = True,
+    dtype: jnp.dtype = jnp.float32
+) -> Union[float, jnp.ndarray]:
     """
     JIT-compiled log pointwise predictive density computation. This is computed
     as:
@@ -78,7 +89,12 @@ def _compute_lppd(log_liks: jnp.ndarray, aggregate: bool = True) -> float:
         Log likelihoods for each posterior sample and data point
     aggregate: bool, default=True
         If True, returns the mean log likelihood for each data point
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
     """
+    # Convert input to specified dtype 
+    log_liks = log_liks.astype(dtype)
+    
     # Use log-sum-exp trick for numerical stability
     max_log_liks = jnp.max(log_liks, axis=0)
     exp_centered = jnp.exp(log_liks - max_log_liks)
@@ -92,10 +108,13 @@ def _compute_lppd(log_liks: jnp.ndarray, aggregate: bool = True) -> float:
 
 # ------------------------------------------------------------------------------
 
-@partial(jit, static_argnames=['aggregate'])
+@partial(jit, static_argnames=['aggregate', 'dtype'])
 def _compute_p_waic_1(
-    log_liks: jnp.ndarray, lppd: Optional[float] = None, aggregate: bool = True
-) -> float:
+    log_liks: jnp.ndarray, 
+    lppd: Optional[Union[float, jnp.ndarray]] = None, 
+    aggregate: bool = True,
+    dtype: jnp.dtype = jnp.float32
+) -> Union[float, jnp.ndarray]:
     """
     JIT-compiled effective adjustment for WAIC version 1. This is computed as:
 
@@ -116,10 +135,12 @@ def _compute_p_waic_1(
         If True, returns the evaluation of the effective parameter count for the
         entire model. If False, returns the evaluation of the effective
         parameter count for each data point.
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
     """
     # Compute lppd if not provided
     if lppd is None:
-        lppd = _compute_lppd(log_liks)
+        lppd = _compute_lppd(log_liks, aggregate=aggregate, dtype=dtype)
 
     if aggregate:
         # Compute mean log likelihood for each data point
@@ -134,10 +155,12 @@ def _compute_p_waic_1(
 
 # ------------------------------------------------------------------------------
 
-@partial(jit, static_argnames=['aggregate'])
+@partial(jit, static_argnames=['aggregate', 'dtype'])
 def _compute_p_waic_2(
-    log_liks: jnp.ndarray, aggregate: bool = True
-) -> float:
+    log_liks: jnp.ndarray, 
+    aggregate: bool = True,
+    dtype: jnp.dtype = jnp.float32
+) -> Union[float, jnp.ndarray]:
     """
     JIT-compiled effective adjustment for WAIC version 2. This is computed as:
 
@@ -154,7 +177,13 @@ def _compute_p_waic_2(
         If True, returns the evaluation of the effective parameter count for the
         entire model. If False, returns the evaluation of the effective
         parameter count for each data point.
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
     """
+    # Convert input to specified dtype only if needed
+    if log_liks.dtype != dtype:
+        log_liks = log_liks.astype(dtype)
+
     # Compute variance of log likelihoods
     var_log_liks = jnp.var(log_liks, axis=0)
     
@@ -166,10 +195,12 @@ def _compute_p_waic_2(
 
 # ------------------------------------------------------------------------------
 
-@partial(jit, static_argnames=['aggregate'])
+@partial(jit, static_argnames=['aggregate', 'dtype'])
 def _compute_waic_stats(
-    log_liks: jnp.ndarray, aggregate: bool = True
-) -> Tuple[float, float, float, float, float]:
+    log_liks: jnp.ndarray, 
+    aggregate: bool = True,
+    dtype: jnp.dtype = jnp.float32
+) -> Dict:
     """
     JIT-compiled computation of WAIC statistics.
     
@@ -186,41 +217,53 @@ def _compute_waic_stats(
         If True, returns the evaluation of the WAIC statistics for the entire
         model. If False, returns the evaluation of the WAIC statistics for each
         data point.
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
         
     Returns
     -------
-    if aggregate:
-        Tuple[float, float, float, float]
-            A tuple containing:
-                - lppd: Log pointwise predictive density
-                - waic_1: WAIC computed using p_waic_1 penalty
-                - waic_2: WAIC computed using p_waic_2 penalty  
-                - p_waic_1: Effective parameter count computed via mean log
-                  likelihood
-                - p_waic_2: Effective parameter count computed via variance
-    else:
-        Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
-            A tuple containing:
-                - lppd: Log pointwise predictive density
-                - waic_1: WAIC computed using p_waic_1 penalty
-            - waic_2: WAIC computed using p_waic_2 penalty  
+    Dict
+        Dictionary containing:
+            - lppd: Log pointwise predictive density
             - p_waic_1: Effective parameter count computed via mean log
-              likelihood
+                likelihood
             - p_waic_2: Effective parameter count computed via variance
+            - elppd_waic_1: Expected log pointwise predictive density
+                computed using p_waic_1 penalty
+            - elppd_waic_2: Expected log pointwise predictive density
+                computed using p_waic_2 penalty
+            - waic_1: WAIC computed using p_waic_1 penalty
+            - waic_2: WAIC computed using p_waic_2 penalty
     """
     # Compute lppd
-    lppd = _compute_lppd(log_liks, aggregate=aggregate)
+    lppd = _compute_lppd(log_liks, aggregate=aggregate, dtype=dtype)
 
     # Compute p_waic_1
-    p_waic_1 = _compute_p_waic_1(log_liks, lppd, aggregate=aggregate)
+    p_waic_1 = _compute_p_waic_1(
+        log_liks, lppd, aggregate=aggregate, dtype=dtype
+    )
 
     # Compute p_waic_2
-    p_waic_2 = _compute_p_waic_2(log_liks, aggregate=aggregate)
+    p_waic_2 = _compute_p_waic_2(
+        log_liks, aggregate=aggregate, dtype=dtype
+    )
 
     # Compute WAIC
-    waic_1 = -2 * (lppd - p_waic_1)
-    waic_2 = -2 * (lppd - p_waic_2)
-    return lppd, waic_1, waic_2, p_waic_1, p_waic_2
+    elppd_waic_1 = lppd - p_waic_1
+    elppd_waic_2 = lppd - p_waic_2
+    waic_1 = -2 * elppd_waic_1
+    waic_2 = -2 * elppd_waic_2
+
+    # Return results as dictionary
+    return {
+        'lppd': lppd,
+        'p_waic_1': p_waic_1,
+        'p_waic_2': p_waic_2,
+        'elppd_waic_1': elppd_waic_1,
+        'elppd_waic_2': elppd_waic_2,
+        'waic_1': waic_1,
+        'waic_2': waic_2,
+    }
 
 # ------------------------------------------------------------------------------
 
@@ -232,6 +275,7 @@ def compute_waic(
     rng_key: random.PRNGKey = random.PRNGKey(42),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    dtype: jnp.dtype = jnp.float32
 ) -> Dict:
     """
     Compute the Widely Applicable Information Criterion (WAIC) for a fitted
@@ -262,6 +306,8 @@ def compute_waic(
         If True, returns the evaluation of the WAIC statistics for the entire
         model. If False, returns the evaluation of the WAIC statistics for each
         data point.
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
         
     Returns
     -------
@@ -293,19 +339,17 @@ def compute_waic(
     
     # Compute log likelihoods directly using _compute_log_liks
     log_liks = _compute_log_liks(
-        params_dict, likelihood_fn, counts, batch_size, ignore_nans
+        params_dict, 
+        likelihood_fn, 
+        counts, 
+        batch_size, 
+        ignore_nans, 
+        dtype=dtype
     )
     
     # Compute WAIC statistics
-    waic_1, waic_2, p_waic_1, p_waic_2, lppd = _compute_waic_stats(log_liks)
+    return _compute_waic_stats(log_liks, dtype=dtype)
     
-    return {
-        'lppd': float(lppd),
-        'waic_1': float(waic_1),
-        'waic_2': float(waic_2), 
-        'p_waic_1': float(p_waic_1),
-        'p_waic_2': float(p_waic_2),
-    }
 
 # ------------------------------------------------------------------------------
 
@@ -317,7 +361,51 @@ def compute_waic_by_gene(
     rng_key: random.PRNGKey = random.PRNGKey(42),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    dtype: jnp.dtype = jnp.float32
 ) -> Dict:
+    """
+    Compute WAIC (Widely Applicable Information Criterion) statistics for each
+    gene independently.
+
+    This function computes WAIC statistics per gene rather than aggregated
+    across all genes. This allows for gene-specific model comparison and
+    assessment.
+
+    Parameters
+    ----------
+    results : BaseScribeResults
+        Results object containing model fit information
+    counts : jnp.ndarray
+        Array of shape (n_cells, n_genes) containing observed counts
+    n_samples : int, default=1000
+        Number of posterior samples to use for WAIC computation
+    batch_size : Optional[int], default=None
+        Size of mini-batches for computation. If None, uses full dataset
+    rng_key : random.PRNGKey, default=random.PRNGKey(42)
+        Random number generator key for reproducibility
+    cells_axis : int, default=0
+        Axis along which cells are arranged. 0 means cells are rows, 1 means
+        cells are columns
+    ignore_nans : bool, default=False
+        Whether to ignore NaN values in computation
+    dtype : jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
+
+    Returns
+    -------
+    Dict
+        Dictionary containing arrays of length n_genes with WAIC statistics:
+            lppd : array
+                Log pointwise predictive density for each gene
+            p_waic_1 : array
+                Effective parameter count via mean log likelihood for each gene
+            p_waic_2 : array
+                Effective parameter count via variance for each gene
+            waic_1 : array
+                WAIC computed using p_waic_1 penalty for each gene
+            waic_2 : array
+                WAIC computed using p_waic_2 penalty for each gene
+    """
     # Get posterior samples if not already present
     if (results.posterior_samples is None or 
         'parameter_samples' not in results.posterior_samples):
@@ -334,26 +422,19 @@ def compute_waic_by_gene(
     # Compute log likelihoods directly using _compute_log_liks
     log_liks = _compute_log_liks(
         params_dict, likelihood_fn, counts, batch_size, ignore_nans, 
-        return_by='gene'
+        return_by='gene', dtype=dtype
     )
     
     # Compute WAIC statistics
-    waic_1, waic_2, p_waic_1, p_waic_2, lppd = _compute_waic_stats(
-        log_liks, aggregate=False
-    )
+    return _compute_waic_stats(log_liks, aggregate=False, dtype=dtype)
     
-    return {
-        'lppd': lppd,
-        'waic_1': waic_1,
-        'waic_2': waic_2, 
-        'p_waic_1': p_waic_1,
-        'p_waic_2': p_waic_2,
-    }
-
 # ------------------------------------------------------------------------------
 
-@jit
-def _compute_waic_weights(waic_values: jnp.ndarray) -> jnp.ndarray:
+@partial(jit, static_argnames=['dtype'])
+def _compute_waic_weights(
+    waic_values: jnp.ndarray,
+    dtype: jnp.dtype = jnp.float32
+) -> jnp.ndarray:
     """
     JIT-compiled weight computation for WAIC. This is computed as:
 
@@ -365,7 +446,13 @@ def _compute_waic_weights(waic_values: jnp.ndarray) -> jnp.ndarray:
     ----------
     waic_values : jnp.ndarray
         Array of WAIC values
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
     """
+    # Convert input to specified dtype only if needed
+    if waic_values.dtype != dtype:
+        waic_values = waic_values.astype(dtype)
+
     # Compute minimum WAIC
     min_waic = jnp.min(waic_values)
 
@@ -388,6 +475,7 @@ def compare_models(
     rng_key: random.PRNGKey = random.PRNGKey(0),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    dtype: jnp.dtype = jnp.float32
 ) -> pd.DataFrame:
     """
     Compare multiple models using WAIC.
@@ -410,6 +498,8 @@ def compare_models(
     ignore_nans: bool = False,
         If True, removes any samples that contain NaNs when evaluating the log
         likelihood.
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
     
     Returns
     -------
@@ -427,7 +517,7 @@ def compare_models(
         counts = counts.T
     
     # Convert counts to jnp.ndarray if necessary
-    counts = jnp.array(counts, dtype=jnp.float32)
+    counts = jnp.array(counts, dtype=dtype)
     
     # Split RNG key for each model
     rng_keys = random.split(rng_key, len(results_list))
@@ -438,36 +528,32 @@ def compare_models(
         print(f"Computing WAIC for {results.model_type}...")
         waic = compute_waic(
             results, counts, n_samples, batch_size, key, 
-            ignore_nans=ignore_nans
+            ignore_nans=ignore_nans, dtype=dtype
         )
-        waic_results.append({
-            'model': results.model_type,
-            'waic_1': waic['waic_1'],
-            'waic_2': waic['waic_2'],
-            'p_waic_1': waic['p_waic_1'],
-            'p_waic_2': waic['p_waic_2'],
-            'lppd': waic['lppd']
-        })
-    
+        # Add model type to results
+        waic['model'] = results.model_type
+        # Append results to list
+        waic_results.append(waic)
+
     # Create DataFrame
     df = pd.DataFrame(waic_results)
     
+    # Convert DataFrame columns to numeric arrays
+    waic1_values = jnp.array(df["waic_1"].values, dtype=dtype)
+    waic2_values = jnp.array(df["waic_2"].values, dtype=dtype)
+    
+    
     # Compute weights using JIT for both WAIC versions
-    waic1_values = jnp.array(df['waic_1'])
-    waic2_values = jnp.array(df['waic_2'])
-    weights1 = _compute_waic_weights(waic1_values)
-    weights2 = _compute_waic_weights(waic2_values)
+    weights1 = _compute_waic_weights(waic1_values, dtype=dtype)
+    weights2 = _compute_waic_weights(waic2_values, dtype=dtype)
     
     # Add delta WAIC and weights to DataFrame for both versions
-    min_waic1 = df['waic_1'].min()
-    min_waic2 = df['waic_2'].min()
-    df['delta_waic_1'] = df['waic_1'] - min_waic1
-    df['delta_waic_2'] = df['waic_2'] - min_waic2
+    min_waic1 = jnp.min(waic1_values)
+    min_waic2 = jnp.min(waic2_values)
+    df['delta_waic_1'] = jnp.array(df['waic_1'].values, dtype=dtype) - min_waic1
+    df['delta_waic_2'] = jnp.array(df['waic_2'].values, dtype=dtype) - min_waic2
     df['weight_1'] = weights1
     df['weight_2'] = weights2
-    
-    # Sort by WAIC1
-    df = df.sort_values('waic_1')
     
     return df
 
@@ -481,6 +567,7 @@ def compare_models_by_gene(
     rng_key: random.PRNGKey = random.PRNGKey(0),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    dtype: jnp.dtype = jnp.float32
 ) -> pd.DataFrame:
     """
     Compare multiple models using WAIC, computed separately for each gene.
@@ -503,6 +590,8 @@ def compare_models_by_gene(
     ignore_nans: bool = False,
         If True, removes any samples that contain NaNs when evaluating the log
         likelihood.
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
     
     Returns
     -------
@@ -521,7 +610,7 @@ def compare_models_by_gene(
         counts = counts.T
     
     # Convert counts to jnp.ndarray if necessary
-    counts = jnp.array(counts, dtype=jnp.float32)
+    counts = jnp.array(counts, dtype=dtype)
     n_genes = counts.shape[1]
     
     # Split RNG key for each model
@@ -537,19 +626,12 @@ def compare_models_by_gene(
             results, counts, n_samples, batch_size, key, 
             ignore_nans=ignore_nans
         )
-        
-        # Create DataFrame for this model
-        df_model = pd.DataFrame({
-            'model': results.model_type,
-            'gene': np.arange(n_genes),
-            'waic_1': waic['waic_1'],
-            'waic_2': waic['waic_2'],
-            'p_waic_1': waic['p_waic_1'],
-            'p_waic_2': waic['p_waic_2'],
-            'lppd': waic['lppd']
-        })
-        
-        df_list.append(df_model)
+        # Add model type to results
+        waic['model'] = results.model_type
+        # Add gene indices to results
+        waic['gene'] = np.arange(n_genes)
+        # Append results to list dataframe
+        df_list.append(pd.DataFrame(waic))
     
     # Combine all model results
     df = pd.concat(df_list, ignore_index=True)
@@ -578,8 +660,8 @@ def compare_models_by_gene(
     n_models = len(results_list)
     
     # Compute metrics for both WAIC versions
-    waic1_values = jnp.array(df['waic_1'])
-    waic2_values = jnp.array(df['waic_2'])
+    waic1_values = jnp.array(df['waic_1'].values, dtype=dtype)
+    waic2_values = jnp.array(df['waic_2'].values, dtype=dtype)
     
     delta_waic1, weights1 = _compute_gene_metrics(waic1_values, n_models)
     delta_waic2, weights2 = _compute_gene_metrics(waic2_values, n_models)
@@ -590,7 +672,4 @@ def compare_models_by_gene(
     df['weight_1'] = weights1
     df['weight_2'] = weights2
     
-    # Sort by gene and WAIC1
-    df_final = df.sort_values(['gene', 'waic_1'])
-    
-    return df_final
+    return df

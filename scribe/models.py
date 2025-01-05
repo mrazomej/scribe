@@ -832,7 +832,8 @@ def nbdm_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell'
+    return_by: str = 'cell',
+    dtype: jnp.dtype = jnp.float32
 ) -> jnp.ndarray:
     """
     Compute log likelihood for NBDM model using plates.
@@ -855,6 +856,8 @@ def nbdm_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities using the NBDM model (default)
             - 'gene': returns log probabilities using independent NB per gene
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
         
     Returns
     -------
@@ -875,11 +878,11 @@ def nbdm_log_likelihood(
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
     else:
         n_genes, n_cells = counts.shape
         counts = counts.T  # Transpose to make cells rows
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
 
     if return_by == 'cell':
         # Compute total counts for each cell
@@ -962,7 +965,8 @@ def zinb_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell'
+    return_by: str = 'cell',
+    dtype: jnp.dtype = jnp.float32
 ) -> jnp.ndarray:
     """
     Compute log likelihood for Zero-Inflated Negative Binomial model.
@@ -986,6 +990,8 @@ def zinb_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
         
     Returns
     -------
@@ -1005,11 +1011,11 @@ def zinb_log_likelihood(
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
     else:
         n_genes, n_cells = counts.shape
         counts = counts.T  # Transpose to make cells rows
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
        
     if return_by == 'cell':
         # If no batch size provided, process all cells at once
@@ -1086,7 +1092,8 @@ def nbvcp_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell'
+    return_by: str = 'cell',
+    dtype: jnp.dtype = jnp.float32
 ) -> jnp.ndarray:
     """
     Compute log likelihood for Negative Binomial with Variable Capture Probability.
@@ -1110,6 +1117,8 @@ def nbvcp_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
         
     Returns
     -------
@@ -1130,11 +1139,11 @@ def nbvcp_log_likelihood(
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
     else:
         n_genes, n_cells = counts.shape
         counts = counts.T  # Transpose to make cells rows
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
 
     if return_by == 'cell':
         # If no batch size provided, process all cells at once
@@ -1218,7 +1227,8 @@ def zinbvcp_log_likelihood(
     params: Dict, 
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell'
+    return_by: str = 'cell',
+    dtype: jnp.dtype = jnp.float32
 ) -> jnp.ndarray:
     """
     Compute log likelihood for Zero-Inflated Negative Binomial with Variable
@@ -1244,6 +1254,8 @@ def zinbvcp_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
         
     Returns
     -------
@@ -1265,11 +1277,11 @@ def zinbvcp_log_likelihood(
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
     else:
         n_genes, n_cells = counts.shape
         counts = counts.T  # Transpose to make cells rows
-        counts = jnp.array(counts, dtype=jnp.float32)
+        counts = jnp.array(counts, dtype=dtype)
        
     if return_by == 'cell':
         # If no batch size provided, process all cells at once
