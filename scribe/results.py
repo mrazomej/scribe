@@ -3,7 +3,7 @@ Results classes for SCRIBE inference.
 """
 
 # Imports for class definitions
-from typing import Dict, Optional, Union, Callable
+from typing import Dict, Optional, Union, Callable, Tuple
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
@@ -15,7 +15,7 @@ from numpyro.infer import Predictive
 from jax import random
 
 # Imports for model-specific results
-from .models import get_model_and_guide
+from .models import get_model_and_guide, get_log_likelihood_fn
 
 # Imports for sampling
 from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
@@ -196,10 +196,30 @@ class BaseScribeResults(ABC):
         )
 
     # --------------------------------------------------------------------------
+    # Get model and guide functions
+    # --------------------------------------------------------------------------
+
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """
+        Get the model and guide functions for this model type.
+        """
+        return get_model_and_guide(self.model_type)
+
+    # --------------------------------------------------------------------------
+    # Get likelihood function
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """
+        Get the log likelihood function for this model type.
+        """
+        return get_log_likelihood_fn(self.model_type)
+
+    # --------------------------------------------------------------------------
     # Posterior predictive check samples
     # --------------------------------------------------------------------------
 
-    def sample_posterior(
+    def get_posterior_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
@@ -232,7 +252,7 @@ class BaseScribeResults(ABC):
 
     # --------------------------------------------------------------------------
 
-    def generate_predictive_samples(
+    def get_predictive_samples(
         self,
         rng_key: random.PRNGKey,
         batch_size: Optional[int] = None,
@@ -255,7 +275,7 @@ class BaseScribeResults(ABC):
 
     # --------------------------------------------------------------------------
 
-    def ppc_samples(
+    def get_ppc_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
