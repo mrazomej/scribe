@@ -739,8 +739,8 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
     # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
     elif model_type == "nbdm_mix":
         # Import model and guide functions locally to avoid circular imports
-        from .models_mix import nbdm_mix_model, nbdm_mix_guide
-        return nbdm_mix_model, nbdm_mix_guide
+        from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
+        return nbdm_mixture_model, nbdm_mixture_guide
     
     # Raise error for unsupported model types
     else:
@@ -820,6 +820,12 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
             'r_prior': (2, 0.1),
             'p_capture_prior': (1, 1),
             'gate_prior': (1, 1)
+        }
+    elif model_type == "nbdm_mix":
+        prior_params = {
+            'mixing_weights_prior': (1, 1),
+            'p_prior': (1, 1),
+            'r_prior': (2, 0.1)
         }
     else:
         prior_params = {}  # Empty dict for custom models if none provided

@@ -626,10 +626,15 @@ class NBDMMixtureResults(BaseScribeResults):
     """
     Results for Negative Binomial mixture model.
 
-    This class extends BaseScribeResults to handle mixture model specifics,
-    where each component has its own set of parameters and mixing weights.
+    This class extends BaseScribeResults to handle Negative Binomial-Dirichlet
+    Multinomial mixture model specifics with the following parameters:
+        - mixing_weights: Dirichlet distribution for mixture weights
+        - p: Beta distributions for success probabilities (one per component)
+        - r: Gamma distributions for dispersion parameters (one per component
+          per gene)
     """
-    n_components: int  # Number of mixture components
+    # Number of mixture components
+    n_components: int = 2
 
     def __post_init__(self):
         assert self.model_type == "nbdm_mixture", f"Invalid model type: {self.model_type}"
@@ -717,79 +722,3 @@ class NBDMMixtureResults(BaseScribeResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
             
         return new_posterior_samples
-
-    def get_component_probabilities(
-        self,
-        counts: Union[np.ndarray, jnp.ndarray],
-        params: Optional[Dict] = None,
-        batch_size: Optional[int] = None
-    ) -> jnp.ndarray:
-        """
-        Compute posterior probabilities of each component for each cell.
-
-        Parameters
-        ----------
-        counts : Union[np.ndarray, jnp.ndarray]
-            Observed count data of shape (n_cells, n_genes)
-        params : Optional[Dict]
-            Parameter dictionary. If None, uses self.params
-        batch_size : Optional[int]
-            Batch size for computation. If None, processes all cells at once.
-
-        Returns
-        -------
-        jnp.ndarray
-            Array of shape (n_cells, n_components) containing posterior
-            probabilities of each component for each cell.
-        """
-        if params is None:
-            params = self.params
-
-        # Get the log likelihood function
-        log_likelihood_fn = self.get_log_likelihood_fn()
-
-        # Define function to compute component log probabilities
-        def compute_log_probs(counts_batch):
-            # Get component distributions
-            mixing_dist = dist.Dirichlet(params['alpha_mixing'])
-            p_dist = dist.Beta(params['alpha_p'], params['beta_p'])
-            r_dist = dist.Gamma(params['alpha_r'], params['beta_r'])
-
-            # Sample from variational distributions
-            mixing_probs = mixing_dist.mean
-            p = p_dist.mean
-            r = r_dist.mean
-
-            # Compute log probabilities for each component
-            log_probs = []
-            for k in range(self.n_components):
-                component_params = {
-                    'p': p[k],
-                    'r': r[k]
-                }
-                log_probs.append(
-                    log_likelihood_fn(
-                        counts_batch,
-                        component_params,
-                        return_by='cell'
-                    )
-                )
-
-            # Stack log probabilities and add mixing weights
-            log_probs = jnp.stack(log_probs, axis=1)  # [batch_size, n_components]
-            log_probs = log_probs + jnp.log(mixing_probs)
-
-            # Convert to probabilities using log-sum-exp trick
-            log_norm = jax.nn.logsumexp(log_probs, axis=1, keepdims=True)
-            return jnp.exp(log_probs - log_norm)
-
-        # Process in batches if specified
-        if batch_size is not None:
-            n_cells = len(counts)
-            probas = []
-            for i in range(0, n_cells, batch_size):
-                batch = counts[i:i + batch_size]
-                probas.append(compute_log_probs(batch))
-            return jnp.concatenate(probas, axis=0)
-        else:
-            return compute_log_probs(counts)

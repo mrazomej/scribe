@@ -182,6 +182,10 @@ def run_inference(
             raise ValueError(
                 f"n_components must be specified for mixture model {model_type}"
             )
+        elif n_components == 1:
+            raise ValueError(
+                f"n_components must be greater than 1 for mixture model {model_type}"
+            )
         # Add n_components to model args
         model_args['n_components'] = n_components
     
