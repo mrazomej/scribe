@@ -616,3 +616,180 @@ class ZINBVCPResults(BaseScribeResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][:, :, index]
             
         return new_posterior_samples
+
+# ------------------------------------------------------------------------------
+# Negative Binomial-Dirichlet Multinomial Mixture Model
+# ------------------------------------------------------------------------------
+
+@dataclass
+class NBDMMixtureResults(BaseScribeResults):
+    """
+    Results for Negative Binomial mixture model.
+
+    This class extends BaseScribeResults to handle mixture model specifics,
+    where each component has its own set of parameters and mixing weights.
+    """
+    n_components: int  # Number of mixture components
+
+    def __post_init__(self):
+        assert self.model_type == "nbdm_mixture", f"Invalid model type: {self.model_type}"
+
+    def get_distributions(self) -> Dict[str, dist.Distribution]:
+        """
+        Get the variational distributions for mixture model parameters.
+
+        Returns
+        -------
+        Dict[str, dist.Distribution]
+            Dictionary mapping parameter names to their Numpyro distributions:
+            - 'mixing_weights': Dirichlet distribution for mixture weights
+            - 'p': Beta distributions for success probabilities (one per component)
+            - 'r': Gamma distributions for dispersion parameters (one per component per gene)
+        """
+        return {
+            'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
+            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r'])
+        }
+
+    def _subset_params(self, params: Dict, index) -> Dict:
+        """
+        Create new parameter dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        params : Dict
+            Original parameter dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New parameter dictionary with subset of gene-specific parameters
+        """
+        new_params = dict(params)
+        # Only r parameters are gene-specific
+        # Keep component dimension, subset gene dimension
+        new_params['alpha_r'] = params['alpha_r'][:, index]
+        new_params['beta_r'] = params['beta_r'][:, index]
+        return new_params
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create new posterior samples dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Original samples dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New samples dictionary with subset of gene-specific samples
+        """
+        new_posterior_samples = {}
+        
+        if "parameter_samples" in samples:
+            param_samples = samples["parameter_samples"]
+            new_param_samples = {}
+            
+            # mixing_weights are component-specific
+            if "mixing_weights" in param_samples:
+                new_param_samples["mixing_weights"] = param_samples["mixing_weights"]
+            
+            # p is component-specific
+            if "p" in param_samples:
+                new_param_samples["p"] = param_samples["p"]
+            
+            # r is both component and gene-specific
+            if "r" in param_samples:
+                # Keep samples and component dimensions, subset gene dimension
+                new_param_samples["r"] = param_samples["r"][..., index]
+                
+            new_posterior_samples["parameter_samples"] = new_param_samples
+        
+        if "predictive_samples" in samples:
+            # Keep samples and cells dimensions, subset gene dimension
+            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
+            
+        return new_posterior_samples
+
+    def get_component_probabilities(
+        self,
+        counts: Union[np.ndarray, jnp.ndarray],
+        params: Optional[Dict] = None,
+        batch_size: Optional[int] = None
+    ) -> jnp.ndarray:
+        """
+        Compute posterior probabilities of each component for each cell.
+
+        Parameters
+        ----------
+        counts : Union[np.ndarray, jnp.ndarray]
+            Observed count data of shape (n_cells, n_genes)
+        params : Optional[Dict]
+            Parameter dictionary. If None, uses self.params
+        batch_size : Optional[int]
+            Batch size for computation. If None, processes all cells at once.
+
+        Returns
+        -------
+        jnp.ndarray
+            Array of shape (n_cells, n_components) containing posterior
+            probabilities of each component for each cell.
+        """
+        if params is None:
+            params = self.params
+
+        # Get the log likelihood function
+        log_likelihood_fn = self.get_log_likelihood_fn()
+
+        # Define function to compute component log probabilities
+        def compute_log_probs(counts_batch):
+            # Get component distributions
+            mixing_dist = dist.Dirichlet(params['alpha_mixing'])
+            p_dist = dist.Beta(params['alpha_p'], params['beta_p'])
+            r_dist = dist.Gamma(params['alpha_r'], params['beta_r'])
+
+            # Sample from variational distributions
+            mixing_probs = mixing_dist.mean
+            p = p_dist.mean
+            r = r_dist.mean
+
+            # Compute log probabilities for each component
+            log_probs = []
+            for k in range(self.n_components):
+                component_params = {
+                    'p': p[k],
+                    'r': r[k]
+                }
+                log_probs.append(
+                    log_likelihood_fn(
+                        counts_batch,
+                        component_params,
+                        return_by='cell'
+                    )
+                )
+
+            # Stack log probabilities and add mixing weights
+            log_probs = jnp.stack(log_probs, axis=1)  # [batch_size, n_components]
+            log_probs = log_probs + jnp.log(mixing_probs)
+
+            # Convert to probabilities using log-sum-exp trick
+            log_norm = jax.nn.logsumexp(log_probs, axis=1, keepdims=True)
+            return jnp.exp(log_probs - log_norm)
+
+        # Process in batches if specified
+        if batch_size is not None:
+            n_cells = len(counts)
+            probas = []
+            for i in range(0, n_cells, batch_size):
+                batch = counts[i:i + batch_size]
+                probas.append(compute_log_probs(batch))
+            return jnp.concatenate(probas, axis=0)
+        else:
+            return compute_log_probs(counts)

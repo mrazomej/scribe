@@ -12,6 +12,9 @@ from numpyro.distributions import constraints
 # Import typing
 from typing import Callable, Dict, Tuple, Optional
 
+# Import mixture models
+from .models_mix import *
+
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
@@ -77,14 +80,12 @@ def nbdm_model(
                     obs=total_counts
                 )
 
-            # Define plate for cells individual counts
-            with numpyro.plate("cells", n_cells, dim=-2):
-                # Likelihood for the individual counts - one for each cell
-                numpyro.sample(
-                    "counts",
-                    dist.DirichletMultinomial(r, total_count=total_counts),
-                    obs=counts
-                )
+            # Likelihood for the individual counts - one for each cell
+            numpyro.sample(
+                "counts",
+                dist.DirichletMultinomial(r, total_count=total_counts),
+                obs=counts
+            )
         else:
             # Define plate for cells total counts
             with numpyro.plate(
@@ -734,6 +735,12 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         # Import model and guide functions locally to avoid circular imports
         from .models import zinbvcp_model, zinbvcp_guide
         return zinbvcp_model, zinbvcp_guide
+    
+    # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
+    elif model_type == "nbdm_mix":
+        # Import model and guide functions locally to avoid circular imports
+        from .models_mix import nbdm_mix_model, nbdm_mix_guide
+        return nbdm_mix_model, nbdm_mix_guide
     
     # Raise error for unsupported model types
     else:

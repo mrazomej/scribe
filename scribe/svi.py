@@ -99,6 +99,7 @@ def run_inference(
     n_steps: int = 100_000,
     batch_size: int = 512,
     model_type: str = "nbdm",
+    n_components: Optional[int] = None,
     prior_params: Optional[Dict] = None,
     cells_axis: int = 0,
     custom_args: Optional[Dict] = None,
@@ -125,6 +126,12 @@ def run_inference(
         Type of model being used. Built-in options are:
         - "nbdm": Negative Binomial-Dirichlet Multinomial model
         - "zinb": Zero-Inflated Negative Binomial model
+        - "nbvcp": Negative Binomial with variable capture probability
+        - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
+          probability
+        - "nbdm_mix": Negative Binomial-Dirichlet Multinomial Mixture Model
+    n_components : int, optional
+        Number of components to fit for mixture models. Default is None.
     prior_params : Dict, optional
         Dictionary of prior parameters specific to the model.
     cells_axis : int, optional
@@ -167,6 +174,16 @@ def run_inference(
     # Add model-specific parameters
     if model_type == "nbdm":
         model_args['total_counts'] = total_counts
+
+    # Check if mixture model
+    if "mix" in model_type:
+        # Check if n_components is provided
+        if n_components is None:
+            raise ValueError(
+                f"n_components must be specified for mixture model {model_type}"
+            )
+        # Add n_components to model args
+        model_args['n_components'] = n_components
     
     # Add all prior parameters to model args
     model_args.update(prior_params)
@@ -235,6 +252,12 @@ def params_to_dist(params: Dict, model: str) -> Dict[str, dist.Distribution]:
             ),
             'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
         }
+    elif model == "nbdm_mix":
+        return {
+            'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+            'p': dist.Beta(params['alpha_p'], params['beta_p']),
+            'r': dist.Gamma(params['alpha_r'], params['beta_r'])
+        }
     else:
         raise ValueError(f"Invalid model type: {model}")
 
@@ -245,6 +268,7 @@ def params_to_dist(params: Dict, model: str) -> Dict[str, dist.Distribution]:
 def run_scribe(
     counts: Union[jnp.ndarray, "AnnData"],
     model_type: str = "nbdm",
+    n_components: Optional[int] = None,
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_steps: int = 100_000,
     batch_size: int = 512,
@@ -254,7 +278,7 @@ def run_scribe(
     cells_axis: int = 0,
     layer: Optional[str] = None,
     stable_update: bool = True,
-) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]:
+) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults]:
     """Run the complete SCRIBE inference pipeline.
     
     Parameters
@@ -271,6 +295,9 @@ def run_scribe(
         - "nbvcp": Negative Binomial with variable capture probability
         - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
           probability
+        - "nbdm_mix": Negative Binomial-Dirichlet Multinomial Mixture Model
+    n_components : int, optional
+        Number of components to fit for mixture models. Default is None.
     prior_params : Dict, optional
         Dictionary of prior parameters specific to the model.
         For built-in models:
@@ -339,7 +366,8 @@ def run_scribe(
         model_type=model_type,
         prior_params=prior_params,
         cells_axis=0,
-        stable_update=stable_update
+        stable_update=stable_update,
+        n_components=n_components
     )
 
     # Create appropriate results class
@@ -347,28 +375,37 @@ def run_scribe(
         "nbdm": NBDMResults,
         "zinb": ZINBResults,
         "nbvcp": NBVCPResults,
-        "zinbvcp": ZINBVCPResults
+        "zinbvcp": ZINBVCPResults,
+        "nbdm_mix": NBDMMixtureResults
     }.get(model_type)
-    
+
     if results_class is None:
         raise ValueError(f"Unknown model type: {model_type}")
-    
-    # Create results object
+
+    # Create results object with model-specific arguments
     if adata is not None:
-        results = results_class.from_anndata(
-            adata=adata,
-            params=svi_results.params,
-            loss_history=svi_results.losses,
-            model_type=model_type
-        )
+        results_kwargs = {
+            "adata": adata,
+            "params": svi_results.params,
+            "loss_history": svi_results.losses,
+            "model_type": model_type
+        }
+        # Add n_components for mixture models
+        if "mix" in model_type:
+            results_kwargs["n_components"] = n_components
+        results = results_class.from_anndata(**results_kwargs)
     else:
-        results = results_class(
-            params=svi_results.params,
-            loss_history=svi_results.losses,
-            n_cells=n_cells,
-            n_genes=n_genes,
-            model_type=model_type
-        )
+        results_kwargs = {
+            "params": svi_results.params,
+            "loss_history": svi_results.losses,
+            "n_cells": n_cells,
+            "n_genes": n_genes,
+            "model_type": model_type
+        }
+        # Add n_components for mixture models
+        if "mix" in model_type:
+            results_kwargs["n_components"] = n_components
+        results = results_class(**results_kwargs)
 
     return results
 
@@ -377,7 +414,13 @@ def run_scribe(
 # ------------------------------------------------------------------------------
 
 def rerun_scribe(
-    results: Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults],
+    results: Union[
+        NBDMResults, 
+        ZINBResults, 
+        NBVCPResults, 
+        ZINBVCPResults, 
+        NBDMMixtureResults
+    ],
     counts: Union[jnp.ndarray, "AnnData"],
     n_steps: int = 100_000,
     batch_size: int = 512,
@@ -388,7 +431,13 @@ def rerun_scribe(
     cells_axis: int = 0,
     layer: Optional[str] = None,
     stable_update: bool = True,
-) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]:
+) -> Union[
+    NBDMResults, 
+    ZINBResults, 
+    NBVCPResults, 
+    ZINBVCPResults, 
+    NBDMMixtureResults
+]:
     """
     Continue training from a previous SCRIBE results object.
 
@@ -488,6 +537,8 @@ def rerun_scribe(
     # Add model-specific parameters
     if results.model_type == "nbdm":
         model_args['total_counts'] = count_data.sum(axis=1)
+    elif "mix" in results.model_type:
+        model_args['n_components'] = results.n_components
     
     # Add all prior parameters to model args
     model_args.update(prior_params)
