@@ -113,6 +113,18 @@ class BaseScribeResults(ABC):
     # --------------------------------------------------------------------------
 
     @abstractmethod
+    def get_model_args(self) -> Dict:
+        """
+        Get the model and guide arguments for this model type.
+
+        For standard models, this is just the number of cells and genes.
+        For mixture models, this is the number of cells, genes, and components.
+        """
+        pass
+
+    # --------------------------------------------------------------------------
+
+    @abstractmethod
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create a new parameter dictionary for the given index.
@@ -231,14 +243,16 @@ class BaseScribeResults(ABC):
         # Get the guide function for this model type
         _, guide = get_model_and_guide(self.model_type)
         
+        # Get the model arguments for this model type
+        model_args = self.get_model_args()
+        
         # Use the sampling utility function
         posterior_samples = sample_variational_posterior(
             guide,
             self.params,
-            self.n_cells,
-            self.n_genes,
-            rng_key,
-            n_samples
+            model_args,
+            rng_key=rng_key,
+            n_samples=n_samples
         )
         
         # Store samples if requested
@@ -263,14 +277,16 @@ class BaseScribeResults(ABC):
         # Get the model function for this model type
         model, _ = get_model_and_guide(self.model_type)
         
+        # Get the model arguments for this model type
+        model_args = self.get_model_args()
+        
         # Use the sampling utility function
         return generate_predictive_samples(
             model,
             self.posterior_samples["parameter_samples"],
-            self.n_cells,
-            self.n_genes,
-            rng_key,
-            batch_size
+            model_args,
+            rng_key=rng_key,
+            batch_size=batch_size
         )
 
     # --------------------------------------------------------------------------
@@ -289,6 +305,9 @@ class BaseScribeResults(ABC):
         # Get the model and guide functions
         model, guide = get_model_and_guide(self.model_type)
         
+        # Get the model arguments for this model type
+        model_args = self.get_model_args()
+        
         # Check if we need to resample parameters
         need_params = (
             resample_parameters or 
@@ -302,11 +321,10 @@ class BaseScribeResults(ABC):
                 model,
                 guide,
                 self.params,
-                self.n_cells,
-                self.n_genes,
-                rng_key,
-                n_samples,
-                batch_size
+                model_args,
+                rng_key=rng_key,
+                n_samples=n_samples,
+                batch_size=batch_size
             )
         else:
             # Split RNG key for predictive sampling only
@@ -317,10 +335,9 @@ class BaseScribeResults(ABC):
                 'predictive_samples': generate_predictive_samples(
                     model,
                     self.posterior_samples['parameter_samples'],
-                    self.n_cells,
-                    self.n_genes,
-                    key_pred,
-                    batch_size
+                    model_args,
+                    rng_key=key_pred,
+                    batch_size=batch_size
                 )
             }
         
@@ -331,11 +348,29 @@ class BaseScribeResults(ABC):
 
 
 # ------------------------------------------------------------------------------
+# Base class for standard (non-mixture) models
+# ------------------------------------------------------------------------------
+
+@dataclass
+class StandardResults(BaseScribeResults):
+    """
+    Abstract base class for standard (non-mixture) models.
+    """
+    def get_model_args(self) -> Dict:
+        """
+        Standard models just need cells and genes.
+        """
+        return {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes,
+        }
+
+# ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial model
 # ------------------------------------------------------------------------------
 
 @dataclass
-class NBDMResults(BaseScribeResults):
+class NBDMResults(StandardResults):
     """
     Results for Negative Binomial-Dirichlet Multinomial model.
     """
@@ -392,7 +427,7 @@ class NBDMResults(BaseScribeResults):
 # ------------------------------------------------------------------------------
 
 @dataclass
-class ZINBResults(BaseScribeResults):
+class ZINBResults(StandardResults):
     """
     Results for Zero-Inflated Negative Binomial model.
     """
@@ -453,7 +488,7 @@ class ZINBResults(BaseScribeResults):
 # ------------------------------------------------------------------------------
 
 @dataclass
-class NBVCPResults(BaseScribeResults):
+class NBVCPResults(StandardResults):
     """
     Results for Negative Binomial with variable capture probability model.
     """
@@ -513,7 +548,7 @@ class NBVCPResults(BaseScribeResults):
 # ------------------------------------------------------------------------------
 
 @dataclass
-class ZINBVCPResults(BaseScribeResults):
+class ZINBVCPResults(StandardResults):
     """
     Results for Zero-Inflated Negative Binomial model with variable capture probability.
     
@@ -618,11 +653,29 @@ class ZINBVCPResults(BaseScribeResults):
         return new_posterior_samples
 
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
+@dataclass
+class MixtureResults(BaseScribeResults):
+    """
+    Abstract base class for mixture models.
+    """
+    n_components: int = 2
+    
+    def get_model_args(self) -> Dict:
+        """Mixture models need components too."""
+        return {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes,
+            'n_components': self.n_components,
+        }
+
+# ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Mixture Model
 # ------------------------------------------------------------------------------
 
 @dataclass
-class NBDMMixtureResults(BaseScribeResults):
+class NBDMMixtureResults(MixtureResults):
     """
     Results for Negative Binomial mixture model.
 
@@ -637,7 +690,7 @@ class NBDMMixtureResults(BaseScribeResults):
     n_components: int = 2
 
     def __post_init__(self):
-        assert self.model_type == "nbdm_mixture", f"Invalid model type: {self.model_type}"
+        assert self.model_type == "nbdm_mix", f"Invalid model type: {self.model_type}"
 
     def get_distributions(self) -> Dict[str, dist.Distribution]:
         """

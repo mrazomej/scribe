@@ -15,8 +15,7 @@ from numpyro.infer import SVI
 def sample_variational_posterior(
     guide: Callable,
     params: Dict,
-    n_cells: int,
-    n_genes: int,
+    model_args: Dict,
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_samples: int = 100,
 ) -> Dict:
@@ -29,10 +28,10 @@ def sample_variational_posterior(
         Guide function
     params : Dict
         Dictionary containing optimized variational parameters
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
+    model_args : Dict
+        Dictionary containing model arguments. For standard models, this is
+        just the number of cells and genes. For mixture models, this is the
+        number of cells, genes, and components.
     rng_key : random.PRNGKey
         JAX random number generator key
     n_samples : int, optional
@@ -53,8 +52,7 @@ def sample_variational_posterior(
     # Sample parameters from the variational posterior
     return predictive_param(
         rng_key,
-        n_cells,
-        n_genes,
+        **model_args
     )
 
 # ------------------------------------------------------------------------------
@@ -62,8 +60,7 @@ def sample_variational_posterior(
 def generate_predictive_samples(
     model: Callable,
     posterior_samples: Dict,
-    n_cells: int,
-    n_genes: int,
+    model_args: Dict,
     rng_key: random.PRNGKey,
     batch_size: Optional[int] = None,
 ) -> jnp.ndarray:
@@ -76,10 +73,10 @@ def generate_predictive_samples(
         Model function
     posterior_samples : Dict
         Dictionary containing samples from the variational posterior
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
+    model_args : Dict
+        Dictionary containing model arguments. For standard models, this is
+        just the number of cells and genes. For mixture models, this is the
+        number of cells, genes, and components.
     rng_key : random.PRNGKey
         JAX random number generator key
     batch_size : int, optional
@@ -101,8 +98,7 @@ def generate_predictive_samples(
     # Generate predictive samples
     predictive_samples = predictive(
         rng_key,
-        n_cells,
-        n_genes,
+        **model_args,
         batch_size=batch_size
     )
     
@@ -114,8 +110,7 @@ def generate_ppc_samples(
     model: Callable,
     guide: Callable,
     params: Dict,
-    n_cells: int,
-    n_genes: int,
+    model_args: Dict,
     rng_key: random.PRNGKey,
     n_samples: int = 100,
     batch_size: Optional[int] = None,
@@ -131,10 +126,10 @@ def generate_ppc_samples(
         Guide function
     params : Dict
         Dictionary containing optimized variational parameters
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
+    model_args : Dict
+        Dictionary containing model arguments. For standard models, this is
+        just the number of cells and genes. For mixture models, this is the
+        number of cells, genes, and components.
     rng_key : random.PRNGKey
         JAX random number generator key
     n_samples : int, optional
@@ -156,8 +151,7 @@ def generate_ppc_samples(
     posterior_param_samples = sample_variational_posterior(
         guide,
         params,
-        n_cells,
-        n_genes,
+        model_args,
         key_params,
         n_samples
     )
@@ -166,8 +160,7 @@ def generate_ppc_samples(
     predictive_samples = generate_predictive_samples(
         model,
         posterior_param_samples,
-        n_cells,
-        n_genes,
+        model_args,
         key_pred,
         batch_size
     )
