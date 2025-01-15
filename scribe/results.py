@@ -3,7 +3,7 @@ Results classes for SCRIBE inference.
 """
 
 # Imports for class definitions
-from typing import Dict, Optional, Union, Callable, Tuple
+from typing import Dict, Optional, Union, Callable, Tuple, Any
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
@@ -13,6 +13,9 @@ import pandas as pd
 import numpyro.distributions as dist
 from numpyro.infer import Predictive
 from jax import random
+
+# Import scipy.stats for distributions
+import scipy.stats as stats
 
 # Imports for model-specific results
 from .models import get_model_and_guide, get_log_likelihood_fn
@@ -99,14 +102,14 @@ class BaseScribeResults(ABC):
     # --------------------------------------------------------------------------
 
     @abstractmethod
-    def get_distributions(self) -> Dict[str, dist.Distribution]:
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for all parameters.
         
         Returns
         -------
-        Dict[str, dist.Distribution]
-            Dictionary mapping parameter names to their Numpyro distributions
+        Dict[str, Any]
+            Dictionary mapping parameter names to their distributions
         """
         pass
 
@@ -378,14 +381,26 @@ class NBDMResults(StandardResults):
         # Change this to only verify the model type instead of setting it
         assert self.model_type == "nbdm", f"Invalid model type: {self.model_type}"
 
-    def get_distributions(self) -> Dict[str, dist.Distribution]:
+    # --------------------------------------------------------------------------
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for NBDM parameters.
         """
-        return {
-            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r'])
-        }
+        if backend == "scipy":
+            return {
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r'])
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+    
+    # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
         """
@@ -396,6 +411,8 @@ class NBDMResults(StandardResults):
         new_params['alpha_r'] = params['alpha_r'][index]
         new_params['beta_r'] = params['beta_r'][index]
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -435,15 +452,30 @@ class ZINBResults(StandardResults):
         # Change this to only verify the model type instead of setting it
         assert self.model_type == "zinb", f"Invalid model type: {self.model_type}"
 
-    def get_distributions(self) -> Dict[str, dist.Distribution]:
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for ZINB parameters.
         """
-        return {
-            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-            'gate': dist.Beta(self.params['alpha_gate'], self.params['beta_gate'])
-        }
+        if backend == "scipy":
+            return {
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r']),
+                'gate': stats.beta(
+                    self.params['alpha_gate'], self.params['beta_gate']
+                )
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+                'gate': dist.Beta(
+                    self.params['alpha_gate'], self.params['beta_gate']
+                )
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
         """
@@ -456,6 +488,8 @@ class ZINBResults(StandardResults):
         new_params['alpha_gate'] = params['alpha_gate'][index]
         new_params['beta_gate'] = params['beta_gate'][index]
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -495,15 +529,32 @@ class NBVCPResults(StandardResults):
     def __post_init__(self):
         assert self.model_type == "nbvcp", f"Invalid model type: {self.model_type}"
 
-    def get_distributions(self) -> Dict[str, dist.Distribution]:
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for NBVCP parameters.
         """
-        return {
-            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-            'p_capture': dist.Beta(self.params['alpha_p_capture'], self.params['beta_p_capture'])
-        }
+        if backend == "scipy":
+            return {
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r']),
+                'p_capture': stats.beta(
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                )
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+                'p_capture': dist.Beta(
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                )
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
         """
@@ -515,6 +566,8 @@ class NBVCPResults(StandardResults):
         new_params['beta_r'] = params['beta_r'][index]
         # p and p_capture parameters are shared across genes
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -562,29 +615,50 @@ class ZINBVCPResults(StandardResults):
     def __post_init__(self):
         assert self.model_type == "zinbvcp", f"Invalid model type: {self.model_type}"
 
-    def get_distributions(self) -> Dict[str, dist.Distribution]:
+    # --------------------------------------------------------------------------
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for ZINBVCP parameters.
         
         Returns
         -------
-        Dict[str, dist.Distribution]
-            Dictionary mapping parameter names to their Numpyro distributions:
+        Dict[str, Any]
+            Dictionary mapping parameter names to their distributions:
             - 'p': Beta distribution for success probability
             - 'r': Gamma distribution for gene-specific dispersion
             - 'p_capture': Beta distribution for cell-specific capture
             probabilities
             - 'gate': Beta distribution for gene-specific dropout probabilities
         """
-        return {
-            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-            'p_capture': dist.Beta(
+        if backend == "scipy":
+            return {
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r']),
+                'p_capture': stats.beta(
                 self.params['alpha_p_capture'], 
                 self.params['beta_p_capture']
             ),
-            'gate': dist.Beta(self.params['alpha_gate'], self.params['beta_gate'])
-        }
+                'gate': stats.beta(
+                    self.params['alpha_gate'], self.params['beta_gate']
+                )
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+                'p_capture': dist.Beta(
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                ),
+                'gate': dist.Beta(
+                    self.params['alpha_gate'], self.params['beta_gate']
+                )
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
         """
@@ -610,6 +684,8 @@ class ZINBVCPResults(StandardResults):
         new_params['beta_gate'] = params['beta_gate'][index]
         # p and p_capture parameters are shared or cell-specific, so keep as is
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -653,6 +729,7 @@ class ZINBVCPResults(StandardResults):
         return new_posterior_samples
 
 # ------------------------------------------------------------------------------
+# Base class for mixture models
 # ------------------------------------------------------------------------------
 
 @dataclass
@@ -692,7 +769,9 @@ class NBDMMixtureResults(MixtureResults):
     def __post_init__(self):
         assert self.model_type == "nbdm_mix", f"Invalid model type: {self.model_type}"
 
-    def get_distributions(self) -> Dict[str, dist.Distribution]:
+    # --------------------------------------------------------------------------
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for mixture model parameters.
 
@@ -704,11 +783,22 @@ class NBDMMixtureResults(MixtureResults):
             - 'p': Beta distributions for success probabilities (one per component)
             - 'r': Gamma distributions for dispersion parameters (one per component per gene)
         """
-        return {
-            'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
-            'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-            'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r'])
-        }
+        if backend == "scipy":
+            return {
+                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r'])
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
         """
@@ -732,6 +822,8 @@ class NBDMMixtureResults(MixtureResults):
         new_params['alpha_r'] = params['alpha_r'][:, index]
         new_params['beta_r'] = params['beta_r'][:, index]
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
