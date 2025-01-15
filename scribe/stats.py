@@ -13,6 +13,9 @@ from jax import scipy as jsp
 import jax
 from numpyro.distributions import Dirichlet
 
+# Import scipy.special functions
+from scipy.special import gammaln, digamma, psi
+
 # ------------------------------------------------------------------------------
 # Histogram functions
 # ------------------------------------------------------------------------------
@@ -71,9 +74,9 @@ def compute_histogram_percentiles(
     
     return bin_edges, hist_percentiles
 
-# %% ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Credible regions functions
-# %% ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 def compute_histogram_credible_regions(
     samples,
@@ -162,9 +165,9 @@ def compute_histogram_credible_regions(
     
     return results
 
-# %% ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Fraction of transcriptome functions
-# %% ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 def sample_dirichlet_from_parameters(
     parameter_samples: Union[np.ndarray, jnp.ndarray],
@@ -211,7 +214,7 @@ def sample_dirichlet_from_parameters(
         # Return 3D array if multiple samples per distribution
         return jnp.transpose(samples, (1, 2, 0))
 
-# %% ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def fit_dirichlet_mle(
@@ -298,3 +301,104 @@ def fit_dirichlet_mle(
     
     # Return final concentration parameters
     return alpha
+
+# ------------------------------------------------------------------------------
+# KL divergence functions
+# ------------------------------------------------------------------------------
+
+def kl_gamma(alpha1, beta1, alpha2, beta2):
+    """
+    Compute Kullback-Leibler (KL) divergence between two Gamma distributions.
+    
+    Calculates KL(P||Q) where:
+    P ~ Gamma(α₁, β₁)
+    Q ~ Gamma(α₂, β₂)
+    
+    The KL divergence is given by:
+    
+    KL(P||Q) = (α₁ - α₂)ψ(α₁) - ln[Γ(α₁)] + ln[Γ(α₂)] + α₂ln(β₁/β₂) + α₁(β₂/β₁ - 1)
+    
+    where:
+    - ψ(x) is the digamma function
+    - Γ(x) is the gamma function
+    
+    Parameters
+    ----------
+    alpha1 : float or array-like
+        Shape parameter α₁ of the first Gamma distribution P
+    beta1 : float or array-like
+        Rate parameter β₁ of the first Gamma distribution P
+    alpha2 : float or array-like
+        Shape parameter α₂ of the second Gamma distribution Q
+    beta2 : float or array-like
+        Rate parameter β₂ of the second Gamma distribution Q
+        
+    Returns
+    -------
+    float
+        KL divergence between the two Gamma distributions
+    """
+    # Check that all inputs are of same shape
+    if not all(isinstance(a, (float, np.ndarray)) and 
+               isinstance(b, (float, np.ndarray)) 
+               for a, b in zip([alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2])
+            ):
+        raise ValueError("All inputs must be of the same shape")
+    
+    return (
+        (alpha1 - alpha2) * digamma(alpha1) 
+        - gammaln(alpha1) 
+        + gammaln(alpha2) 
+        + alpha2 * (np.log(beta1) - np.log(beta2)) 
+        + alpha1 * (beta2/beta1 - 1)
+    )
+
+# ------------------------------------------------------------------------------
+
+def kl_beta(alpha1, beta1, alpha2, beta2):
+    """
+    Compute Kullback-Leibler (KL) divergence between two Beta distributions.
+    
+    Calculates KL(P||Q) where:
+    P ~ Beta(α₁, β₁)
+    Q ~ Beta(α₂, β₂)
+    
+    The KL divergence is given by:
+    
+    KL(P||Q) = ln[B(α₂,β₂)] - ln[B(α₁,β₁)] + (α₁-α₂)ψ(α₁) + (β₁-β₂)ψ(β₁) 
+                + (α₂-α₁+β₂-β₁)ψ(α₁+β₁)
+    
+    where:
+    - ψ(x) is the digamma function
+    - B(x,y) is the beta function
+    
+    Parameters
+    ----------
+    alpha1 : float or array-like
+        Shape parameter α₁ of the first Beta distribution P
+    beta1 : float or array-like
+        Shape parameter β₁ of the first Beta distribution P
+    alpha2 : float or array-like
+        Shape parameter α₂ of the second Beta distribution Q
+    beta2 : float or array-like
+        Shape parameter β₂ of the second Beta distribution Q
+        
+    Returns
+    -------
+    float
+        KL divergence between the two Beta distributions
+    """
+    # Check that all inputs are of same shape
+    if not all(isinstance(a, (float, np.ndarray)) and 
+               isinstance(b, (float, np.ndarray)) 
+               for a, b in zip([alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2])
+            ):
+        raise ValueError("All inputs must be of the same shape")
+    
+    return (
+        gammaln(alpha2 + beta2) - gammaln(alpha2) - gammaln(beta2)
+        - (gammaln(alpha1 + beta1) - gammaln(alpha1) - gammaln(beta1))
+        + (alpha1 - alpha2) * psi(alpha1)
+        + (beta1 - beta2) * psi(beta1)
+        + (alpha2 - alpha1 + beta2 - beta1) * psi(alpha1 + beta1)
+    )
