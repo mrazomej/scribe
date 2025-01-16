@@ -390,7 +390,11 @@ class NBDMResults(StandardResults):
         if backend == "scipy":
             return {
                 'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r'])
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                )
             }
         elif backend == "numpyro":
             return {
@@ -459,7 +463,11 @@ class ZINBResults(StandardResults):
         if backend == "scipy":
             return {
                 'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r']),
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                ),
                 'gate': stats.beta(
                     self.params['alpha_gate'], self.params['beta_gate']
                 )
@@ -536,7 +544,11 @@ class NBVCPResults(StandardResults):
         if backend == "scipy":
             return {
                 'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r']),
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                ),
                 'p_capture': stats.beta(
                     self.params['alpha_p_capture'], 
                     self.params['beta_p_capture']
@@ -634,11 +646,15 @@ class ZINBVCPResults(StandardResults):
         if backend == "scipy":
             return {
                 'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r']),
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                ),
                 'p_capture': stats.beta(
-                self.params['alpha_p_capture'], 
-                self.params['beta_p_capture']
-            ),
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                ),
                 'gate': stats.beta(
                     self.params['alpha_gate'], self.params['beta_gate']
                 )
@@ -787,7 +803,11 @@ class NBDMMixtureResults(MixtureResults):
             return {
                 'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
                 'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(self.params['alpha_r'], self.params['beta_r'])
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                )
             }
         elif backend == "numpyro":
             return {
@@ -859,6 +879,172 @@ class NBDMMixtureResults(MixtureResults):
             if "r" in param_samples:
                 # Keep samples and component dimensions, subset gene dimension
                 new_param_samples["r"] = param_samples["r"][..., index]
+                
+            new_posterior_samples["parameter_samples"] = new_param_samples
+        
+        if "predictive_samples" in samples:
+            # Keep samples and cells dimensions, subset gene dimension
+            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
+            
+        return new_posterior_samples
+
+# ------------------------------------------------------------------------------
+# Zero-Inflated Negative Binomial Mixture Model
+# ------------------------------------------------------------------------------
+
+@dataclass
+class ZINBMixtureResults(MixtureResults):
+    """
+    Results for Zero-Inflated Negative Binomial mixture model.
+
+    This class extends MixtureResults to handle ZINB mixture model specifics
+    with the following parameters:
+        - mixing_weights: Dirichlet distribution for mixture weights
+        - p: Beta distributions for success probabilities (one per component)
+        - r: Gamma distributions for dispersion parameters (one per component
+          per gene)
+        - gate: Beta distributions for dropout probabilities (one per component
+          per gene)
+    
+    Attributes
+    ----------
+    params : Dict
+        Dictionary of inferred model parameters
+    loss_history : jnp.ndarray
+        Array containing the ELBO loss values during training
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_type : str
+        Type of model used for inference (must be "zinb_mix")
+    n_components : int
+        Number of mixture components
+    cell_metadata : Optional[pd.DataFrame]
+        Cell-level metadata from adata.obs, if provided
+    gene_metadata : Optional[pd.DataFrame]
+        Gene-level metadata from adata.var, if provided
+    uns : Optional[Dict]
+        Unstructured metadata from adata.uns, if provided
+    posterior_samples : Optional[Dict]
+        Samples from the posterior distribution, if generated
+    """
+    # Number of mixture components
+    n_components: int = 2
+
+    def __post_init__(self):
+        assert self.model_type == "zinb_mix", f"Invalid model type: {self.model_type}"
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
+        """
+        Get the variational distributions for mixture model parameters.
+
+        Parameters
+        ----------
+        backend : str
+            Statistical package to use for distributions. Must be one of:
+            - "scipy": Returns scipy.stats distributions
+            - "numpyro": Returns numpyro.distributions
+
+        Returns
+        -------
+        Dict[str, dist.Distribution]
+            Dictionary mapping parameter names to their distributions:
+            - 'mixing_weights': Dirichlet distribution for mixture weights
+            - 'p': Beta distributions for success probabilities (one per component)
+            - 'r': Gamma distributions for dispersion parameters (one per component
+              per gene)
+            - 'gate': Beta distributions for dropout probabilities (one per
+              component per gene)
+        """
+        if backend == "scipy":
+            return {
+                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                ),
+                'gate': stats.beta(
+                    self.params['alpha_gate'],
+                    self.params['beta_gate']
+                )
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+                'gate': dist.Beta(
+                    self.params['alpha_gate'],
+                    self.params['beta_gate']
+                )
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    def _subset_params(self, params: Dict, index) -> Dict:
+        """
+        Create new parameter dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        params : Dict
+            Original parameter dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New parameter dictionary with subset of gene-specific parameters
+        """
+        new_params = dict(params)
+        # Both r and gate parameters are gene-specific
+        # Keep component dimension, subset gene dimension
+        new_params['alpha_r'] = params['alpha_r'][:, index]
+        new_params['beta_r'] = params['beta_r'][:, index]
+        new_params['alpha_gate'] = params['alpha_gate'][:, index]
+        new_params['beta_gate'] = params['beta_gate'][:, index]
+        return new_params
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create new posterior samples dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Original samples dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New samples dictionary with subset of gene-specific samples
+        """
+        new_posterior_samples = {}
+        
+        if "parameter_samples" in samples:
+            param_samples = samples["parameter_samples"]
+            new_param_samples = {}
+            
+            # mixing_weights are component-specific
+            if "mixing_weights" in param_samples:
+                new_param_samples["mixing_weights"] = param_samples["mixing_weights"]
+            
+            # p is component-specific
+            if "p" in param_samples:
+                new_param_samples["p"] = param_samples["p"]
+            
+            # r and gate are both component and gene-specific
+            if "r" in param_samples:
+                # Keep samples and component dimensions, subset gene dimension
+                new_param_samples["r"] = param_samples["r"][..., index]
+            if "gate" in param_samples:
+                new_param_samples["gate"] = param_samples["gate"][..., index]
                 
             new_posterior_samples["parameter_samples"] = new_param_samples
         
