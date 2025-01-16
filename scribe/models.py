@@ -741,6 +741,12 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         # Import model and guide functions locally to avoid circular imports
         from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
         return nbdm_mixture_model, nbdm_mixture_guide
+
+    # Handle Zero-Inflated Negative Binomial Mixture Model
+    elif model_type == "zinb_mix":
+        # Import model and guide functions locally to avoid circular imports
+        from .models_mix import zinb_mixture_model, zinb_mixture_guide
+        return zinb_mixture_model, zinb_mixture_guide
     
     # Raise error for unsupported model types
     else:
