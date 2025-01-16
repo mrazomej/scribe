@@ -208,62 +208,115 @@ def run_inference(
 # Convert variational parameters to distributions
 # ------------------------------------------------------------------------------
 
-def params_to_dist(params: Dict, model: str) -> Dict[str, dist.Distribution]:
+def params_to_dist(params: Dict, model: str, backend: str = "scipy") -> Dict[str, Any]:
     """
-    Convert variational parameters to their corresponding Numpyro distributions.
+    Convert variational parameters to their corresponding distributions.
     
     Parameters
     ----------
     params : Dict
         Dictionary containing variational parameters with keys:
-        - alpha_p, beta_p: Beta distribution parameters for p
-        - alpha_r, beta_r: Gamma distribution parameters for r
+            - alpha_p, beta_p: Beta distribution parameters for p
+            - alpha_r, beta_r: Gamma distribution parameters for r
+            - alpha_mixing: Dirichlet distribution parameters for mixing weights
+            - alpha_gate, beta_gate: Beta distribution parameters for gate
     model : str
-        Model type. Must be one of: 'nbdm', 'zinb'
+        Model type. Must be one of: 'nbdm', 'zinb', 'nbvcp', 'zinbvcp',
+        'nbdm_mix', 'zinb_mix'
+    backend : str, optional
+        Statistical package to use for distributions. Must be one of:
+            - "scipy": Returns scipy.stats distributions (default)
+            - "numpyro": Returns numpyro.distributions
         
     Returns
     -------
-    Dict[str, dist.Distribution]
-        Dictionary mapping parameter names to their distributions:
-        - 'p': Beta distribution
-        - 'r': Gamma distribution
+    Dict[str, Any]
+        Dictionary mapping parameter names to their distributions
     """
     if model == "nbdm":
-        return {
-            'p': dist.Beta(params['alpha_p'], params['beta_p']),
-            'r': dist.Gamma(params['alpha_r'], params['beta_r'])
-        }
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
+            }
     elif model == "zinb":
-        return {
-            'p': dist.Beta(params['alpha_p'], params['beta_p']),
-            'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-            'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-        }
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
     elif model == "nbvcp":
-        return {
-            'p': dist.Beta(params['alpha_p'], params['beta_p']),
-            'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-            'p_capture': dist.Beta(
-                params['alpha_p_capture'], params['beta_p_capture']
-            )
-        }
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
     elif model == "zinbvcp":
-        return {
-            'p': dist.Beta(params['alpha_p'], params['beta_p']),
-            'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-            'p_capture': dist.Beta(
-                params['alpha_p_capture'], params['beta_p_capture']
-            ),
-            'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-        }
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
     elif model == "nbdm_mix":
-        return {
-            'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-            'p': dist.Beta(params['alpha_p'], params['beta_p']),
-            'r': dist.Gamma(params['alpha_r'], params['beta_r'])
-        }
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
+            }
+    elif model == "zinb_mix":
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
     else:
         raise ValueError(f"Invalid model type: {model}")
+
+    raise ValueError(f"Invalid backend: {backend}")
 
 # ------------------------------------------------------------------------------
 # SCRIBE inference pipeline
@@ -282,7 +335,7 @@ def run_scribe(
     cells_axis: int = 0,
     layer: Optional[str] = None,
     stable_update: bool = True,
-) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults]:
+) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults]:
     """Run the complete SCRIBE inference pipeline.
     
     Parameters
@@ -326,7 +379,7 @@ def run_scribe(
 
     Returns
     -------
-    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]
+    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults]
         Results container with inference results and optional metadata
     """
     # Set default prior parameters if none provided
@@ -380,7 +433,8 @@ def run_scribe(
         "zinb": ZINBResults,
         "nbvcp": NBVCPResults,
         "zinbvcp": ZINBVCPResults,
-        "nbdm_mix": NBDMMixtureResults
+        "nbdm_mix": NBDMMixtureResults,
+        "zinb_mix": ZINBMixtureResults
     }.get(model_type)
 
     if results_class is None:
@@ -423,7 +477,8 @@ def rerun_scribe(
         ZINBResults, 
         NBVCPResults, 
         ZINBVCPResults, 
-        NBDMMixtureResults
+        NBDMMixtureResults,
+        ZINBMixtureResults
     ],
     counts: Union[jnp.ndarray, "AnnData"],
     n_steps: int = 100_000,
@@ -440,7 +495,8 @@ def rerun_scribe(
     ZINBResults, 
     NBVCPResults, 
     ZINBVCPResults, 
-    NBDMMixtureResults
+    NBDMMixtureResults,
+    ZINBMixtureResults
 ]:
     """
     Continue training from a previous SCRIBE results object.
@@ -499,14 +555,12 @@ def rerun_scribe(
         count_data = jnp.array(counts)
         adata = None
 
-    # Extract dimensions
+    # Extract dimensions and transpose if needed
     if cells_axis == 0:
         n_cells, n_genes = count_data.shape
-        count_data = jnp.array(count_data)
     else:
         n_genes, n_cells = count_data.shape
-        count_data = count_data.T  # Transpose to make cells rows
-        count_data = jnp.array(count_data)
+        count_data = count_data.T
 
     # Verify dimensions match
     if n_genes != results.n_genes:
@@ -516,44 +570,34 @@ def rerun_scribe(
         )
 
     # Get model and guide functions
-    model, guide = get_model_and_guide(results.model_type)
+    model, guide = results.get_model_and_guide()
 
     # Create SVI instance
-    svi = SVI(
-        model,
-        guide,
-        optimizer,
-        loss=loss
-    )
+    svi = SVI(model, guide, optimizer, loss=loss)
 
     # Use default prior parameters if none provided
     if prior_params is None:
         prior_params = get_default_priors(results.model_type)
 
-    # Prepare model arguments - specific to each model type
-    model_args = {
-        'n_cells': n_cells,
-        'n_genes': n_genes,
+    # Get base model arguments from results class
+    model_args = results.get_model_args()
+    
+    # Update with runtime-specific arguments
+    model_args.update({
         'counts': count_data,
         'batch_size': batch_size,
-    }
+    })
 
     # Add model-specific parameters
     if results.model_type == "nbdm":
         model_args['total_counts'] = count_data.sum(axis=1)
-    elif "mix" in results.model_type:
-        model_args['n_components'] = results.n_components
     
-    # Add all prior parameters to model args
+    # Add prior parameters and current parameters
     model_args.update(prior_params)
-
-    # Extract current parameters from results as init_params
     model_args['init_params'] = results.params
 
-    # Initialize the SVI state with current parameters
+    # Initialize and run SVI
     svi_state = svi.init(rng_key, **model_args)
-
-    # Run the inference algorithm from current state
     svi_results = svi.run(
         rng_key,
         n_steps,
@@ -562,16 +606,10 @@ def rerun_scribe(
         **model_args
     )
 
-    # Create the appropriate results class
+    # Create new results object
     results_class = type(results)
-    
-    # Combine the loss histories
-    combined_losses = jnp.concatenate([
-        results.loss_history,
-        svi_results.losses
-    ])
+    combined_losses = jnp.concatenate([results.loss_history, svi_results.losses])
 
-    # Create and return new results object
     if adata is not None:
         return results_class.from_anndata(
             adata=adata,
