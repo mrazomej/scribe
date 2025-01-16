@@ -72,7 +72,7 @@ def nbdm_model(
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
             # Define plate for cells total counts
-            with numpyro.plate("cells", n_cells):
+            with numpyro.plate("cells", n_cells, dim=-2):
                 # Likelihood for the total counts - one for each cell
                 numpyro.sample(
                     "total_counts",
@@ -80,18 +80,21 @@ def nbdm_model(
                     obs=total_counts
                 )
 
-            # Likelihood for the individual counts - one for each cell
-            numpyro.sample(
-                "counts",
-                dist.DirichletMultinomial(r, total_count=total_counts),
-                obs=counts
-            )
+            # Define plate for cells individual counts
+            with numpyro.plate("cells", n_cells, dim=-2):
+                # Likelihood for the individual counts - one for each cell
+                numpyro.sample(
+                    "counts",
+                    dist.DirichletMultinomial(r, total_count=total_counts),
+                    obs=counts
+                )
         else:
             # Define plate for cells total counts
             with numpyro.plate(
                 "cells",
                 n_cells,
-                subsample_size=batch_size
+                subsample_size=batch_size,
+                dim=-2
             ) as idx:
                 # Likelihood for the total counts - one for each cell
                 numpyro.sample(
@@ -242,14 +245,14 @@ def zinb_model(
     base_dist = dist.NegativeBinomialProbs(r, p)
     
     # Create zero-inflated distribution
-    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
 
     # If we have observed data, condition on it
     if counts is not None:
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
             # Define plate for cells
-            with numpyro.plate("cells", n_cells):
+            with numpyro.plate("cells", n_cells, dim=-2):
                 # Likelihood for the counts - one for each cell
                 numpyro.sample("counts", zinb, obs=counts)
         else:
@@ -266,7 +269,7 @@ def zinb_model(
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Make the distribution return a vector of length n_genes
-            counts = numpyro.sample("counts", zinb)
+            counts = numpyro.sample("counts", zinb.to_event(1))
 
 # ------------------------------------------------------------------------------
 # Beta-Gamma-Beta Variational Posterior for Zero-Inflated Negative Binomial
