@@ -338,13 +338,6 @@ def kl_gamma(alpha1, beta1, alpha2, beta2):
     float
         KL divergence between the two Gamma distributions
     """
-    # Check that all inputs are of same shape
-    if not all(isinstance(a, (float, np.ndarray)) and 
-               isinstance(b, (float, np.ndarray)) 
-               for a, b in zip([alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2])
-            ):
-        raise ValueError("All inputs must be of the same shape")
-    
     return (
         (alpha1 - alpha2) * digamma(alpha1) 
         - gammaln(alpha1) 
