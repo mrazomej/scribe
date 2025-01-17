@@ -57,6 +57,17 @@ def nbdm_model(
     batch_size : int, optional
         Mini-batch size for stochastic variational inference.
         If None, uses full dataset.
+
+    Model Structure
+    --------------
+    Global Parameters:
+        - Success probability p ~ Beta(p_prior)
+        - Gene-specific dispersion r ~ Gamma(r_prior)
+        - Total dispersion r_total = sum(r)
+
+    Likelihood:
+        - total_counts ~ NegativeBinomial(r_total, p)
+        - counts ~ DirichletMultinomial(r, total_counts)
     """
     # Define the prior on the p parameter
     p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
@@ -72,7 +83,7 @@ def nbdm_model(
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
             # Define plate for cells total counts
-            with numpyro.plate("cells", n_cells, dim=-2):
+            with numpyro.plate("cells", n_cells):
                 # Likelihood for the total counts - one for each cell
                 numpyro.sample(
                     "total_counts",
@@ -81,7 +92,7 @@ def nbdm_model(
                 )
 
             # Define plate for cells individual counts
-            with numpyro.plate("cells", n_cells, dim=-2):
+            with numpyro.plate("cells", n_cells):
                 # Likelihood for the individual counts - one for each cell
                 numpyro.sample(
                     "counts",
@@ -94,7 +105,6 @@ def nbdm_model(
                 "cells",
                 n_cells,
                 subsample_size=batch_size,
-                dim=-2
             ) as idx:
                 # Likelihood for the total counts - one for each cell
                 numpyro.sample(
@@ -107,7 +117,6 @@ def nbdm_model(
             with numpyro.plate(
                 "cells",
                 n_cells,
-                dim=-2,
                 subsample_size=batch_size
             ) as idx:
                 # Likelihood for the individual counts - one for each cell
@@ -229,6 +238,16 @@ def zinb_model(
         Observed counts matrix of shape (n_cells, n_genes)
     batch_size : int, optional
         Mini-batch size for stochastic variational inference
+
+    Model Structure
+    --------------
+    Global Parameters:
+        - Success probability p ~ Beta(p_prior)
+        - Gene-specific dispersion r ~ Gamma(r_prior)
+        - Gene-specific dropout probabilities gate ~ Beta(gate_prior)
+
+    Likelihood:
+        - counts ~ ZeroInflatedNegativeBinomial(r, p, gate)
     """
     # Single shared p parameter for all genes
     p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
@@ -245,14 +264,14 @@ def zinb_model(
     base_dist = dist.NegativeBinomialProbs(r, p)
     
     # Create zero-inflated distribution
-    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
 
     # If we have observed data, condition on it
     if counts is not None:
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
             # Define plate for cells
-            with numpyro.plate("cells", n_cells, dim=-2):
+            with numpyro.plate("cells", n_cells):
                 # Likelihood for the counts - one for each cell
                 numpyro.sample("counts", zinb, obs=counts)
         else:
@@ -261,7 +280,6 @@ def zinb_model(
                 "cells",
                 n_cells,
                 subsample_size=batch_size,
-                dim=-2
             ) as idx:
                 # Likelihood for the counts - one for each cell
                 numpyro.sample("counts", zinb, obs=counts[idx])
@@ -403,6 +421,19 @@ def nbvcp_model(
     batch_size : int, optional
         Mini-batch size for stochastic variational inference. If None, uses full
         dataset.
+
+    Model Structure
+    --------------
+    Global Parameters:
+        - Success probability p ~ Beta(p_prior)
+        - Gene-specific dispersion r ~ Gamma(r_prior)
+
+    Local Parameters:
+        - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
+        - Effective probability p_hat = p / (p_capture + p * (1 - p_capture))
+
+    Likelihood:
+        - counts ~ NegativeBinomial(r, p_hat)
     """
     # Define global parameters
     # Sample base success probability
@@ -647,6 +678,20 @@ def zinbvcp_model(
         Observed counts matrix of shape (n_cells, n_genes)
     batch_size : int, optional
         Mini-batch size for stochastic variational inference
+
+    Model Structure
+    --------------
+    Global Parameters:
+        - Success probability p ~ Beta(p_prior)
+        - Gene-specific dispersion r ~ Gamma(r_prior)
+        - Gene-specific dropout probabilities gate ~ Beta(gate_prior)
+
+    Local Parameters:
+        - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
+        - Effective probability p_hat = p / (p_capture + p * (1 - p_capture))
+
+    Likelihood:
+        - counts ~ ZeroInflatedNegativeBinomial(r, p_hat, gate)
     """
     # Define global parameters
     # Sample base success probability
