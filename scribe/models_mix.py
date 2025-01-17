@@ -81,10 +81,7 @@ def nbdm_mixture_model(
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
     # Define the prior on the p parameters - one for each component
-    p = numpyro.sample(
-        "p",
-        dist.Beta(p_prior[0], p_prior[1]).expand([n_components])
-    )
+    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
 
     # Define the prior on the r parameters - one for each gene and component
     r = numpyro.sample(
@@ -97,7 +94,7 @@ def nbdm_mixture_model(
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
             # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p[:, None]).to_event(1)
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             
             # Create mixture distribution
             mixture = dist.MixtureSameFamily(
@@ -116,11 +113,10 @@ def nbdm_mixture_model(
         else:
             # Mini-batch version
             with numpyro.plate(
-                "cells", n_cells, subsample_size=batch_size, dim=-2
+                "cells", n_cells, subsample_size=batch_size
             ) as idx:
                 # Create base negative binomial distribution
-                base_dist = dist.NegativeBinomialProbs(
-                    r, p[:, None]).to_event(1)
+                base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
                 
                 # Create mixture distribution
                 mixture = dist.MixtureSameFamily(
@@ -138,7 +134,7 @@ def nbdm_mixture_model(
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p[:, None]).to_event(1)
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             
             # Create mixture distribution
             mixture = dist.MixtureSameFamily(
@@ -215,12 +211,12 @@ def nbdm_mixture_guide(
     # Variational parameters for p (one per component)
     alpha_p = numpyro.param(
         "alpha_p",
-        jnp.ones(n_components) * p_prior[0],
+        p_prior[0],
         constraint=constraints.positive
     )
     beta_p = numpyro.param(
         "beta_p",
-        jnp.ones(n_components) * p_prior[1],
+        p_prior[1],
         constraint=constraints.positive
     )
 
@@ -257,14 +253,13 @@ def zinb_mixture_model(
     batch_size=None,
 ):
     """
-    Numpyro mixture model for single-cell RNA sequencing data using Zero-Inflated
-    Negative Binomial distributions.
+    Numpyro mixture model for single-cell RNA sequencing data using
+    Zero-Inflated Negative Binomial distributions.
     
     This model assumes a hierarchical mixture structure where:
-        1. Each mixture component has:
-           - A shared success probability p across all genes
-           - Gene-specific dispersion parameters r
-           - Gene-specific dropout probabilities (gate)
+        1. Each mixture component has: - A shared success probability p across
+           all genes - Gene-specific dispersion parameters r - Gene-specific
+           dropout probabilities (gate)
         2. The mixture is handled using Numpyro's MixtureSameFamily
     
     Parameters
@@ -276,25 +271,25 @@ def zinb_mixture_model(
     n_components : int
         Number of mixture components to fit
     p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p parameters.
-        Default is (1, 1) for uniform priors.
+        Parameters (alpha, beta) for the Beta prior on p parameters. Default is
+        (1, 1) for uniform priors.
     r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters.
-        Default is (2, 0.1).
+        Parameters (shape, rate) for the Gamma prior on r parameters. Default is
+        (2, 0.1).
     gate_prior : tuple of float
         Parameters (alpha, beta) for the Beta prior on dropout probabilities.
         Default is (1, 1).
     mixing_prior : Union[float, tuple]
-        Concentration parameter for the Dirichlet prior on mixing weights.
-        If float, uses same value for all components.
-        If tuple, uses different concentration for each component.
-        Default is 1.0 for a uniform prior over the simplex.
+        Concentration parameter for the Dirichlet prior on mixing weights. If
+        float, uses same value for all components. If tuple, uses different
+        concentration for each component. Default is 1.0 for a uniform prior
+        over the simplex.
     counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes).
-        If None, generates samples from the prior.
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference.
-        If None, uses full dataset.
+        Mini-batch size for stochastic variational inference. If None, uses full
+        dataset.
     """
     # Check if mixing_prior is a tuple
     if isinstance(mixing_prior, tuple):
@@ -316,11 +311,8 @@ def zinb_mixture_model(
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
-    # Define the prior on the p parameters - one for each component
-    p = numpyro.sample(
-        "p",
-        dist.Beta(p_prior[0], p_prior[1]).expand([n_components])
-    )
+    # Define the prior on the p parameters
+    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
 
     # Define the prior on the r parameters - one for each gene and component
     r = numpyro.sample(
@@ -338,11 +330,8 @@ def zinb_mixture_model(
     if counts is not None:
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
-            # Broadcast p to match shape [n_components, n_genes]
-            p_broadcasted = jnp.broadcast_to(p[:, None], (n_components, n_genes))
-            
             # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p_broadcasted).to_event(1)
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             
             # Create zero-inflated distribution
             zinb = dist.ZeroInflatedDistribution(
@@ -369,12 +358,9 @@ def zinb_mixture_model(
             with numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size, dim=-2
             ) as idx:
-                # Broadcast p to match shape [n_components, n_genes]
-                p_broadcasted = jnp.broadcast_to(p[:, None], (n_components, n_genes))
-                
                 # Create base negative binomial distribution
-                base_dist = dist.NegativeBinomialProbs(
-                    r, p_broadcasted)
+                # Create base negative binomial distribution
+                base_dist = dist.NegativeBinomialProbs(r, p)
                 
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
@@ -397,11 +383,8 @@ def zinb_mixture_model(
     else:
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
-            # Broadcast p to match shape [n_components, n_genes]
-            p_broadcasted = jnp.broadcast_to(p[:, None], (n_components, n_genes))
-            
             # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p_broadcasted).to_event(1)
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             
             # Create zero-inflated distribution
             zinb = dist.ZeroInflatedDistribution(
@@ -488,12 +471,12 @@ def zinb_mixture_guide(
     # Variational parameters for p (one per component)
     alpha_p = numpyro.param(
         "alpha_p",
-        jnp.ones(n_components) * p_prior[0],
+        p_prior[0],
         constraint=constraints.positive
     )
     beta_p = numpyro.param(
         "beta_p",
-        jnp.ones(n_components) * p_prior[1],
+        p_prior[1],
         constraint=constraints.positive
     )
 
