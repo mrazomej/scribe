@@ -313,6 +313,38 @@ def params_to_dist(params: Dict, model: str, backend: str = "scipy") -> Dict[str
                 'r': dist.Gamma(params['alpha_r'], params['beta_r']),
                 'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
             }
+    elif model == "nbvcp_mix":
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
+    elif model == "zinbvcp_mix":
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
     else:
         raise ValueError(f"Invalid model type: {model}")
 
