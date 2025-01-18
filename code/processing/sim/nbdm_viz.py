@@ -309,3 +309,168 @@ fig.savefig(
 )
 
 # %% ---------------------------------------------------------------------------
+
+# Get distribution of r
+r_dist = results.get_distributions()["r"]
+
+# Compute 68% confidence interval quantiles
+lower_quantile = r_dist.ppf(0.16)  # 16th percentile
+upper_quantile = r_dist.ppf(0.84)  # 84th percentile
+median = r_dist.ppf(0.5)  # median
+
+# Initialize figure
+fig, ax = plt.subplots(1, 1, figsize=(3, 3))
+
+# Plot error bars
+ax.errorbar(
+    data["r"], 
+    median, 
+    yerr=[median - lower_quantile, upper_quantile - median],
+    color=colors["light_blue"],
+    alpha=0.25,
+    zorder=0
+)
+
+# Plot median
+ax.scatter(
+    data["r"],
+    median,
+    color=colors["blue"],
+    alpha=0.25
+)
+
+# Plot identity line
+ax.plot(
+    [data["r"].min(), data["r"].max()],
+    [data["r"].min(), data["r"].max()],
+    color="black",
+    linestyle="--",
+    zorder=50_000
+)
+
+# Set axis labels
+ax.set_xlabel(r"ground truth $r$")
+ax.set_ylabel(r"posterior $r$")
+
+# Save figure
+fig.savefig(
+    f"{FIG_DIR}/r_posterior_vs_ground_truth.png", 
+    bbox_inches="tight"
+)
+
+# %% ---------------------------------------------------------------------------
+
+# Extract ground truth parameters
+r_true = data["r"]
+p_true = data["p"]
+
+# Generate posterior samples
+results.get_posterior_samples(n_samples=500)
+
+# Extract parameter samples
+r_samples = results.posterior_samples["parameter_samples"]["r"]
+p_samples = results.posterior_samples["parameter_samples"]["p"][:, None]
+
+# %% ---------------------------------------------------------------------------
+
+# Compute ground truth negative binomial mean
+mean_true = r_true * p_true / (1 - p_true)
+# Compute ground truth negative binomial variance
+var_true = r_true * p_true / (1 - p_true) ** 2
+
+# Compute posterior mean of negative binomial mean
+mean_post = r_samples * p_samples / (1 - p_samples)
+# Compute posterior variance of negative binomial mean
+var_post = r_samples * p_samples / (1 - p_samples) ** 2
+
+# %% ---------------------------------------------------------------------------
+
+# Compute sample median and quantiles
+mean_post_median = jnp.median(mean_post, axis=0)
+mean_post_lower = jnp.quantile(mean_post, 0.16, axis=0)
+mean_post_upper = jnp.quantile(mean_post, 0.84, axis=0)
+
+# Compute sample median and quantiles
+var_post_median = jnp.median(var_post, axis=0)
+var_post_lower = jnp.quantile(var_post, 0.16, axis=0)
+var_post_upper = jnp.quantile(var_post, 0.84, axis=0)
+
+# %% ---------------------------------------------------------------------------
+
+# Initialize figure
+fig, ax = plt.subplots(1, 2, figsize=(6, 3))
+
+# Plot error bars
+ax[0].errorbar(
+    mean_true, 
+    mean_post_median, 
+    yerr=[mean_post_median - mean_post_lower, mean_post_upper - mean_post_median],
+    color=colors["light_blue"],
+    alpha=0.25,
+    zorder=0
+)
+
+
+# Plot median vs ground truth
+ax[0].scatter(
+    mean_true,
+    mean_post_median,
+    color=colors["blue"],
+    alpha=0.25
+)
+
+# Plot identity line
+ax[0].plot(
+    [mean_true.min(), mean_true.max()],
+    [mean_true.min(), mean_true.max()],
+    color="black",
+    linestyle="--",
+    zorder=50_000
+)
+
+# Label axis
+ax[0].set_xlabel(r"ground truth mean counts $\langle u \rangle$")
+ax[0].set_ylabel(r"posterior mean counts $\langle u \rangle$")
+ax[0].set_title(r"Posterior mean counts $\langle u \rangle$")
+
+# Plot variance error bars
+ax[1].errorbar(
+    var_true, 
+    var_post_median, 
+    yerr=[var_post_median - var_post_lower, var_post_upper - var_post_median],
+    color=colors["light_blue"],
+    alpha=0.25,
+    zorder=0
+)
+
+# Plot variance median vs ground truth
+ax[1].scatter(
+    var_true,
+    var_post_median,
+    color=colors["blue"],
+    alpha=0.25
+)
+
+# Plot identity line
+ax[1].plot(
+    [var_true.min(), var_true.max()],
+    [var_true.min(), var_true.max()],
+    color="black",
+    linestyle="--",
+    zorder=50_000
+)
+
+# Label axis
+ax[1].set_xlabel(r"ground truth variance $\sigma^2(u)$")
+ax[1].set_ylabel(r"posterior variance $\sigma^2(u)$")
+ax[1].set_title(r"Posterior variance $\sigma^2(u)$")
+
+plt.tight_layout()
+
+# Save figure
+fig.savefig(
+    f"{FIG_DIR}/mean_counts_posterior_vs_ground_truth.png", 
+    bbox_inches="tight"
+)
+
+# %% ---------------------------------------------------------------------------
