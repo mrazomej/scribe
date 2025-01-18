@@ -1082,27 +1082,27 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
         }
     elif model_type == "nbdm_mix":
         prior_params = {
-            'mixing_weights_prior': (1, 1),
+            'mixing_prior': (1, 1),
             'p_prior': (1, 1),
             'r_prior': (2, 0.1)
         }
     elif model_type == "zinb_mix":
         prior_params = {
-            'mixing_weights_prior': (1, 1),
+            'mixing_prior': (1, 1),
             'p_prior': (1, 1),
             'r_prior': (2, 0.1),
             'gate_prior': (1, 1)
         }
     elif model_type == "nbvcp_mix":
         prior_params = {
-            'mixing_weights_prior': (1, 1),
+            'mixing_prior': (1, 1),
             'p_prior': (1, 1),
             'r_prior': (2, 0.1),
             'p_capture_prior': (1, 1)
         }
     elif model_type == "zinbvcp_mix":
         prior_params = {
-            'mixing_weights_prior': (1, 1),
+            'mixing_prior': (1, 1),
             'p_prior': (1, 1),
             'r_prior': (2, 0.1),
             'p_capture_prior': (1, 1),
