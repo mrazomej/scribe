@@ -93,7 +93,7 @@ def test_continue_training(example_zinb_results, small_dataset, rng_key):
 def test_posterior_sampling(example_zinb_results, rng_key):
     """Test sampling from the variational posterior."""
     n_samples = 100
-    samples = example_zinb_results.sample_posterior(
+    samples = example_zinb_results.get_posterior_samples(
         rng_key=rng_key,
         n_samples=n_samples
     )
@@ -115,13 +115,13 @@ def test_predictive_sampling(example_zinb_results, rng_key):
     n_samples = 50
     
     # First get posterior samples
-    posterior_samples = example_zinb_results.sample_posterior(
+    posterior_samples = example_zinb_results.get_posterior_samples(
         rng_key=rng_key,
         n_samples=n_samples
     )
     
     # Generate predictive samples
-    predictive_samples = example_zinb_results.generate_predictive_samples(
+    predictive_samples = example_zinb_results.get_predictive_samples(
         rng_key=random.split(rng_key)[1]
     )
     
@@ -137,7 +137,7 @@ def test_ppc_sampling(example_zinb_results, rng_key):
     """Test posterior predictive check sampling."""
     n_samples = 50
     
-    ppc_samples = example_zinb_results.ppc_samples(
+    ppc_samples = example_zinb_results.get_ppc_samples(
         rng_key=rng_key,
         n_samples=n_samples
     )
