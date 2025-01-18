@@ -430,7 +430,7 @@ def nbvcp_model(
 
     Local Parameters:
         - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
-        - Effective probability p_hat = p / (p_capture + p * (1 - p_capture))
+        - Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     Likelihood:
         - counts ~ NegativeBinomial(r, p_hat)
@@ -688,7 +688,7 @@ def zinbvcp_model(
 
     Local Parameters:
         - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
-        - Effective probability p_hat = p / (p_capture + p * (1 - p_capture))
+        - Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     Likelihood:
         - counts ~ ZeroInflatedNegativeBinomial(r, p_hat, gate)
@@ -989,6 +989,18 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         from .models_mix import zinb_mixture_model, zinb_mixture_guide
         return zinb_mixture_model, zinb_mixture_guide
     
+    # Handle Negative Binomial-Variable Capture Probability Mixture Model
+    elif model_type == "nbvcp_mix":
+        # Import model and guide functions locally to avoid circular imports
+        from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
+        return nbvcp_mixture_model, nbvcp_mixture_guide
+    
+    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability Mixture Model
+    elif model_type == "zinbvcp_mix":
+        # Import model and guide functions locally to avoid circular imports
+        from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
+        return zinbvcp_mixture_model, zinbvcp_mixture_guide
+    
     # Raise error for unsupported model types
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -1073,6 +1085,28 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
             'mixing_weights_prior': (1, 1),
             'p_prior': (1, 1),
             'r_prior': (2, 0.1)
+        }
+    elif model_type == "zinb_mix":
+        prior_params = {
+            'mixing_weights_prior': (1, 1),
+            'p_prior': (1, 1),
+            'r_prior': (2, 0.1),
+            'gate_prior': (1, 1)
+        }
+    elif model_type == "nbvcp_mix":
+        prior_params = {
+            'mixing_weights_prior': (1, 1),
+            'p_prior': (1, 1),
+            'r_prior': (2, 0.1),
+            'p_capture_prior': (1, 1)
+        }
+    elif model_type == "zinbvcp_mix":
+        prior_params = {
+            'mixing_weights_prior': (1, 1),
+            'p_prior': (1, 1),
+            'r_prior': (2, 0.1),
+            'p_capture_prior': (1, 1),
+            'gate_prior': (1, 1)
         }
     else:
         prior_params = {}  # Empty dict for custom models if none provided

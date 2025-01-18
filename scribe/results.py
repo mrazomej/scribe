@@ -1053,3 +1053,275 @@ class ZINBMixtureResults(MixtureResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
             
         return new_posterior_samples
+
+# ------------------------------------------------------------------------------
+# Negative Binomial-Variable Capture Probability Mixture Model
+# ------------------------------------------------------------------------------
+
+@dataclass
+class NBVCPMixtureResults(MixtureResults):
+    """
+    Results for Negative Binomial mixture model with variable capture
+    probability.
+
+    This class extends MixtureResults to handle the specific parameters and
+    structure of the NBVCP mixture model, which includes:
+        - Mixing weights for the mixture components
+        - A shared success probability p
+        - Component-specific dispersion parameters r
+        - Cell-specific capture probabilities p_capture
+    """
+    def __post_init__(self):
+        assert self.model_type == "nbvcp_mix", f"Invalid model type: {self.model_type}"
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
+        """
+        Get the variational distributions for mixture model parameters.
+
+        Returns
+        -------
+        Dict[str, dist.Distribution]
+            Dictionary mapping parameter names to their distributions:
+            - 'mixing_weights': Dirichlet distribution for mixture weights
+            - 'p': Beta distribution for success probability
+            - 'r': Gamma distributions for dispersion parameters (one per component per gene)
+            - 'p_capture': Beta distributions for capture probabilities (one per cell)
+        """
+        if backend == "scipy":
+            return {
+                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                ),
+                'p_capture': stats.beta(
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                )
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+                'p_capture': dist.Beta(
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                )
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    def _subset_params(self, params: Dict, index) -> Dict:
+        """
+        Create new parameter dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        params : Dict
+            Original parameter dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New parameter dictionary with subset of gene-specific parameters
+        """
+        new_params = dict(params)
+        # Only r parameters are gene-specific
+        # Keep component dimension, subset gene dimension
+        new_params['alpha_r'] = params['alpha_r'][:, index]
+        new_params['beta_r'] = params['beta_r'][:, index]
+        return new_params
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create new posterior samples dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Original samples dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New samples dictionary with subset of gene-specific samples
+        """
+        new_posterior_samples = {}
+        
+        if "parameter_samples" in samples:
+            param_samples = samples["parameter_samples"]
+            new_param_samples = {}
+            
+            # mixing_weights are component-specific
+            if "mixing_weights" in param_samples:
+                new_param_samples["mixing_weights"] = param_samples["mixing_weights"]
+            
+            # p is shared across genes
+            if "p" in param_samples:
+                new_param_samples["p"] = param_samples["p"]
+            
+            # p_capture is cell-specific
+            if "p_capture" in param_samples:
+                new_param_samples["p_capture"] = param_samples["p_capture"]
+                
+            # r is both component and gene-specific
+            if "r" in param_samples:
+                # Keep samples and component dimensions, subset gene dimension
+                new_param_samples["r"] = param_samples["r"][..., index]
+                
+            new_posterior_samples["parameter_samples"] = new_param_samples
+        
+        if "predictive_samples" in samples:
+            # Keep samples and cells dimensions, subset gene dimension
+            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
+            
+        return new_posterior_samples
+
+
+@dataclass
+class ZINBVCPMixtureResults(MixtureResults):
+    """
+    Results for Zero-Inflated Negative Binomial mixture model with variable capture probability.
+
+    This class extends MixtureResults to handle the ZINBVCP mixture model specifics with:
+        - Mixing weights for the mixture components
+        - A shared success probability p
+        - Component-specific dispersion parameters r
+        - Cell-specific capture probabilities p_capture
+        - Gene-specific dropout probabilities (gate)
+    """
+    def __post_init__(self):
+        assert self.model_type == "zinbvcp_mix", f"Invalid model type: {self.model_type}"
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
+        """
+        Get the variational distributions for mixture model parameters.
+
+        Returns
+        -------
+        Dict[str, dist.Distribution]
+            Dictionary mapping parameter names to their distributions:
+            - 'mixing_weights': Dirichlet distribution for mixture weights
+            - 'p': Beta distribution for success probability
+            - 'r': Gamma distributions for dispersion parameters (one per component per gene)
+            - 'p_capture': Beta distributions for capture probabilities (one per cell)
+            - 'gate': Beta distributions for dropout probabilities (one per gene)
+        """
+        if backend == "scipy":
+            return {
+                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.gamma(
+                    self.params['alpha_r'],
+                    loc=0,
+                    scale=1 / self.params['beta_r']
+                ),
+                'p_capture': stats.beta(
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                ),
+                'gate': stats.beta(
+                    self.params['alpha_gate'],
+                    self.params['beta_gate']
+                )
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
+                'p_capture': dist.Beta(
+                    self.params['alpha_p_capture'], 
+                    self.params['beta_p_capture']
+                ),
+                'gate': dist.Beta(
+                    self.params['alpha_gate'],
+                    self.params['beta_gate']
+                )
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    def _subset_params(self, params: Dict, index) -> Dict:
+        """
+        Create new parameter dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        params : Dict
+            Original parameter dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New parameter dictionary with subset of gene-specific parameters
+        """
+        new_params = dict(params)
+        # Both r and gate parameters are gene-specific
+        # For r: keep component dimension, subset gene dimension
+        new_params['alpha_r'] = params['alpha_r'][:, index]
+        new_params['beta_r'] = params['beta_r'][:, index]
+        # For gate: subset gene dimension
+        new_params['alpha_gate'] = params['alpha_gate'][index]
+        new_params['beta_gate'] = params['beta_gate'][index]
+        return new_params
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create new posterior samples dictionary for subset of genes.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Original samples dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New samples dictionary with subset of gene-specific samples
+        """
+        new_posterior_samples = {}
+        
+        if "parameter_samples" in samples:
+            param_samples = samples["parameter_samples"]
+            new_param_samples = {}
+            
+            # mixing_weights are component-specific
+            if "mixing_weights" in param_samples:
+                new_param_samples["mixing_weights"] = param_samples["mixing_weights"]
+            
+            # p is shared across genes
+            if "p" in param_samples:
+                new_param_samples["p"] = param_samples["p"]
+            
+            # p_capture is cell-specific
+            if "p_capture" in param_samples:
+                new_param_samples["p_capture"] = param_samples["p_capture"]
+                
+            # r is both component and gene-specific
+            if "r" in param_samples:
+                # Keep samples and component dimensions, subset gene dimension
+                new_param_samples["r"] = param_samples["r"][..., index]
+            
+            # gate is gene-specific
+            if "gate" in param_samples:
+                new_param_samples["gate"] = param_samples["gate"][..., index]
+                
+            new_posterior_samples["parameter_samples"] = new_param_samples
+        
+        if "predictive_samples" in samples:
+            # Keep samples and cells dimensions, subset gene dimension
+            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
+            
+        return new_posterior_samples

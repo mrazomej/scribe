@@ -434,7 +434,9 @@ def run_scribe(
         "nbvcp": NBVCPResults,
         "zinbvcp": ZINBVCPResults,
         "nbdm_mix": NBDMMixtureResults,
-        "zinb_mix": ZINBMixtureResults
+        "zinb_mix": ZINBMixtureResults,
+        "nbvcp_mix": NBVCPMixtureResults,
+        "zinbvcp_mix": ZINBVCPMixtureResults,
     }.get(model_type)
 
     if results_class is None:
