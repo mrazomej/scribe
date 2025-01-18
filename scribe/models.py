@@ -461,7 +461,7 @@ def nbvcp_model(
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 # Condition on observed counts
@@ -486,7 +486,7 @@ def nbvcp_model(
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 # Condition on observed counts
@@ -508,7 +508,7 @@ def nbvcp_model(
             p_capture_reshaped = p_capture[:, None]
             p_hat = numpyro.deterministic(
                 "p_hat",
-                p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
             )
 
             # Sample counts
@@ -724,7 +724,7 @@ def zinbvcp_model(
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 # Create base negative binomial distribution with adjusted probabilities
@@ -750,7 +750,7 @@ def zinbvcp_model(
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 # Create base negative binomial distribution with adjusted probabilities
@@ -774,7 +774,7 @@ def zinbvcp_model(
             p_capture_reshaped = p_capture[:, None]
             p_hat = numpyro.deterministic(
                 "p_hat",
-                p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
+                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
             )
 
             # Create base negative binomial distribution with adjusted
