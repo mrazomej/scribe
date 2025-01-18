@@ -1271,8 +1271,8 @@ class ZINBVCPMixtureResults(MixtureResults):
         new_params['alpha_r'] = params['alpha_r'][:, index]
         new_params['beta_r'] = params['beta_r'][:, index]
         # For gate: subset gene dimension
-        new_params['alpha_gate'] = params['alpha_gate'][index]
-        new_params['beta_gate'] = params['beta_gate'][index]
+        new_params['alpha_gate'] = params['alpha_gate'][:, index]
+        new_params['beta_gate'] = params['beta_gate'][:, index]
         return new_params
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:

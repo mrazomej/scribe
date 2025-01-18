@@ -921,7 +921,7 @@ def zinbvcp_mixture_model(
     # Define the prior on the gate parameters - one for each gene
     gate = numpyro.sample(
         "gate",
-        dist.Beta(gate_prior[0], gate_prior[1]).expand([n_genes])
+        dist.Beta(gate_prior[0], gate_prior[1]).expand([n_components, n_genes])
     )
 
     # If we have observed data, condition on it
@@ -1118,12 +1118,12 @@ def zinbvcp_mixture_guide(
     # Variational parameters for gate (one per gene)
     alpha_gate = numpyro.param(
         "alpha_gate",
-        jnp.ones(n_genes) * gate_prior[0],
+        jnp.ones((n_components, n_genes)) * gate_prior[0],
         constraint=constraints.positive
     )
     beta_gate = numpyro.param(
         "beta_gate",
-        jnp.ones(n_genes) * gate_prior[1],
+        jnp.ones((n_components, n_genes)) * gate_prior[1],
         constraint=constraints.positive
     )
 
