@@ -45,7 +45,7 @@ def use_cpu():
     -------
     >>> # Force posterior sampling to run on CPU
     >>> with use_cpu():
-    ...     results.ppc_samples(n_samples=100)
+    ...     results.get_ppc_samples(n_samples=100)
     """
     # Store the current default device to restore it later
     original_device = jax.default_device()
