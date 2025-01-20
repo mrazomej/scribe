@@ -192,23 +192,48 @@ class BaseScribeResults(ABC):
 
         # Create new posterior samples if available
         new_posterior_samples = None
-        # Check if posterior samples are available
         if self.posterior_samples is not None:
-            # Create new posterior samples for the given index
             new_posterior_samples = self._subset_posterior_samples(self.posterior_samples, index)
             
-        # Create new instance with the subset of data
-        return self.__class__(
-            model_type=self.model_type,
-            params=new_params,
-            loss_history=self.loss_history,
-            n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
-            cell_metadata=self.cell_metadata,
-            gene_metadata=new_gene_metadata,
-            uns=self.uns,
-            posterior_samples=new_posterior_samples
+        # Let subclass create its own instance with additional attributes
+        return self._create_subset(
+            index=index,
+            new_params=new_params,
+            new_gene_metadata=new_gene_metadata,
+            new_posterior_samples=new_posterior_samples
         )
+
+    @abstractmethod
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'BaseScribeResults':
+        """
+        Create a new instance with a subset of genes.
+        
+        This method must be implemented by subclasses to handle class-specific
+        attributes when creating a subset.
+        
+        Parameters
+        ----------
+        index : array-like
+            Boolean or integer index for selecting genes
+        new_params : Dict
+            Subsetted parameters dictionary
+        new_gene_metadata : Optional[pd.DataFrame]
+            Subsetted gene metadata
+        new_posterior_samples : Optional[Dict]
+            Subsetted posterior samples
+            
+        Returns
+        -------
+        BaseScribeResults
+            New instance with subset of genes
+        """
+        pass
 
     # --------------------------------------------------------------------------
     # Get model and guide functions
@@ -442,6 +467,29 @@ class NBDMResults(StandardResults):
             
         return new_posterior_samples
 
+    # --------------------------------------------------------------------------
+    # Create a new NBDMResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'NBDMResults':
+        """Create a new NBDMResults instance with a subset of genes."""
+        return NBDMResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial model
@@ -525,6 +573,30 @@ class ZINBResults(StandardResults):
             
         return new_posterior_samples
 
+    # --------------------------------------------------------------------------
+    # Create a new ZINBResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'ZINBResults':
+        """Create a new ZINBResults instance with a subset of genes."""
+        return ZINBResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
+
 # ------------------------------------------------------------------------------
 # Negative Binomial with variable capture probability model
 # ------------------------------------------------------------------------------
@@ -607,6 +679,30 @@ class NBVCPResults(StandardResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][:, :, index]
             
         return new_posterior_samples
+
+    # --------------------------------------------------------------------------
+    # Create a new NBVCPResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'NBVCPResults':
+        """Create a new NBVCPResults instance with a subset of genes."""
+        return NBVCPResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial with variable capture probability
@@ -743,6 +839,30 @@ class ZINBVCPResults(StandardResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][:, :, index]
             
         return new_posterior_samples
+
+    # --------------------------------------------------------------------------
+    # Create a new ZINBVCPResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'ZINBVCPResults':
+        """Create a new ZINBVCPResults instance with a subset of genes."""
+        return ZINBVCPResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
 
 # ------------------------------------------------------------------------------
 # Base class for mixture models
@@ -887,6 +1007,31 @@ class NBDMMixtureResults(MixtureResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
             
         return new_posterior_samples
+
+    # --------------------------------------------------------------------------
+    # Create a new NBDMMixtureResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'NBDMMixtureResults':
+        """Create a new NBDMMixtureResults instance with a subset of genes."""
+        return NBDMMixtureResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            n_components=self.n_components,
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model
@@ -1054,6 +1199,31 @@ class ZINBMixtureResults(MixtureResults):
             
         return new_posterior_samples
 
+    # --------------------------------------------------------------------------
+    # Create a new ZINBMixtureResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'ZINBMixtureResults':
+        """Create a new ZINBMixtureResults instance with a subset of genes."""
+        return ZINBMixtureResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            n_components=self.n_components,
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
+
 # ------------------------------------------------------------------------------
 # Negative Binomial-Variable Capture Probability Mixture Model
 # ------------------------------------------------------------------------------
@@ -1184,13 +1354,43 @@ class NBVCPMixtureResults(MixtureResults):
             
         return new_posterior_samples
 
+    # --------------------------------------------------------------------------
+    # Create a new NBVCPMixtureResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'NBVCPMixtureResults':
+        """Create a new NBVCPMixtureResults instance with a subset of genes."""
+        return NBVCPMixtureResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            n_components=self.n_components,
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
+
+# ------------------------------------------------------------------------------
+# Zero-Inflated Negative Binomial-Variable Capture Probability Mixture Model
+# ------------------------------------------------------------------------------
 
 @dataclass
 class ZINBVCPMixtureResults(MixtureResults):
     """
-    Results for Zero-Inflated Negative Binomial mixture model with variable capture probability.
+    Results for Zero-Inflated Negative Binomial mixture model with variable
+    capture probability.
 
-    This class extends MixtureResults to handle the ZINBVCP mixture model specifics with:
+    This class extends MixtureResults to handle the ZINBVCP mixture model
+    specifics with:
         - Mixing weights for the mixture components
         - A shared success probability p
         - Component-specific dispersion parameters r
@@ -1208,11 +1408,14 @@ class ZINBVCPMixtureResults(MixtureResults):
         -------
         Dict[str, dist.Distribution]
             Dictionary mapping parameter names to their distributions:
-            - 'mixing_weights': Dirichlet distribution for mixture weights
-            - 'p': Beta distribution for success probability
-            - 'r': Gamma distributions for dispersion parameters (one per component per gene)
-            - 'p_capture': Beta distributions for capture probabilities (one per cell)
-            - 'gate': Beta distributions for dropout probabilities (one per gene)
+                - 'mixing_weights': Dirichlet distribution for mixture weights
+                - 'p': Beta distribution for success probability
+                - 'r': Gamma distributions for dispersion parameters (one per
+                  component per gene)
+                - 'p_capture': Beta distributions for capture probabilities (one
+                  per cell)
+                - 'gate': Beta distributions for dropout probabilities (one per
+                  gene)
         """
         if backend == "scipy":
             return {
@@ -1325,3 +1528,291 @@ class ZINBVCPMixtureResults(MixtureResults):
             new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
             
         return new_posterior_samples
+
+    # --------------------------------------------------------------------------
+    # Create a new ZINBVCPMixtureResults instance with a subset of genes
+    # --------------------------------------------------------------------------
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'ZINBVCPMixtureResults':
+        """Create a new ZINBVCPMixtureResults instance with a subset of genes."""
+        return ZINBVCPMixtureResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            n_components=self.n_components,
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples
+        )
+
+# ------------------------------------------------------------------------------
+# Custom Model Results
+# ------------------------------------------------------------------------------
+
+@dataclass
+class CustomResults(BaseScribeResults):
+    """
+    Results class for custom user-defined models.
+    
+    This class extends BaseScribeResults to handle user-defined models with
+    flexible parameter specifications. It supports both standard and mixture
+    model types and maintains compatibility with SCRIBE's inference and sampling
+    infrastructure.
+
+    Parameters
+    ----------
+    params : Dict
+        Dictionary of inferred variational model parameters
+    loss_history : jnp.ndarray
+        Array containing the ELBO loss values during training
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_type : str
+        Identifier for the custom model
+    param_spec : Dict[str, Dict]
+        Specification of parameter types. Each parameter name should match
+        exactly as it appears in params. For example:
+            {
+                'alpha_p': {'type': 'global'}, 'beta_p': {'type': 'global'},
+                'alpha_r': {'type': 'gene-specific'}, 'beta_r': {'type':
+                'gene-specific'}
+            }
+        Where type must be one of: ['global', 'gene-specific', 'cell-specific']
+    custom_model : Callable
+        The user's custom model function
+    custom_guide : Callable
+        The user's custom guide function
+    get_distributions_fn : Optional[Callable]
+        Optional function to implement get_distributions behavior for the
+        custom model
+    n_components : Optional[int]
+        Number of mixture components (if mixture model)
+    cell_metadata : Optional[pd.DataFrame]
+        Cell-level metadata from adata.obs
+    gene_metadata : Optional[pd.DataFrame]
+        Gene-level metadata from adata.var
+    uns : Optional[Dict]
+        Unstructured metadata from adata.uns
+    posterior_samples : Optional[Dict]
+        Samples from the posterior distribution
+    """
+    # Additional attributes for custom models
+    param_spec: Optional[Dict[str, Dict]] = None
+    custom_model: Optional[Callable] = None
+    custom_guide: Optional[Callable] = None
+    get_distributions_fn: Optional[Callable] = None
+    get_model_args_fn: Optional[Callable] = None
+    n_components: Optional[int] = None
+
+    def __post_init__(self):
+        """Validate parameter specifications against actual parameters."""
+        self._validate_param_spec()
+    
+    def _validate_param_spec(self):
+        """
+        Validate that parameter specifications match actual parameters.
+        
+        This method checks that all parameters in params have specifications and
+        that all specified parameters exist in params.
+        """
+        # Check that all parameters in params have specifications
+        for param_name in self.params.keys():
+            if param_name not in self.param_spec:
+                raise ValueError(
+                    f"Parameter {param_name} found in params but not in "
+                    f"param_spec"
+                )
+        
+        # Check that all specified parameters exist in params
+        for param_name in self.param_spec.keys():
+            if param_name not in self.params:
+                raise ValueError(
+                    f"Parameter {param_name} specified but not found in params"
+                )
+            
+            # Validate parameter type
+            spec = self.param_spec[param_name]
+            if 'type' not in spec:
+                raise ValueError(
+                    f"No type specified for parameter {param_name}"
+                )
+            
+            # Check that parameter type is valid
+            if spec['type'] not in ['global', 'gene-specific', 'cell-specific']:
+                raise ValueError(
+                    f"Invalid parameter type {spec['type']} for {param_name}"
+                )
+            
+            # Validate parameter shapes based on type
+            param_shape = self.params[param_name].shape
+            
+            # Check that gene-specific parameters have n_genes as last dimension
+            if spec['type'] == 'gene-specific':
+                if param_shape[-1] != self.n_genes:
+                    raise ValueError(
+                        f"Gene-specific parameter {param_name} should have "
+                        f"n_genes ({self.n_genes}) as last dimension, "
+                        f"got shape {param_shape}"
+                    )
+            
+            # Check that cell-specific parameters have n_cells as last dimension
+            elif spec['type'] == 'cell-specific':
+                if param_shape[-1] != self.n_cells:
+                    raise ValueError(
+                        f"Cell-specific parameter {param_name} should have "
+                        f"n_cells ({self.n_cells}) as last dimension, "
+                        f"got shape {param_shape}"
+                    )
+
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """
+        Get the custom model and guide functions.
+        
+        Returns
+        -------
+        Tuple[Callable, Callable]
+            Custom model and guide functions
+        """
+        return self.custom_model, self.custom_guide
+
+    def get_model_args(self) -> Dict:
+        """
+        Get the model and guide arguments. If get_model_args_fn was provided,
+        uses that function. Otherwise returns default arguments.
+
+        Returns
+        -------
+        Dict
+            Dictionary of arguments to pass to model/guide functions
+        """
+        if self.get_model_args_fn is not None:
+            return self.get_model_args_fn(self)
+        
+        # Default implementation
+        args = {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes
+        }
+        if self.n_components is not None:
+            args['n_components'] = self.n_components
+        return args
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
+        """
+        Get the variational distributions for all parameters if a custom
+        get_distributions_fn was provided.
+        
+        Parameters
+        ----------
+        backend : str
+            Statistical package to use for distributions
+            
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary mapping parameter names to their distributions, or
+            empty dict if no get_distributions_fn provided
+        """
+        if self.get_distributions_fn is not None:
+            return self.get_distributions_fn(self.params, backend)
+        return {}
+
+    def _subset_params(self, params: Dict, index) -> Dict:
+        """
+        Create a new parameter dictionary for the given index.
+        
+        Parameters
+        ----------
+        params : Dict
+            Original parameter dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New parameter dictionary with subset of gene-specific parameters
+        """
+        new_params = dict(params)
+        
+        # Subset only gene-specific parameters
+        for param_name, spec in self.param_spec.items():
+            if spec['type'] == 'gene-specific':
+                new_params[param_name] = params[param_name][..., index]
+        
+        return new_params
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create a new posterior samples dictionary for the given index.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Original samples dictionary
+        index : array-like
+            Boolean or integer index for selecting genes
+            
+        Returns
+        -------
+        Dict
+            New samples dictionary with subset of gene-specific samples
+        """
+        new_posterior_samples = {}
+        
+        if "parameter_samples" in samples:
+            param_samples = samples["parameter_samples"]
+            new_param_samples = {}
+            
+            # Handle each parameter according to its specification
+            for param_name, spec in self.param_spec.items():
+                if param_name in param_samples:
+                    if spec['type'] == 'gene-specific':
+                        new_param_samples[param_name] = param_samples[param_name][..., index]
+                    else:
+                        new_param_samples[param_name] = param_samples[param_name]
+            
+            new_posterior_samples["parameter_samples"] = new_param_samples
+        
+        if "predictive_samples" in samples:
+            # Keep samples and cells dimensions, subset gene dimension
+            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
+        
+        return new_posterior_samples
+
+    def _create_subset(
+        self,
+        index,
+        new_params: Dict,
+        new_gene_metadata: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict]
+    ) -> 'CustomResults':
+        """Create a new CustomResults instance with a subset of genes."""
+        return CustomResults(
+            model_type=self.model_type,
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            cell_metadata=self.cell_metadata,
+            gene_metadata=new_gene_metadata,
+            uns=self.uns,
+            posterior_samples=new_posterior_samples,
+            param_spec=self.param_spec,
+            custom_model=self.custom_model,
+            custom_guide=self.custom_guide,
+            get_distributions_fn=self.get_distributions_fn,
+            get_model_args_fn=self.get_model_args_fn,
+            n_components=self.n_components
+        )

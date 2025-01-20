@@ -205,152 +205,6 @@ def run_inference(
     )
 
 # ------------------------------------------------------------------------------
-# Convert variational parameters to distributions
-# ------------------------------------------------------------------------------
-
-def params_to_dist(params: Dict, model: str, backend: str = "scipy") -> Dict[str, Any]:
-    """
-    Convert variational parameters to their corresponding distributions.
-    
-    Parameters
-    ----------
-    params : Dict
-        Dictionary containing variational parameters with keys:
-            - alpha_p, beta_p: Beta distribution parameters for p
-            - alpha_r, beta_r: Gamma distribution parameters for r
-            - alpha_mixing: Dirichlet distribution parameters for mixing weights
-            - alpha_gate, beta_gate: Beta distribution parameters for gate
-    model : str
-        Model type. Must be one of: 'nbdm', 'zinb', 'nbvcp', 'zinbvcp',
-        'nbdm_mix', 'zinb_mix'
-    backend : str, optional
-        Statistical package to use for distributions. Must be one of:
-            - "scipy": Returns scipy.stats distributions (default)
-            - "numpyro": Returns numpyro.distributions
-        
-    Returns
-    -------
-    Dict[str, Any]
-        Dictionary mapping parameter names to their distributions
-    """
-    if model == "nbdm":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
-            }
-    elif model == "zinb":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    elif model == "nbvcp":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-    elif model == "zinbvcp":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    elif model == "nbdm_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
-            }
-    elif model == "zinb_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    elif model == "nbvcp_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-    elif model == "zinbvcp_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    else:
-        raise ValueError(f"Invalid model type: {model}")
-
-    raise ValueError(f"Invalid backend: {backend}")
-
-# ------------------------------------------------------------------------------
 # SCRIBE inference pipeline
 # ------------------------------------------------------------------------------
 
@@ -358,6 +212,10 @@ def run_scribe(
     counts: Union[jnp.ndarray, "AnnData"],
     model_type: str = "nbdm",
     n_components: Optional[int] = None,
+    custom_model: Optional[Callable] = None,
+    custom_guide: Optional[Callable] = None,
+    custom_args: Optional[Dict] = None,
+    param_spec: Optional[Dict] = None,  # For custom models
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_steps: int = 100_000,
     batch_size: int = 512,
@@ -367,8 +225,17 @@ def run_scribe(
     cells_axis: int = 0,
     layer: Optional[str] = None,
     stable_update: bool = True,
-) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults]:
-    """Run the complete SCRIBE inference pipeline.
+) -> Union[
+    NBDMResults, 
+    ZINBResults, 
+    NBVCPResults, 
+    ZINBVCPResults, 
+    NBDMMixtureResults, 
+    ZINBMixtureResults, 
+    CustomResults
+]:
+    """
+    Run the complete SCRIBE inference pipeline.
     
     Parameters
     ----------
@@ -378,52 +245,55 @@ def run_scribe(
         - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
         - If AnnData, will use .X or specified layer
     model_type : str
-        Type of model to use. Options are:
-        - "nbdm": Negative Binomial-Dirichlet Multinomial model
-        - "zinb": Zero-Inflated Negative Binomial model
-        - "nbvcp": Negative Binomial with variable capture probability
-        - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
-          probability
-        - "nbdm_mix": Negative Binomial-Dirichlet Multinomial Mixture Model
+        Type of model to use or identifier for custom model
     n_components : int, optional
         Number of components to fit for mixture models. Default is None.
+    custom_model : Callable, optional
+        Custom model function. If provided, custom_guide must also be provided.
+    custom_guide : Callable, optional
+        Custom guide function. If provided, custom_model must also be provided.
+    param_spec : Dict, optional
+        Parameter specification for custom models. Required if custom_model is
+        provided. Maps parameter names to their types ('global', 'gene-specific',
+        or 'cell-specific').
     prior_params : Dict, optional
         Dictionary of prior parameters specific to the model.
-        For built-in models:
-        - "nbdm": {'p_prior': (1,1), 'r_prior': (2,0.1)}
-        - "zinb": {'p_prior': (1,1), 'r_prior': (2,0.1), 'gate_prior': (1,1)}
-        - "nbvcp": {'p_prior': (1,1), 'r_prior': (2,0.1), 'p_capture_prior': (1,1)}
-        - "zinbvcp": {'p_prior': (1,1), 'r_prior': (2,0.1), 'p_capture_prior': (1,1),
-                      'gate_prior': (1,1)}
     loss : numpyro.infer.elbo, optional
         Loss function to use for the SVI. Default is TraceMeanField_ELBO
     optimizer : numpyro.optim.optimizers, optional
         Optimizer to use for SVI. Default is Adam with step_size=0.001
     cells_axis : int, optional
-        Axis along which cells are arranged. 0 means cells are rows (default), 1
-        means cells are columns.
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
     layer : str, optional
         If counts is AnnData, specifies which layer to use. If None, uses .X
     stable_update : bool, optional
-        Whether to use stable update method. Default is True. If true, returns
-        the current state if the the loss or the new state contains invalid
-        values.
+        Whether to use stable update method. Default is True.
 
     Returns
     -------
-    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults]
+    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults, CustomResults]
         Results container with inference results and optional metadata
     """
-    # Set default prior parameters if none provided
-    if prior_params is None:
+    # Validate custom model inputs
+    if custom_model is not None or custom_guide is not None:
+        if custom_model is None or custom_guide is None:
+            raise ValueError(
+                "Both custom_model and custom_guide must be provided together"
+            )
+        if param_spec is None:
+            raise ValueError(
+                "param_spec must be provided when using custom models"
+            )
+
+    # Set default prior parameters if none provided and using built-in model
+    if prior_params is None and custom_model is None:
         prior_params = get_default_priors(model_type)
     
-    # Handle AnnData input as before
+    # Handle AnnData input
     if hasattr(counts, "obs"):
         adata = counts
-        # Get counts from specified layer or .X
         count_data = adata.layers[layer] if layer else adata.X
-        # Convert to dense array if sparse
         if scipy.sparse.issparse(count_data):
             count_data = count_data.toarray()
         count_data = jnp.array(count_data)
@@ -436,14 +306,24 @@ def run_scribe(
         n_cells, n_genes = count_data.shape
     else:
         n_genes, n_cells = count_data.shape
-        count_data = count_data.T  # Transpose to make cells rows
+        count_data = count_data.T
 
     # Create SVI instance
-    svi = create_svi_instance(
-        model_type=model_type,
-        optimizer=optimizer,
-        loss=loss
-    )
+    if custom_model is not None:
+        # Use custom model and guide
+        svi = create_svi_instance(
+            custom_model=custom_model,
+            custom_guide=custom_guide,
+            optimizer=optimizer,
+            loss=loss
+        )
+    else:
+        # Use built-in model
+        svi = create_svi_instance(
+            model_type=model_type,
+            optimizer=optimizer,
+            loss=loss
+        )
 
     # Run inference
     svi_results = run_inference(
@@ -456,48 +336,73 @@ def run_scribe(
         prior_params=prior_params,
         cells_axis=0,
         stable_update=stable_update,
-        n_components=n_components
+        n_components=n_components,
+        custom_args=custom_args
     )
 
-    # Create appropriate results class
-    results_class = {
-        "nbdm": NBDMResults,
-        "zinb": ZINBResults,
-        "nbvcp": NBVCPResults,
-        "zinbvcp": ZINBVCPResults,
-        "nbdm_mix": NBDMMixtureResults,
-        "zinb_mix": ZINBMixtureResults,
-        "nbvcp_mix": NBVCPMixtureResults,
-        "zinbvcp_mix": ZINBVCPMixtureResults,
-    }.get(model_type)
-
-    if results_class is None:
-        raise ValueError(f"Unknown model type: {model_type}")
-
-    # Create results object with model-specific arguments
-    if adata is not None:
-        results_kwargs = {
-            "adata": adata,
-            "params": svi_results.params,
-            "loss_history": svi_results.losses,
-            "model_type": model_type
-        }
-        # Add n_components for mixture models
-        if "mix" in model_type:
-            results_kwargs["n_components"] = n_components
-        results = results_class.from_anndata(**results_kwargs)
+    # Create results object
+    if custom_model is not None:
+        # Create CustomResults for custom model
+        if adata is not None:
+            results = CustomResults.from_anndata(
+                adata=adata,
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                model_type=model_type,
+                param_spec=param_spec,
+                custom_model=custom_model,
+                custom_guide=custom_guide,
+                n_components=n_components
+            )
+        else:
+            results = CustomResults(
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                n_cells=n_cells,
+                n_genes=n_genes,
+                model_type=model_type,
+                param_spec=param_spec,
+                custom_model=custom_model,
+                custom_guide=custom_guide,
+                n_components=n_components
+            )
     else:
-        results_kwargs = {
-            "params": svi_results.params,
-            "loss_history": svi_results.losses,
-            "n_cells": n_cells,
-            "n_genes": n_genes,
-            "model_type": model_type
-        }
-        # Add n_components for mixture models
-        if "mix" in model_type:
-            results_kwargs["n_components"] = n_components
-        results = results_class(**results_kwargs)
+        # Use built-in model results classes
+        results_class = {
+            "nbdm": NBDMResults,
+            "zinb": ZINBResults,
+            "nbvcp": NBVCPResults,
+            "zinbvcp": ZINBVCPResults,
+            "nbdm_mix": NBDMMixtureResults,
+            "zinb_mix": ZINBMixtureResults,
+            "nbvcp_mix": NBVCPMixtureResults,
+            "zinbvcp_mix": ZINBVCPMixtureResults,
+        }.get(model_type)
+
+        if results_class is None:
+            raise ValueError(f"Unknown model type: {model_type}")
+
+        if adata is not None:
+            results_kwargs = {
+                "adata": adata,
+                "params": svi_results.params,
+                "loss_history": svi_results.losses,
+                "model_type": model_type
+            }
+            if "mix" in model_type:
+                results_kwargs["n_components"] = n_components
+            results = results_class.from_anndata(**results_kwargs)
+        else:
+            results_kwargs = {
+                "params": svi_results.params,
+                "loss_history": svi_results.losses,
+                "n_cells": n_cells,
+                "n_genes": n_genes,
+                "model_type": model_type
+            }
+            if "mix" in model_type:
+                results_kwargs["n_components"] = n_components
+            results = results_class(**results_kwargs)
 
     return results
 
@@ -659,3 +564,149 @@ def rerun_scribe(
             n_genes=n_genes,
             model_type=results.model_type
         )
+
+# ------------------------------------------------------------------------------
+# Convert variational parameters to distributions
+# ------------------------------------------------------------------------------
+
+def params_to_dist(params: Dict, model: str, backend: str = "scipy") -> Dict[str, Any]:
+    """
+    Convert variational parameters to their corresponding distributions.
+    
+    Parameters
+    ----------
+    params : Dict
+        Dictionary containing variational parameters with keys:
+            - alpha_p, beta_p: Beta distribution parameters for p
+            - alpha_r, beta_r: Gamma distribution parameters for r
+            - alpha_mixing: Dirichlet distribution parameters for mixing weights
+            - alpha_gate, beta_gate: Beta distribution parameters for gate
+    model : str
+        Model type. Must be one of: 'nbdm', 'zinb', 'nbvcp', 'zinbvcp',
+        'nbdm_mix', 'zinb_mix'
+    backend : str, optional
+        Statistical package to use for distributions. Must be one of:
+            - "scipy": Returns scipy.stats distributions (default)
+            - "numpyro": Returns numpyro.distributions
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Dictionary mapping parameter names to their distributions
+    """
+    if model == "nbdm":
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
+            }
+    elif model == "zinb":
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
+    elif model == "nbvcp":
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
+    elif model == "zinbvcp":
+        if backend == "scipy":
+            return {
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
+    elif model == "nbdm_mix":
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
+            }
+    elif model == "zinb_mix":
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
+    elif model == "nbvcp_mix":
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
+            }
+    elif model == "zinbvcp_mix":
+        if backend == "scipy":
+            return {
+                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
+                'p': stats.beta(params['alpha_p'], params['beta_p']),
+                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
+                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
+                'p': dist.Beta(params['alpha_p'], params['beta_p']),
+                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
+                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
+                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
+            }
+    else:
+        raise ValueError(f"Invalid model type: {model}")
+
+    raise ValueError(f"Invalid backend: {backend}")
