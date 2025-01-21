@@ -343,28 +343,22 @@ def run_scribe(
     # Create results object
     if custom_model is not None:
         # Create CustomResults for custom model
+        custom_kwargs = {
+            "params": svi_results.params,
+            "loss_history": svi_results.losses,
+            "model_type": model_type,
+            "param_spec": param_spec,
+            "custom_model": custom_model,
+            "custom_guide": custom_guide,
+            "n_components": n_components
+        }
         if adata is not None:
-            results = CustomResults.from_anndata(
-                adata=adata,
-                params=svi_results.params,
-                loss_history=svi_results.losses,
-                model_type=model_type,
-                param_spec=param_spec,
-                custom_model=custom_model,
-                custom_guide=custom_guide,
-                n_components=n_components
-            )
+            results = CustomResults.from_anndata(adata=adata, **custom_kwargs)
         else:
             results = CustomResults(
-                params=svi_results.params,
-                loss_history=svi_results.losses,
                 n_cells=n_cells,
                 n_genes=n_genes,
-                model_type=model_type,
-                param_spec=param_spec,
-                custom_model=custom_model,
-                custom_guide=custom_guide,
-                n_components=n_components
+                **custom_kwargs
             )
     else:
         # Use built-in model results classes
@@ -417,13 +411,15 @@ def rerun_scribe(
         NBVCPResults, 
         ZINBVCPResults, 
         NBDMMixtureResults,
-        ZINBMixtureResults
+        ZINBMixtureResults,
+        CustomResults
     ],
     counts: Union[jnp.ndarray, "AnnData"],
     n_steps: int = 100_000,
     batch_size: int = 512,
     rng_key: random.PRNGKey = random.PRNGKey(42),
     prior_params: Optional[Dict] = None,
+    custom_args: Optional[Dict] = None,
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     cells_axis: int = 0,
@@ -435,7 +431,8 @@ def rerun_scribe(
     NBVCPResults, 
     ZINBVCPResults, 
     NBDMMixtureResults,
-    ZINBMixtureResults
+    ZINBMixtureResults,
+    CustomResults
 ]:
     """
     Continue training from a previous SCRIBE results object.
@@ -464,6 +461,8 @@ def rerun_scribe(
     prior_params : Dict, optional
         Dictionary of prior parameters. If None, uses the same priors as the
         original training
+    custom_args : Dict, optional
+        Dictionary of custom arguments for the model
     loss : numpyro.infer.elbo, optional
         Loss function to use (default: TraceMeanField_ELBO)
     optimizer : numpyro.optim.optimizers, optional
@@ -535,6 +534,12 @@ def rerun_scribe(
     model_args.update(prior_params)
     model_args['init_params'] = results.params
 
+    # Add custom arguments
+    if custom_args is not None:
+        model_args.update(custom_args)
+    
+    # Add
+
     # Initialize and run SVI
     svi_state = svi.init(rng_key, **model_args)
     svi_results = svi.run(
@@ -549,20 +554,32 @@ def rerun_scribe(
     results_class = type(results)
     combined_losses = jnp.concatenate([results.loss_history, svi_results.losses])
 
+    # Build common kwargs
+    results_kwargs = {
+        "params": svi_results.params,
+        "loss_history": combined_losses,
+        "model_type": results.model_type
+    }
+
+    # Add custom model specific arguments if needed
+    if results_class.__name__ == "CustomResults":
+        results_kwargs.update({
+            "param_spec": results.param_spec,
+            "custom_model": results.custom_model,
+            "custom_guide": results.custom_guide,
+            "n_components": results.n_components
+        })
+
     if adata is not None:
         return results_class.from_anndata(
             adata=adata,
-            params=svi_results.params,
-            loss_history=combined_losses,
-            model_type=results.model_type
+            **results_kwargs
         )
     else:
         return results_class(
-            params=svi_results.params,
-            loss_history=combined_losses,
             n_cells=n_cells,
             n_genes=n_genes,
-            model_type=results.model_type
+            **results_kwargs
         )
 
 # ------------------------------------------------------------------------------

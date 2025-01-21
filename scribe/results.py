@@ -17,9 +17,6 @@ from jax import random
 # Import scipy.stats for distributions
 import scipy.stats as stats
 
-# Imports for model-specific results
-from .models import get_model_and_guide, get_log_likelihood_fn
-
 # Imports for sampling
 from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
 
@@ -203,6 +200,8 @@ class BaseScribeResults(ABC):
             new_posterior_samples=new_posterior_samples
         )
 
+    # --------------------------------------------------------------------------
+
     @abstractmethod
     def _create_subset(
         self,
@@ -239,21 +238,23 @@ class BaseScribeResults(ABC):
     # Get model and guide functions
     # --------------------------------------------------------------------------
 
+    @abstractmethod
     def get_model_and_guide(self) -> Tuple[Callable, Callable]:
         """
         Get the model and guide functions for this model type.
         """
-        return get_model_and_guide(self.model_type)
+        pass
 
     # --------------------------------------------------------------------------
     # Get likelihood function
     # --------------------------------------------------------------------------
 
+    @abstractmethod
     def get_log_likelihood_fn(self) -> Callable:
         """
         Get the log likelihood function for this model type.
         """
-        return get_log_likelihood_fn(self.model_type)
+        pass
 
     # --------------------------------------------------------------------------
     # Posterior predictive check samples
@@ -269,7 +270,7 @@ class BaseScribeResults(ABC):
         Sample parameters from the variational posterior distribution.
         """
         # Get the guide function for this model type
-        _, guide = get_model_and_guide(self.model_type)
+        _, guide = self.get_model_and_guide()
         
         # Get the model arguments for this model type
         model_args = self.get_model_args()
@@ -303,7 +304,7 @@ class BaseScribeResults(ABC):
         Generate predictive samples using posterior parameter samples.
         """
         # Get the model function for this model type
-        model, _ = get_model_and_guide(self.model_type)
+        model, _ = self.get_model_and_guide()
         
         # Get the model arguments for this model type
         model_args = self.get_model_args()
@@ -331,7 +332,7 @@ class BaseScribeResults(ABC):
         Generate posterior predictive check samples.
         """
         # Get the model and guide functions
-        model, guide = get_model_and_guide(self.model_type)
+        model, guide = self.get_model_and_guide()
         
         # Get the model arguments for this model type
         model_args = self.get_model_args()
@@ -431,6 +432,20 @@ class NBDMResults(StandardResults):
     
     # --------------------------------------------------------------------------
 
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the NBDM model and guide functions."""
+        from .models import nbdm_model, nbdm_guide
+        return nbdm_model, nbdm_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for NBDM model."""
+        from .models import nbdm_log_likelihood
+        return nbdm_log_likelihood
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for NBDM model.
@@ -467,8 +482,6 @@ class NBDMResults(StandardResults):
             
         return new_posterior_samples
 
-    # --------------------------------------------------------------------------
-    # Create a new NBDMResults instance with a subset of genes
     # --------------------------------------------------------------------------
 
     def _create_subset(
@@ -533,6 +546,20 @@ class ZINBResults(StandardResults):
 
     # --------------------------------------------------------------------------
 
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the ZINB model and guide functions."""
+        from .models import zinb_model, zinb_guide
+        return zinb_model, zinb_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for ZINB model."""
+        from .models import zinb_log_likelihood
+        return zinb_log_likelihood
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for ZINB model.
@@ -573,8 +600,6 @@ class ZINBResults(StandardResults):
             
         return new_posterior_samples
 
-    # --------------------------------------------------------------------------
-    # Create a new ZINBResults instance with a subset of genes
     # --------------------------------------------------------------------------
 
     def _create_subset(
@@ -640,6 +665,20 @@ class NBVCPResults(StandardResults):
 
     # --------------------------------------------------------------------------
 
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the NBVCP model and guide functions."""
+        from .models import nbvcp_model, nbvcp_guide
+        return nbvcp_model, nbvcp_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for NBVCP model."""
+        from .models import nbvcp_log_likelihood
+        return nbvcp_log_likelihood
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for NBVCP model.
@@ -680,8 +719,6 @@ class NBVCPResults(StandardResults):
             
         return new_posterior_samples
 
-    # --------------------------------------------------------------------------
-    # Create a new NBVCPResults instance with a subset of genes
     # --------------------------------------------------------------------------
 
     def _create_subset(
@@ -772,6 +809,20 @@ class ZINBVCPResults(StandardResults):
 
     # --------------------------------------------------------------------------
 
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the ZINBVCP model and guide functions."""
+        from .models import zinbvcp_model, zinbvcp_guide
+        return zinbvcp_model, zinbvcp_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for ZINBVCP model."""
+        from .models import zinbvcp_log_likelihood
+        return zinbvcp_log_likelihood
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for ZINBVCP model.
@@ -840,8 +891,6 @@ class ZINBVCPResults(StandardResults):
             
         return new_posterior_samples
 
-    # --------------------------------------------------------------------------
-    # Create a new ZINBVCPResults instance with a subset of genes
     # --------------------------------------------------------------------------
 
     def _create_subset(
@@ -940,6 +989,19 @@ class NBDMMixtureResults(MixtureResults):
 
     # --------------------------------------------------------------------------
 
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the NBDMMixture model and guide functions."""
+        from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
+        return nbdm_mixture_model, nbdm_mixture_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for NBDMMixture model."""
+        pass
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for subset of genes.
@@ -1008,8 +1070,6 @@ class NBDMMixtureResults(MixtureResults):
             
         return new_posterior_samples
 
-    # --------------------------------------------------------------------------
-    # Create a new NBDMMixtureResults instance with a subset of genes
     # --------------------------------------------------------------------------
 
     def _create_subset(
@@ -1129,6 +1189,21 @@ class ZINBMixtureResults(MixtureResults):
         else:
             raise ValueError(f"Invalid backend: {backend}")
 
+    # --------------------------------------------------------------------------
+
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the ZINB model and guide functions."""
+        from .models_mix import zinb_mixture_model, zinb_mixture_guide
+        return zinb_mixture_model, zinb_mixture_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for ZINB model."""
+        pass
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for subset of genes.
@@ -1153,6 +1228,8 @@ class ZINBMixtureResults(MixtureResults):
         new_params['alpha_gate'] = params['alpha_gate'][:, index]
         new_params['beta_gate'] = params['beta_gate'][:, index]
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -1200,8 +1277,6 @@ class ZINBMixtureResults(MixtureResults):
         return new_posterior_samples
 
     # --------------------------------------------------------------------------
-    # Create a new ZINBMixtureResults instance with a subset of genes
-    # --------------------------------------------------------------------------
 
     def _create_subset(
         self,
@@ -1244,6 +1319,8 @@ class NBVCPMixtureResults(MixtureResults):
     def __post_init__(self):
         assert self.model_type == "nbvcp_mix", f"Invalid model type: {self.model_type}"
 
+    # --------------------------------------------------------------------------
+
     def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for mixture model parameters.
@@ -1284,6 +1361,21 @@ class NBVCPMixtureResults(MixtureResults):
         else:
             raise ValueError(f"Invalid backend: {backend}")
 
+    # --------------------------------------------------------------------------
+
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the NBVCP model and guide functions."""
+        from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
+        return nbvcp_mixture_model, nbvcp_mixture_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for NBVCP model."""
+        pass
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for subset of genes.
@@ -1306,6 +1398,8 @@ class NBVCPMixtureResults(MixtureResults):
         new_params['alpha_r'] = params['alpha_r'][:, index]
         new_params['beta_r'] = params['beta_r'][:, index]
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -1355,8 +1449,6 @@ class NBVCPMixtureResults(MixtureResults):
         return new_posterior_samples
 
     # --------------------------------------------------------------------------
-    # Create a new NBVCPMixtureResults instance with a subset of genes
-    # --------------------------------------------------------------------------
 
     def _create_subset(
         self,
@@ -1399,6 +1491,8 @@ class ZINBVCPMixtureResults(MixtureResults):
     """
     def __post_init__(self):
         assert self.model_type == "zinbvcp_mix", f"Invalid model type: {self.model_type}"
+
+    # --------------------------------------------------------------------------
 
     def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
@@ -1452,6 +1546,21 @@ class ZINBVCPMixtureResults(MixtureResults):
         else:
             raise ValueError(f"Invalid backend: {backend}")
 
+    # --------------------------------------------------------------------------
+
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the ZINBVCP model and guide functions."""
+        from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
+        return zinbvcp_mixture_model, zinbvcp_mixture_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for ZINBVCP model."""
+        pass
+
+    # --------------------------------------------------------------------------
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create new parameter dictionary for subset of genes.
@@ -1477,6 +1586,8 @@ class ZINBVCPMixtureResults(MixtureResults):
         new_params['alpha_gate'] = params['alpha_gate'][:, index]
         new_params['beta_gate'] = params['beta_gate'][:, index]
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -1529,8 +1640,6 @@ class ZINBVCPMixtureResults(MixtureResults):
             
         return new_posterior_samples
 
-    # --------------------------------------------------------------------------
-    # Create a new ZINBVCPMixtureResults instance with a subset of genes
     # --------------------------------------------------------------------------
 
     def _create_subset(
@@ -1593,9 +1702,13 @@ class CustomResults(BaseScribeResults):
         The user's custom model function
     custom_guide : Callable
         The user's custom guide function
+    custom_log_likelihood_fn : Optional[Callable]
+        Optional function to compute log likelihood for the custom model
     get_distributions_fn : Optional[Callable]
         Optional function to implement get_distributions behavior for the
         custom model
+    get_model_args_fn : Optional[Callable]
+        Optional function to customize model arguments
     n_components : Optional[int]
         Number of mixture components (if mixture model)
     cell_metadata : Optional[pd.DataFrame]
@@ -1611,6 +1724,7 @@ class CustomResults(BaseScribeResults):
     param_spec: Optional[Dict[str, Dict]] = None
     custom_model: Optional[Callable] = None
     custom_guide: Optional[Callable] = None
+    custom_log_likelihood_fn: Optional[Callable] = None
     get_distributions_fn: Optional[Callable] = None
     get_model_args_fn: Optional[Callable] = None
     n_components: Optional[int] = None
@@ -1619,6 +1733,8 @@ class CustomResults(BaseScribeResults):
         """Validate parameter specifications against actual parameters."""
         self._validate_param_spec()
     
+    # --------------------------------------------------------------------------
+
     def _validate_param_spec(self):
         """
         Validate that parameter specifications match actual parameters.
@@ -1675,6 +1791,8 @@ class CustomResults(BaseScribeResults):
                         f"got shape {param_shape}"
                     )
 
+    # --------------------------------------------------------------------------
+
     def get_model_and_guide(self) -> Tuple[Callable, Callable]:
         """
         Get the custom model and guide functions.
@@ -1685,6 +1803,17 @@ class CustomResults(BaseScribeResults):
             Custom model and guide functions
         """
         return self.custom_model, self.custom_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for custom model."""
+        if self.custom_log_likelihood_fn is not None:
+            return self.custom_log_likelihood_fn
+        else:
+            raise ValueError("No custom log likelihood function provided")
+
+    # --------------------------------------------------------------------------
 
     def get_model_args(self) -> Dict:
         """
@@ -1708,6 +1837,8 @@ class CustomResults(BaseScribeResults):
             args['n_components'] = self.n_components
         return args
 
+    # --------------------------------------------------------------------------
+
     def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
         Get the variational distributions for all parameters if a custom
@@ -1727,6 +1858,8 @@ class CustomResults(BaseScribeResults):
         if self.get_distributions_fn is not None:
             return self.get_distributions_fn(self.params, backend)
         return {}
+
+    # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
         """
@@ -1752,6 +1885,8 @@ class CustomResults(BaseScribeResults):
                 new_params[param_name] = params[param_name][..., index]
         
         return new_params
+
+    # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
@@ -1791,6 +1926,8 @@ class CustomResults(BaseScribeResults):
         
         return new_posterior_samples
 
+    # --------------------------------------------------------------------------
+
     def _create_subset(
         self,
         index,
@@ -1812,6 +1949,7 @@ class CustomResults(BaseScribeResults):
             param_spec=self.param_spec,
             custom_model=self.custom_model,
             custom_guide=self.custom_guide,
+            custom_log_likelihood_fn=self.custom_log_likelihood_fn,
             get_distributions_fn=self.get_distributions_fn,
             get_model_args_fn=self.get_model_args_fn,
             n_components=self.n_components
