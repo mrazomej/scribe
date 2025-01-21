@@ -232,6 +232,8 @@ def run_scribe(
     ZINBVCPResults, 
     NBDMMixtureResults, 
     ZINBMixtureResults, 
+    NBVCPMixtureResults,
+    ZINBVCPMixtureResults,
     CustomResults
 ]:
     """
@@ -272,7 +274,7 @@ def run_scribe(
 
     Returns
     -------
-    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults, CustomResults]
+    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults, NBVCPMixtureResults, ZINBVCPMixtureResults, CustomResults]
         Results container with inference results and optional metadata
     """
     # Validate custom model inputs
@@ -343,25 +345,31 @@ def run_scribe(
     # Create results object
     if custom_model is not None:
         # Create CustomResults for custom model
-        custom_kwargs = {
-            "params": svi_results.params,
-            "loss_history": svi_results.losses,
-            "model_type": model_type,
-            "param_spec": param_spec,
-            "custom_model": custom_model,
-            "custom_guide": custom_guide,
-            "n_components": n_components
-        }
         if adata is not None:
-            results = CustomResults.from_anndata(adata=adata, **custom_kwargs)
+            results = CustomResults.from_anndata(
+                adata=adata,
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                model_type=model_type,
+                param_spec=param_spec,
+                custom_model=custom_model,
+                custom_guide=custom_guide,
+                n_components=n_components
+            )
         else:
             results = CustomResults(
+                params=svi_results.params,
+                loss_history=svi_results.losses,
                 n_cells=n_cells,
                 n_genes=n_genes,
-                **custom_kwargs
+                model_type=model_type,
+                param_spec=param_spec,
+                custom_model=custom_model,
+                custom_guide=custom_guide,
+                n_components=n_components
             )
     else:
-        # Use built-in model results classes
+        # Get the appropriate results class
         results_class = {
             "nbdm": NBDMResults,
             "zinb": ZINBResults,
@@ -376,27 +384,31 @@ def run_scribe(
         if results_class is None:
             raise ValueError(f"Unknown model type: {model_type}")
 
+        # Get default param_spec if not provided
+        param_spec = results_class.get_param_spec()
+
+        # Create results object
         if adata is not None:
-            results_kwargs = {
-                "adata": adata,
-                "params": svi_results.params,
-                "loss_history": svi_results.losses,
-                "model_type": model_type
-            }
-            if "mix" in model_type:
-                results_kwargs["n_components"] = n_components
-            results = results_class.from_anndata(**results_kwargs)
+            # Create results object from AnnData
+            results = results_class.from_anndata(
+                adata=adata,
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                model_type=model_type,
+                param_spec=param_spec,
+                n_components=n_components
+            )
         else:
-            results_kwargs = {
-                "params": svi_results.params,
-                "loss_history": svi_results.losses,
-                "n_cells": n_cells,
-                "n_genes": n_genes,
-                "model_type": model_type
-            }
-            if "mix" in model_type:
-                results_kwargs["n_components"] = n_components
-            results = results_class(**results_kwargs)
+            # Create results object
+            results = results_class(
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                n_cells=n_cells,
+                n_genes=n_genes,
+                model_type=model_type,
+                param_spec=param_spec,
+                n_components=n_components
+            )
 
     return results
 
@@ -412,6 +424,8 @@ def rerun_scribe(
         ZINBVCPResults, 
         NBDMMixtureResults,
         ZINBMixtureResults,
+        NBVCPMixtureResults,
+        ZINBVCPMixtureResults,
         CustomResults
     ],
     counts: Union[jnp.ndarray, "AnnData"],
@@ -432,6 +446,8 @@ def rerun_scribe(
     ZINBVCPResults, 
     NBDMMixtureResults,
     ZINBMixtureResults,
+    NBVCPMixtureResults,
+    ZINBVCPMixtureResults,
     CustomResults
 ]:
     """
@@ -529,7 +545,7 @@ def rerun_scribe(
     # Add model-specific parameters
     if results.model_type == "nbdm":
         model_args['total_counts'] = count_data.sum(axis=1)
-    
+   
     # Add prior parameters and current parameters
     model_args.update(prior_params)
     model_args['init_params'] = results.params
@@ -538,8 +554,6 @@ def rerun_scribe(
     if custom_args is not None:
         model_args.update(custom_args)
     
-    # Add
-
     # Initialize and run SVI
     svi_state = svi.init(rng_key, **model_args)
     svi_results = svi.run(
@@ -558,16 +572,16 @@ def rerun_scribe(
     results_kwargs = {
         "params": svi_results.params,
         "loss_history": combined_losses,
-        "model_type": results.model_type
+        "model_type": results.model_type,
+        "param_spec": results.param_spec,
+        "n_components": results.n_components
     }
 
     # Add custom model specific arguments if needed
     if results_class.__name__ == "CustomResults":
         results_kwargs.update({
-            "param_spec": results.param_spec,
             "custom_model": results.custom_model,
             "custom_guide": results.custom_guide,
-            "n_components": results.n_components
         })
 
     if adata is not None:
