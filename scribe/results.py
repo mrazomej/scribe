@@ -357,6 +357,7 @@ class BaseScribeResults(ABC):
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
         store_samples: bool = True,
+        custom_args: Optional[Dict] = None,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
         # Get the guide function for this model type
@@ -364,6 +365,10 @@ class BaseScribeResults(ABC):
         
         # Get the model arguments
         model_args = self.get_model_args()
+
+        # Add custom arguments to model_args if provided
+        if custom_args is not None:
+            model_args.update(custom_args)
         
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
@@ -389,6 +394,7 @@ class BaseScribeResults(ABC):
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         batch_size: Optional[int] = None,
+        custom_args: Optional[Dict] = None,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
         # Get the model function
@@ -396,6 +402,10 @@ class BaseScribeResults(ABC):
         
         # Get the model arguments
         model_args = self.get_model_args()
+
+        # Add custom arguments to model_args if provided
+        if custom_args is not None:
+            model_args.update(custom_args)
         
         # Generate samples
         return generate_predictive_samples(
@@ -415,6 +425,7 @@ class BaseScribeResults(ABC):
         batch_size: Optional[int] = None,
         store_samples: bool = True,
         resample_parameters: bool = False,
+        custom_args: Optional[Dict] = None,
     ) -> Dict:
         """Generate posterior predictive check samples."""
         # Get the model and guide functions
@@ -422,6 +433,10 @@ class BaseScribeResults(ABC):
         
         # Get the model arguments
         model_args = self.get_model_args()
+
+        # Add custom arguments to model_args if provided
+        if custom_args is not None:
+            model_args.update(custom_args)
         
         # Check if we need to resample parameters
         need_params = (
