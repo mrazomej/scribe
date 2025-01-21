@@ -11,7 +11,6 @@ from jax import random
 from scribe.stats import (
     compute_histogram_percentiles,
     compute_histogram_credible_regions,
-    compute_ecdf_credible_regions,
     sample_dirichlet_from_parameters,
     fit_dirichlet_mle
 )
@@ -103,48 +102,6 @@ def test_compute_histogram_credible_regions(sample_data):
         # Check ordering
         assert np.all(region['lower'] <= region['median'])
         assert np.all(region['median'] <= region['upper'])
-
-# ------------------------------------------------------------------------------
-# Test ECDF functions
-# ------------------------------------------------------------------------------
-
-def test_compute_ecdf_credible_regions(sample_data):
-    """Test computation of ECDF credible regions."""
-    credible_regions = [95, 68, 50]
-    results = compute_ecdf_credible_regions(
-        sample_data,
-        credible_regions=credible_regions
-    )
-    
-    # Check that all expected keys exist
-    assert 'x_values' in results
-    assert 'regions' in results
-    for cr in credible_regions:
-        assert cr in results['regions']
-        
-    # Check that each region has required components
-    for cr in credible_regions:
-        region = results['regions'][cr]
-        assert 'lower' in region
-        assert 'upper' in region
-        assert 'median' in region
-        
-        # Check shapes
-        n_points = len(results['x_values'])
-        assert region['lower'].shape == (n_points,)
-        assert region['upper'].shape == (n_points,)
-        assert region['median'].shape == (n_points,)
-        
-        # Check ordering
-        assert np.all(region['lower'] <= region['median'])
-        assert np.all(region['median'] <= region['upper'])
-        
-        # Check ECDF properties
-        assert np.all(region['lower'] >= 0)
-        assert np.all(region['upper'] <= 1)
-        assert np.all(np.diff(region['lower']) >= -1e-10)  # Should be monotonic
-        assert np.all(np.diff(region['upper']) >= -1e-10)
-        assert np.all(np.diff(region['median']) >= -1e-10)
 
 # ------------------------------------------------------------------------------
 # Test Dirichlet-related functions
