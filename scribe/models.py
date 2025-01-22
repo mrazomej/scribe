@@ -940,7 +940,8 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
     ----------
     model_type : str
         The type of model to retrieve functions for. Must be one of ["nbdm",
-        "zinb", "nbvcp", "zinbvcp"].
+        "zinb", "nbvcp", "zinbvcp", "nbdm_mix", "zinb_mix", "nbvcp_mix",
+        "zinbvcp_mix"].
 
     Returns
     -------
@@ -995,7 +996,8 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
         return nbvcp_mixture_model, nbvcp_mixture_guide
     
-    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability Mixture Model
+    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability
+    # Mixture Model
     elif model_type == "zinbvcp_mix":
         # Import model and guide functions locally to avoid circular imports
         from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
@@ -1657,40 +1659,3 @@ def zinbvcp_log_likelihood(
             gene_log_probs += jnp.sum(batch_log_probs, axis=0)
         
         return gene_log_probs
-
-# ------------------------------------------------------------------------------
-# Log Likelihood registry
-# ------------------------------------------------------------------------------
-
-def get_log_likelihood_fn(model_type: str) -> Callable:
-    """
-    Get the log likelihood function for a specified model type.
-    
-    Parameters
-    ----------
-    model_type : str
-        Type of model to get likelihood function for. Must be one of:
-            - 'nbdm': Negative Binomial-Dirichlet Multinomial
-            - 'zinb': Zero-Inflated Negative Binomial
-            - 'nbvcp': Negative Binomial with Variable Capture Probability
-            - 'zinbvcp': Zero-Inflated Negative Binomial with Variable Capture
-              Probability
-        
-    Returns
-    -------
-    Callable
-        Log likelihood function for the specified model type. The function takes
-        observed counts and model parameters as input and returns an array of
-        log likelihood values.
-        
-    Raises
-    ------
-    KeyError
-        If model_type is not one of the supported types.
-    """
-    return {
-        "nbdm": nbdm_log_likelihood,
-        "zinb": zinb_log_likelihood,
-        "nbvcp": nbvcp_log_likelihood,
-        "zinbvcp": zinbvcp_log_likelihood
-    }[model_type]

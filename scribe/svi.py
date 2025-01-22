@@ -205,6 +205,398 @@ def run_inference(
     )
 
 # ------------------------------------------------------------------------------
+# SCRIBE inference pipeline
+# ------------------------------------------------------------------------------
+
+def run_scribe(
+    counts: Union[jnp.ndarray, "AnnData"],
+    model_type: str = "nbdm",
+    n_components: Optional[int] = None,
+    custom_model: Optional[Callable] = None,
+    custom_guide: Optional[Callable] = None,
+    custom_args: Optional[Dict] = None,
+    param_spec: Optional[Dict] = None,  # For custom models
+    rng_key: random.PRNGKey = random.PRNGKey(42),
+    n_steps: int = 100_000,
+    batch_size: int = 512,
+    prior_params: Optional[Dict] = None,
+    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
+    optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
+    cells_axis: int = 0,
+    layer: Optional[str] = None,
+    stable_update: bool = True,
+) -> Union[
+    NBDMResults, 
+    ZINBResults, 
+    NBVCPResults, 
+    ZINBVCPResults, 
+    NBDMMixtureResults, 
+    ZINBMixtureResults, 
+    NBVCPMixtureResults,
+    ZINBVCPMixtureResults,
+    CustomResults
+]:
+    """
+    Run the complete SCRIBE inference pipeline.
+    
+    Parameters
+    ----------
+    counts : Union[jax.numpy.ndarray, AnnData]
+        Either a count matrix or an AnnData object. 
+        - If ndarray and cells_axis=0 (default), shape is (n_cells, n_genes)
+        - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
+        - If AnnData, will use .X or specified layer
+    model_type : str
+        Type of model to use or identifier for custom model
+    n_components : int, optional
+        Number of components to fit for mixture models. Default is None.
+    custom_model : Callable, optional
+        Custom model function. If provided, custom_guide must also be provided.
+    custom_guide : Callable, optional
+        Custom guide function. If provided, custom_model must also be provided.
+    param_spec : Dict, optional
+        Parameter specification for custom models. Required if custom_model is
+        provided. Maps parameter names to their types ('global', 'gene-specific',
+        or 'cell-specific').
+    prior_params : Dict, optional
+        Dictionary of prior parameters specific to the model.
+    loss : numpyro.infer.elbo, optional
+        Loss function to use for the SVI. Default is TraceMeanField_ELBO
+    optimizer : numpyro.optim.optimizers, optional
+        Optimizer to use for SVI. Default is Adam with step_size=0.001
+    cells_axis : int, optional
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
+    layer : str, optional
+        If counts is AnnData, specifies which layer to use. If None, uses .X
+    stable_update : bool, optional
+        Whether to use stable update method. Default is True.
+
+    Returns
+    -------
+    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults, NBVCPMixtureResults, ZINBVCPMixtureResults, CustomResults]
+        Results container with inference results and optional metadata
+    """
+    # Validate custom model inputs
+    if custom_model is not None or custom_guide is not None:
+        if custom_model is None or custom_guide is None:
+            raise ValueError(
+                "Both custom_model and custom_guide must be provided together"
+            )
+        if param_spec is None:
+            raise ValueError(
+                "param_spec must be provided when using custom models"
+            )
+
+    # Set default prior parameters if none provided and using built-in model
+    if prior_params is None and custom_model is None:
+        prior_params = get_default_priors(model_type)
+    
+    # Handle AnnData input
+    if hasattr(counts, "obs"):
+        adata = counts
+        count_data = adata.layers[layer] if layer else adata.X
+        if scipy.sparse.issparse(count_data):
+            count_data = count_data.toarray()
+        count_data = jnp.array(count_data)
+    else:
+        count_data = counts
+        adata = None
+
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = count_data.shape
+    else:
+        n_genes, n_cells = count_data.shape
+        count_data = count_data.T
+
+    # Create SVI instance
+    if custom_model is not None:
+        # Use custom model and guide
+        svi = create_svi_instance(
+            custom_model=custom_model,
+            custom_guide=custom_guide,
+            optimizer=optimizer,
+            loss=loss
+        )
+    else:
+        # Use built-in model
+        svi = create_svi_instance(
+            model_type=model_type,
+            optimizer=optimizer,
+            loss=loss
+        )
+
+    # Run inference
+    svi_results = run_inference(
+        svi,
+        rng_key,
+        jnp.array(count_data),
+        n_steps=n_steps,
+        batch_size=batch_size,
+        model_type=model_type,
+        prior_params=prior_params,
+        cells_axis=0,
+        stable_update=stable_update,
+        n_components=n_components,
+        custom_args=custom_args
+    )
+
+    # Create results object
+    if custom_model is not None:
+        # Create CustomResults for custom model
+        if adata is not None:
+            results = CustomResults.from_anndata(
+                adata=adata,
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                model_type=model_type,
+                param_spec=param_spec,
+                custom_model=custom_model,
+                custom_guide=custom_guide,
+                n_components=n_components
+            )
+        else:
+            results = CustomResults(
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                n_cells=n_cells,
+                n_genes=n_genes,
+                model_type=model_type,
+                param_spec=param_spec,
+                custom_model=custom_model,
+                custom_guide=custom_guide,
+                n_components=n_components
+            )
+    else:
+        # Get the appropriate results class
+        results_class = {
+            "nbdm": NBDMResults,
+            "zinb": ZINBResults,
+            "nbvcp": NBVCPResults,
+            "zinbvcp": ZINBVCPResults,
+            "nbdm_mix": NBDMMixtureResults,
+            "zinb_mix": ZINBMixtureResults,
+            "nbvcp_mix": NBVCPMixtureResults,
+            "zinbvcp_mix": ZINBVCPMixtureResults,
+        }.get(model_type)
+
+        if results_class is None:
+            raise ValueError(f"Unknown model type: {model_type}")
+
+        # Get default param_spec if not provided
+        param_spec = results_class.get_param_spec()
+
+        # Create results object
+        if adata is not None:
+            # Create results object from AnnData
+            results = results_class.from_anndata(
+                adata=adata,
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                model_type=model_type,
+                param_spec=param_spec,
+                n_components=n_components
+            )
+        else:
+            # Create results object
+            results = results_class(
+                params=svi_results.params,
+                loss_history=svi_results.losses,
+                n_cells=n_cells,
+                n_genes=n_genes,
+                model_type=model_type,
+                param_spec=param_spec,
+                n_components=n_components
+            )
+
+    return results
+
+# ------------------------------------------------------------------------------
+# Continue training from a previous SCRIBE results object
+# ------------------------------------------------------------------------------
+
+def rerun_scribe(
+    results: Union[
+        NBDMResults, 
+        ZINBResults, 
+        NBVCPResults, 
+        ZINBVCPResults, 
+        NBDMMixtureResults,
+        ZINBMixtureResults,
+        NBVCPMixtureResults,
+        ZINBVCPMixtureResults,
+        CustomResults
+    ],
+    counts: Union[jnp.ndarray, "AnnData"],
+    n_steps: int = 100_000,
+    batch_size: int = 512,
+    rng_key: random.PRNGKey = random.PRNGKey(42),
+    prior_params: Optional[Dict] = None,
+    custom_args: Optional[Dict] = None,
+    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
+    optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
+    cells_axis: int = 0,
+    layer: Optional[str] = None,
+    stable_update: bool = True,
+) -> Union[
+    NBDMResults, 
+    ZINBResults, 
+    NBVCPResults, 
+    ZINBVCPResults, 
+    NBDMMixtureResults,
+    ZINBMixtureResults,
+    NBVCPMixtureResults,
+    ZINBVCPMixtureResults,
+    CustomResults
+]:
+    """
+    Continue training from a previous SCRIBE results object.
+
+    This function creates a new results object starting from the parameters
+    of a previous run. This is useful when:
+        1. You want to run more iterations to improve convergence
+        2. You're doing incremental training as new data arrives
+        3. You're fine-tuning a model that was previously trained
+
+    Parameters
+    ----------
+    results : Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]
+        Previous results object containing trained parameters
+    counts : Union[jax.numpy.ndarray, AnnData]
+        Either a count matrix or an AnnData object. 
+        - If ndarray and cells_axis=0 (default), shape is (n_cells, n_genes)
+        - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
+        - If AnnData, will use .X or specified layer
+    n_steps : int, optional
+        Number of optimization steps (default: 100,000)
+    batch_size : int, optional
+        Mini-batch size for stochastic optimization (default: 512)
+    rng_key : random.PRNGKey, optional
+        Random key for reproducibility (default: PRNGKey(42))
+    prior_params : Dict, optional
+        Dictionary of prior parameters. If None, uses the same priors as the
+        original training
+    custom_args : Dict, optional
+        Dictionary of custom arguments for the model
+    loss : numpyro.infer.elbo, optional
+        Loss function to use (default: TraceMeanField_ELBO)
+    optimizer : numpyro.optim.optimizers, optional
+        Optimizer to use (default: Adam with step_size=0.001)
+    cells_axis : int, optional
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
+    layer : str, optional
+        If counts is AnnData, specifies which layer to use. If None, uses .X
+    stable_update : bool, optional
+        Whether to use stable update method. Default is True. If true,  returns
+        the current state if the the loss or the new state contains invalid
+        values.
+
+    Returns
+    -------
+    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]
+        A new results object containing the continued training results
+    """
+    # Handle AnnData input
+    if hasattr(counts, "obs"):
+        adata = counts
+        count_data = adata.layers[layer] if layer else adata.X
+        if scipy.sparse.issparse(count_data):
+            count_data = count_data.toarray()
+        count_data = jnp.array(count_data)
+    else:
+        count_data = jnp.array(counts)
+        adata = None
+
+    # Extract dimensions and transpose if needed
+    if cells_axis == 0:
+        n_cells, n_genes = count_data.shape
+    else:
+        n_genes, n_cells = count_data.shape
+        count_data = count_data.T
+
+    # Verify dimensions match
+    if n_genes != results.n_genes:
+        raise ValueError(
+            f"Number of genes in counts ({n_genes}) doesn't match model "
+            f"({results.n_genes})"
+        )
+
+    # Get model and guide functions
+    model, guide = results.get_model_and_guide()
+
+    # Create SVI instance
+    svi = SVI(model, guide, optimizer, loss=loss)
+
+    # Use default prior parameters if none provided
+    if prior_params is None:
+        prior_params = get_default_priors(results.model_type)
+
+    # Get base model arguments from results class
+    model_args = results.get_model_args()
+    
+    # Update with runtime-specific arguments
+    model_args.update({
+        'counts': count_data,
+        'batch_size': batch_size,
+    })
+
+    # Add model-specific parameters
+    if results.model_type == "nbdm":
+        model_args['total_counts'] = count_data.sum(axis=1)
+   
+    # Add prior parameters and current parameters
+    model_args.update(prior_params)
+    model_args['init_params'] = results.params
+
+    # Add custom arguments
+    if custom_args is not None:
+        model_args.update(custom_args)
+    
+    # Initialize and run SVI
+    svi_state = svi.init(rng_key, **model_args)
+    svi_results = svi.run(
+        rng_key,
+        n_steps,
+        init_state=svi_state,
+        stable_update=stable_update,
+        **model_args
+    )
+
+    # Create new results object
+    results_class = type(results)
+    combined_losses = jnp.concatenate([results.loss_history, svi_results.losses])
+
+    # Build common kwargs
+    results_kwargs = {
+        "params": svi_results.params,
+        "loss_history": combined_losses,
+        "model_type": results.model_type,
+        "param_spec": results.param_spec,
+        "n_components": results.n_components
+    }
+
+    # Add custom model specific arguments if needed
+    if results_class.__name__ == "CustomResults":
+        results_kwargs.update({
+            "custom_model": results.custom_model,
+            "custom_guide": results.custom_guide,
+        })
+
+    if adata is not None:
+        return results_class.from_anndata(
+            adata=adata,
+            **results_kwargs
+        )
+    else:
+        return results_class(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            **results_kwargs
+        )
+
+# ------------------------------------------------------------------------------
 # Convert variational parameters to distributions
 # ------------------------------------------------------------------------------
 
@@ -349,313 +741,3 @@ def params_to_dist(params: Dict, model: str, backend: str = "scipy") -> Dict[str
         raise ValueError(f"Invalid model type: {model}")
 
     raise ValueError(f"Invalid backend: {backend}")
-
-# ------------------------------------------------------------------------------
-# SCRIBE inference pipeline
-# ------------------------------------------------------------------------------
-
-def run_scribe(
-    counts: Union[jnp.ndarray, "AnnData"],
-    model_type: str = "nbdm",
-    n_components: Optional[int] = None,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
-    n_steps: int = 100_000,
-    batch_size: int = 512,
-    prior_params: Optional[Dict] = None,
-    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
-    optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
-    cells_axis: int = 0,
-    layer: Optional[str] = None,
-    stable_update: bool = True,
-) -> Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults]:
-    """Run the complete SCRIBE inference pipeline.
-    
-    Parameters
-    ----------
-    counts : Union[jax.numpy.ndarray, AnnData]
-        Either a count matrix or an AnnData object. 
-        - If ndarray and cells_axis=0 (default), shape is (n_cells, n_genes)
-        - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
-        - If AnnData, will use .X or specified layer
-    model_type : str
-        Type of model to use. Options are:
-        - "nbdm": Negative Binomial-Dirichlet Multinomial model
-        - "zinb": Zero-Inflated Negative Binomial model
-        - "nbvcp": Negative Binomial with variable capture probability
-        - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
-          probability
-        - "nbdm_mix": Negative Binomial-Dirichlet Multinomial Mixture Model
-    n_components : int, optional
-        Number of components to fit for mixture models. Default is None.
-    prior_params : Dict, optional
-        Dictionary of prior parameters specific to the model.
-        For built-in models:
-        - "nbdm": {'p_prior': (1,1), 'r_prior': (2,0.1)}
-        - "zinb": {'p_prior': (1,1), 'r_prior': (2,0.1), 'gate_prior': (1,1)}
-        - "nbvcp": {'p_prior': (1,1), 'r_prior': (2,0.1), 'p_capture_prior': (1,1)}
-        - "zinbvcp": {'p_prior': (1,1), 'r_prior': (2,0.1), 'p_capture_prior': (1,1),
-                      'gate_prior': (1,1)}
-    loss : numpyro.infer.elbo, optional
-        Loss function to use for the SVI. Default is TraceMeanField_ELBO
-    optimizer : numpyro.optim.optimizers, optional
-        Optimizer to use for SVI. Default is Adam with step_size=0.001
-    cells_axis : int, optional
-        Axis along which cells are arranged. 0 means cells are rows (default), 1
-        means cells are columns.
-    layer : str, optional
-        If counts is AnnData, specifies which layer to use. If None, uses .X
-    stable_update : bool, optional
-        Whether to use stable update method. Default is True. If true, returns
-        the current state if the the loss or the new state contains invalid
-        values.
-
-    Returns
-    -------
-    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults]
-        Results container with inference results and optional metadata
-    """
-    # Set default prior parameters if none provided
-    if prior_params is None:
-        prior_params = get_default_priors(model_type)
-    
-    # Handle AnnData input as before
-    if hasattr(counts, "obs"):
-        adata = counts
-        # Get counts from specified layer or .X
-        count_data = adata.layers[layer] if layer else adata.X
-        # Convert to dense array if sparse
-        if scipy.sparse.issparse(count_data):
-            count_data = count_data.toarray()
-        count_data = jnp.array(count_data)
-    else:
-        count_data = counts
-        adata = None
-
-    # Extract dimensions
-    if cells_axis == 0:
-        n_cells, n_genes = count_data.shape
-    else:
-        n_genes, n_cells = count_data.shape
-        count_data = count_data.T  # Transpose to make cells rows
-
-    # Create SVI instance
-    svi = create_svi_instance(
-        model_type=model_type,
-        optimizer=optimizer,
-        loss=loss
-    )
-
-    # Run inference
-    svi_results = run_inference(
-        svi,
-        rng_key,
-        jnp.array(count_data),
-        n_steps=n_steps,
-        batch_size=batch_size,
-        model_type=model_type,
-        prior_params=prior_params,
-        cells_axis=0,
-        stable_update=stable_update,
-        n_components=n_components
-    )
-
-    # Create appropriate results class
-    results_class = {
-        "nbdm": NBDMResults,
-        "zinb": ZINBResults,
-        "nbvcp": NBVCPResults,
-        "zinbvcp": ZINBVCPResults,
-        "nbdm_mix": NBDMMixtureResults,
-        "zinb_mix": ZINBMixtureResults,
-        "nbvcp_mix": NBVCPMixtureResults,
-        "zinbvcp_mix": ZINBVCPMixtureResults,
-    }.get(model_type)
-
-    if results_class is None:
-        raise ValueError(f"Unknown model type: {model_type}")
-
-    # Create results object with model-specific arguments
-    if adata is not None:
-        results_kwargs = {
-            "adata": adata,
-            "params": svi_results.params,
-            "loss_history": svi_results.losses,
-            "model_type": model_type
-        }
-        # Add n_components for mixture models
-        if "mix" in model_type:
-            results_kwargs["n_components"] = n_components
-        results = results_class.from_anndata(**results_kwargs)
-    else:
-        results_kwargs = {
-            "params": svi_results.params,
-            "loss_history": svi_results.losses,
-            "n_cells": n_cells,
-            "n_genes": n_genes,
-            "model_type": model_type
-        }
-        # Add n_components for mixture models
-        if "mix" in model_type:
-            results_kwargs["n_components"] = n_components
-        results = results_class(**results_kwargs)
-
-    return results
-
-# ------------------------------------------------------------------------------
-# Continue training from a previous SCRIBE results object
-# ------------------------------------------------------------------------------
-
-def rerun_scribe(
-    results: Union[
-        NBDMResults, 
-        ZINBResults, 
-        NBVCPResults, 
-        ZINBVCPResults, 
-        NBDMMixtureResults,
-        ZINBMixtureResults
-    ],
-    counts: Union[jnp.ndarray, "AnnData"],
-    n_steps: int = 100_000,
-    batch_size: int = 512,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
-    prior_params: Optional[Dict] = None,
-    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
-    optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
-    cells_axis: int = 0,
-    layer: Optional[str] = None,
-    stable_update: bool = True,
-) -> Union[
-    NBDMResults, 
-    ZINBResults, 
-    NBVCPResults, 
-    ZINBVCPResults, 
-    NBDMMixtureResults,
-    ZINBMixtureResults
-]:
-    """
-    Continue training from a previous SCRIBE results object.
-
-    This function creates a new results object starting from the parameters
-    of a previous run. This is useful when:
-        1. You want to run more iterations to improve convergence
-        2. You're doing incremental training as new data arrives
-        3. You're fine-tuning a model that was previously trained
-
-    Parameters
-    ----------
-    results : Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]
-        Previous results object containing trained parameters
-    counts : Union[jax.numpy.ndarray, AnnData]
-        Either a count matrix or an AnnData object. 
-        - If ndarray and cells_axis=0 (default), shape is (n_cells, n_genes)
-        - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
-        - If AnnData, will use .X or specified layer
-    n_steps : int, optional
-        Number of optimization steps (default: 100,000)
-    batch_size : int, optional
-        Mini-batch size for stochastic optimization (default: 512)
-    rng_key : random.PRNGKey, optional
-        Random key for reproducibility (default: PRNGKey(42))
-    prior_params : Dict, optional
-        Dictionary of prior parameters. If None, uses the same priors as the
-        original training
-    loss : numpyro.infer.elbo, optional
-        Loss function to use (default: TraceMeanField_ELBO)
-    optimizer : numpyro.optim.optimizers, optional
-        Optimizer to use (default: Adam with step_size=0.001)
-    cells_axis : int, optional
-        Axis along which cells are arranged. 0 means cells are rows (default),
-        1 means cells are columns
-    layer : str, optional
-        If counts is AnnData, specifies which layer to use. If None, uses .X
-    stable_update : bool, optional
-        Whether to use stable update method. Default is True. If true,  returns
-        the current state if the the loss or the new state contains invalid
-        values.
-
-    Returns
-    -------
-    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]
-        A new results object containing the continued training results
-    """
-    # Handle AnnData input
-    if hasattr(counts, "obs"):
-        adata = counts
-        count_data = adata.layers[layer] if layer else adata.X
-        if scipy.sparse.issparse(count_data):
-            count_data = count_data.toarray()
-        count_data = jnp.array(count_data)
-    else:
-        count_data = jnp.array(counts)
-        adata = None
-
-    # Extract dimensions and transpose if needed
-    if cells_axis == 0:
-        n_cells, n_genes = count_data.shape
-    else:
-        n_genes, n_cells = count_data.shape
-        count_data = count_data.T
-
-    # Verify dimensions match
-    if n_genes != results.n_genes:
-        raise ValueError(
-            f"Number of genes in counts ({n_genes}) doesn't match model "
-            f"({results.n_genes})"
-        )
-
-    # Get model and guide functions
-    model, guide = results.get_model_and_guide()
-
-    # Create SVI instance
-    svi = SVI(model, guide, optimizer, loss=loss)
-
-    # Use default prior parameters if none provided
-    if prior_params is None:
-        prior_params = get_default_priors(results.model_type)
-
-    # Get base model arguments from results class
-    model_args = results.get_model_args()
-    
-    # Update with runtime-specific arguments
-    model_args.update({
-        'counts': count_data,
-        'batch_size': batch_size,
-    })
-
-    # Add model-specific parameters
-    if results.model_type == "nbdm":
-        model_args['total_counts'] = count_data.sum(axis=1)
-    
-    # Add prior parameters and current parameters
-    model_args.update(prior_params)
-    model_args['init_params'] = results.params
-
-    # Initialize and run SVI
-    svi_state = svi.init(rng_key, **model_args)
-    svi_results = svi.run(
-        rng_key,
-        n_steps,
-        init_state=svi_state,
-        stable_update=stable_update,
-        **model_args
-    )
-
-    # Create new results object
-    results_class = type(results)
-    combined_losses = jnp.concatenate([results.loss_history, svi_results.losses])
-
-    if adata is not None:
-        return results_class.from_anndata(
-            adata=adata,
-            params=svi_results.params,
-            loss_history=combined_losses,
-            model_type=results.model_type
-        )
-    else:
-        return results_class(
-            params=svi_results.params,
-            loss_history=combined_losses,
-            n_cells=n_cells,
-            n_genes=n_genes,
-            model_type=results.model_type
-        )
