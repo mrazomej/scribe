@@ -122,7 +122,11 @@ def compute_histogram_credible_regions(
     
     # Find global min and max across all samples
     global_min = int(samples.min())
-    global_max = min(int(samples.max()), max_bin)
+
+    # Define global max if max_bin is not None, else use global max
+    global_max = (min(int(samples.max()), max_bin) 
+                 if max_bin is not None 
+                 else int(samples.max()))
     
     # Create bin edges (integers from min to max + 1)
     bin_edges = jnp.arange(global_min, global_max + 2)

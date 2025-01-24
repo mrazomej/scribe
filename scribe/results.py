@@ -64,7 +64,8 @@ class BaseScribeResults(ABC):
     n_genes: int
     model_type: str
     param_spec: Dict[str, Dict[str, Any]]
-    
+    prior_params: Dict[str, Any]
+
     # Standard metadata from AnnData object
     cell_metadata: Optional[pd.DataFrame] = None
     gene_metadata: Optional[pd.DataFrame] = None
@@ -548,6 +549,7 @@ class StandardResults(BaseScribeResults):
         return type(self)(
             model_type=self.model_type,
             params=new_params,
+            prior_params=self.prior_params,
             loss_history=self.loss_history,
             n_cells=self.n_cells,
             n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
@@ -649,7 +651,8 @@ class MixtureResults(BaseScribeResults):
             gene_metadata=new_gene_metadata,
             uns=self.uns,
             posterior_samples=new_posterior_samples,
-            param_spec=self.param_spec
+            param_spec=self.param_spec,
+            prior_params=self.prior_params
         )
 
 # ------------------------------------------------------------------------------
@@ -793,30 +796,6 @@ class ZINBResults(StandardResults):
         """Get the log likelihood function for ZINB model."""
         from .models import zinb_log_likelihood
         return zinb_log_likelihood
-
-    # --------------------------------------------------------------------------
-
-    def _create_subset(
-        self,
-        index,
-        new_params: Dict,
-        new_gene_metadata: Optional[pd.DataFrame],
-        new_posterior_samples: Optional[Dict]
-    ) -> 'ZINBResults':
-        """Create a new ZINBResults instance with a subset of genes."""
-        return ZINBResults(
-            model_type=self.model_type,
-            params=new_params,
-            loss_history=self.loss_history,
-            n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
-            n_components=self.n_components,
-            cell_metadata=self.cell_metadata,
-            gene_metadata=new_gene_metadata,
-            uns=self.uns,
-            posterior_samples=new_posterior_samples,
-            param_spec=self.param_spec
-        )
 
 # ------------------------------------------------------------------------------
 # Negative Binomial with variable capture probability model
