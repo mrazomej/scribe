@@ -30,7 +30,8 @@ scribe.viz.matplotlib_style()
 model_type = "nbdm"
 
 # Define training parameters
-n_steps = 25_000
+n_steps = 15_000
+batch_size_max = 4096
 
 # %% ---------------------------------------------------------------------------
 
@@ -41,7 +42,7 @@ DATA_DIR = f"/app/data/sanity"
 MODEL_DIR = f"{scribe.utils.git_root()}/output/sanity/{model_type}"
 
 # Define figure directory
-FIG_DIR = f"{scribe.utils.git_root()}/fig/sanity/{model_type}"
+FIG_DIR = f"{scribe.utils.git_root()}/fig/sanity/{model_type}/{n_steps}steps"
 
 # Create figure directory if it does not exist
 if not os.path.exists(FIG_DIR):
@@ -66,7 +67,8 @@ for file in files:
     print(f"Processing {dataset_name}")
 
     # Define output file name
-    output_file = f"{MODEL_DIR}/{dataset_name}_{n_steps}steps.pkl"
+    output_file = f"{MODEL_DIR}/{dataset_name}_{n_steps}steps_" \
+                f"{batch_size_max}batch.pkl"
 
     print("Loading model...")
     # Load model
@@ -102,19 +104,43 @@ for file in files:
 
     print("Plotting ECDF...")
     # Define number of genes to select
-    n_genes = 9
+    n_genes = 25
 
-    # Compute the mean expression of each gene and sort them
-    df_mean = df.mean(axis=1).sort_values(ascending=False)
+    # Compute the median for each gene
+    median_counts = df.median(axis=1)
 
-    # Generate logarithmically spaced indices
-    log_indices = np.logspace(
-        0, np.log10(len(df_mean) - 1), num=n_genes, dtype=int
-    )
+    # Get median counts > 0
+    median_counts_nonzero = median_counts[median_counts > 0]
 
-    # Select genes using the logarithmically spaced indices
-    genes = df_mean.iloc[log_indices].index
+    # Sort median counts
+    sorted_idx = np.argsort(median_counts_nonzero)
+    
+    # Generate logarithmically spaced positions
+    log_positions = np.unique(np.logspace(
+        0, np.log10(len(sorted_idx) - 1), num=n_genes, dtype=int
+    ))
 
+    # If we got fewer positions than requested due to uniqueness, fill in the 
+    # gaps with random positions
+    if len(log_positions) < n_genes:
+        available_positions = np.setdiff1d(
+            np.arange(len(sorted_idx)), 
+            log_positions
+        )
+        additional_positions = np.random.choice(
+            available_positions,
+            size=n_genes - len(log_positions),
+            replace=False
+        )
+        selected_positions = np.sort(
+            np.concatenate([log_positions, additional_positions])
+        )
+    else:
+        selected_positions = log_positions
+
+    # Map positions back to original array indices
+    selected_genes = sorted_idx.iloc[selected_positions].index.values
+    
     # Initialize figure
     fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
 
@@ -122,13 +148,13 @@ for file in files:
     step = 1
 
     # Loop throu each gene
-    for (i, gene) in enumerate(genes):
+    for (i, gene) in enumerate(selected_genes):
         # Plot the ECDF for each column in the DataFrame
         sns.ecdfplot(
             data=df.loc[gene, :],
             ax=ax,
             color=sns.color_palette('Blues', n_colors=n_genes)[i],
-            label=np.round(df_mean[gene], 0).astype(int),
+            label=np.round(median_counts[gene], 0).astype(int),
             lw=1.5
         )
 
@@ -138,14 +164,6 @@ for file in files:
 
     # Add title
     ax.set_title(dataset_name.replace("_", " "))
-
-    # Add legend
-    ax.legend(
-        loc='lower right', 
-        fontsize=8, 
-        title=r"$\langle U \rangle$", 
-        frameon=False
-    )
 
     # Save figure
     fig.savefig(
@@ -160,8 +178,8 @@ for file in files:
 
     print("Keeping subset of inference...")
     # Keep subset of inference from log_indices
-    gene_indices = model.gene_metadata.isin(genes.values).values.flatten()
-    model_subset = model[gene_indices]
+    model_subset = model[
+        model.gene_metadata.isin(selected_genes).values.flatten()]
 
     # --------------------------------------------------------------------------
 
@@ -172,39 +190,49 @@ for file in files:
     # --------------------------------------------------------------------------
 
     # Single plot example
-    fig, axes = plt.subplots(3, 3, figsize=(7, 7))
+    fig, axes = plt.subplots(5, 5, figsize=(12, 12))
 
     # Flatten axes
     axes = axes.flatten()
 
     # Loop through each gene
-    for i, ax in enumerate(axes):
+    for i in range(model_subset.n_genes):
         print(f"Plotting gene {i} PPC...")
+
+        # Extract axis
+        ax = axes[i]
+
+        # Extract gene from results to plot
+        gene = model_subset.gene_metadata.iloc[i].values[0]
     
         # Extract true counts for this gene
-        true_counts = df.loc[model_subset.gene_metadata.iloc[i], :]
+        true_counts = df.loc[gene, :]
 
         # Compute credible regions
         credible_regions = scribe.stats.compute_histogram_credible_regions(
             model_subset.posterior_samples["predictive_samples"][:, :, i],
             credible_regions=[95, 68, 50],
-            max_bin=true_counts.values.max()
+            max_bin=None
         )
 
         # Compute histogram of the real data
         hist_results = np.histogram(
             true_counts,
-            bins=credible_regions['bin_edges'],
+            bins=np.arange(0, true_counts.max() + 1),
             density=True
         )
 
+
         # Get indices where cumsum <= 0.999
-        cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
-        # If no indices found (all values > 0.999), use first bin
-        max_bin = np.max([
-            cumsum_indices[-1] if len(cumsum_indices) > 0 else 0,
-            10
-        ])
+        cumsum_indices_data = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
+        
+
+        # If no indices found (all values > 0.99), use first bin
+        max_bin = (
+            cumsum_indices_data[-1] 
+            if len(cumsum_indices_data) > 1 
+            else 5
+        )
 
         # Plot credible regions
         scribe.viz.plot_histogram_credible_regions_stairs(
@@ -215,23 +243,27 @@ for file in files:
             max_bin=max_bin
         )
 
-        # Define max_bin for histogram
-        max_bin_hist = max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
+        
         # Plot histogram of the real data as step plot
         ax.step(
-            hist_results[1][:max_bin_hist],
-            hist_results[0][:max_bin_hist],
+            hist_results[1][:-1],
+            hist_results[0],
             where='post',
             label='data',
             color='black',
+            lw=2
         )
 
         # Set axis labels
         ax.set_xlabel('counts')
         ax.set_ylabel('frequency')
+        # Set xlim
+        ax.set_xlim(true_counts.min() - 0.05, np.max([max_bin, 3]) + 0.05)
+        # Set ylim
+        # ax.set_ylim(0, hist_results[0].max() * 1.05)
 
         # Set title
-        ax.set_title(model_subset.gene_metadata.iloc[i].values[0], fontsize=8)
+        ax.set_title(gene, fontsize=8)
 
     plt.tight_layout()
 

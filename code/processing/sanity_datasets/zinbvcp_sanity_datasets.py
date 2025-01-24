@@ -24,9 +24,17 @@ import numpyro
 model_type = "zinbvcp"
 
 # Define training parameters
-n_steps = 30_000
+n_steps = 25_000
 optimizer = Adam(step_size=1e-3)
 batch_size_max = 4096
+
+# Define prior parameters
+prior_params = {
+    "p_prior": (1, 1),
+    "r_prior": (2, 0.075),
+    "p_capture_prior": (1, 1),
+    "gate_prior": (1, 1),
+}
 
 # %% ---------------------------------------------------------------------------
 
@@ -52,7 +60,9 @@ for file in files:
     dataset_name = file.split("/")[-1].replace("_counts.txt.gz", "")
 
     # Define output file name
-    output_file = f"{OUTPUT_DIR}/{dataset_name}_{n_steps}steps.pkl"
+    output_file = f"{OUTPUT_DIR}/{dataset_name}_" \
+                f"{n_steps}steps_" \
+                f"{batch_size_max}batch.pkl"
 
     # Check if the file exists
     if os.path.exists(output_file):
@@ -75,7 +85,8 @@ for file in files:
         cells_axis=1,
         batch_size=batch_size,
         rng_key=random.PRNGKey(42),
-        stable_update=True
+        stable_update=True,
+        prior_params=prior_params
     )
 
     # Clear JAX caches
