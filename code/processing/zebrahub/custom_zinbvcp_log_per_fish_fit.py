@@ -18,26 +18,43 @@ import scribe
 # Import library for reading 10x Genomics data
 import scanpy as sc
 
+if not os.getcwd().endswith("code/processing/zebrahub"):
+    os.chdir("./code/processing/zebrahub")
+
+# Import custom model and guide
+from custom_zinbvcp_log_per_fish_model import zinbvcp_log_model, zinbvcp_log_guide
+
+# %% ---------------------------------------------------------------------------
+
+# Define param_spec for model
+param_spec = {
+    "alpha_p": {"type": "global"},
+    "beta_p": {"type": "global"},
+    "loc_r": {"type": "gene-specific"},
+    "scale_r": {"type": "gene-specific"},
+    "alpha_p_capture": {"type": "cell-specific"},
+    "beta_p_capture": {"type": "cell-specific"},
+    "alpha_gate": {"type": "gene-specific"},
+    "beta_gate": {"type": "gene-specific"}
+}
+
 # %% ---------------------------------------------------------------------------
 print("Setting up the model parameters and output directory...")
 
 # Define model type
-model_type = "zinbvcp"
+model_type = "custom_zinbvcp-log"
 
 # Define number of steps
-n_steps = 15_000
+n_steps = 25_000
 
 # Define batch size for memory-efficient sampling
 batch_size = 2048
 
 # Define priors
-prior_params = {
-    "p_prior": (1, 1),
-    "r_prior": (1, 0.001),
-    "p_capture_prior": (1, 1),
-    "gate_prior": (1, 1)
-}
-
+p_prior = (1, 1)
+p_capture_prior = (1, 1)
+r_prior = (0, 2)
+gate_prior = (1, 1)
 
 # Define dataset directory
 DATA_DIR = f"/app/data/zebrahub/count_matrices/*/"
@@ -63,7 +80,7 @@ print(f"Found {len(files)} datasets")
 print(f"Inferring the {model_type} model parameters...")
 
 # Loop over the datasets
-for i, file in enumerate(files):
+for i, file in enumerate(files[9:]):
     # Define dataset name
     dataset_name = file.split('/')[-2]
 
@@ -92,11 +109,18 @@ for i, file in enumerate(files):
     print(f"Running the inference...")
     # Run scribe
     scribe_results = scribe.svi.run_scribe(
-        model_type=model_type,
+        custom_model=zinbvcp_log_model,
+        custom_guide=zinbvcp_log_guide,
         counts=data,
         n_steps=n_steps,
         batch_size=batch_size,
-        prior_params=prior_params
+        param_spec=param_spec,
+        prior_params={
+            "p_prior": p_prior,
+            "r_prior": r_prior,
+            "p_capture_prior": p_capture_prior,
+            "gate_prior": gate_prior
+        }
     )
 
     # Save the results

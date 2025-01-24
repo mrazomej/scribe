@@ -30,16 +30,16 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define number of steps for scribe
-n_steps = 30_000
+n_steps = 15_000
 
 # Define model type
-model_type = "zinbvcp_mix"
+model_type = "zinbvcp"
 
 # Define output directory
 OUTPUT_DIR = f"{scribe.utils.git_root()}/output/zebrahub/{model_type}"
 
 # Define figure directory
-FIG_DIR = f"{scribe.utils.git_root()}/fig/zebrahub/{model_type}"
+FIG_DIR = f"{scribe.utils.git_root()}/fig/zebrahub/{model_type}/{n_steps}steps"
 
 # Define dataset directory
 DATA_DIR = f"/app/data/zebrahub/count_matrices/*/"
@@ -50,7 +50,7 @@ os.makedirs(FIG_DIR, exist_ok=True)
 # %% ---------------------------------------------------------------------------
 
 # List all files in the output directory
-model_files = sorted(glob.glob(f"{OUTPUT_DIR}/*.pkl"))
+model_files = sorted(glob.glob(f"{OUTPUT_DIR}/*{n_steps}steps*.pkl"))
 
 # List all datasets
 data_files = sorted(glob.glob(f"{DATA_DIR}/*bc_matrix.h5", recursive=True))
@@ -141,15 +141,6 @@ for i, model_file in enumerate(model_files):
     ax.set_xlabel('UMI count')
     ax.set_xscale('log')
     ax.set_ylabel('ECDF')
-
-    # Add legends outside plots
-    # ax.legend(
-    #     bbox_to_anchor=(1.05, 1),
-    #     loc='upper left',
-    #     fontsize=8,
-    #     title=r"$\langle U \rangle$",
-    #     frameon=False
-    # )
 
     plt.tight_layout()
 
