@@ -31,9 +31,9 @@ from .models import get_model_and_guide, get_default_priors
 # ------------------------------------------------------------------------------
 
 def create_svi_instance(
-    model_type: str = "nbdm",
-    custom_model = None,
-    custom_guide = None,
+    model_type: Optional[str] = None,
+    custom_model: Optional[Callable] = None,
+    custom_guide: Optional[Callable] = None,
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ):
@@ -176,7 +176,7 @@ def run_inference(
         model_args['total_counts'] = total_counts
 
     # Check if mixture model
-    if "mix" in model_type:
+    if model_type is not None and "mix" in model_type:
         # Check if n_components is provided
         if n_components is None:
             raise ValueError(
@@ -210,7 +210,7 @@ def run_inference(
 
 def run_scribe(
     counts: Union[jnp.ndarray, "AnnData"],
-    model_type: str = "nbdm",
+    model_type: Optional[str] = None,
     n_components: Optional[int] = None,
     custom_model: Optional[Callable] = None,
     custom_guide: Optional[Callable] = None,
@@ -354,7 +354,8 @@ def run_scribe(
                 param_spec=param_spec,
                 custom_model=custom_model,
                 custom_guide=custom_guide,
-                n_components=n_components
+                n_components=n_components,
+                prior_params=prior_params
             )
         else:
             results = CustomResults(
@@ -366,7 +367,8 @@ def run_scribe(
                 param_spec=param_spec,
                 custom_model=custom_model,
                 custom_guide=custom_guide,
-                n_components=n_components
+                n_components=n_components,
+                prior_params=prior_params
             )
     else:
         # Get the appropriate results class
@@ -396,7 +398,8 @@ def run_scribe(
                 loss_history=svi_results.losses,
                 model_type=model_type,
                 param_spec=param_spec,
-                n_components=n_components
+                n_components=n_components,
+                prior_params=prior_params
             )
         else:
             # Create results object
@@ -407,7 +410,8 @@ def run_scribe(
                 n_genes=n_genes,
                 model_type=model_type,
                 param_spec=param_spec,
-                n_components=n_components
+                n_components=n_components,
+                prior_params=prior_params
             )
 
     return results
@@ -432,7 +436,6 @@ def rerun_scribe(
     n_steps: int = 100_000,
     batch_size: int = 512,
     rng_key: random.PRNGKey = random.PRNGKey(42),
-    prior_params: Optional[Dict] = None,
     custom_args: Optional[Dict] = None,
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
@@ -474,9 +477,6 @@ def rerun_scribe(
         Mini-batch size for stochastic optimization (default: 512)
     rng_key : random.PRNGKey, optional
         Random key for reproducibility (default: PRNGKey(42))
-    prior_params : Dict, optional
-        Dictionary of prior parameters. If None, uses the same priors as the
-        original training
     custom_args : Dict, optional
         Dictionary of custom arguments for the model
     loss : numpyro.infer.elbo, optional
@@ -529,10 +529,6 @@ def rerun_scribe(
     # Create SVI instance
     svi = SVI(model, guide, optimizer, loss=loss)
 
-    # Use default prior parameters if none provided
-    if prior_params is None:
-        prior_params = get_default_priors(results.model_type)
-
     # Get base model arguments from results class
     model_args = results.get_model_args()
     
@@ -542,12 +538,14 @@ def rerun_scribe(
         'batch_size': batch_size,
     })
 
+    # Add prior parameters
+    model_args.update(results.prior_params)
+
     # Add model-specific parameters
     if results.model_type == "nbdm":
         model_args['total_counts'] = count_data.sum(axis=1)
    
-    # Add prior parameters and current parameters
-    model_args.update(prior_params)
+    # Add prior current parameters
     model_args['init_params'] = results.params
 
     # Add custom arguments
@@ -574,7 +572,8 @@ def rerun_scribe(
         "loss_history": combined_losses,
         "model_type": results.model_type,
         "param_spec": results.param_spec,
-        "n_components": results.n_components
+        "n_components": results.n_components,
+        "prior_params": results.prior_params
     }
 
     # Add custom model specific arguments if needed
