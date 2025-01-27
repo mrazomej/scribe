@@ -20,7 +20,7 @@ model_type = "nbvcp_mix"
 n_steps = 50_000
 
 # Define batch size for memory-efficient sampling
-batch_size = None
+batch_size = 2048
 
 # Define priors
 p_prior = (1, 1)
@@ -49,9 +49,9 @@ print(f"Found {len(files)} datasets")
 # %% ---------------------------------------------------------------------------
 
 # Loop over the datasets
-for i, file in enumerate(files):
+for i, file in enumerate(files[3:]):
     # Define dataset name
-    dataset_name = files[0].split("/")[-1].split(".")[0]
+    dataset_name = file.split("/")[-1].split(".")[0]
 
     print(f"Loading the dataset...")
     # Ignore warnings

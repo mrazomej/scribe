@@ -51,10 +51,10 @@ n_unique_genes = 10_000
 n_genes = n_shared_genes + n_unique_genes
 
 # Define batch size for memory-efficient sampling
-batch_size = 2048
+batch_size = 4096
 
 # Define number of steps for scribe
-n_steps = 50_000
+n_steps = 30_000
 
 # Define parameters for prior
 r_alpha = 2
@@ -164,6 +164,7 @@ file_name = f"{OUTPUT_DIR}/" \
     f"{n_shared_genes}shared_" \
     f"{n_unique_genes}unique_" \
     f"{n_components:02d}components_" \
+    f"{batch_size}batch_" \
     f"{n_steps}steps.pkl"
 
 # Check if the file exists
