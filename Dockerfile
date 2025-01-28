@@ -40,6 +40,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy the rest of your project
 COPY . .
 
+# Set the user and group ID (these will be filled in when building)
+ARG USER_ID
+ARG GROUP_ID
+
+# Ensure all files are owned by the user
+RUN chown -R ${USER_ID}:${GROUP_ID} /app
+
+USER ${USER_ID}:${GROUP_ID}
+
+# Set the default command
+SHELL ["/bin/zsh", "-c"]
+ENTRYPOINT ["zsh"]
+
 # Set the default command
 SHELL ["/bin/zsh", "-c"]
 ENTRYPOINT ["zsh"]
