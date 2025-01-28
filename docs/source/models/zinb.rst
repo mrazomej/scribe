@@ -274,17 +274,6 @@ It may be less suitable when:
 * Cell-specific capture efficiencies vary significantly (consider ZINBVCP model)
 * The data contains multiple distinct cell populations (consider mixture models)
 
-Comparison with NBDM
-------------------
-
-Key differences from the NBDM model:
-
-1. **Zero-inflation**: Explicitly models technical dropouts
-2. **Independence**: Models genes independently rather than using
-   Dirichlet-multinomial
-3. **No normalization**: Does not inherently normalize for library size
-4. **Additional parameters**: Requires learning dropout probabilities
-
 Practical Tips
 -------------
 
