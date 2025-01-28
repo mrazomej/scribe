@@ -20,9 +20,11 @@ Model Structure
 
 The NBDM model follows a hierarchical structure where:
 
-Each cell's total molecular count follows a Negative Binomial distribution Given
-the total count, the allocation of molecules across genes follows a
-Dirichlet-Multinomial distribution
+Each cell's total molecular count follows a `Negative Binomial distribution
+<https://en.wikipedia.org/wiki/Negative_binomial_distribution>`_. Given the
+total count, the allocation of molecules across genes follows a
+`Dirichlet-Multinomial distribution
+<https://en.wikipedia.org/wiki/Dirichlet-multinomial_distribution>`_.
 
 Formally, for a dataset with :math:`N` cells and :math:`G` genes, let
 :math:`u_{g}^{(c)}` be the UMI count for gene :math:`g` in cell :math:`c`, and
