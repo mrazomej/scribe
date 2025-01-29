@@ -47,7 +47,15 @@ affects our ability to observe its true mRNA content.
    defines the meaning of the :math:`p` parameters in the negative binomial, the
    NBVCP model uses Eq. (1) to define the effective probability.
 
-
+Given the explicit modeling of the cell-specific capture probabilities, the
+NBVCP model can remove technical variability, allowing for the same
+normalization methods as the :doc:`NBDM model <nbdm>` based on the
+Dirichlet-Multinomial model. In other words, since the NBVCP model fits a
+parameter to account for significant technical variations in the total number of
+counts per cell, once this effect is removed, the remaining variation can be
+modeled using the same :math:`\underline{r}` parameters as the :doc:`NBDM model
+<nbdm>`. Thus, the NBVCP model presents a more principled approach to
+normalization compared to other methods in the scRNA-seq literature.
 
 Model Structure
 ---------------
