@@ -2,7 +2,7 @@ Models
 ======
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 0
 
    nbdm
    zinb

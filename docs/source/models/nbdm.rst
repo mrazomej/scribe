@@ -336,12 +336,3 @@ captures both how many molecules each cell is estimated to have and how they are
 allocated across genes. Together, these assumptions yield a principled way to
 "normalize" the data by focusing on per-cell fractions in a probabilistic
 framework.
-
-Practical Tips
--------------
-
-**Initialization**
-    If the dataset is large, the priors :math:`\alpha_p=1, \beta_p=1` and
-    :math:`\alpha_r=2, \beta_r=0.1` are usually reasonable. If your data are
-    extremely sparse or extremely high depth, consider tuning these
-    hyperparameters.
