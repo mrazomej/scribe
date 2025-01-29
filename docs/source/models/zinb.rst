@@ -1,5 +1,5 @@
-Zero-Inflated Negative Binomial Model
-=====================================
+Zero-Inflated Negative Binomial Model (ZINB)
+============================================
 
 The Zero-Inflated Negative Binomial (ZINB) model extends the standard
 :doc:`Negative Binomial-Dirichlet Multinomial (NBDM) <nbdm>` model to handle

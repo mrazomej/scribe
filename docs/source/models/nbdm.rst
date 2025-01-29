@@ -1,5 +1,5 @@
-Negative Binomial-Dirichlet Multinomial Model
-==============================================
+Negative Binomial-Dirichlet Multinomial Model (NBDM)
+====================================================
 
 The Negative Binomial-Dirichlet Multinomial (NBDM) model is designed to capture
 key characteristics of single-cell RNA sequencing data, particularly:
@@ -40,6 +40,8 @@ Formally, for a dataset with :math:`N` cells and :math:`G` genes, let
      p)`
    * Draw gene proportions: :math:`u^{(c)} \sim \text{DirichletMultinomial}(r,
      U^{(c)})`
+
+.. _nbdm-model-derivation:
 
 Model Derivation
 ----------------
