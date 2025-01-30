@@ -124,6 +124,13 @@ loss values:
     ax.set_ylabel("ELBO loss")
     plt.show()
 
+.. figure:: _static/images/nbdm_sim/loss_history.png
+   :width: 350
+   :alt: ELBO loss history
+   
+   ELBO loss history showing convergence of the model fitting process. The spiky
+   nature of the loss is due to the batching process.
+
 We can also compare our inferred parameters to the true values. Let's look at
 the posterior distribution for p:
 
@@ -147,6 +154,56 @@ the posterior distribution for p:
     ax.set_xlabel("p")
     ax.set_ylabel("posterior density")
     plt.show()
+
+.. figure:: _static/images/nbdm_sim/example_p_posterior.png
+   :width: 350
+   :alt: Posterior distribution for p
+   
+   Posterior distribution for the :math:`p` parameter. The true value from
+   simulation is shown in black.
+
+Let's generate a similar plot for various examples of the inferred :math:`r`
+parameter:
+
+.. code-block:: python
+
+    # Initialize figure
+    fig, ax = plt.subplots(3, 3, figsize=(9.5, 9))
+
+    # Flatten axes
+    ax = ax.flatten()
+
+    fig.suptitle(r"$r$ parameter posterior distributions", y=1.005, fontsize=18)
+
+    # Loop through each gene in shared genes
+    for i, ax in enumerate(ax):
+        # Extract distribution for first type
+        distribution = stats.gamma(
+            results.params["alpha_r"][np.sort(selected_idx)[i]],
+            loc=0,
+            scale=1 / results.params["beta_r"][np.sort(selected_idx)[i]]
+        )
+
+        # Plot distribution
+        scribe.viz.plot_posterior(
+            ax,
+            distribution,
+            ground_truth=data["r"][np.sort(selected_idx)[i]],
+            ground_truth_color="black",
+            color=scribe.viz.colors()["dark_blue"],
+            fill_color=scribe.viz.colors()["light_blue"],
+        )
+
+
+    plt.tight_layout()
+    plt.show()
+
+.. figure:: _static/images/nbdm_sim/example_r_posterior.png
+   :width: 350
+   :alt: Posterior distribution for r
+   
+   Posterior distribution for multiple examples of the :math:`r` parameter. The
+   true value from simulation is shown in black.
 
 Finally, we can generate posterior predictive checks (PPCs) to assess model fit:
 
@@ -173,6 +230,27 @@ Finally, we can generate posterior predictive checks (PPCs) to assess model fit:
     )
     
     plt.show()
+
+.. figure:: _static/images/nbdm_sim/example_ppc.png
+   :width: 350
+   :alt: Posterior predictive checks for p
+   
+   Posterior predictive checks for the data generative process. The distribution
+   of counts observed in the simulated data is shown in black. The shades of
+   blue show the credible regions for the distribution of counts under the
+   posterior predictive distribution.
+
+The visual assessment of the model fit to some of the genes reveals that the
+model is able to capture the data generating process. From here, we can continue
+our analysis with the inferred parameters.
+
+.. warning::
+
+    Never trust any model fit (either from SCRIBE or any other analysis
+    pipeline) without at least visualizing how the fit compares to the observed
+    data. There are no silver bullets in statistics, and the best assessment of
+    any fitting procedure is to visualize how the fit compares to the observed
+    data.
 
 This completes our quickstart guide! You've now learned how to:
 

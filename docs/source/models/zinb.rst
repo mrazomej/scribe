@@ -201,7 +201,7 @@ Implementation Details
 --------------------
 
 Like the :doc:`NBDM model <nbdm>`, the ZINB model is implemented using
-:doc:`NumPyro <numpyro>`. The key additions are:
+`NumPyro <https://num.pyro.ai/>`_. The key additions are:
 
 * Zero-inflated distributions using NumPyro's `ZeroInflatedDistribution
   <https://num.pyro.ai/en/stable/distributions.html#zeroinflateddistribution>`_
