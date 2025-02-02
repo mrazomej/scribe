@@ -15,6 +15,8 @@ into the generative process (via the Dirichlet-multinomial). This can provide a
 more principled measure of uncertainty and can help separate technical from
 biological variation.
 
+.. _nbdm-model-structure:
+
 Model Structure
 ---------------
 
