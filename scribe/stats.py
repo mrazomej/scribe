@@ -307,6 +307,117 @@ def fit_dirichlet_mle(
     return alpha
 
 # ------------------------------------------------------------------------------
+
+def digamma_inv(y, num_iters=5):
+    """
+    Approximate the inverse of the digamma function using Newton iterations.
+    
+    The digamma function ψ(x) is the derivative of the log of the gamma function.
+    This function computes its inverse ψ⁻¹(y) using Newton's method:
+        x_{n+1} = x_n - (ψ(x_n) - y) / ψ'(x_n)
+    where ψ' is the trigamma function (polygamma of order 1).
+    
+    Parameters
+    ----------
+    y : array-like
+        The input value(s) (can be scalar or vector) representing ψ(x) values
+        for which we want to find x.
+    num_iters : int, optional
+        Number of Newton iterations (default: 5). More iterations increase
+        accuracy but take longer to compute.
+        
+    Returns
+    -------
+    x : array-like
+        The approximate inverse digamma of y, such that ψ(x) ≈ y.
+    """
+    # Choose initial guess based on input value:
+    # For y >= -2.22, use x₀ = exp(y) + 0.5 (good for larger values)
+    # For y < -2.22, use x₀ = -1/y (better for negative values)
+    x = jnp.where(y >= -2.22, jnp.exp(y) + 0.5, -1.0 / y)
+    
+    # Perform Newton iterations to improve the approximation
+    for _ in range(num_iters):
+        # Newton update: x = x - f(x)/f'(x) where f(x) = ψ(x) - y
+        # Here f'(x) = ψ'(x) = polygamma(1, x)
+        x = x - (jsp.special.digamma(x) - y) / jsp.special.polygamma(1, x)
+    
+    # Return the final approximation
+    return x
+
+@jax.jit
+def fit_dirichlet_minka(samples, max_iter=1000, tol=1e-7, sample_axis=0):
+    """
+    Fit a Dirichlet distribution to data using Minka's fixed-point iteration.
+    
+    This function uses the relation:
+        ψ(α_j) - ψ(α₀) = ⟨ln x_j⟩    (with α₀ = ∑ₖ αₖ)
+    so that the fixed point update is:
+        α_j ← ψ⁻¹( ψ(α₀) + ⟨ln x_j⟩ )
+    
+    This method is generally more stable and faster than moment matching or
+    maximum likelihood estimation via gradient descent.
+    
+    Parameters
+    ----------
+    samples : array-like
+        Data array with shape (n_samples, n_variables) by default (or transposed
+        if sample_axis=1). Each row should sum to 1 (i.e., be a probability
+        vector).
+    max_iter : int, optional
+        Maximum number of iterations for the fixed-point algorithm.
+    tol : float, optional
+        Tolerance for convergence - algorithm stops when max change in α is
+        below this.
+    sample_axis : int, optional
+        Axis containing samples (default: 0). Use 1 if data is (n_variables,
+        n_samples).
+        
+    Returns
+    -------
+    jnp.ndarray
+        Estimated concentration parameters (α) of shape (n_variables,).
+    """
+    # Convert input to JAX array and transpose if needed to get (n_samples,
+    # n_variables)
+    x = jnp.asarray(samples)
+    if sample_axis == 1:
+        x = x.T
+    n_samples, n_variables = x.shape
+
+    # Compute mean of log(x) across samples. Add small constant to avoid log(0)
+    # This estimates ⟨ln x_j⟩ for each variable j
+    mean_log_x = jnp.mean(jnp.log(x + 1e-10), axis=0)
+
+    # Initialize concentration parameters to ones
+    # This is a common choice that works well in practice
+    alpha = jnp.ones(n_variables)
+
+    # Define condition function for while loop
+    # Continues while iteration count is below max and change in alpha is above
+    # tolerance
+    def cond_fun(val):
+        i, alpha, diff = val
+        return jnp.logical_and(i < max_iter, diff > tol)
+
+    # Define update function for while loop
+    def body_fun(val):
+        i, alpha, _ = val
+        # Compute sum of all alphas (α₀)
+        alpha0 = jnp.sum(alpha)
+        # Implement Minka's fixed-point update:
+        #   α_j = ψ⁻¹(ψ(α₀) + ⟨ln x_j⟩)
+        alpha_new = digamma_inv(jsp.special.digamma(alpha0) + mean_log_x)
+        # Compute maximum absolute change in alpha for convergence check
+        diff = jnp.max(jnp.abs(alpha_new - alpha))
+        return i + 1, alpha_new, diff
+
+    # Run fixed-point iteration until convergence or max iterations reached
+    _, alpha, _ = jax.lax.while_loop(cond_fun, body_fun, (0, alpha, jnp.inf))
+    return alpha
+
+
+# ------------------------------------------------------------------------------
 # KL divergence functions
 # ------------------------------------------------------------------------------
 
