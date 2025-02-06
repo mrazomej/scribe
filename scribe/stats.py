@@ -14,7 +14,7 @@ import jax
 from numpyro.distributions import Dirichlet
 
 # Import scipy.special functions
-from scipy.special import gammaln, digamma, psi
+from jax.scipy.special import gammaln, digamma
 
 # ------------------------------------------------------------------------------
 # Histogram functions
@@ -497,8 +497,8 @@ def kl_beta(alpha1, beta1, alpha2, beta2):
         KL divergence between the two Beta distributions
     """
     # Check that all inputs are of same shape
-    if not all(isinstance(a, (float, np.ndarray)) and 
-               isinstance(b, (float, np.ndarray)) 
+    if not all(isinstance(a, (float, np.ndarray, jnp.ndarray)) and 
+               isinstance(b, (float, np.ndarray, jnp.ndarray)) 
                for a, b in zip([alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2])
             ):
         raise ValueError("All inputs must be of the same shape")
@@ -506,7 +506,106 @@ def kl_beta(alpha1, beta1, alpha2, beta2):
     return (
         gammaln(alpha2 + beta2) - gammaln(alpha2) - gammaln(beta2)
         - (gammaln(alpha1 + beta1) - gammaln(alpha1) - gammaln(beta1))
-        + (alpha1 - alpha2) * psi(alpha1)
-        + (beta1 - beta2) * psi(beta1)
-        + (alpha2 - alpha1 + beta2 - beta1) * psi(alpha1 + beta1)
+        + (alpha1 - alpha2) * digamma(alpha1)
+        + (beta1 - beta2) * digamma(beta1)
+        + (alpha2 - alpha1 + beta2 - beta1) * digamma(alpha1 + beta1)
+    )
+
+
+# ------------------------------------------------------------------------------
+# Hellinger distance functions
+# ------------------------------------------------------------------------------
+
+def sq_hellinger_beta(alpha1, beta1, alpha2, beta2):
+    """
+    Compute the squared Hellinger distance between two Beta distributions.
+    
+    The squared Hellinger distance between two Beta distributions P and Q is
+    given by:
+    
+    H²(P,Q) = 1 - ∫ sqrt(P(x)Q(x)) dx
+    
+    where P(x) and Q(x) are the probability density functions of P and Q,
+    respectively.
+    
+    For Beta distributions P ~ Beta(α₁,β₁) and Q ~ Beta(α₂,β₂), this has the 
+    closed form:
+    
+    H²(P,Q) = 1 - B((α₁+α₂)/2, (β₁+β₂)/2) / sqrt(B(α₁,β₁) * B(α₂,β₂))
+    
+    where B(x,y) is the beta function.
+    
+    Parameters
+    ----------
+    alpha1 : float or array-like
+        Shape parameter α₁ of the first Beta distribution P
+    beta1 : float or array-like
+        Shape parameter β₁ of the first Beta distribution P  
+    alpha2 : float or array-like
+        Shape parameter α₂ of the second Beta distribution Q
+    beta2 : float or array-like
+        Shape parameter β₂ of the second Beta distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        Squared Hellinger distance between the two Beta distributions
+    """
+    # Check that all inputs are of same shape
+    if not all(isinstance(a, (float, np.ndarray, jnp.ndarray)) and 
+               isinstance(b, (float, np.ndarray, jnp.ndarray)) 
+               for a, b in zip([alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2])
+            ):
+        raise ValueError("All inputs must be of the same shape")
+    
+    return 1 - (
+        jsp.special.beta((alpha1 + alpha2) / 2, (beta1 + beta2) / 2) /
+        jnp.sqrt(
+            jsp.special.beta(alpha1, beta1) * jsp.special.beta(alpha2, beta2)
+        )
+    )
+
+def sq_hellinger_gamma(alpha1, beta1, alpha2, beta2):
+    """
+    Compute the squared Hellinger distance between two Gamma distributions.
+    
+    The squared Hellinger distance between two Gamma distributions P and Q is
+    given by:
+    
+    H²(P,Q) = 1 - ∫ sqrt(P(x)Q(x)) dx
+    
+    where P(x) and Q(x) are the probability density functions of P and Q,
+    respectively.
+    
+    For Gamma distributions P ~ Gamma(α₁,β₁) and Q ~ Gamma(α₂,β₂), this has the
+    closed form:
+    
+    H²(P,Q) = 1 - Γ((α₁+α₂)/2) * ((β₁+β₂)/2)^(-(α₁+α₂)/2) * 
+               sqrt((β₁^α₁ * β₂^α₂)/(Γ(α₁) * Γ(α₂)))
+    
+    where Γ(x) is the gamma function.
+    
+    Parameters
+    ----------
+    alpha1 : float or array-like
+        Shape parameter α₁ of the first Gamma distribution P
+    beta1 : float or array-like
+        Rate parameter β₁ of the first Gamma distribution P
+    alpha2 : float or array-like
+        Shape parameter α₂ of the second Gamma distribution Q
+    beta2 : float or array-like
+        Rate parameter β₂ of the second Gamma distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        Squared Hellinger distance between the two Gamma distributions
+    """
+    return 1 - (
+        jsp.special.gamma((alpha1 + alpha2) / 2) *
+        ((beta1 + beta2) / 2) ** (- (alpha1 + alpha2) / 2) *
+        jnp.sqrt(
+            beta1 ** alpha1 * beta2 ** alpha2 /
+            jsp.special.gamma(alpha1) * jsp.special.gamma(alpha2)
+        )
     )
