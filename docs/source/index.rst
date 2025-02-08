@@ -1,5 +1,5 @@
 Welcome to SCRIBE's documentation!
-================================
+==================================
 
 SCRIBE (Single-Cell RNA-Seq Inference using Bayesian Estimation) is a `Python`
 package for analyzing single-cell RNA sequencing (scRNA-seq) data using
@@ -28,25 +28,30 @@ Available Models
 SCRIBE includes several probabilistic models for scRNA-seq data:
 
 1. :doc:`Negative Binomial-Dirichlet Multinomial (NBDM) <models/nbdm>`
+
   - Models both count magnitudes and proportions
   - Accounts for overdispersion in count data
 
 2. :doc:`Zero-Inflated Negative Binomial (ZINB) <models/zinb>`
+
   - Handles excess zeros in scRNA-seq data
   - Models technical and biological dropouts
   - Includes gene-specific dropout rates
 
 3. :doc:`Negative Binomial with Variable Capture Probability (NBVCP) <models/nbvcp>` 
+
   - Accounts for cell-specific mRNA capture efficiency 
   - Models technical variation in library preparation 
   - Suitable for datasets with varying sequencing depths per cell
 
 4. :doc:`Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVCP) <models/zinbvcp>` 
+
   - Combines zero-inflation and variable capture probability 
   - Most comprehensive model for technical variation 
   - Handles both dropouts and capture efficiency
 
 5. :doc:`Mixture Models <models/models_mix>`
+
   - Any of the above models can be turned into a mixture model to account for
     subpopulations.
 
