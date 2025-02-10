@@ -61,6 +61,7 @@ SCRIBE includes several probabilistic models for scRNA-seq data:
    :hidden:
 
    installation
+   quickoverview
    quickstart
 
 .. toctree::
