@@ -1366,53 +1366,64 @@ def zinb_mixture_log_likelihood(
         counts = counts.T  # Transpose to make cells rows
         counts = jnp.array(counts, dtype=dtype)
 
+    # Expand dimensions for vectorized computation
+    # counts: (n_cells, n_genes) -> (n_cells, 1, n_genes)
+    counts = counts[:, None, :]
+    # r: (n_components, n_genes) -> (1, n_components, n_genes)
+    r = r[None, :, :]
+    # gate: (n_components, n_genes) -> (1, n_components, n_genes)
+    gate = gate[None, :, :]
+    # p: scalar -> (1, n_components, 1) for broadcasting
+    p = jnp.array(p)[None, None, None]  # First convert scalar to array, then add dimensions
+
+    # Create base NB distribution vectorized over cells, components, genes
+    # r: (1, n_components, n_genes)
+    # p: (1, n_components, 1) or scalar
+    # counts: (n_cells, 1, n_genes)
+    # This will broadcast to: (n_cells, n_components, n_genes)
+    base_dist = dist.NegativeBinomialProbs(r, p)
+    # Create zero-inflated distribution for each component
+    # This will broadcast to: (n_cells, n_components, n_genes)
+    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+
     if return_by == 'cell':
-        # Create base NB distribution vectorized over components and genes
-        base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
-        # Create zero-inflated distribution for each component
-        zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
-        
         if batch_size is None:
             # Compute log probs for all cells at once
-            log_probs = zinb.log_prob(counts) + jnp.log(mixing_weights)
+            # This gives (n_cells, n_components, n_genes)
+            gene_log_probs = zinb.log_prob(counts)
+            # Sum over genes (axis=-1) to get (n_cells, n_components)
+            log_probs = jnp.sum(gene_log_probs, axis=-1) + jnp.log(mixing_weights)
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_cells, n_components))
             
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
                 
-                # Compute batch log probabilities
+                # Compute log probs for batch
+                batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
+                # Store log probs for batch
                 log_probs = log_probs.at[start_idx:end_idx].set(
-                    zinb.log_prob(counts[start_idx:end_idx]) +
-                    jnp.log(mixing_weights)
+                    jnp.sum(batch_log_probs, axis=-1) + jnp.log(mixing_weights)
                 )
-        
-        if split_components:
-            return log_probs
-        else:
-            return jsp.special.logsumexp(log_probs, axis=1)
     
     else:  # return_by == 'gene'
-        # Create base NB distribution
-        base_dist = dist.NegativeBinomialProbs(r, p)
-        # Create zero-inflated distribution
-        zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
-
         if batch_size is None:
             # Compute log probs for each gene
-            gene_log_probs = zinb.log_prob(counts[..., None, :])  # (n_cells, n_components, n_genes)
+            gene_log_probs = zinb.log_prob(counts)
             # Sum over cells and add mixing weights
-            gene_comp_probs = (jnp.sum(gene_log_probs, axis=0).T +
-                             jnp.log(mixing_weights))  # (n_genes, n_components)
+            log_probs = (jnp.sum(gene_log_probs, axis=0).T + 
+                         jnp.log(mixing_weights))  # (n_genes, n_components)
         else:
             # Initialize array for gene-wise sums
-            gene_comp_probs = jnp.zeros((n_genes, n_components))
+            log_probs = jnp.zeros((n_genes, n_components))
             
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
                 
@@ -1420,17 +1431,17 @@ def zinb_mixture_log_likelihood(
                 batch_log_probs = zinb.log_prob(
                     counts[start_idx:end_idx, None, :]
                 )  # (batch_size, n_components, n_genes)
-                
+
                 # Sum over batch
-                gene_comp_probs += jnp.sum(batch_log_probs, axis=0).T
+                log_probs += jnp.sum(batch_log_probs, axis=0).T
             
             # Add mixing weights
-            gene_comp_probs += jnp.log(mixing_weights)
+            log_probs += jnp.log(mixing_weights)
             
-        if split_components:
-            return gene_comp_probs
-        else:
-            return jsp.special.logsumexp(gene_comp_probs, axis=1)
+    if split_components:
+        return log_probs
+    else:
+        return jsp.special.logsumexp(log_probs, axis=1)
 
 # ------------------------------------------------------------------------------
 # Negative Binomial Mixture Model with Capture Probabilities
