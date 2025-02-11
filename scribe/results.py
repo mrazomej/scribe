@@ -616,16 +616,13 @@ class StandardResults(BaseScribeResults):
         parameter_samples = self.posterior_samples['parameter_samples']
         
         # Get number of samples from first parameter
-        n_samples = parameter_samples[next(iter(parameter_samples))].shape[0]
+        n_samples = next(iter(parameter_samples.values())).shape[0]
         
         # Get likelihood function
         likelihood_fn = self.get_log_likelihood_fn()
         
         # Define function to compute likelihood for a single sample
-        @partial(jit, static_argnums=(0,))
-        def compute_sample_lik(i):
-            # Extract parameters for this sample
-            params_i = {k: v[i] for k, v in parameter_samples.items()}
+        def compute_sample_lik(params_i):
             # Return likelihood
             return likelihood_fn(
                 counts, 
@@ -636,8 +633,11 @@ class StandardResults(BaseScribeResults):
                 dtype=dtype
             )
         
+        # Prepare parameters for vectorization
+        params_vec = {k: v for k, v in parameter_samples.items()}
+        
         # Compute log likelihoods for all samples using vmap
-        log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+        log_liks = vmap(compute_sample_lik)(params_vec)
         
         # Handle NaNs if requested
         if ignore_nans:
