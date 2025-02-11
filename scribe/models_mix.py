@@ -1515,91 +1515,104 @@ def nbvcp_mixture_log_likelihood(
         counts = counts.T  # Transpose to make cells rows
         counts = jnp.array(counts, dtype=dtype)
 
+    # Expand dimensions for vectorized computation
+    # counts: (n_cells, n_genes) -> (n_cells, 1, n_genes)
+    counts = counts[:, None, :]
+    # r: (n_components, n_genes) -> (1, n_components, n_genes)
+    r = r[None, :, :]
+    # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
+    p_capture_reshaped = p_capture[:, None, None]
+    # p: scalar -> (1, 1, 1) for broadcasting
+    p = jnp.array(p)[None, None, None]
     # Compute effective probability for each cell
-    # Reshape p_capture for broadcasting: (n_cells, 1) 
-    p_capture_reshaped = p_capture[:, None]
-    p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))  # shape (n_cells,)
+    # This will broadcast to shape (n_cells, 1, 1)
+    p_hat = p / (p_capture_reshaped + p * (1 - p_capture_reshaped))
 
     if return_by == 'cell':
-        # Create base NB distribution vectorized over components and genes
-        # We need to expand p_hat for broadcasting with components
-        p_hat_expanded = p_hat[:, None]  # shape (n_cells, 1)
-        base_dist = dist.NegativeBinomialProbs(r, p_hat_expanded).to_event(1)
-        
         if batch_size is None:
+            # Create base NB distribution vectorized over cells, components, genes
+            # r: (1, n_components, n_genes)
+            # p_hat: (n_cells, 1, 1) or scalar
+            # counts: (n_cells, 1, n_genes)
+                # This will broadcast to: (n_cells, n_components, n_genes)
+            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+
             # Compute log probs for all cells at once
-            log_probs = base_dist.log_prob(counts) + jnp.log(mixing_weights)
+            # This gives (n_cells, n_components, n_genes)
+            gene_log_probs = nb_dist.log_prob(counts)
+            # Sum over genes (axis=-1) to get (n_cells, n_components)
+            log_probs = jnp.sum(gene_log_probs, axis=-1) + jnp.log(mixing_weights)
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_cells, n_components))
             
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                
-                # Create batch-specific distribution with batch p_hat
-                batch_dist = dist.NegativeBinomialProbs(
-                    r, p_hat_expanded[start_idx:end_idx]
-                ).to_event(1)
-                
-                # Compute batch log probabilities
+                # Create base NB distribution vectorized over cells, components,
+                # genes
+                # r: (1, n_components, n_genes)
+                # p_hat: (n_cells, 1, 1) or scalar
+                # counts: (n_cells, 1, n_genes)
+                    # This will broadcast to: (n_cells, n_components, n_genes)
+                nb_dist = dist.NegativeBinomialProbs(
+                    r, p_hat[start_idx:end_idx])
+                # Compute log probs for batch
+                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
+                # Store log probs for batch
                 log_probs = log_probs.at[start_idx:end_idx].set(
-                    batch_dist.log_prob(counts[start_idx:end_idx]) +
-                    jnp.log(mixing_weights)
+                    jnp.sum(batch_log_probs, axis=-1) + jnp.log(mixing_weights)
                 )
-        
-        if split_components:
-            return log_probs
-        else:
-            return jsp.special.logsumexp(log_probs, axis=1)
     
     else:  # return_by == 'gene'
         if batch_size is None:
-            # Expand dimensions for vectorized computation
-            # p_hat: (n_cells,) -> (n_cells, 1, 1) for broadcasting
-            p_hat_expanded = p_hat[:, None, None]
-            # r: (n_components, n_genes) -> (1, n_components, n_genes) 
-            # for broadcasting
-            r_expanded = r[None, :, :]
-            
-            # Create base NB distribution
-            base_dist = dist.NegativeBinomialProbs(r_expanded, p_hat_expanded)
+            # Create base NB distribution vectorized over cells, components,
+            # genes
+            # r: (1, n_components, n_genes)
+            # p_hat: (n_cells, 1, 1) or scalar
+            # counts: (n_cells, 1, n_genes)
+                # This will broadcast to: (n_cells, n_components, n_genes)
+            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Compute log probs for each gene
-            gene_log_probs = base_dist.log_prob(counts[:, None, :])  # (n_cells, n_components, n_genes)
+            gene_log_probs = nb_dist.log_prob(counts)
             # Sum over cells and add mixing weights
-            gene_comp_probs = (jnp.sum(gene_log_probs, axis=0).T +
-                             jnp.log(mixing_weights))  # (n_genes, n_components)
+            log_probs = (jnp.sum(gene_log_probs, axis=0).T + 
+                         jnp.log(mixing_weights))  # (n_genes, n_components)
         else:
             # Initialize array for gene-wise sums
-            gene_comp_probs = jnp.zeros((n_genes, n_components))
+            log_probs = jnp.zeros((n_genes, n_components))
             
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
+                # Create base NB distribution vectorized over cells, components,
+                # genes
+                # r: (1, n_components, n_genes)
+                # p_hat: (1, n_components, 1) or scalar
+                # counts: (n_cells, 1, n_genes)
+                    # This will broadcast to: (n_cells, n_components, n_genes)
+                nb_dist = dist.NegativeBinomialProbs(
+                    r, p_hat[start_idx:end_idx])
                 
-                # Get batch p_hat and expand for broadcasting
-                batch_p_hat = p_hat[start_idx:end_idx, None, None]
-                r_expanded = r[None, :, :]
-                
-                # Create batch-specific distribution
-                base_dist = dist.NegativeBinomialProbs(r_expanded, batch_p_hat)
                 # Compute log probs for batch
-                batch_log_probs = base_dist.log_prob(
+                batch_log_probs = nb_dist.log_prob(
                     counts[start_idx:end_idx, None, :]
                 )  # (batch_size, n_components, n_genes)
-                
+
                 # Sum over batch
-                gene_comp_probs += jnp.sum(batch_log_probs, axis=0).T
+                log_probs += jnp.sum(batch_log_probs, axis=0).T
             
             # Add mixing weights
-            gene_comp_probs += jnp.log(mixing_weights)
+            log_probs += jnp.log(mixing_weights)
             
-        if split_components:
-            return gene_comp_probs
-        else:
-            return jsp.special.logsumexp(gene_comp_probs, axis=1)
+    if split_components:
+        return log_probs
+    else:
+        return jsp.special.logsumexp(log_probs, axis=1)
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model with Capture Probabilities
