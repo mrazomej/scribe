@@ -21,6 +21,8 @@ from scribe.results import ZINBResults
 
 # Define number of steps for testing
 N_STEPS = 3
+# Define number of samples for testing
+N_SAMPLES = 10
 
 @pytest.fixture
 def example_zinb_results(small_dataset, rng_key):
@@ -203,3 +205,78 @@ def test_parameter_subsetting(example_zinb_results):
     # Check that shared parameters remain the same
     assert subset.params['alpha_p'].shape == ()
     assert subset.params['beta_p'].shape == ()
+
+# ------------------------------------------------------------------------------
+# Test log likelihood
+# ------------------------------------------------------------------------------
+
+def test_log_likelihood(example_zinb_results, small_dataset, rng_key):
+    """Test evaluation of the log likelihood function."""
+    # Get counts and total counts from dataset
+    counts, _ = small_dataset
+    total_counts = counts.sum(axis=1)
+    
+    # Get posterior samples 
+    # - these should already be available from previous tests
+    example_zinb_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES
+    )
+    
+    # Test log likelihood evaluation - with cell axis
+    cell_log_liks = example_zinb_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='cell'
+    )
+    
+    # Shape checks for cell-wise log likelihood
+    assert cell_log_liks.shape[0] == N_SAMPLES  # n_samples
+    assert cell_log_liks.shape[1] == example_zinb_results.n_cells  # n_cells
+    
+    # Test log likelihood evaluation - with gene axis
+    gene_log_liks = example_zinb_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='gene'
+    )
+    
+    # Shape checks for gene-wise log likelihood
+    assert gene_log_liks.shape[0] == N_SAMPLES  # n_samples
+    assert gene_log_liks.shape[1] == example_zinb_results.n_genes  # n_genes
+    
+    # Basic sanity checks
+    assert jnp.all(jnp.isfinite(cell_log_liks))  # No NaNs or infs
+    assert jnp.all(jnp.isfinite(gene_log_liks))  # No NaNs or infs
+    assert jnp.all(cell_log_liks <= 0)  # Log likelihoods should be <= 0
+    assert jnp.all(gene_log_liks <= 0)  # Log likelihoods should be <= 0
+
+def test_log_likelihood_batching(example_zinb_results, small_dataset, rng_key):
+    """Test that batched and non-batched log likelihood give same results."""
+    # Get counts and total counts from dataset
+    counts, _ = small_dataset
+    total_counts = counts.sum(axis=1)
+    
+    # Get posterior samples
+    example_zinb_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES
+    )
+    
+    # Compute log likelihood without batching
+    full_log_liks = example_zinb_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='cell'
+    )
+    
+    # Compute log likelihood with batching
+    batched_log_liks = example_zinb_results.compute_log_likelihood(
+        counts=counts, 
+        batch_size=5,  # Small batch size for testing
+        cells_axis=0,
+        return_by='cell'
+    )
+    
+    # Check that results match
+    assert jnp.allclose(full_log_liks, batched_log_liks, rtol=1e-5)
