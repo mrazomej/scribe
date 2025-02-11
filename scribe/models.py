@@ -1167,8 +1167,8 @@ def nbdm_log_likelihood(
         raise ValueError("return_by must be one of ['cell', 'gene']")
 
     # Extract parameters from dictionary
-    p = jnp.squeeze(params['p'])
-    r = jnp.squeeze(params['r'])
+    p = jnp.squeeze(params['p']).astype(dtype)
+    r = jnp.squeeze(params['r']).astype(dtype)
     r_total = jnp.sum(r)
     
     # Extract dimensions
@@ -1212,7 +1212,8 @@ def nbdm_log_likelihood(
             batch_log_prob_total = dist.NegativeBinomialProbs(
                 r_total, p).log_prob(batch_total_counts)
             # Compute log probability for each gene
-            batch_log_prob_genes = dist.DirichletMultinomial(r, total_count=batch_total_counts).log_prob(batch_counts)
+            batch_log_prob_genes = dist.DirichletMultinomial(
+                r, total_count=batch_total_counts).log_prob(batch_counts)
             
             # Store batch log probabilities
             cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
@@ -1245,7 +1246,8 @@ def nbdm_log_likelihood(
             nb_dist = dist.NegativeBinomialProbs(r, p)
             # Shape of batch_counts is (batch_size, n_genes)
             # We want log probs for each gene summed over the batch
-            batch_log_probs = nb_dist.log_prob(batch_counts)  # Shape: (batch_size, n_genes)
+            # Shape: (batch_size, n_genes)
+            batch_log_probs = nb_dist.log_prob(batch_counts)  
             
             # Add the batch contribution to the running total
             gene_log_probs += jnp.sum(batch_log_probs, axis=0)
@@ -1300,9 +1302,9 @@ def zinb_log_likelihood(
         raise ValueError("return_by must be one of ['cell', 'gene']")
 
     # Extract parameters from dictionary
-    p = jnp.squeeze(params['p'])
-    r = jnp.squeeze(params['r'])
-    gate = jnp.squeeze(params['gate'])
+    p = jnp.squeeze(params['p']).astype(dtype)
+    r = jnp.squeeze(params['r']).astype(dtype)
+    gate = jnp.squeeze(params['gate']).astype(dtype)
     
     # Extract dimensions
     if cells_axis == 0:
@@ -1392,7 +1394,8 @@ def nbvcp_log_likelihood(
     dtype: jnp.dtype = jnp.float32
 ) -> jnp.ndarray:
     """
-    Compute log likelihood for Negative Binomial with Variable Capture Probability.
+    Compute log likelihood for Negative Binomial with Variable Capture
+    Probability.
     
     Parameters
     ----------
@@ -1407,8 +1410,8 @@ def nbvcp_log_likelihood(
         Size of mini-batches for stochastic computation. If None, uses full
         dataset.
     cells_axis: int = 0
-        Axis along which cells are arranged. 0 means cells are rows (default),
-        1 means cells are columns
+        Axis along which cells are arranged. 0 means cells are rows (default), 1
+        means cells are columns
     return_by: str
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
@@ -1428,9 +1431,9 @@ def nbvcp_log_likelihood(
         raise ValueError("return_by must be one of ['cell', 'gene']")
 
     # Extract parameters from dictionary
-    p = jnp.squeeze(params['p'])
-    r = params['r']
-    p_capture = params['p_capture']
+    p = jnp.squeeze(params['p']).astype(dtype)
+    r = jnp.squeeze(params['r']).astype(dtype)
+    p_capture = jnp.squeeze(params['p_capture']).astype(dtype)
     
     # Extract dimensions
     if cells_axis == 0:
@@ -1565,10 +1568,10 @@ def zinbvcp_log_likelihood(
         raise ValueError("return_by must be one of ['cell', 'gene']")
 
     # Extract parameters from dictionary
-    p = jnp.squeeze(params['p'])
-    r = jnp.squeeze(params['r'])
-    p_capture = jnp.squeeze(params['p_capture'])
-    gate = jnp.squeeze(params['gate'])
+    p = jnp.squeeze(params['p']).astype(dtype)
+    r = jnp.squeeze(params['r']).astype(dtype)
+    p_capture = jnp.squeeze(params['p_capture']).astype(dtype)
+    gate = jnp.squeeze(params['gate']).astype(dtype)
     
     # Extract dimensions
     if cells_axis == 0:
