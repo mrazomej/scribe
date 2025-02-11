@@ -23,6 +23,7 @@ from scribe.results import ZINBVCPMixtureResults
 # Define number of steps for testing
 N_STEPS = 3
 N_COMPONENTS = 2  # Number of mixture components for testing
+N_SAMPLES = 11  # Number of samples for posterior sampling
 
 @pytest.fixture
 def example_zinbvcp_mix_results(small_dataset, rng_key):
@@ -251,3 +252,131 @@ def test_parameter_subsetting(example_zinbvcp_mix_results):
     # Check that shared parameters remain unchanged
     assert subset.params['alpha_p'].shape == ()
     assert subset.params['beta_p'].shape == ()
+
+# ------------------------------------------------------------------------------
+# Test log likelihood
+# ------------------------------------------------------------------------------
+
+def test_log_likelihood(example_zinbvcp_mix_results, small_dataset, rng_key):
+    """Test evaluation of the log likelihood function."""
+    # Get counts from dataset
+    counts, _ = small_dataset
+    
+    # Get posterior samples if not already available
+    example_zinbvcp_mix_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES
+    )
+    
+    # Test log likelihood evaluation without split_components
+    cell_log_liks = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='cell',
+        split_components=False
+    )
+    
+    # Shape checks for cell-wise log likelihood (should match non-mixture case)
+    assert cell_log_liks.shape[0] == N_SAMPLES  # n_samples
+    assert cell_log_liks.shape[1] == example_zinbvcp_mix_results.n_cells  # n_cells
+    
+    # Test with split_components=True
+    cell_log_liks_split = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='cell',
+        split_components=True
+    )
+    
+    # Shape checks for split components case
+    assert cell_log_liks_split.shape[0] == N_SAMPLES  # n_samples
+    assert cell_log_liks_split.shape[1] == example_zinbvcp_mix_results.n_cells  # n_cells
+    assert cell_log_liks_split.shape[2] == N_COMPONENTS  # n_components
+    
+    # Test gene-wise likelihood without split_components
+    gene_log_liks = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='gene',
+        split_components=False
+    )
+    
+    # Shape checks for gene-wise log likelihood
+    assert gene_log_liks.shape[0] == N_SAMPLES  # n_samples
+    assert gene_log_liks.shape[1] == example_zinbvcp_mix_results.n_genes  # n_genes
+    
+    # Test gene-wise likelihood with split_components
+    gene_log_liks_split = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='gene',
+        split_components=True
+    )
+    
+    # Shape checks for split components case
+    assert gene_log_liks_split.shape[0] == N_SAMPLES  # n_samples 
+    assert gene_log_liks_split.shape[1] == example_zinbvcp_mix_results.n_genes  # n_genes
+    assert gene_log_liks_split.shape[2] == N_COMPONENTS  # n_components
+    
+    # Basic sanity checks
+    assert jnp.all(jnp.isfinite(cell_log_liks))  # No NaNs or infs
+    assert jnp.all(jnp.isfinite(gene_log_liks))  # No NaNs or infs
+    assert jnp.all(jnp.isfinite(cell_log_liks_split))  # No NaNs or infs
+    assert jnp.all(jnp.isfinite(gene_log_liks_split))  # No NaNs or infs
+    assert jnp.all(cell_log_liks <= 0)  # Log likelihoods should be <= 0
+    assert jnp.all(gene_log_liks <= 0)  # Log likelihoods should be <= 0
+    assert jnp.all(cell_log_liks_split <= 0)  # Log likelihoods should be <= 0
+    assert jnp.all(gene_log_liks_split <= 0)  # Log likelihoods should be <= 0
+
+def test_log_likelihood_batching(example_zinbvcp_mix_results, small_dataset, rng_key):
+    """Test that batched and non-batched log likelihood give same results."""
+    # Get counts from dataset
+    counts, _ = small_dataset
+    
+    # Get posterior samples if not already available
+    example_zinbvcp_mix_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES
+    )
+    
+    # Test without split_components
+    # Compute log likelihood without batching
+    full_log_liks = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='cell',
+        split_components=False
+    )
+    
+    # Compute log likelihood with batching
+    batched_log_liks = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        batch_size=5,  # Small batch size for testing
+        cells_axis=0,
+        return_by='cell',
+        split_components=False
+    )
+    
+    # Check that results match
+    assert jnp.allclose(full_log_liks, batched_log_liks, rtol=1e-5)
+    
+    # Test with split_components
+    # Compute log likelihood without batching
+    full_log_liks_split = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        cells_axis=0,
+        return_by='cell',
+        split_components=True
+    )
+    
+    # Compute log likelihood with batching
+    batched_log_liks_split = example_zinbvcp_mix_results.compute_log_likelihood(
+        counts=counts, 
+        batch_size=5,  # Small batch size for testing
+        cells_axis=0,
+        return_by='cell',
+        split_components=True
+    )
+    
+    # Check that results match
+    assert jnp.allclose(full_log_liks_split, batched_log_liks_split, rtol=1e-5)
