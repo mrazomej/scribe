@@ -69,7 +69,7 @@ All result objects support these basic operations:
     and their corresponding posterior distributions. The backend can be set to
     either ``scipy`` or ``numpyro`` via the ``backend`` argument.
 
-2. **Subsetting Genes**:
+2. **Subsetting Genes**, i.e., indexing specific genes from the results object:
 
 .. code-block:: python
 
@@ -89,7 +89,13 @@ All result objects support these basic operations:
     order of the indices. For example, if you index with ``[3, 1, 2]``, the
     results will be returned in the order ``[1, 2, 3]``.
 
-3. **Posterior Sampling**:
+3. **Posterior Sampling**. There are two types of posterior sampling:
+
+   * Sampling from the posterior distributions of the model parameters. These are samples from the parameters that describe your data generating process.
+   * Sampling from the posterior predictive distribution of the counts. These
+     are "simulated datasets" of the counts you would expect to see given the
+     posterior distributions of the parameters. They are very useful for
+     diagnosing the model fit.
 
 .. code-block:: python
 
@@ -100,7 +106,7 @@ All result objects support these basic operations:
     # computed)
     results.get_predictive_samples()
 
-    # Get posterior predictive samples
+    # Get posterior predictive samples (samples both parameters and counts on a single call)
     results.get_ppc_samples(n_samples=1000)
 
 .. note::
@@ -110,7 +116,9 @@ All result objects support these basic operations:
     can handle this, we recommend generating samples for a subset of the genes
     for diagnostic purposes.
 
-4. **Log Likelihood function**:
+1. **Log Likelihood function**. This is a function that computes the log
+   likelihood of the data given the parameters. It is useful for diagnosing the
+   model fit and for selecting the best model.
 
 .. code-block:: python
 
