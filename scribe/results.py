@@ -5,12 +5,13 @@ Results classes for SCRIBE inference.
 from typing import Dict, Optional, Union, Callable, Tuple, Any
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from functools import partial
 
 import jax.numpy as jnp
 import pandas as pd
 import numpyro.distributions as dist
 from numpyro.infer import Predictive
-from jax import random
+from jax import random, jit, vmap
 
 import scipy.stats as stats
 
@@ -560,6 +561,92 @@ class StandardResults(BaseScribeResults):
             posterior_samples=new_posterior_samples,
             param_spec=self.param_spec
         )
+
+    # --------------------------------------------------------------------------
+
+    def compute_log_likelihood(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        return_by: str = 'cell',
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        dtype: jnp.dtype = jnp.float32
+    ) -> jnp.ndarray:
+        """
+        Compute log likelihood of data under posterior samples.
+        
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data to evaluate likelihood on
+        batch_size : Optional[int], default=None
+            Size of mini-batches used for likelihood computation
+        return_by : str, default='cell'
+            Specifies how to return the log probabilities. Must be one of:
+                - 'cell': returns log probabilities summed over genes
+                - 'gene': returns log probabilities summed over cells
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        ignore_nans : bool, default=False
+            If True, removes any samples that contain NaNs.
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        jnp.ndarray
+            Array of log likelihoods. Shape depends on return_by:
+                - 'cell': shape (n_samples, n_cells)
+                - 'gene': shape (n_samples, n_genes)
+                
+        Raises
+        ------
+        ValueError
+            If posterior samples have not been generated yet
+        """
+        # Check if posterior samples exist
+        if (self.posterior_samples is None or 
+            'parameter_samples' not in self.posterior_samples):
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
+        
+        # Get parameter samples
+        parameter_samples = self.posterior_samples['parameter_samples']
+        
+        # Get number of samples from first parameter
+        n_samples = parameter_samples[next(iter(parameter_samples))].shape[0]
+        
+        # Get likelihood function
+        likelihood_fn = self.get_log_likelihood_fn()
+        
+        # Define function to compute likelihood for a single sample
+        @partial(jit, static_argnums=(0,))
+        def compute_sample_lik(i):
+            # Extract parameters for this sample
+            params_i = {k: v[i] for k, v in parameter_samples.items()}
+            # Return likelihood
+            return likelihood_fn(
+                counts, 
+                params_i, 
+                batch_size=batch_size,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                dtype=dtype
+            )
+        
+        # Compute log likelihoods for all samples using vmap
+        log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+        
+        # Handle NaNs if requested
+        if ignore_nans:
+            valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=1)
+            print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
+            return log_liks[valid_samples]
+        
+        return log_liks
+
 # ------------------------------------------------------------------------------
 # Base classes for mixture models
 # ------------------------------------------------------------------------------
