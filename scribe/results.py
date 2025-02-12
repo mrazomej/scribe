@@ -5,18 +5,17 @@ Results classes for SCRIBE inference.
 from typing import Dict, Optional, Union, Callable, Tuple, Any
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from functools import partial
 
 import jax.numpy as jnp
+import jax.scipy as jsp
 import pandas as pd
 import numpyro.distributions as dist
-from numpyro.infer import Predictive
 from jax import random, jit, vmap
 
 import scipy.stats as stats
 
 from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
-
+from .stats import fit_dirichlet_minka
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
@@ -843,6 +842,131 @@ class MixtureResults(BaseScribeResults):
             return log_liks[valid_samples]
         
         return log_liks
+
+    # --------------------------------------------------------------------------
+
+    def compute_cell_type_assignments(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        dtype: jnp.dtype = jnp.float32,
+        fit_distribution: bool = True,
+        verbose: bool = True
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute probabilistic cell type assignments and fit Dirichlet
+        distributions to characterize assignment uncertainty.
+
+        For each cell, this method:
+            1. Computes component-specific log-likelihoods using posterior
+               samples
+            2. Converts these to probability distributions over cell types
+            3. Fits a Dirichlet distribution to characterize the uncertainty in
+               these assignments
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data to evaluate assignments for
+        batch_size : Optional[int], default=None
+            Size of mini-batches for likelihood computation
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        ignore_nans : bool, default=False
+            If True, removes any samples that contain NaNs.
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+        fit_distribution : bool, default=True
+            If True, fits a Dirichlet distribution to the assignment
+            probabilities
+        verbose : bool, default=True
+            If True, prints progress
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing:
+                - 'concentration': Dirichlet concentration parameters for each
+                  cell Shape: (n_cells, n_components). Only returned if
+                  fit_distribution is True.
+                - 'mean_probabilities': Mean assignment probabilities for each
+                  cell Shape: (n_cells, n_components). Only returned if
+                  fit_distribution is True.
+                - 'sample_probabilities': Assignment probabilities for each
+                  posterior sample. Shape: (n_samples, n_cells, n_components)
+
+        Raises
+        ------
+        ValueError
+            If posterior samples have not been generated yet
+        """
+        # Check if posterior samples exist
+        if (self.posterior_samples is None or 
+            'parameter_samples' not in self.posterior_samples):
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
+
+        if verbose:
+            print("- Computing component-specific log-likelihoods...")
+
+        # Compute component-specific log-likelihoods
+        # Shape: (n_samples, n_cells, n_components)
+        log_liks = self.compute_log_likelihood(
+            counts,
+            batch_size=batch_size,
+            return_by='cell',
+            cells_axis=cells_axis,
+            ignore_nans=ignore_nans,
+            split_components=True,
+            dtype=dtype
+        )
+
+        if verbose:
+            print("- Converting log-likelihoods to probabilities...")
+
+        # Convert log-likelihoods to probabilities using log-sum-exp for
+        # stability First compute log(sum(exp(x))) along component axis
+        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+        # Then subtract and exponentiate to get probabilities
+        probabilities = jnp.exp(log_liks - log_sum_exp)
+
+        # Get shapes
+        n_samples, n_cells, n_components = probabilities.shape
+
+        if fit_distribution:
+            if verbose:
+                print("- Fitting Dirichlet distribution...")
+
+            # Initialize array for Dirichlet concentration parameters
+            concentrations = jnp.zeros((n_cells, n_components), dtype=dtype)
+
+            # Fit Dirichlet distribution for each cell
+            for cell in range(n_cells):
+                if cell % 1_000 == 0:
+                    print(f"    - Fitting Dirichlet distribution for cell {cell} of {n_cells}")
+                # Get probability vectors for this cell across all samples
+                cell_probs = probabilities[:, cell, :]
+                # Fit Dirichlet using Minka's fixed-point method
+                concentrations = concentrations.at[cell].set(
+                    fit_dirichlet_minka(cell_probs)
+                )
+
+            # Compute mean probabilities (Dirichlet mean)
+            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
+            mean_probabilities = concentrations / concentration_sums
+
+            return {
+                'concentration': concentrations,
+                'mean_probabilities': mean_probabilities,
+                'sample_probabilities': probabilities
+            }
+        else:
+            return {
+                'sample_probabilities': probabilities
+            }
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial model

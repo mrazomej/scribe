@@ -101,64 +101,35 @@ def nbdm_mixture_model(
         dist.Gamma(r_prior[0], r_prior[1]).expand([n_components, n_genes])
     )
 
+    # Create base negative binomial distribution
+    base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+    
+    # Create mixture distribution
+    mixture = dist.MixtureSameFamily(
+        mixing_dist, 
+        base_dist
+    )
+
     # If we have observed data, condition on it
     if counts is not None:
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
-            # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
-            
-            # Create mixture distribution
-            mixture = dist.MixtureSameFamily(
-                mixing_dist, 
-                base_dist
-            )
-            
             # Define plate for cells
             with numpyro.plate("cells", n_cells):
                 # Sample counts from mixture
-                numpyro.sample(
-                    "counts",
-                    mixture,
-                    obs=counts
-                )
+                numpyro.sample("counts", mixture, obs=counts)
         else:
             # Mini-batch version
             with numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
-                # Create base negative binomial distribution
-                base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
-                
-                # Create mixture distribution
-                mixture = dist.MixtureSameFamily(
-                    mixing_dist, 
-                    base_dist
-                )
-                
                 # Sample counts from mixture
-                numpyro.sample(
-                    "counts",
-                    mixture,
-                    obs=counts[idx]
-                )
+                numpyro.sample("counts", mixture, obs=counts[idx])
     else:
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
-            # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
-            
-            # Create mixture distribution
-            mixture = dist.MixtureSameFamily(
-                mixing_dist, 
-                base_dist
-            )
-            
             # Sample counts from mixture
-            numpyro.sample(
-                "counts",
-                mixture
-            )
+            numpyro.sample("counts", mixture)
 
 
 # ------------------------------------------------------------------------------
@@ -220,7 +191,7 @@ def nbdm_mixture_guide(
         constraint=constraints.positive
     )
 
-    # Variational parameters for p (one per component)
+    # Variational parameters for p
     alpha_p = numpyro.param(
         "alpha_p",
         p_prior[0],
