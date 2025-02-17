@@ -853,6 +853,7 @@ class MixtureResults(BaseScribeResults):
         ignore_nans: bool = False,
         dtype: jnp.dtype = jnp.float32,
         fit_distribution: bool = True,
+        weights: Optional[jnp.ndarray] = None,
         verbose: bool = True
     ) -> Dict[str, jnp.ndarray]:
         """
@@ -881,6 +882,9 @@ class MixtureResults(BaseScribeResults):
         fit_distribution : bool, default=True
             If True, fits a Dirichlet distribution to the assignment
             probabilities
+        weights : Optional[jnp.ndarray], default=None
+            Array of shape (n_cells,) containing weights for each cell. If
+            None, weights are not used.
         verbose : bool, default=True
             If True, prints progress
 
@@ -921,6 +925,7 @@ class MixtureResults(BaseScribeResults):
             cells_axis=cells_axis,
             ignore_nans=ignore_nans,
             split_components=True,
+            weights=weights,
             dtype=dtype
         )
 
