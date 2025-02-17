@@ -565,6 +565,8 @@ def sq_hellinger_beta(alpha1, beta1, alpha2, beta2):
         )
     )
 
+# ------------------------------------------------------------------------------
+
 def hellinger_beta(alpha1, beta1, alpha2, beta2):
     """
     Compute the Hellinger distance between two Beta distributions.
@@ -689,3 +691,90 @@ def hellinger_gamma(alpha1, beta1, alpha2, beta2):
         Hellinger distance between the two Gamma distributions
     """
     return jnp.sqrt(sq_hellinger_gamma(alpha1, beta1, alpha2, beta2))
+
+# ------------------------------------------------------------------------------
+# Mode functions
+# ------------------------------------------------------------------------------
+
+def beta_mode(alpha, beta):
+    """
+    Calculate the mode for a Beta distribution.
+    
+    For Beta(α,β) distribution, the mode is:
+        (α-1)/(α+β-2) when α,β > 1
+        undefined when α,β ≤ 1
+    
+    Parameters
+    ----------
+    alpha : float or array-like
+        Shape parameter α of the Beta distribution
+    beta : float or array-like 
+        Shape parameter β of the Beta distribution
+        
+    Returns
+    -------
+    float or array-like
+        Mode of the Beta distribution. Returns NaN for cases where
+        mode is undefined (α,β ≤ 1)
+    """
+    return jnp.where(
+        (alpha > 1) & (beta > 1),
+        (alpha - 1) / (alpha + beta - 2),
+        jnp.nan
+    )
+
+# ------------------------------------------------------------------------------
+
+def gamma_mode(alpha, beta):
+    """
+    Calculate the mode for a Gamma distribution.
+    
+    For Gamma(α,β) distribution, the mode is:
+        (α-1)/β when α > 1
+        0 when α ≤ 1
+    
+    Parameters
+    ----------
+    alpha : float or array-like
+        Shape parameter α of the Gamma distribution
+    beta : float or array-like
+        Rate parameter β of the Gamma distribution
+        
+    Returns
+    -------
+    float or array-like
+        Mode of the Gamma distribution
+    """
+    return jnp.where(
+        alpha > 1,
+        (alpha - 1) / beta,
+        0.0
+    )
+
+# ------------------------------------------------------------------------------
+
+def dirichlet_mode(alpha):
+    """
+    Calculate the mode for a Dirichlet distribution.
+    
+    For Dirichlet(α) distribution with concentration parameters α, the mode for
+    each component is:
+        (αᵢ-1)/(∑ⱼαⱼ-K) when αᵢ > 1 for all i
+        0 when αᵢ ≤ 1 for any i
+    where K is the number of components.
+    
+    Parameters
+    ----------
+    alpha : array-like
+        Concentration parameters α of the Dirichlet distribution
+        
+    Returns
+    -------
+    array-like
+        Mode of the Dirichlet distribution
+    """
+    return jnp.where(
+        alpha > 1,
+        (alpha - 1) / jnp.sum(alpha) - 1,
+        0.0
+    )
