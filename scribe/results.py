@@ -15,8 +15,8 @@ from jax import random, jit, vmap
 import scipy.stats as stats
 
 from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
-from .stats import fit_dirichlet_minka, beta_mode, gamma_mode, dirichlet_mode
-
+from .stats import fit_dirichlet_minka, beta_mode, gamma_mode, dirichlet_mode, lognorm_mode
+from .distributions import ModelConfig
 # ------------------------------------------------------------------------------
 # Base class for inference results
 # ------------------------------------------------------------------------------
@@ -63,7 +63,7 @@ class BaseScribeResults(ABC):
     n_cells: int
     n_genes: int
     model_type: str
-    param_spec: Dict[str, Dict[str, Any]]
+    model_config: ModelConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
@@ -73,13 +73,13 @@ class BaseScribeResults(ABC):
     
     # Optional results
     posterior_samples: Optional[Dict] = None
-    n_components: Optional[int] = None
 
     # --------------------------------------------------------------------------
 
     def __post_init__(self):
-        """Validate parameters against specification."""
-        self._validate_param_spec()
+        """Validate model configuration and parameters."""
+        self._validate_model_config()
+        self._validate_parameters()
 
     # --------------------------------------------------------------------------
     
@@ -1064,6 +1064,12 @@ class MixtureResults(BaseScribeResults):
         }
 
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Standard Models
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial model
 # ------------------------------------------------------------------------------
 
@@ -1548,7 +1554,11 @@ class ZINBVCPResults(StandardResults):
         from .models import zinbvcp_log_likelihood
         return zinbvcp_log_likelihood
 
-# Previous code remains the same...
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Mixture Models
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Mixture Model
@@ -2010,7 +2020,116 @@ class ZINBVCPMixtureResults(MixtureResults):
         return zinbvcp_mixture_log_likelihood
 
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Log-Normal Mixture Models
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Negative Binomial-Dirichlet Multinomial Mixture Model
+# ------------------------------------------------------------------------------
+
+@dataclass
+class NBDMMixtureLogResults(MixtureResults):
+    """
+    Results for Negative Binomial-Dirichlet Multinomial mixture model with
+    log-normal prior on r parameters.
+    """
+    @classmethod
+    def get_param_spec(self) -> Dict:
+        """Get the parameter specification for this model type."""
+        return {
+            'alpha_mixing': {'type': 'global', 'component_specific': True},
+            'alpha_p': {'type': 'global'},
+            'beta_p': {'type': 'global'},
+            'mu_r': {'type': 'gene-specific', 'component_specific': True},
+            'sigma_r': {'type': 'gene-specific', 'component_specific': True}
+        }
+    
+    # --------------------------------------------------------------------------
+
+    def __post_init__(self):
+        # Set parameter spec
+        self.param_spec = self.get_param_spec()
+        # Verify model type and validate parameters
+        assert self.model_type == "nbdm_log_mix", f"Invalid model type: {self.model_type}"
+        # Call superclass post-init
+        super().__post_init__()
+
+    # --------------------------------------------------------------------------
+
+    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
+        """Get the variational distributions for mixture model parameters."""
+        if backend == "scipy":
+            return {
+                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
+                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': stats.lognorm(
+                    self.params['sigma_r'],
+                    loc=0,
+                    scale=jnp.exp(self.params['mu_r'])
+                )
+            }
+        elif backend == "numpyro":
+            return {
+                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
+                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
+                'r': dist.LogNormal(self.params['mu_r'], self.params['sigma_r'])
+            }
+        else:
+            raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
+    
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        """
+        map_dict = {}
+        
+        # Handle Dirichlet distribution for mixing weights
+        map_dict['mixing_weights'] = dirichlet_mode(
+            self.params['alpha_mixing']
+        )
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = lognorm_mode(
+            self.params['mu_r'],
+            self.params['sigma_r']
+        )
+        
+        return map_dict
+
+    # --------------------------------------------------------------------------
+
+    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the NBDMMixture model and guide functions."""
+        from .models_mix_log import nbdm_log_mixture_model, nbdm_log_mixture_guide
+        return nbdm_log_mixture_model, nbdm_log_mixture_guide
+
+    # --------------------------------------------------------------------------
+
+    def get_log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for NBDMMixture model."""
+        from .models_mix import nbdm_mixture_log_likelihood
+        return nbdm_mixture_log_likelihood
+
+
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Custom Model Results
+# ------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------
 
 @dataclass

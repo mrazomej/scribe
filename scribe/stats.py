@@ -513,6 +513,41 @@ def kl_beta(alpha1, beta1, alpha2, beta2):
 
 
 # ------------------------------------------------------------------------------
+
+def kl_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute Kullback-Leibler (KL) divergence between two log-normal
+    distributions.
+    
+    Calculates KL(P||Q) where: P ~ LogNormal(μ₁, σ₁) Q ~ LogNormal(μ₂, σ₂)
+    
+    The KL divergence is given by:
+    
+    KL(P||Q) = ln(σ₂/σ₁) + (σ₁² + (μ₁-μ₂)²)/(2σ₂²) - 1/2
+    
+    Parameters
+    ----------
+    mu1 : float or array-like
+        Location parameter μ₁ of the first log-normal distribution P
+    sigma1 : float or array-like
+        Scale parameter σ₁ of the first log-normal distribution P
+    mu2 : float or array-like
+        Location parameter μ₂ of the second log-normal distribution Q
+    sigma2 : float or array-like
+        Scale parameter σ₂ of the second log-normal distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        KL divergence between the two log-normal distributions
+    """
+    return (
+        jnp.log(sigma2/sigma1) 
+        + (sigma1**2 + (mu1 - mu2)**2)/(2*sigma2**2) 
+        - 0.5
+    )
+
+# ------------------------------------------------------------------------------
 # Hellinger distance functions
 # ------------------------------------------------------------------------------
 
@@ -693,6 +728,71 @@ def hellinger_gamma(alpha1, beta1, alpha2, beta2):
     return jnp.sqrt(sq_hellinger_gamma(alpha1, beta1, alpha2, beta2))
 
 # ------------------------------------------------------------------------------
+
+def sq_hellinger_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute the squared Hellinger distance between two log-normal distributions.
+    
+    The squared Hellinger distance between two log-normal distributions P and Q is
+    given by:
+    
+    H²(P,Q) = 1 - sqrt( σ1 * σ2 / (σ1² + σ2²) )
+                    * exp( - (μ1-μ2)² / [4*(σ1² + σ2²)] )
+    
+    Parameters
+    ----------
+    mu1 : float or array-like
+        Location parameter μ₁ of the first log-normal distribution P
+    sigma1 : float or array-like
+        Scale parameter σ₁ of the first log-normal distribution P
+    mu2 : float or array-like
+        Location parameter μ₂ of the second log-normal distribution Q
+    sigma2 : float or array-like
+        Scale parameter σ₂ of the second log-normal distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        Squared Hellinger distance between the two log-normal distributions
+    """
+    # Check that all inputs are of same shape
+    if not all(isinstance(a, (float, np.ndarray, jnp.ndarray)) and 
+               isinstance(b, (float, np.ndarray, jnp.ndarray)) 
+               for a, b in zip([mu1, sigma1, mu2, sigma2], [mu1, sigma1, mu2, sigma2])
+            ):
+        raise ValueError("All inputs must be of the same shape")
+    
+    # The prefactor under the square root:
+    prefactor = jnp.sqrt( (sigma1 * sigma2) / (sigma1**2 + sigma2**2) )
+    # The exponent factor:
+    exponent = jnp.exp( - (mu1 - mu2)**2 / (4.0 * (sigma1**2 + sigma2**2)) )
+    return 1.0 - (prefactor * exponent)
+
+def hellinger_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute the Hellinger distance between two log-normal distributions.
+    
+    The Hellinger distance is the square root of the squared Hellinger distance.
+    
+    Parameters
+    ----------
+    mu1 : float or array-like
+        Location parameter μ₁ of the first log-normal distribution P
+    sigma1 : float or array-like
+        Scale parameter σ₁ of the first log-normal distribution P
+    mu2 : float or array-like
+        Location parameter μ₂ of the second log-normal distribution Q
+    sigma2 : float or array-like
+        Scale parameter σ₂ of the second log-normal distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        Hellinger distance between the two log-normal distributions
+    """
+    return jnp.sqrt(sq_hellinger_lognormal(mu1, sigma1, mu2, sigma2))
+
+# ------------------------------------------------------------------------------
 # Mode functions
 # ------------------------------------------------------------------------------
 
@@ -775,6 +875,29 @@ def dirichlet_mode(alpha):
     """
     return jnp.where(
         alpha > 1,
-        (alpha - 1) / jnp.sum(alpha) - 1,
-        0.0
+        (alpha - 1) / (jnp.sum(alpha) - len(alpha)),
+        jnp.nan
     )
+
+# ------------------------------------------------------------------------------
+
+def lognorm_mode(mu, sigma):
+    """
+    Calculate the mode for a log-normal distribution.
+    
+    For LogNormal(μ,σ) distribution, the mode is:
+        exp(μ - σ²)
+
+    Parameters
+    ----------
+    mu : float or array-like
+        Mean of the log-normal distribution
+    sigma : float or array-like
+        Standard deviation of the log-normal distribution
+
+    Returns
+    -------
+    float or array-like
+        Mode of the log-normal distribution
+    """
+    return jnp.exp(mu - sigma**2)

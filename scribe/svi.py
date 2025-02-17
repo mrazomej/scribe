@@ -24,7 +24,7 @@ import scipy.sparse
 from anndata import AnnData
 
 # Imports for model-specific functions
-from .models import get_model_and_guide, get_default_priors
+from .model_registry import get_model_and_guide, get_default_priors
 
 # ------------------------------------------------------------------------------
 # Stochastic Variational Inference with Numpyro
@@ -234,6 +234,7 @@ def run_scribe(
     ZINBMixtureResults, 
     NBVCPMixtureResults,
     ZINBVCPMixtureResults,
+    NBDMMixtureLogResults,
     CustomResults
 ]:
     """
@@ -381,6 +382,10 @@ def run_scribe(
             "zinb_mix": ZINBMixtureResults,
             "nbvcp_mix": NBVCPMixtureResults,
             "zinbvcp_mix": ZINBVCPMixtureResults,
+            "nbdm_log_mix": NBDMMixtureLogResults,
+            # "zinb_log_mix": ZINBMixtureLogResults,
+            # "nbvcp_log_mix": NBVCPMixtureLogResults,
+            # "zinbvcp_log_mix": ZINBVCPMixtureLogResults,
         }.get(model_type)
 
         if results_class is None:
@@ -430,6 +435,7 @@ def rerun_scribe(
         ZINBMixtureResults,
         NBVCPMixtureResults,
         ZINBVCPMixtureResults,
+        NBDMMixtureLogResults,
         CustomResults
     ],
     counts: Union[jnp.ndarray, "AnnData"],
@@ -451,6 +457,7 @@ def rerun_scribe(
     ZINBMixtureResults,
     NBVCPMixtureResults,
     ZINBVCPMixtureResults,
+    NBDMMixtureLogResults,
     CustomResults
 ]:
     """
