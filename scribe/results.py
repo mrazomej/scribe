@@ -15,7 +15,7 @@ from jax import random, jit, vmap
 import scipy.stats as stats
 
 from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
-from .stats import fit_dirichlet_minka
+from .stats import fit_dirichlet_minka, beta_mode, gamma_mode, dirichlet_mode
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
@@ -200,6 +200,16 @@ class BaseScribeResults(ABC):
         -------
         Dict[str, Any]
             Dictionary mapping parameter names to their distributions
+        """
+        pass
+
+    # --------------------------------------------------------------------------
+
+    @abstractmethod
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational
+        posterior.
         """
         pass
 
@@ -751,6 +761,7 @@ class MixtureResults(BaseScribeResults):
         cells_axis: int = 0,
         ignore_nans: bool = False,
         split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
         dtype: jnp.dtype = jnp.float32
     ) -> jnp.ndarray:
         """
@@ -774,6 +785,9 @@ class MixtureResults(BaseScribeResults):
         split_components : bool, default=False
             If True, returns log likelihoods for each mixture component
             separately. If False, returns marginalized log likelihoods.
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight the log likelihoods either by cell (when
+            return_by='gene') or by gene (when return_by='cell').
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
             
@@ -822,6 +836,7 @@ class MixtureResults(BaseScribeResults):
                 cells_axis=cells_axis,
                 return_by=return_by,
                 split_components=split_components,
+                weights=weights,
                 dtype=dtype
             )
         
@@ -853,6 +868,7 @@ class MixtureResults(BaseScribeResults):
         ignore_nans: bool = False,
         dtype: jnp.dtype = jnp.float32,
         fit_distribution: bool = True,
+        weights: Optional[jnp.ndarray] = None,
         verbose: bool = True
     ) -> Dict[str, jnp.ndarray]:
         """
@@ -881,6 +897,9 @@ class MixtureResults(BaseScribeResults):
         fit_distribution : bool, default=True
             If True, fits a Dirichlet distribution to the assignment
             probabilities
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight the log likelihoods either by cell (when
+            return_by='gene') or by gene (when return_by='cell').
         verbose : bool, default=True
             If True, prints progress
 
@@ -921,6 +940,7 @@ class MixtureResults(BaseScribeResults):
             cells_axis=cells_axis,
             ignore_nans=ignore_nans,
             split_components=True,
+            weights=weights,
             dtype=dtype
         )
 
@@ -967,6 +987,81 @@ class MixtureResults(BaseScribeResults):
             return {
                 'sample_probabilities': probabilities
             }
+
+    # --------------------------------------------------------------------------
+
+    def compute_cell_type_assignments_map(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        dtype: jnp.dtype = jnp.float32,
+        weights: Optional[jnp.ndarray] = None,
+        verbose: bool = True
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute probabilistic cell type assignments using MAP estimates of parameters.
+        
+        For each cell, this method:
+            1. Computes component-specific log-likelihoods using MAP parameter estimates
+            2. Converts these to probability distributions over cell types
+        
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data to evaluate assignments for
+        batch_size : Optional[int], default=None
+            Size of mini-batches for likelihood computation
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight the log likelihoods by gene
+        verbose : bool, default=True
+            If True, prints progress
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing:
+                - 'probabilities': Assignment probabilities for each cell
+                Shape: (n_cells, n_components)
+        """
+        if verbose:
+            print("- Computing component-specific log-likelihoods...")
+
+        # Get the log likelihood function
+        likelihood_fn = self.get_log_likelihood_fn()
+
+        # Get the MAP estimates
+        map_estimates = self.get_map()
+        
+        # Compute component-specific log-likelihoods using MAP estimates
+        # Shape: (n_cells, n_components)
+        log_liks = likelihood_fn(
+            counts,
+            map_estimates,
+            batch_size=batch_size,
+            cells_axis=cells_axis,
+            return_by='cell',
+            split_components=True,
+            weights=weights,
+            dtype=dtype
+        )
+
+        if verbose:
+            print("- Converting log-likelihoods to probabilities...")
+
+        # Convert log-likelihoods to probabilities using log-sum-exp for stability
+        # First compute log(sum(exp(x))) along component axis
+        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+        # Then subtract and exponentiate to get probabilities
+        probabilities = jnp.exp(log_liks - log_sum_exp)
+
+        return {
+            'probabilities': probabilities
+        }
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial model
@@ -1019,6 +1114,45 @@ class NBDMResults(StandardResults):
             }
         else:
             raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
+
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        For Beta(α,β) distribution, the mode is:
+            (α-1)/(α+β-2) when α,β > 1
+            undefined when α,β ≤ 1
+            
+        For Gamma(α,β) distribution, the mode is:
+            (α-1)/β when α > 1
+            0 when α ≤ 1
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        
+        Notes
+        -----
+        Returns NaN for cases where mode is undefined (e.g., Beta with α,β ≤ 1)
+        """
+        map_dict = {}
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        return map_dict
 
     # --------------------------------------------------------------------------
 
@@ -1097,6 +1231,51 @@ class ZINBResults(StandardResults):
             raise ValueError(f"Invalid backend: {backend}")
 
     # --------------------------------------------------------------------------
+    
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        For Beta(α,β) distribution, the mode is:
+            (α-1)/(α+β-2) when α,β > 1
+            undefined when α,β ≤ 1
+            
+        For Gamma(α,β) distribution, the mode is:
+            (α-1)/β when α > 1
+            0 when α ≤ 1
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        
+        Notes
+        -----
+        Returns NaN for cases where mode is undefined (e.g., Beta with α,β ≤ 1)
+        """
+        map_dict = {}
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        # Hangle Beta distribution for gate parameter
+        map_dict['gate'] = beta_mode(
+            self.params['alpha_gate'],
+            self.params['beta_gate']
+        )
+        
+        return map_dict
+
+    # --------------------------------------------------------------------------
 
     def get_model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the ZINB model and guide functions."""
@@ -1171,6 +1350,51 @@ class NBVCPResults(StandardResults):
             }
         else:
             raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
+
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        For Beta(α,β) distribution, the mode is:
+            (α-1)/(α+β-2) when α,β > 1
+            undefined when α,β ≤ 1
+            
+        For Gamma(α,β) distribution, the mode is:
+            (α-1)/β when α > 1
+            0 when α ≤ 1
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        
+        Notes
+        -----
+        Returns NaN for cases where mode is undefined (e.g., Beta with α,β ≤ 1)
+        """
+        map_dict = {}
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        # Handle Beta distribution for p_capture parameter
+        map_dict['p_capture'] = beta_mode(
+            self.params['alpha_p_capture'],
+            self.params['beta_p_capture']
+        )
+        
+        return map_dict
 
     # --------------------------------------------------------------------------
 
@@ -1261,6 +1485,57 @@ class ZINBVCPResults(StandardResults):
 
     # --------------------------------------------------------------------------
 
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        For Beta(α,β) distribution, the mode is:
+            (α-1)/(α+β-2) when α,β > 1
+            undefined when α,β ≤ 1
+            
+        For Gamma(α,β) distribution, the mode is:
+            (α-1)/β when α > 1
+            0 when α ≤ 1
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        
+        Notes
+        -----
+        Returns NaN for cases where mode is undefined (e.g., Beta with α,β ≤ 1)
+        """
+        map_dict = {}
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        # Handle Beta distribution for gate parameter
+        map_dict['gate'] = beta_mode(
+            self.params['alpha_gate'],
+            self.params['beta_gate']
+        )
+        
+        # Handle Beta distribution for p_capture parameter
+        map_dict['p_capture'] = beta_mode(
+            self.params['alpha_p_capture'],
+            self.params['beta_p_capture']
+        )
+        
+        return map_dict
+
+    # --------------------------------------------------------------------------
+
     def get_model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the ZINBVCP model and guide functions."""
         from .models import zinbvcp_model, zinbvcp_guide
@@ -1327,6 +1602,38 @@ class NBDMMixtureResults(MixtureResults):
             }
         else:
             raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
+    
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        """
+        map_dict = {}
+        
+        # Handle Dirichlet distribution for mixing weights
+        map_dict['mixing_weights'] = dirichlet_mode(
+            self.params['alpha_mixing']
+        )
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        return map_dict
 
     # --------------------------------------------------------------------------
 
@@ -1406,6 +1713,44 @@ class ZINBMixtureResults(MixtureResults):
 
     # --------------------------------------------------------------------------
 
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        """
+        map_dict = {}
+        
+        # Handle Dirichlet distribution for mixing weights
+        map_dict['mixing_weights'] = dirichlet_mode(
+            self.params['alpha_mixing']
+        )
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        # Handle Beta distribution for gate parameter
+        map_dict['gate'] = beta_mode(
+            self.params['alpha_gate'],
+            self.params['beta_gate']
+        )
+        
+        return map_dict
+
+    # --------------------------------------------------------------------------
+
     def get_model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the ZINB mixture model and guide functions."""
         from .models_mix import zinb_mixture_model, zinb_mixture_guide
@@ -1479,6 +1824,44 @@ class NBVCPMixtureResults(MixtureResults):
             }
         else:
             raise ValueError(f"Invalid backend: {backend}")
+
+    # --------------------------------------------------------------------------
+    
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        """
+        map_dict = {}
+        
+        # Handle Dirichlet distribution for mixing weights
+        map_dict['mixing_weights'] = dirichlet_mode(
+            self.params['alpha_mixing']
+        )
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        # Handle Beta distribution for p_capture parameter
+        map_dict['p_capture'] = beta_mode(
+            self.params['alpha_p_capture'],
+            self.params['beta_p_capture']
+        )
+        
+        return map_dict
 
     # --------------------------------------------------------------------------
 
@@ -1569,6 +1952,50 @@ class ZINBVCPMixtureResults(MixtureResults):
             raise ValueError(f"Invalid backend: {backend}")
 
     # --------------------------------------------------------------------------
+    
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary mapping parameter names to their MAP estimates
+        """
+        map_dict = {}
+        
+        # Handle Dirichlet distribution for mixing weights
+        map_dict['mixing_weights'] = dirichlet_mode(
+            self.params['alpha_mixing']
+        )
+        
+        # Handle Beta distribution for p parameter
+        map_dict['p'] = beta_mode(
+            self.params['alpha_p'],
+            self.params['beta_p']
+        )
+        
+        # Handle Gamma distribution for r parameter
+        map_dict['r'] = gamma_mode(
+            self.params['alpha_r'],
+            self.params['beta_r']
+        )
+        
+        # Handle Beta distribution for gate parameter
+        map_dict['gate'] = beta_mode(
+            self.params['alpha_gate'],
+            self.params['beta_gate']
+        )
+        
+        # Handle Beta distribution for p_capture parameter
+        map_dict['p_capture'] = beta_mode(
+            self.params['alpha_p_capture'],
+            self.params['beta_p_capture']
+        )
+        
+        return map_dict
+
+    # --------------------------------------------------------------------------
 
     def get_model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the ZINBVCP mixture model and guide functions."""
@@ -1620,6 +2047,8 @@ class CustomResults(BaseScribeResults):
         Optional function to compute log likelihood for the custom model
     get_distributions_fn : Optional[Callable]
         Optional function to implement get_distributions behavior
+    get_map_fn : Optional[Callable]
+        Optional function to implement get_map behavior
     get_model_args_fn : Optional[Callable]
         Optional function to customize model arguments
     n_components : Optional[int]
@@ -1638,6 +2067,7 @@ class CustomResults(BaseScribeResults):
     custom_guide: Optional[Callable] = None
     custom_log_likelihood_fn: Optional[Callable] = None
     get_distributions_fn: Optional[Callable] = None
+    get_map_fn: Optional[Callable] = None
     get_model_args_fn: Optional[Callable] = None
 
     
@@ -1655,6 +2085,14 @@ class CustomResults(BaseScribeResults):
         """Get distributions using provided get_distributions_fn if available."""
         if self.get_distributions_fn is not None:
             return self.get_distributions_fn(self.params, backend)
+        return {}
+
+    # --------------------------------------------------------------------------
+    
+    def get_map(self) -> Dict[str, jnp.ndarray]:
+        """Get the maximum a posteriori (MAP) estimates from the variational posterior."""
+        if self.get_map_fn is not None:
+            return self.get_map_fn(self.params)
         return {}
 
     # --------------------------------------------------------------------------
@@ -1718,5 +2156,6 @@ class CustomResults(BaseScribeResults):
             custom_guide=self.custom_guide,
             custom_log_likelihood_fn=self.custom_log_likelihood_fn,
             get_distributions_fn=self.get_distributions_fn,
+            get_map_fn=self.get_map_fn,
             get_model_args_fn=self.get_model_args_fn,
         )
