@@ -12,9 +12,6 @@ import scipy.stats as stats
 # Import typing
 from typing import Union
 
-from .stats import compute_histogram_credible_regions
-from .results import NBDMResults, ZINBResults
-
 # ------------------------------------------------------------------------------
 # General plotting functions
 # ------------------------------------------------------------------------------

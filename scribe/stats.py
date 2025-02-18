@@ -901,3 +901,37 @@ def lognorm_mode(mu, sigma):
         Mode of the log-normal distribution
     """
     return jnp.exp(mu - sigma**2)
+
+# ------------------------------------------------------------------------------
+
+def get_distribution_mode(dist_obj):
+    """
+    Get the mode of a distribution object.
+    
+    Parameters
+    ----------
+    dist_obj : numpyro.distributions.Distribution
+        Distribution object
+        
+    Returns
+    -------
+    jnp.ndarray
+        Mode of the distribution
+    """
+    dist_type = type(dist_obj).__name__
+    
+    if dist_type == 'Beta':
+        return beta_mode(dist_obj.concentration1, dist_obj.concentration0)
+    elif dist_type == 'Gamma':
+        return gamma_mode(dist_obj.concentration, dist_obj.rate)
+    elif dist_type == 'LogNormal':
+        return lognorm_mode(dist_obj.loc, dist_obj.scale)
+    elif dist_type == 'Dirichlet':
+        return dirichlet_mode(dist_obj.concentration)
+    else:
+        try:
+            return dist_obj.mean
+        except:
+            raise ValueError(
+                f"Cannot compute mode for distribution type {dist_type}"
+            )

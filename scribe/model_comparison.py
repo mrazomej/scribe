@@ -7,7 +7,7 @@ from jax import random, jit, vmap
 import numpy as np
 from typing import List, Dict, Union, Tuple, Optional, Callable
 from functools import partial
-from .results import BaseScribeResults, NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults
+from .results import ScribeResults
 import pandas as pd
 
 # ------------------------------------------------------------------------------

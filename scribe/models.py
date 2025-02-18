@@ -12,9 +12,11 @@ from numpyro.distributions import constraints
 # Import typing
 from typing import Callable, Dict, Tuple, Optional
 
+# Import model config
+from .model_config import ModelConfig
+
 # Import mixture models
 from .models_mix import *
-from .models_mix_log import *
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
@@ -23,32 +25,24 @@ from .models_mix_log import *
 def nbdm_model(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
+    model_config: ModelConfig,
     counts=None,
     total_counts=None,
     batch_size=None,
 ):
     """
     Numpyro model for Dirichlet-Multinomial single-cell RNA sequencing data.
-
-    This model assumes a hierarchical structure where:
-    0. Each cell has a total count drawn from a Negative Binomial distribution
-    1. The counts for individual genes are drawn from a Dirichlet-Multinomial
-    distribution conditioned on the total count.
     
+    This model uses the configuration defined in model_config.
+
     Parameters
     ----------
     n_cells : int
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p parameter.
-        Default is (1, 1) for a uniform prior.
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters.
-        Default is (2, 0.1).
+    model_config : ModelConfig
+        Configuration object for model distributions
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes).
         If None, generates samples from the prior.
@@ -58,23 +52,12 @@ def nbdm_model(
     batch_size : int, optional
         Mini-batch size for stochastic variational inference.
         If None, uses full dataset.
-
-    Model Structure
-    --------------
-    Global Parameters:
-        - Success probability p ~ Beta(p_prior)
-        - Gene-specific dispersion r ~ Gamma(r_prior)
-        - Total dispersion r_total = sum(r)
-
-    Likelihood:
-        - total_counts ~ NegativeBinomial(r_total, p)
-        - counts ~ DirichletMultinomial(r, total_counts)
     """
-    # Define the prior on the p parameter
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
-
-    # Define the prior on the r parameters - one for each category (gene)
-    r = numpyro.sample("r", dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes]))
+    # Sample p
+    p = numpyro.sample("p", model_config.p_distribution_model)
+    
+    # Sample r
+    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
 
     # Sum of r parameters
     r_total = numpyro.deterministic("r_total", jnp.sum(r))
@@ -143,8 +126,7 @@ def nbdm_model(
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
+    model_config: ModelConfig,
     counts=None,
     total_counts=None,
     batch_size=None,
@@ -152,12 +134,7 @@ def nbdm_guide(
     """
     Define the variational distribution for stochastic variational inference.
     
-    This guide function specifies the form of the variational distribution that
-    will be optimized to approximate the true posterior. It defines a mean-field
-    variational family where:
-    - The success probability p follows a Beta distribution
-    - Each gene's overdispersion parameter r follows an independent Gamma
-    distribution
+    This guide uses the configuration defined in guide_config.
     
     Parameters
     ----------
@@ -165,10 +142,8 @@ def nbdm_guide(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p (default: (0,1))
-    r_prior : tuple of float
-        Parameters (alpha, beta) for the Gamma prior on r (default: (1,2))
+    guide_config : GuideConfig
+        Configuration object for guide distributions
     counts : array_like, optional
         Observed counts matrix of shape (n_cells, n_genes)
     total_counts : array_like, optional
@@ -176,35 +151,39 @@ def nbdm_guide(
     batch_size : int, optional
         Mini-batch size for stochastic optimization
     """
-    # register alpha_p and beta_p parameters for the Beta distribution in the
-    # variational posterior
-    alpha_p = numpyro.param(
-        "alpha_p",
-        jnp.array(p_prior[0]),
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        jnp.array(p_prior[1]),
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # register one alpha_r and one beta_r parameters for the Gamma distributions
-    # for each of the n_genes categories
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones(n_genes) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones(n_genes) * r_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones(n_genes) * r_values[param_name],
+            constraint=constraint
+        )
 
-    # Sample from the variational posterior parameters
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
+    # Sample p from variational distribution using unpacked parameters
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+
+    # Sample r from variational distribution using unpacked parameters
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Model

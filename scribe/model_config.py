@@ -98,20 +98,28 @@ class ModelConfig:
             self.base_model = f"{self.base_model}_mix"
             
         # Ensure ZINB models have gate distribution specified
-        if "zinb" in self.base_model and self.gate_distribution is None:
-            raise ValueError("ZINB models require gate_distribution")
+        if "zinb" in self.base_model and \
+            (self.gate_distribution_model is None or 
+             self.gate_distribution_guide is None):
+            raise ValueError("ZINB models require gate_distribution_model and gate_distribution_guide")
 
         # Ensure non ZINB models do not have gate distribution specified
-        if "zinb" not in self.base_model and self.gate_distribution is not None:
+        if "zinb" not in self.base_model and \
+            (self.gate_distribution_model is not None or 
+             self.gate_distribution_guide is not None):
             raise ValueError("Non-ZINB models do not require gate_distribution")
             
         # Ensure VCP models have capture probability distribution specified
-        if "vcp" in self.base_model and self.p_capture_distribution is None:
-            raise ValueError("VCP models require p_capture_distribution")
+        if "vcp" in self.base_model and \
+            (self.p_capture_distribution_model is None or 
+             self.p_capture_distribution_guide is None):
+            raise ValueError("VCP models require p_capture_distribution_model and p_capture_distribution_guide")
 
         # Ensure non VCP models do not have capture probability distribution
         # specified
-        if "vcp" not in self.base_model and self.p_capture_distribution is not None:
+        if "vcp" not in self.base_model and \
+            (self.p_capture_distribution_model is not None or 
+             self.p_capture_distribution_guide is not None):
             raise ValueError("Non-VCP models do not require p_capture_distribution")
 
 # ------------------------------------------------------------------------------

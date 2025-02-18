@@ -20,12 +20,10 @@ from .sampling import (
 )
 from .stats import (
     fit_dirichlet_minka, 
-    beta_mode, 
-    gamma_mode, 
-    dirichlet_mode, 
-    lognorm_mode
+    get_distribution_mode
 )
-from .distributions import ModelConfig, GuideConfig
+from .model_config import ModelConfig
+from .utils import numpyro_to_scipy
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
@@ -55,8 +53,6 @@ class ScribeResults:
         Type of model used for inference
     model_config : ModelConfig
         Configuration object specifying model architecture and priors
-    guide_config : GuideConfig
-        Configuration object specifying variational family and initialization
     prior_params : Dict[str, Any]
         Dictionary of prior parameter values used during inference
     obs : Optional[pd.DataFrame]
@@ -83,7 +79,6 @@ class ScribeResults:
     n_genes: int
     model_type: str
     model_config: ModelConfig
-    guide_config: GuideConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
@@ -107,8 +102,6 @@ class ScribeResults:
             self.n_components = self.model_config.n_components
             
         self._validate_model_config()
-        self._validate_guide_config()
-        self._validate_parameters()
 
     # --------------------------------------------------------------------------
 
@@ -133,91 +126,26 @@ class ScribeResults:
                     f"n_components mismatch: {self.n_components} vs "
                     f"{self.model_config.n_components} in model_config"
                 )
-    # --------------------------------------------------------------------------
-    
-    def _validate_guide_config(self):
-        """Validate guide configuration is compatible with model config."""
-        self.guide_config.validate_with_model(self.model_config)
-
-    # --------------------------------------------------------------------------
-
-    def _validate_parameters(self):
-        """Validate parameters match guide configuration."""
-        # Get expected parameter shape based on n_components
-        if self.n_components is not None:
-            r_expected_shape = (self.n_components, self.n_genes)
-        else:
-            r_expected_shape = (self.n_genes,)
-            
-        # Loop through r parameters from guide config
-        for param_name in self.guide_config.r_distribution.param_names:
-            # Get parameter key
-            param_key = f"{param_name}_r"
-            # Check if parameter exists and has correct shape
-            if param_key not in self.params:
-                raise ValueError(f"Missing parameter {param_key}")
-            if self.params[param_key].shape != r_expected_shape:
-                raise ValueError(
-                    f"Parameter {param_key} has shape {self.params[param_key].shape}, "
-                    f"expected {r_expected_shape}"
-                )
                 
-        # Validate p parameters (typically scalar/global)
-        param_p_shape = ()
-        # Loop through p parameters from guide config
-        for param_name in self.guide_config.p_distribution.param_names:
-            # Get parameter key
-            param_key = f"{param_name}_p"
-            # Check if parameter exists and has correct shape
-            if param_key not in self.params:
-                raise ValueError(f"Missing parameter {param_key}")
-            if self.params[param_key].shape != param_p_shape:
+        # Validate required distributions based on model type
+        if "zinb" in self.model_type:
+            if (self.model_config.gate_distribution_model is None or 
+                self.model_config.gate_distribution_guide is None):
+                raise ValueError("ZINB models require gate distributions")
+        else:
+            if (self.model_config.gate_distribution_model is not None or 
+                self.model_config.gate_distribution_guide is not None):
+                raise ValueError("Non-ZINB models should not have gate distributions")
+                
+        if "vcp" in self.model_type:
+            if (self.model_config.p_capture_distribution_model is None or
+                self.model_config.p_capture_distribution_guide is None):
+                raise ValueError("VCP models require capture probability distributions")
+        else:
+            if (self.model_config.p_capture_distribution_model is not None or
+                self.model_config.p_capture_distribution_guide is not None):
                 raise ValueError(
-                    f"Parameter {param_key} has shape {self.params[param_key].shape}, "
-                    f"expected {param_p_shape}"
-                )
-        
-        # Validate gate parameters if present
-        if self.guide_config.gate_distribution is not None:
-            # Loop through gate parameters
-            for param_name in self.guide_config.gate_distribution.param_names:
-                # Get parameter key
-                param_key = f"{param_name}_gate"
-                # Check if parameter exists and has correct shape
-                if param_key not in self.params:
-                    raise ValueError(f"Missing parameter {param_key}")
-                if self.params[param_key].shape != r_expected_shape:
-                    raise ValueError(
-                        f"Parameter {param_key} has shape {self.params[param_key].shape}, "
-                        f"expected {r_expected_shape}"
-                    )
-        
-        # Validate p_capture parameters if present
-        if self.guide_config.p_capture_distribution is not None:
-            # Get expected shape for cell-specific parameter
-            expected_shape = (self.n_cells,)
-            # Loop through p_capture parameters 
-            for param_name in self.guide_config.p_capture_distribution.param_names:
-                # Get parameter key
-                param_key = f"{param_name}_p_capture"
-                # Check if parameter exists and has correct shape
-                if param_key not in self.params:
-                    raise ValueError(f"Missing parameter {param_key}")
-                if self.params[param_key].shape != expected_shape:
-                    raise ValueError(
-                        f"Parameter {param_key} has shape {self.params[param_key].shape}, "
-                        f"expected {expected_shape}"
-                    )
-                    
-        # If mixture model, validate mixing parameters
-        if self.n_components is not None:
-            # Check if mixing parameter exists and has correct shape
-            if "alpha_mixing" not in self.params:
-                raise ValueError("Missing mixing weight parameter")
-            if self.params["alpha_mixing"].shape != (self.n_components,):
-                raise ValueError(
-                    f"Mixing parameter has shape {self.params['alpha_mixing'].shape}, "
-                    f"expected ({self.n_components},)"
+                    "Non-VCP models should not have capture probability distributions"
                 )
 
     # --------------------------------------------------------------------------
@@ -231,7 +159,6 @@ class ScribeResults:
         params: Dict,
         loss_history: jnp.ndarray,
         model_config: ModelConfig,
-        guide_config: GuideConfig,
         **kwargs
     ):
         """Create ScribeResults from AnnData object."""
@@ -241,7 +168,6 @@ class ScribeResults:
             n_cells=adata.n_obs,
             n_genes=adata.n_vars,
             model_config=model_config,
-            guide_config=guide_config,
             obs=adata.obs.copy(),
             var=adata.var.copy(),
             uns=adata.uns.copy(),
@@ -251,74 +177,12 @@ class ScribeResults:
         )
     
     # --------------------------------------------------------------------------
-    # Methods for model-specific results
-    # --------------------------------------------------------------------------
-
-    def get_model_args(self) -> Dict:
-        """
-        Get model arguments based on configuration.
-        
-        Returns
-        -------
-        Dict
-            Dictionary containing arguments needed for model initialization
-        """
-        args = {
-            'n_cells': self.n_cells,
-            'n_genes': self.n_genes,
-        }
-        
-        # Add n_components if needed
-        if self.n_components is not None:
-            args['n_components'] = self.n_components
-        
-        # Extract distribution names
-        r_dist_name = self.model_config.r_distribution.dist_type
-        # Add r distribution configuration
-        if r_dist_name == 'gamma':
-            args['r_prior'] = (
-                self.model_config.r_distribution.init_values['alpha'],
-                self.model_config.r_distribution.init_values['beta']
-            )
-        elif r_dist_name == 'lognormal':
-            args['r_prior'] = (
-                self.model_config.r_distribution.init_values['mu'],
-                self.model_config.r_distribution.init_values['sigma']
-            )
-        
-        # Add p distribution configuration
-        args['p_prior'] = (
-            self.model_config.p_distribution.init_values['alpha'],
-            self.model_config.p_distribution.init_values['beta']
-        )
-        
-        # Add gate configuration if present
-        if self.model_config.gate_distribution is not None:
-            args['gate_prior'] = (
-                self.model_config.gate_distribution.init_values['alpha'],
-                self.model_config.gate_distribution.init_values['beta']
-            )
-        
-        # Add p_capture configuration if present
-        if self.model_config.p_capture_distribution is not None:
-            args['p_capture_prior'] = (
-                self.model_config.p_capture_distribution.init_values['alpha'],
-                self.model_config.p_capture_distribution.init_values['beta']
-            )
-        
-        # Add mixing configuration if mixture model
-        if self.n_components is not None:
-            args['mixing_prior'] = 1.0  # Default concentration
-        
-        return args
-
-    # --------------------------------------------------------------------------
     # Get distributions using configs
     # --------------------------------------------------------------------------
 
     def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
-        Get the variational distributions for all parameters using guide config.
+        Get the variational distributions for all parameters using model config.
         
         Parameters
         ----------
@@ -335,45 +199,60 @@ class ScribeResults:
         if backend not in ["scipy", "numpyro"]:
             raise ValueError(f"Invalid backend: {backend}")
             
-        dist_method = "get_scipy_dist" if backend == "scipy" else "get_numpyro_dist"
+        distributions = {}
         
-        # Extract parameter prefixes and actual values
-        r_params = {
-            param_name: self.params[f"{param_name}_r"] 
-            for param_name in self.guide_config.r_distribution.param_names
-        }
-        p_params = {
-            param_name: self.params[f"{param_name}_p"]
-            for param_name in self.guide_config.p_distribution.param_names  
-        }
+        # Handle r distribution
+        r_params = {}
+        for param_name in self.model_config.r_distribution_guide.arg_constraints:
+            r_params[param_name] = self.params[f"r_{param_name}"]
         
-        distributions = {
-            'r': getattr(self.guide_config.r_distribution, dist_method)(r_params),
-            'p': getattr(self.guide_config.p_distribution, dist_method)(p_params)
-        }
+        if backend == "scipy":
+            distributions['r'] = numpyro_to_scipy(
+                self.model_config.r_distribution_guide.__class__(**r_params)
+            )
+        else:  # numpyro
+            distributions['r'] = self.model_config.r_distribution_guide.__class__(**r_params)
+        
+        # Handle p distribution
+        p_params = {}
+        for param_name in self.model_config.p_distribution_guide.arg_constraints:
+            p_params[param_name] = self.params[f"p_{param_name}"]
+        
+        if backend == "scipy":
+            distributions['p'] = numpyro_to_scipy(
+                self.model_config.p_distribution_guide.__class__(**p_params)
+            )
+        else:  # numpyro
+            distributions['p'] = self.model_config.p_distribution_guide.__class__(**p_params)
         
         # Add gate distribution if present
-        if self.guide_config.gate_distribution is not None:
-            gate_params = {
-                param_name: self.params[f"{param_name}_gate"]
-                for param_name in self.guide_config.gate_distribution.param_names
-            }
-            distributions['gate'] = getattr(
-                self.guide_config.gate_distribution, dist_method
-            )(gate_params)
+        if self.model_config.gate_distribution_guide is not None:
+            gate_params = {}
+            for param_name in self.model_config.gate_distribution_guide.arg_constraints:
+                gate_params[param_name] = self.params[f"gate_{param_name}"]
+                
+            if backend == "scipy":
+                distributions['gate'] = numpyro_to_scipy(
+                    self.model_config.gate_distribution_guide.__class__(**gate_params)
+                )
+            else:  # numpyro
+                distributions['gate'] = self.model_config.gate_distribution_guide.__class__(**gate_params)
             
         # Add p_capture distribution if present
-        if self.guide_config.p_capture_distribution is not None:
-            p_capture_params = {
-                param_name: self.params[f"{param_name}_p_capture"]
-                for param_name in self.guide_config.p_capture_distribution.param_names
-            }
-            distributions['p_capture'] = getattr(
-                self.guide_config.p_capture_distribution, dist_method
-            )(p_capture_params)
+        if self.model_config.p_capture_distribution_guide is not None:
+            p_capture_params = {}
+            for param_name in self.model_config.p_capture_distribution_guide.arg_constraints:
+                p_capture_params[param_name] = self.params[f"p_capture_{param_name}"]
+                
+            if backend == "scipy":
+                distributions['p_capture'] = numpyro_to_scipy(
+                    self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                )
+            else:  # numpyro
+                distributions['p_capture'] = self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
             
         # Add mixing weights if mixture model
-        if self.n_components is not None:
+        if self.model_config.n_components is not None:
             if backend == "scipy":
                 distributions['mixing_weights'] = stats.dirichlet(
                     self.params['alpha_mixing'])
@@ -389,45 +268,11 @@ class ScribeResults:
         """
         Get the maximum a posteriori (MAP) estimates from the variational posterior.
         """
-        # Extract parameter prefixes and actual values
-        r_params = {
-            param_name: self.params[f"{param_name}_r"] 
-            for param_name in self.guide_config.r_distribution.param_names
+        distributions = self.get_distributions(backend="numpyro")
+        return {
+            param: get_distribution_mode(dist) 
+            for param, dist in distributions.items()
         }
-        p_params = {
-            param_name: self.params[f"{param_name}_p"]
-            for param_name in self.guide_config.p_distribution.param_names  
-        }
-        
-        map_estimates = {
-            'r': self.guide_config.r_distribution.get_mode(r_params),
-            'p': self.guide_config.p_distribution.get_mode(p_params)
-        }
-        
-        # Add gate MAP if present
-        if self.guide_config.gate_distribution is not None:
-            gate_params = {
-                param_name: self.params[f"{param_name}_gate"]
-                for param_name in self.guide_config.gate_distribution.param_names
-            }
-            map_estimates['gate'] = self.guide_config.gate_distribution.get_mode(gate_params)
-            
-        # Add p_capture MAP if present
-        if self.guide_config.p_capture_distribution is not None:
-            p_capture_params = {
-                param_name: self.params[f"{param_name}_p_capture"] 
-                for param_name in self.guide_config.p_capture_distribution.param_names
-            }
-            map_estimates['p_capture'] = self.guide_config.p_capture_distribution.get_mode(
-                p_capture_params
-            )
-            
-        # Add mixing weights MAP if mixture model
-        if self.n_components is not None:
-            from .stats import dirichlet_mode
-            map_estimates['mixing_weights'] = dirichlet_mode(self.params['alpha_mixing'])
-        
-        return map_estimates
 
     # --------------------------------------------------------------------------
     # Indexing
@@ -439,11 +284,10 @@ class ScribeResults:
         """
         new_params = dict(params)
         
-        # Identify gene-specific parameters based on guide configuration
-        
-        # Handle r parameters, which are always gene-specific
-        for param_name in self.guide_config.r_distribution.param_names:
-            param_key = f"{param_name}_r"
+        # Handle r parameters (always gene-specific)
+        r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
+        for param_name in r_param_names:
+            param_key = f"r_{param_name}"
             if param_key in params:
                 if self.n_components is not None:
                     # Keep component dimension but subset gene dimension
@@ -453,9 +297,10 @@ class ScribeResults:
                     new_params[param_key] = params[param_key][index]
         
         # Handle gate parameters if present (gene-specific)
-        if self.guide_config.gate_distribution is not None:
-            for param_name in self.guide_config.gate_distribution.param_names:
-                param_key = f"{param_name}_gate"
+        if self.model_config.gate_distribution_guide is not None:
+            gate_param_names = list(self.model_config.gate_distribution_guide.arg_constraints.keys())
+            for param_name in gate_param_names:
+                param_key = f"gate_{param_name}"
                 if param_key in params:
                     if self.n_components is not None:
                         # Keep component dimension but subset gene dimension
@@ -477,9 +322,17 @@ class ScribeResults:
             
         new_posterior_samples = {}
         
+        # Check if we have parameter_samples sub-dictionary
+        if 'parameter_samples' in samples:
+            param_samples = samples['parameter_samples']
+            new_param_samples = self._subset_params(param_samples, index)
+            new_posterior_samples['parameter_samples'] = new_param_samples
+            return new_posterior_samples
+        
         # Process r parameters (always gene-specific)
-        for param_name in self.guide_config.r_distribution.param_names:
-            param_key = f"{param_name}_r"
+        r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
+        for param_name in r_param_names:
+            param_key = f"r_{param_name}"
             if param_key in samples:
                 if self.n_components is not None:
                     # Keep samples and component dimensions, subset gene dimension
@@ -489,9 +342,10 @@ class ScribeResults:
                     new_posterior_samples[param_key] = samples[param_key][..., index]
         
         # Process gate parameters if present (gene-specific)
-        if self.guide_config.gate_distribution is not None:
-            for param_name in self.guide_config.gate_distribution.param_names:
-                param_key = f"{param_name}_gate"
+        if self.model_config.gate_distribution_guide is not None:
+            gate_param_names = list(self.model_config.gate_distribution_guide.arg_constraints.keys())
+            for param_name in gate_param_names:
+                param_key = f"gate_{param_name}"
                 if param_key in samples:
                     if self.n_components is not None:
                         # Keep samples and component dimensions, subset gene dimension
@@ -503,15 +357,17 @@ class ScribeResults:
         # Copy non-gene-specific parameters as is
         
         # p parameters (global)
-        for param_name in self.guide_config.p_distribution.param_names:
-            param_key = f"{param_name}_p"
+        p_param_names = list(self.model_config.p_distribution_guide.arg_constraints.keys())
+        for param_name in p_param_names:
+            param_key = f"p_{param_name}"
             if param_key in samples:
                 new_posterior_samples[param_key] = samples[param_key]
         
         # p_capture parameters (cell-specific)
-        if self.guide_config.p_capture_distribution is not None:
-            for param_name in self.guide_config.p_capture_distribution.param_names:
-                param_key = f"{param_name}_p_capture"
+        if self.model_config.p_capture_distribution_guide is not None:
+            p_capture_param_names = list(self.model_config.p_capture_distribution_guide.arg_constraints.keys())
+            for param_name in p_capture_param_names:
+                param_key = f"p_capture_{param_name}"
                 if param_key in samples:
                     new_posterior_samples[param_key] = samples[param_key]
         
@@ -609,7 +465,6 @@ class ScribeResults:
             n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
             model_type=self.model_type,
             model_config=self.model_config,
-            guide_config=self.guide_config,
             prior_params=self.prior_params,
             obs=self.obs,
             var=new_var,
@@ -620,7 +475,6 @@ class ScribeResults:
             predictive_samples=new_predictive_samples,
             n_components=self.n_components
         )
-
     # --------------------------------------------------------------------------
     # Get model and guide functions
     # --------------------------------------------------------------------------
