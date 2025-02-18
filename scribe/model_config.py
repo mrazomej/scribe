@@ -58,26 +58,26 @@ class ModelConfig:
     base_model: str
        
     # Distribution config for success probability parameter  
-    p_distribution_model: DistributionMeta
-    p_distribution_guide: DistributionMeta
+    p_distribution_model: dist.Distribution
+    p_distribution_guide: dist.Distribution
     p_param_prior: tuple
     p_param_guide: tuple
 
     # Distribution config for dispersion parameter
-    r_distribution_model: DistributionMeta
-    r_distribution_guide: DistributionMeta
+    r_distribution_model: dist.Distribution
+    r_distribution_guide: dist.Distribution
     r_param_prior: tuple
     r_param_guide: tuple
     
     # Optional distribution config for dropout gate parameter
-    gate_distribution_model: Optional[DistributionMeta] = None
-    gate_distribution_guide: Optional[DistributionMeta] = None
+    gate_distribution_model: Optional[dist.Distribution] = None
+    gate_distribution_guide: Optional[dist.Distribution] = None
     gate_param_prior: Optional[tuple] = None
     gate_param_guide: Optional[tuple] = None
 
     # Optional distribution config for capture probability parameter
-    p_capture_distribution_model: Optional[DistributionMeta] = None
-    p_capture_distribution_guide: Optional[DistributionMeta] = None
+    p_capture_distribution_model: Optional[dist.Distribution] = None
+    p_capture_distribution_guide: Optional[dist.Distribution] = None
     p_capture_param_prior: Optional[tuple] = None
     p_capture_param_guide: Optional[tuple] = None
 
@@ -198,27 +198,27 @@ def get_model_config(
     """
     # Set dispersion distribution based on r_dist parameter
     if r_distribution_model == "gamma":
-        r_model = dist.Gamma
+        r_model = dist.Gamma(*r_param_prior)
     elif r_distribution_model == "lognormal":
-        r_model = dist.LogNormal
+        r_model = dist.LogNormal(*r_param_prior)
     else:
         raise ValueError(f"Invalid dispersion distribution: {r_distribution_model}")
 
     if r_distribution_guide == "gamma":
-        r_guide = dist.Gamma
+        r_guide = dist.Gamma(*r_param_guide)
     elif r_distribution_guide == "lognormal":
-        r_guide = dist.LogNormal
+        r_guide = dist.LogNormal(*r_param_guide)
     else:
         raise ValueError(f"Invalid dispersion distribution: {r_distribution_guide}")
 
     # Set success probability distribution
     if p_distribution_model == "beta":
-        p_model = dist.Beta
+        p_model = dist.Beta(*p_param_prior)
     else:
         raise ValueError(f"Invalid success probability distribution: {p_distribution_model}")
 
     if p_distribution_guide == "beta":
-        p_guide = dist.Beta
+        p_guide = dist.Beta(*p_param_guide)
     else:
         raise ValueError(f"Invalid success probability distribution: {p_distribution_guide}")
 
@@ -229,7 +229,7 @@ def get_model_config(
     # Set gate distribution model
     if gate_distribution_model is not None:
         if gate_distribution_model == "beta":
-            gate_model = dist.Beta
+            gate_model = dist.Beta(*gate_param_prior)
         else:
             raise ValueError(f"Invalid gate distribution: {gate_distribution_model}")
     else:
@@ -238,7 +238,7 @@ def get_model_config(
     # Set gate distribution guide
     if gate_distribution_guide is not None:
         if gate_distribution_guide == "beta":
-            gate_guide = dist.Beta
+            gate_guide = dist.Beta(*gate_param_guide)
         else:
             raise ValueError(f"Invalid gate distribution: {gate_distribution_guide}")
     else:
@@ -251,7 +251,7 @@ def get_model_config(
     # Set capture probability distribution model
     if p_capture_distribution_model is not None:
         if p_capture_distribution_model == "beta":
-            p_capture_model = dist.Beta
+            p_capture_model = dist.Beta(*p_capture_param_prior)
         else:
             raise ValueError(f"Invalid capture probability distribution: {p_capture_distribution_model}")
     else:
@@ -260,7 +260,7 @@ def get_model_config(
     # Set capture probability distribution guide
     if p_capture_distribution_guide is not None:
         if p_capture_distribution_guide == "beta":
-            p_capture_guide = dist.Beta
+            p_capture_guide = dist.Beta(*p_capture_param_guide)
         else:
             raise ValueError(f"Invalid capture probability distribution: {p_capture_distribution_guide}")
     else:
@@ -293,9 +293,9 @@ def get_model_config(
 # ------------------------------------------------------------------------------
 
 # Define default distributions
-GAMMA_DEFAULT = (dist.Gamma, (2, 0.1))
-LOGNORMAL_DEFAULT = (dist.LogNormal, (1, 1))
-BETA_DEFAULT = (dist.Beta, (1, 1))
+GAMMA_DEFAULT = (dist.Gamma(2, 0.1), (2, 0.1))
+LOGNORMAL_DEFAULT = (dist.LogNormal(1, 1), (1, 1))
+BETA_DEFAULT = (dist.Beta(1, 1), (1, 1))
 
 # ------------------------------------------------------------------------------
 # Default Model Configurations and Pre-configured Models
