@@ -39,7 +39,7 @@ class BaseScribeResults(ABC):
     
     This class stores the results from SCRIBE's variational inference procedure,
     including model parameters, loss history, and dataset dimensions. It can
-    optionally store metadata from an AnnData object and posterior samples.
+    optionally store metadata from an AnnData object and posterior/predictive samples.
 
     Attributes
     ----------
@@ -53,18 +53,26 @@ class BaseScribeResults(ABC):
         Number of genes in the dataset
     model_type : str
         Type of model used for inference
-    param_spec: Dict[str, Dict]
-        Specification for parameters. Each parameter has a type ('global',
-        'gene-specific', or 'cell-specific') and optionally 'component_specific'
-        for mixture models.
-    cell_metadata : Optional[pd.DataFrame]
+    model_config : ModelConfig
+        Configuration object specifying model architecture and priors
+    guide_config : GuideConfig
+        Configuration object specifying variational family and initialization
+    prior_params : Dict[str, Any]
+        Dictionary of prior parameter values used during inference
+    obs : Optional[pd.DataFrame]
         Cell-level metadata from adata.obs, if provided
-    gene_metadata : Optional[pd.DataFrame]
+    var : Optional[pd.DataFrame]
         Gene-level metadata from adata.var, if provided
     uns : Optional[Dict]
         Unstructured metadata from adata.uns, if provided
+    n_obs : Optional[int]
+        Number of observations (cells), if provided
+    n_vars : Optional[int]
+        Number of variables (genes), if provided
     posterior_samples : Optional[Dict]
-        Samples from the posterior distribution, if generated
+        Samples of parameters from the posterior distribution, if generated
+    predictive_samples : Optional[Dict]
+        Predictive samples generated from the model, if generated
     n_components : Optional[int]
         Number of mixture components, if using a mixture model
     """
@@ -79,12 +87,15 @@ class BaseScribeResults(ABC):
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
-    cell_metadata: Optional[pd.DataFrame] = None
-    gene_metadata: Optional[pd.DataFrame] = None
+    obs: Optional[pd.DataFrame] = None
+    var: Optional[pd.DataFrame] = None
     uns: Optional[Dict] = None
+    n_obs: Optional[int] = None
+    n_vars: Optional[int] = None
     
     # Optional results
     posterior_samples: Optional[Dict] = None
+    predictive_samples: Optional[Dict] = None
     n_components: Optional[int] = None
 
     # --------------------------------------------------------------------------
@@ -131,83 +142,85 @@ class BaseScribeResults(ABC):
     # --------------------------------------------------------------------------
 
     def _validate_parameters(self):
-        """Validate parameters match model configuration."""
-        # Get expected shapes for different parameter types
-        gene_shape = (self.n_genes,)
-        cell_shape = (self.n_cells,)
-        global_shape = ()
+        """Validate parameters match guide configuration."""
+        # Get expected parameter names from guide configuration
         
-        # Adjust shapes for mixture models
-        if hasattr(self, 'n_components') and self.n_components is not None:
-            gene_shape = (self.n_components, self.n_genes)
-            global_shape = (self.n_components,)
-        
-        # Check r parameters
-        r_params = {
-            f"{param}_{var}": self.params[f"{param}_{var}"] 
-            for param in self.model_config.r_distribution.param_names
-            for var in ['r']
-        }
-        for param, value in r_params.items():
-            if value.shape != gene_shape:
+        # Validate r parameters
+        if self.n_components is not None:
+            expected_shape = (self.n_components, self.n_genes)
+        else:
+            expected_shape = (self.n_genes,)
+            
+        # Loop through r parameters from guide config
+        for param_name in self.guide_config.r_distribution.param_names:
+            # Get parameter key
+            param_key = f"{param_name}_r"
+            # Check if parameter exists and has correct shape
+            if param_key not in self.params:
+                raise ValueError(f"Missing parameter {param_key}")
+            if self.params[param_key].shape != expected_shape:
                 raise ValueError(
-                    f"Parameter {param} has shape {value.shape}, "
-                    f"expected {gene_shape}"
+                    f"Parameter {param_key} has shape {self.params[param_key].shape}, "
+                    f"expected {expected_shape}"
+                )
+                
+        # Validate p parameters
+        param_p_shape = ()  # p is global by default
+        # Loop through p parameters from guide config
+        for param_name in self.guide_config.p_distribution.param_names:
+            # Get parameter key
+            param_key = f"{param_name}_p"
+            # Check if parameter exists and has correct shape
+            if param_key not in self.params:
+                raise ValueError(f"Missing parameter {param_key}")
+            if self.params[param_key].shape != param_p_shape:
+                raise ValueError(
+                    f"Parameter {param_key} has shape {self.params[param_key].shape}, "
+                    f"expected {param_p_shape}"
                 )
         
-        # Check p parameters
-        p_params = {
-            f"{param}_{var}": self.params[f"{param}_{var}"] 
-            for param in self.model_config.p_distribution.param_names
-            for var in ['p']
-        }
-        for param, value in p_params.items():
-            if value.shape != global_shape:
-                raise ValueError(
-                    f"Parameter {param} has shape {value.shape}, "
-                    f"expected {global_shape}"
-                )
-        
-        # Check gate parameters for zero-inflated models
-        if self.model_config.gate_distribution is not None:
-            gate_params = {
-                f"{param}_{var}": self.params[f"{param}_{var}"] 
-                for param in self.model_config.gate_distribution.param_names
-                for var in ['gate']
-            }
-            for param, value in gate_params.items():
-                if value.shape != gene_shape:
+        # Validate gate parameters if present
+        if self.guide_config.gate_distribution is not None:
+            # Loop through gate parameters from guide config
+            for param_name in self.guide_config.gate_distribution.param_names:
+                # Get parameter key
+                param_key = f"{param_name}_gate"
+                # Check if parameter exists and has correct shape
+                if param_key not in self.params:
+                    raise ValueError(f"Missing parameter {param_key}")
+                if self.params[param_key].shape != expected_shape:
                     raise ValueError(
-                        f"Parameter {param} has shape {value.shape}, "
-                        f"expected {gene_shape}"
+                        f"Parameter {param_key} has shape {self.params[param_key].shape}, "
+                        f"expected {expected_shape}"
                     )
         
-        # Check capture probability parameters for VCP models
-        if self.model_config.p_capture_distribution is not None:
-            p_capture_params = {
-                f"{param}_{var}": self.params[f"{param}_{var}"] 
-                for param in self.model_config.p_capture_distribution.param_names
-                for var in ['p_capture']
-            }
-            for param, value in p_capture_params.items():
-                if value.shape != cell_shape:
+        # Validate p_capture parameters if present
+        if self.guide_config.p_capture_distribution is not None:
+            # Get expected shape
+            expected_shape = (self.n_cells,)
+            # Loop through p_capture parameters from guide config
+            for param_name in self.guide_config.p_capture_distribution.param_names:
+                # Get parameter key
+                param_key = f"{param_name}_p_capture"
+                # Check if parameter exists and has correct shape
+                if param_key not in self.params:
+                    raise ValueError(f"Missing parameter {param_key}")
+                if self.params[param_key].shape != expected_shape:
                     raise ValueError(
-                        f"Parameter {param} has shape {value.shape}, "
-                        f"expected {cell_shape}"
+                        f"Parameter {param_key} has shape {self.params[param_key].shape}, "
+                        f"expected {expected_shape}"
                     )
-        
-        # Check mixing weights for mixture models
-        if hasattr(self, 'n_components') and self.n_components is not None:
-            if 'alpha_mixing' not in self.params:
-                raise ValueError("Mixture model requires 'alpha_mixing' parameter")
-            if self.params['alpha_mixing'].shape != (self.n_components,):
+                    
+        # If mixture model, validate mixing parameters
+        if self.n_components is not None:
+            # Check if mixing parameter exists and has correct shape
+            if "alpha_mixing" not in self.params:
+                raise ValueError("Missing mixing weight parameter")
+            if self.params["alpha_mixing"].shape != (self.n_components,):
                 raise ValueError(
-                    f"Parameter alpha_mixing has shape {self.params['alpha_mixing'].shape}, "
+                    f"Mixing parameter has shape {self.params['alpha_mixing'].shape}, "
                     f"expected ({self.n_components},)"
                 )
-    # --------------------------------------------------------------------------
-    
-    
 
     # --------------------------------------------------------------------------
     # Create BaseScribeResults from AnnData object
@@ -219,6 +232,8 @@ class BaseScribeResults(ABC):
         adata: "AnnData",
         params: Dict,
         loss_history: jnp.ndarray,
+        model_config: ModelConfig,
+        guide_config: GuideConfig,
         **kwargs
     ):
         """Create ScribeResults from AnnData object."""
@@ -227,20 +242,85 @@ class BaseScribeResults(ABC):
             loss_history=loss_history,
             n_cells=adata.n_obs,
             n_genes=adata.n_vars,
-            cell_metadata=adata.obs.copy(),
-            gene_metadata=adata.var.copy(),
+            model_config=model_config,
+            guide_config=guide_config,
+            obs=adata.obs.copy(),
+            var=adata.var.copy(),
             uns=adata.uns.copy(),
+            n_obs=adata.n_obs,
+            n_vars=adata.n_vars,
             **kwargs
         )
-
+    
     # --------------------------------------------------------------------------
     # Abstract methods for model-specific results
     # --------------------------------------------------------------------------
 
-    @abstractmethod
+    def get_model_args(self) -> Dict:
+        """
+        Get model arguments based on configuration.
+        
+        Returns
+        -------
+        Dict
+            Dictionary containing arguments needed for model initialization
+        """
+        args = {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes,
+        }
+        
+        # Add n_components if needed
+        if self.n_components is not None:
+            args['n_components'] = self.n_components
+        
+        # Extract distribution names
+        r_dist_name = self.model_config.r_distribution.dist_type
+        # Add r distribution configuration
+        if r_dist_name == 'gamma':
+            args['r_prior'] = (
+                self.model_config.r_distribution.init_values['alpha'],
+                self.model_config.r_distribution.init_values['beta']
+            )
+        elif r_dist_name == 'lognormal':
+            args['r_prior'] = (
+                self.model_config.r_distribution.init_values['mu'],
+                self.model_config.r_distribution.init_values['sigma']
+            )
+        
+        # Add p distribution configuration
+        args['p_prior'] = (
+            self.model_config.p_distribution.init_values['alpha'],
+            self.model_config.p_distribution.init_values['beta']
+        )
+        
+        # Add gate configuration if present
+        if self.model_config.gate_distribution is not None:
+            args['gate_prior'] = (
+                self.model_config.gate_distribution.init_values['alpha'],
+                self.model_config.gate_distribution.init_values['beta']
+            )
+        
+        # Add p_capture configuration if present
+        if self.model_config.p_capture_distribution is not None:
+            args['p_capture_prior'] = (
+                self.model_config.p_capture_distribution.init_values['alpha'],
+                self.model_config.p_capture_distribution.init_values['beta']
+            )
+        
+        # Add mixing configuration if mixture model
+        if self.n_components is not None:
+            args['mixing_prior'] = 1.0  # Default concentration
+        
+        return args
+
+    # --------------------------------------------------------------------------
+    # Get distributions using configs
+    # --------------------------------------------------------------------------
+
     def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
-        Get the variational distributions for all parameters.
+        Get the variational distributions for all parameters using guide config.
         
         Parameters
         ----------
@@ -254,25 +334,105 @@ class BaseScribeResults(ABC):
         Dict[str, Any]
             Dictionary mapping parameter names to their distributions
         """
-        pass
+        if backend not in ["scipy", "numpyro"]:
+            raise ValueError(f"Invalid backend: {backend}")
+            
+        dist_method = "get_scipy_dist" if backend == "scipy" else "get_numpyro_dist"
+        
+        # Extract parameter prefixes and actual values
+        r_params = {
+            param_name: self.params[f"{param_name}_r"] 
+            for param_name in self.guide_config.r_distribution.param_names
+        }
+        p_params = {
+            param_name: self.params[f"{param_name}_p"]
+            for param_name in self.guide_config.p_distribution.param_names  
+        }
+        
+        distributions = {
+            'r': getattr(self.guide_config.r_distribution, dist_method)(r_params),
+            'p': getattr(self.guide_config.p_distribution, dist_method)(p_params)
+        }
+        
+        # Add gate distribution if present
+        if self.guide_config.gate_distribution is not None:
+            gate_params = {
+                param_name: self.params[f"{param_name}_gate"]
+                for param_name in self.guide_config.gate_distribution.param_names
+            }
+            distributions['gate'] = getattr(
+                self.guide_config.gate_distribution, dist_method
+            )(gate_params)
+            
+        # Add p_capture distribution if present
+        if self.guide_config.p_capture_distribution is not None:
+            p_capture_params = {
+                param_name: self.params[f"{param_name}_p_capture"]
+                for param_name in self.guide_config.p_capture_distribution.param_names
+            }
+            distributions['p_capture'] = getattr(
+                self.guide_config.p_capture_distribution, dist_method
+            )(p_capture_params)
+            
+        # Add mixing weights if mixture model
+        if self.n_components is not None:
+            if backend == "scipy":
+                distributions['mixing_weights'] = stats.dirichlet(
+                    self.params['alpha_mixing'])
+            else:
+                distributions['mixing_weights'] = dist.Dirichlet(
+                    self.params['alpha_mixing'])
+        
+        return distributions
 
     # --------------------------------------------------------------------------
 
-    @abstractmethod
     def get_map(self) -> Dict[str, jnp.ndarray]:
         """
-        Get the maximum a posteriori (MAP) estimates from the variational
-        posterior.
+        Get the maximum a posteriori (MAP) estimates from the variational posterior.
         """
-        pass
+        # Extract parameter prefixes and actual values
+        r_params = {
+            param_name: self.params[f"{param_name}_r"] 
+            for param_name in self.guide_config.r_distribution.param_names
+        }
+        p_params = {
+            param_name: self.params[f"{param_name}_p"]
+            for param_name in self.guide_config.p_distribution.param_names  
+        }
+        
+        map_estimates = {
+            'r': self.guide_config.r_distribution.get_mode(r_params),
+            'p': self.guide_config.p_distribution.get_mode(p_params)
+        }
+        
+        # Add gate MAP if present
+        if self.guide_config.gate_distribution is not None:
+            gate_params = {
+                param_name: self.params[f"{param_name}_gate"]
+                for param_name in self.guide_config.gate_distribution.param_names
+            }
+            map_estimates['gate'] = self.guide_config.gate_distribution.get_mode(gate_params)
+            
+        # Add p_capture MAP if present
+        if self.guide_config.p_capture_distribution is not None:
+            p_capture_params = {
+                param_name: self.params[f"{param_name}_p_capture"] 
+                for param_name in self.guide_config.p_capture_distribution.param_names
+            }
+            map_estimates['p_capture'] = self.guide_config.p_capture_distribution.get_mode(
+                p_capture_params
+            )
+            
+        # Add mixing weights MAP if mixture model
+        if self.n_components is not None:
+            from .stats import dirichlet_mode
+            map_estimates['mixing_weights'] = dirichlet_mode(self.params['alpha_mixing'])
+        
+        return map_estimates
 
     # --------------------------------------------------------------------------
-
-    @abstractmethod
-    def get_model_args(self) -> Dict:
-        """Get the model and guide arguments for this model type."""
-        pass
-
+    # Indexing
     # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
@@ -281,15 +441,30 @@ class BaseScribeResults(ABC):
         """
         new_params = dict(params)
         
-        # Subset only gene-specific parameters
-        for param_name, spec in self.param_spec.items():
-            if spec['type'] == 'gene-specific':
-                if spec.get('component_specific', False):
+        # Identify gene-specific parameters based on guide configuration
+        
+        # Handle r parameters, which are always gene-specific
+        for param_name in self.guide_config.r_distribution.param_names:
+            param_key = f"{param_name}_r"
+            if param_key in params:
+                if self.n_components is not None:
                     # Keep component dimension but subset gene dimension
-                    new_params[param_name] = params[param_name][..., index]
+                    new_params[param_key] = params[param_key][..., index]
                 else:
                     # Just subset gene dimension
-                    new_params[param_name] = params[param_name][index]
+                    new_params[param_key] = params[param_key][index]
+        
+        # Handle gate parameters if present (gene-specific)
+        if self.guide_config.gate_distribution is not None:
+            for param_name in self.guide_config.gate_distribution.param_names:
+                param_key = f"{param_name}_gate"
+                if param_key in params:
+                    if self.n_components is not None:
+                        # Keep component dimension but subset gene dimension
+                        new_params[param_key] = params[param_key][..., index]
+                    else:
+                        # Just subset gene dimension
+                        new_params[param_key] = params[param_key][index]
         
         return new_params
 
@@ -301,29 +476,47 @@ class BaseScribeResults(ABC):
         """
         new_posterior_samples = {}
         
-        if "parameter_samples" in samples:
-            param_samples = samples["parameter_samples"]
-            new_param_samples = {}
-            
-            # Use param_spec to determine how to subset each parameter
-            for param_name, spec in self.param_spec.items():
-                if param_name in param_samples:
-                    if spec['type'] == 'gene-specific':
-                        if spec.get('component_specific', False):
-                            # Keep samples and component dimensions, subset gene dimension
-                            new_param_samples[param_name] = param_samples[param_name][..., index]
-                        else:
-                            # Keep samples dimension, subset gene dimension
-                            new_param_samples[param_name] = param_samples[param_name][..., index]
-                    else:
-                        # Keep non-gene-specific parameters as is
-                        new_param_samples[param_name] = param_samples[param_name]
-            
-            new_posterior_samples["parameter_samples"] = new_param_samples
+        # Process r parameters (always gene-specific)
+        for param_name in self.guide_config.r_distribution.param_names:
+            param_key = f"{param_name}_r"
+            if param_key in samples:
+                if self.n_components is not None:
+                    # Keep samples and component dimensions, subset gene dimension
+                    new_posterior_samples[param_key] = samples[param_key][..., index]
+                else:
+                    # Keep samples dimension, subset gene dimension
+                    new_posterior_samples[param_key] = samples[param_key][..., index]
         
-        if "predictive_samples" in samples:
-            # Keep samples and cells dimensions, subset gene dimension
-            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
+        # Process gate parameters if present (gene-specific)
+        if self.guide_config.gate_distribution is not None:
+            for param_name in self.guide_config.gate_distribution.param_names:
+                param_key = f"{param_name}_gate"
+                if param_key in samples:
+                    if self.n_components is not None:
+                        # Keep samples and component dimensions, subset gene dimension
+                        new_posterior_samples[param_key] = samples[param_key][..., index]
+                    else:
+                        # Keep samples dimension, subset gene dimension
+                        new_posterior_samples[param_key] = samples[param_key][..., index]
+        
+        # Copy non-gene-specific parameters as is
+        
+        # p parameters (global)
+        for param_name in self.guide_config.p_distribution.param_names:
+            param_key = f"{param_name}_p"
+            if param_key in samples:
+                new_posterior_samples[param_key] = samples[param_key]
+        
+        # p_capture parameters (cell-specific)
+        if self.guide_config.p_capture_distribution is not None:
+            for param_name in self.guide_config.p_capture_distribution.param_names:
+                param_key = f"{param_name}_p_capture"
+                if param_key in samples:
+                    new_posterior_samples[param_key] = samples[param_key]
+        
+        # Mixing weights if present
+        if self.n_components is not None and "alpha_mixing" in samples:
+            new_posterior_samples["alpha_mixing"] = samples["alpha_mixing"]
         
         return new_posterior_samples
 
@@ -366,19 +559,27 @@ class BaseScribeResults(ABC):
         new_params = self._subset_params(self.params, index)
         
         # Create new metadata if available
-        new_gene_metadata = self.gene_metadata.iloc[index] if self.gene_metadata is not None else None
+        new_var = self.var.iloc[index] if self.var is not None else None
 
         # Create new posterior samples if available
         new_posterior_samples = None
         if self.posterior_samples is not None:
-            new_posterior_samples = self._subset_posterior_samples(self.posterior_samples, index)
+            new_posterior_samples = self._subset_posterior_samples(
+                self.posterior_samples, index
+            )
+            
+        # Create new predictive samples if available
+        new_predictive_samples = None
+        if self.predictive_samples is not None:
+            new_predictive_samples = self.predictive_samples[..., index]
             
         # Let subclass create its own instance with additional attributes
         return self._create_subset(
             index=index,
             new_params=new_params,
-            new_gene_metadata=new_gene_metadata,
-            new_posterior_samples=new_posterior_samples
+            new_var=new_var,
+            new_posterior_samples=new_posterior_samples,
+            new_predictive_samples=new_predictive_samples
         )
 
     # --------------------------------------------------------------------------
@@ -388,8 +589,9 @@ class BaseScribeResults(ABC):
         self,
         index,
         new_params: Dict,
-        new_gene_metadata: Optional[pd.DataFrame],
-        new_posterior_samples: Optional[Dict]
+        new_var: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict],
+        new_predictive_samples: Optional[Dict]
     ) -> 'BaseScribeResults':
         """Create a new instance with a subset of genes."""
         pass
@@ -400,7 +602,7 @@ class BaseScribeResults(ABC):
 
     @abstractmethod
     def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the model and guide functions for this model type."""
+        """Get the model and guide functions based on model and guide configs."""
         pass
 
     # --------------------------------------------------------------------------
@@ -424,13 +626,13 @@ class BaseScribeResults(ABC):
         custom_args: Optional[Dict] = None,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
-        # Get the guide function for this model type
+        # Get the guide function 
         _, guide = self.get_model_and_guide()
         
-        # Get the model arguments
+        # Get the model arguments (already updated to use configs)
         model_args = self.get_model_args()
 
-        # Add custom arguments to model_args if provided
+        # Add custom arguments if provided
         if custom_args is not None:
             model_args.update(custom_args)
         
@@ -445,40 +647,43 @@ class BaseScribeResults(ABC):
         
         # Store samples if requested
         if store_samples:
-            if self.posterior_samples is not None:
-                self.posterior_samples['parameter_samples'] = posterior_samples
-            else:
-                self.posterior_samples = {'parameter_samples': posterior_samples}
+            self.posterior_samples = posterior_samples
             
         return posterior_samples
-    
+
     # --------------------------------------------------------------------------
 
     def get_predictive_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         batch_size: Optional[int] = None,
+        store_samples: bool = True,
         custom_args: Optional[Dict] = None,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
-        # Get the model function
+        # Get the model and guide functions
         model, _ = self.get_model_and_guide()
-        
         # Get the model arguments
         model_args = self.get_model_args()
 
-        # Add custom arguments to model_args if provided
+        # Add custom arguments if provided
         if custom_args is not None:
             model_args.update(custom_args)
         
-        # Generate samples
-        return generate_predictive_samples(
+        # Generate predictive samples
+        predictive_samples = generate_predictive_samples(
             model,
-            self.posterior_samples["parameter_samples"],
+            self.posterior_samples,
             model_args,
             rng_key=rng_key,
             batch_size=batch_size
         )
+        
+        # Store samples if requested
+        if store_samples:
+            self.predictive_samples = predictive_samples
+            
+        return predictive_samples
 
     # --------------------------------------------------------------------------
 
@@ -494,51 +699,49 @@ class BaseScribeResults(ABC):
         """Generate posterior predictive check samples."""
         # Get the model and guide functions
         model, guide = self.get_model_and_guide()
-        
         # Get the model arguments
         model_args = self.get_model_args()
 
-        # Add custom arguments to model_args if provided
+        # Add custom arguments if provided
         if custom_args is not None:
             model_args.update(custom_args)
         
         # Check if we need to resample parameters
         need_params = (
             resample_parameters or 
-            self.posterior_samples is None or 
-            'parameter_samples' not in self.posterior_samples
+            self.posterior_samples is None
         )
-        
+
+        # Generate PPC samples
         if need_params:
-            # Generate both parameter and predictive samples
-            samples = generate_ppc_samples(
-                model,
-                guide,
-                self.params,
-                model_args,
+            # Sample parameters and generate predictive samples
+            posterior_samples = self.get_posterior_samples(
                 rng_key=rng_key,
                 n_samples=n_samples,
-                batch_size=batch_size
+                store_samples=store_samples,
+                custom_args=custom_args
+            )
+            _, key_pred = random.split(rng_key)
+            predictive_samples = self.get_predictive_samples(
+                rng_key=key_pred,
+                batch_size=batch_size,
+                store_samples=store_samples,
+                custom_args=custom_args
             )
         else:
-            # Split RNG key for predictive sampling only
+            # Just generate predictive samples using existing parameters
             _, key_pred = random.split(rng_key)
-            # Use existing parameter samples and generate new predictive samples
-            samples = {
-                'parameter_samples': self.posterior_samples['parameter_samples'],
-                'predictive_samples': generate_predictive_samples(
-                    model,
-                    self.posterior_samples['parameter_samples'],
-                    model_args,
-                    rng_key=key_pred,
-                    batch_size=batch_size
-                )
-            }
-        
-        if store_samples:
-            self.posterior_samples = samples
+            predictive_samples = self.get_predictive_samples(
+                rng_key=key_pred,
+                batch_size=batch_size,
+                store_samples=store_samples,
+                custom_args=custom_args
+            )
             
-        return samples
+        return {
+            'posterior_samples': self.posterior_samples,
+            'predictive_samples': self.predictive_samples
+        }
 
 # ------------------------------------------------------------------------------
 # Base classes for standard models
