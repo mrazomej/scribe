@@ -495,25 +495,49 @@ def get_default_guide_config(
 # ------------------------------------------------------------------------------
 
 # NBDM model with gamma distribution for dispersion
-NBDM_GAMMA = get_default_model_config("nbdm", "gamma")
-
+NBDM_GAMMA = (
+    get_default_model_config("nbdm", "gamma"),
+    get_default_guide_config(get_default_model_config("nbdm", "gamma"))
+)
 # NBDM model with lognormal distribution for dispersion
-NBDM_LOGNORMAL = get_default_model_config("nbdm", "lognormal")
+NBDM_LOGNORMAL = (
+    get_default_model_config("nbdm", "lognormal"),
+    get_default_guide_config(get_default_model_config("nbdm", "lognormal"))
+)
 
 # ZINB model with gamma distribution for dispersion
-ZINB_GAMMA = get_default_model_config("zinb", "gamma")
+ZINB_GAMMA = (
+    get_default_model_config("zinb", "gamma"),
+    get_default_guide_config(get_default_model_config("zinb", "gamma"))
+)
 
 # ZINB model with lognormal distribution for dispersion
-ZINB_LOGNORMAL = get_default_model_config("zinb", "lognormal")
+ZINB_LOGNORMAL = (
+    get_default_model_config("zinb", "lognormal"),
+    get_default_guide_config(get_default_model_config("zinb", "lognormal"))
+)
 
 # NBVCP model with gamma distribution for dispersion
-NBVCP_GAMMA = get_default_model_config("nbvcp", "gamma")
+NBVCP_GAMMA = (
+    get_default_model_config("nbvcp", "gamma"),
+    get_default_guide_config(get_default_model_config("nbvcp", "gamma"))
+)
 
 # NBVCP model with lognormal distribution for dispersion
-NBVCP_LOGNORMAL = get_default_model_config("nbvcp", "lognormal")
+NBVCP_LOGNORMAL = (
+    get_default_model_config("nbvcp", "lognormal"),
+    get_default_guide_config(get_default_model_config("nbvcp", "lognormal"))
+)
 
 # ZINBVCP model with gamma distribution for dispersion
-ZINBVCP_GAMMA = get_default_model_config("zinbvcp", "gamma")
+ZINBVCP_GAMMA = (
+    get_default_model_config("zinbvcp", "gamma"),
+    get_default_guide_config(get_default_model_config("zinbvcp", "gamma"))
+)
 
 # ZINBVCP model with lognormal distribution for dispersion
-ZINBVCP_LOGNORMAL = get_default_model_config("zinbvcp", "lognormal")
+ZINBVCP_LOGNORMAL = (
+    get_default_model_config("zinbvcp", "lognormal"),
+    get_default_guide_config(get_default_model_config("zinbvcp", "lognormal"))
+)
+
