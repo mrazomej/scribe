@@ -14,9 +14,20 @@ from jax import random, jit, vmap
 
 import scipy.stats as stats
 
-from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
-from .stats import fit_dirichlet_minka, beta_mode, gamma_mode, dirichlet_mode, lognorm_mode
-from .distributions import ModelConfig
+from .sampling import (
+    sample_variational_posterior, 
+    generate_predictive_samples, 
+    generate_ppc_samples
+)
+from .stats import (
+    fit_dirichlet_minka, 
+    beta_mode, 
+    gamma_mode, 
+    dirichlet_mode, 
+    lognorm_mode
+)
+from .distributions import ModelConfig, GuideConfig
+
 # ------------------------------------------------------------------------------
 # Base class for inference results
 # ------------------------------------------------------------------------------
@@ -64,6 +75,7 @@ class BaseScribeResults(ABC):
     n_genes: int
     model_type: str
     model_config: ModelConfig
+    guide_config: GuideConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
@@ -73,88 +85,129 @@ class BaseScribeResults(ABC):
     
     # Optional results
     posterior_samples: Optional[Dict] = None
+    n_components: Optional[int] = None
 
     # --------------------------------------------------------------------------
 
     def __post_init__(self):
         """Validate model configuration and parameters."""
+        # Set n_components from model_config if not explicitly provided
+        if self.n_components is None and self.model_config.n_components is not None:
+            self.n_components = self.model_config.n_components
+            
         self._validate_model_config()
+        self._validate_guide_config()
         self._validate_parameters()
 
     # --------------------------------------------------------------------------
+
+    def _validate_model_config(self):
+        """Validate model configuration matches model type."""
+        # Validate base model
+        if self.model_config.base_model != self.model_type:
+            raise ValueError(
+                f"Model type '{self.model_type}' does not match config "
+                f"base model '{self.model_config.base_model}'"
+            )
+        
+        # Validate n_components consistency
+        if self.n_components is not None:
+            if not self.model_type.endswith('_mix'):
+                raise ValueError(
+                    f"Model type '{self.model_type}' is not a mixture model "
+                    f"but n_components={self.n_components} was specified"
+                )
+            if self.model_config.n_components != self.n_components:
+                raise ValueError(
+                    f"n_components mismatch: {self.n_components} vs "
+                    f"{self.model_config.n_components} in model_config"
+                )
+    # --------------------------------------------------------------------------
     
-    def _validate_param_spec(self):
-        """
-        Validate that parameter specifications match actual parameters.
+    def _validate_guide_config(self):
+        """Validate guide configuration is compatible with model config."""
+        self.guide_config.validate_with_model(self.model_config)
+
+    # --------------------------------------------------------------------------
+
+    def _validate_parameters(self):
+        """Validate parameters match model configuration."""
+        # Get expected shapes for different parameter types
+        gene_shape = (self.n_genes,)
+        cell_shape = (self.n_cells,)
+        global_shape = ()
         
-        This method checks:
-            1. All parameters have specifications and all specified parameters
-               exist
-            2. Parameter types are valid
-            3. Parameter shapes match their specification
-        """
-        # Check that all parameters have specifications
-        for param_name in self.params.keys():
-            if param_name not in self.param_spec:
+        # Adjust shapes for mixture models
+        if hasattr(self, 'n_components') and self.n_components is not None:
+            gene_shape = (self.n_components, self.n_genes)
+            global_shape = (self.n_components,)
+        
+        # Check r parameters
+        r_params = {
+            f"{param}_{var}": self.params[f"{param}_{var}"] 
+            for param in self.model_config.r_distribution.param_names
+            for var in ['r']
+        }
+        for param, value in r_params.items():
+            if value.shape != gene_shape:
                 raise ValueError(
-                    f"Parameter {param_name} found in params but not in param_spec"
+                    f"Parameter {param} has shape {value.shape}, "
+                    f"expected {gene_shape}"
                 )
         
-        # Check that all specified parameters exist
-        for param_name in self.param_spec.keys():
-            if param_name not in self.params:
+        # Check p parameters
+        p_params = {
+            f"{param}_{var}": self.params[f"{param}_{var}"] 
+            for param in self.model_config.p_distribution.param_names
+            for var in ['p']
+        }
+        for param, value in p_params.items():
+            if value.shape != global_shape:
                 raise ValueError(
-                    f"Parameter {param_name} specified but not found in params"
+                    f"Parameter {param} has shape {value.shape}, "
+                    f"expected {global_shape}"
                 )
-            
-            # Get specification and validate type
-            spec = self.param_spec[param_name]
-            if 'type' not in spec:
-                raise ValueError(f"No type specified for parameter {param_name}")
-            
-            if spec['type'] not in ['global', 'gene-specific', 'cell-specific']:
-                raise ValueError(
-                    f"Invalid parameter type {spec['type']} for {param_name}"
-                )
-            
-            # Get parameter shape
-            param_shape = self.params[param_name].shape
-            
-            # Check if parameter should be component-specific
-            if spec.get('component_specific', False):
-                if isinstance(self, MixtureResults):
-                    # Validate component dimension is first
-                    if param_shape[0] != self.n_components:
-                        raise ValueError(
-                            f"Component-specific parameter {param_name} should have "
-                            f"n_components ({self.n_components}) as first dimension"
-                        )
-                    # For gene/cell specific params, check last dimension
-                    if spec['type'] == 'gene-specific':
-                        if param_shape[-1] != self.n_genes:
-                            raise ValueError(f"Gene dimension mismatch for {param_name}")
-                    elif spec['type'] == 'cell-specific':
-                        if param_shape[-1] != self.n_cells:
-                            raise ValueError(f"Cell dimension mismatch for {param_name}")
-                else:
+        
+        # Check gate parameters for zero-inflated models
+        if self.model_config.gate_distribution is not None:
+            gate_params = {
+                f"{param}_{var}": self.params[f"{param}_{var}"] 
+                for param in self.model_config.gate_distribution.param_names
+                for var in ['gate']
+            }
+            for param, value in gate_params.items():
+                if value.shape != gene_shape:
                     raise ValueError(
-                        f"Parameter {param_name} specified as component-specific "
-                        f"but this is not a mixture model"
+                        f"Parameter {param} has shape {value.shape}, "
+                        f"expected {gene_shape}"
                     )
-            else:
-                # Regular validation for non-component parameters
-                if spec['type'] == 'gene-specific':
-                    if param_shape[-1] != self.n_genes:
-                        raise ValueError(
-                            f"Gene-specific parameter {param_name} should have "
-                            f"n_genes ({self.n_genes}) as last dimension"
-                        )
-                elif spec['type'] == 'cell-specific':
-                    if param_shape[-1] != self.n_cells:
-                        raise ValueError(
-                            f"Cell-specific parameter {param_name} should have "
-                            f"n_cells ({self.n_cells}) as last dimension"
-                        )
+        
+        # Check capture probability parameters for VCP models
+        if self.model_config.p_capture_distribution is not None:
+            p_capture_params = {
+                f"{param}_{var}": self.params[f"{param}_{var}"] 
+                for param in self.model_config.p_capture_distribution.param_names
+                for var in ['p_capture']
+            }
+            for param, value in p_capture_params.items():
+                if value.shape != cell_shape:
+                    raise ValueError(
+                        f"Parameter {param} has shape {value.shape}, "
+                        f"expected {cell_shape}"
+                    )
+        
+        # Check mixing weights for mixture models
+        if hasattr(self, 'n_components') and self.n_components is not None:
+            if 'alpha_mixing' not in self.params:
+                raise ValueError("Mixture model requires 'alpha_mixing' parameter")
+            if self.params['alpha_mixing'].shape != (self.n_components,):
+                raise ValueError(
+                    f"Parameter alpha_mixing has shape {self.params['alpha_mixing'].shape}, "
+                    f"expected ({self.n_components},)"
+                )
+    # --------------------------------------------------------------------------
+    
+    
 
     # --------------------------------------------------------------------------
     # Create BaseScribeResults from AnnData object
