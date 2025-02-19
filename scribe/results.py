@@ -532,19 +532,26 @@ class ScribeResults:
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
         store_samples: bool = True,
-        custom_args: Optional[Dict] = None,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
         # Get the guide function 
         _, guide = self.get_model_and_guide()
         
-        # Get the model arguments (already updated to use configs)
-        model_args = self.get_model_args()
-
-        # Add custom arguments if provided
-        if custom_args is not None:
-            model_args.update(custom_args)
+        # Prepare base model arguments
+        model_args = {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes,
+            'model_config': self.model_config
+        }
         
+        # Add specialized arguments based on model type
+        if self.model_type == "nbdm":
+            model_args['total_counts'] = None  # Will be filled during sampling
+            
+        # Add components if mixture model
+        if self.n_components is not None:
+            model_args['n_components'] = self.n_components
+
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
             guide,
@@ -567,17 +574,31 @@ class ScribeResults:
         rng_key: random.PRNGKey = random.PRNGKey(42),
         batch_size: Optional[int] = None,
         store_samples: bool = True,
-        custom_args: Optional[Dict] = None,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
         # Get the model and guide functions
         model, _ = self.get_model_and_guide()
-        # Get the model arguments
-        model_args = self.get_model_args()
-
-        # Add custom arguments if provided
-        if custom_args is not None:
-            model_args.update(custom_args)
+        
+        # Prepare base model arguments
+        model_args = {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes,
+            'model_config': self.model_config,
+        }
+        
+        # Add specialized arguments based on model type
+        if self.model_type == "nbdm":
+            model_args['total_counts'] = None  # Will be filled during sampling
+            
+        # Add components if mixture model
+        if self.n_components is not None:
+            model_args['n_components'] = self.n_components
+        
+        # Check if posterior samples exist
+        if self.posterior_samples is None:
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
         
         # Generate predictive samples
         predictive_samples = generate_predictive_samples(
@@ -603,55 +624,36 @@ class ScribeResults:
         batch_size: Optional[int] = None,
         store_samples: bool = True,
         resample_parameters: bool = False,
-        custom_args: Optional[Dict] = None,
     ) -> Dict:
         """Generate posterior predictive check samples."""
-        # Get the model and guide functions
-        model, guide = self.get_model_and_guide()
-        # Get the model arguments
-        model_args = self.get_model_args()
-
-        # Add custom arguments if provided
-        if custom_args is not None:
-            model_args.update(custom_args)
-        
         # Check if we need to resample parameters
         need_params = (
             resample_parameters or 
             self.posterior_samples is None
         )
 
-        # Generate PPC samples
+        # Generate posterior samples if needed
         if need_params:
             # Sample parameters and generate predictive samples
-            posterior_samples = self.get_posterior_samples(
+            self.get_posterior_samples(
                 rng_key=rng_key,
                 n_samples=n_samples,
                 store_samples=store_samples,
-                custom_args=custom_args
             )
-            _, key_pred = random.split(rng_key)
-            predictive_samples = self.get_predictive_samples(
-                rng_key=key_pred,
-                batch_size=batch_size,
-                store_samples=store_samples,
-                custom_args=custom_args
-            )
-        else:
-            # Just generate predictive samples using existing parameters
-            _, key_pred = random.split(rng_key)
-            predictive_samples = self.get_predictive_samples(
-                rng_key=key_pred,
-                batch_size=batch_size,
-                store_samples=store_samples,
-                custom_args=custom_args
-            )
+
+        # Generate predictive samples using existing parameters
+        _, key_pred = random.split(rng_key)
+
+        self.get_predictive_samples(
+            rng_key=key_pred,
+            batch_size=batch_size,
+            store_samples=store_samples,
+        )
             
         return {
             'parameter_samples': self.posterior_samples,
             'predictive_samples': self.predictive_samples
         }
-
     # --------------------------------------------------------------------------
     # Compute log likelihood methods 
     # --------------------------------------------------------------------------
