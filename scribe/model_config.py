@@ -83,6 +83,12 @@ class ModelConfig:
 
     # Optional number of mixture components
     n_components: Optional[int] = None
+
+    # Optional distribution for mixing weights
+    mixing_distribution_model: Optional[dist.Distribution] = None
+    mixing_distribution_guide: Optional[dist.Distribution] = None
+    mixing_param_prior: Optional[tuple] = None
+    mixing_param_guide: Optional[tuple] = None
     
     def __post_init__(self):
         # Define set of valid model types
@@ -144,7 +150,11 @@ def get_model_config(
     p_capture_distribution_guide: Optional[str] = None,
     p_capture_param_prior: Optional[tuple] = None,
     p_capture_param_guide: Optional[tuple] = None,
-    n_components: Optional[int] = None
+    n_components: Optional[int] = None,
+    mixing_distribution_model: Optional[str] = None,
+    mixing_distribution_guide: Optional[str] = None,
+    mixing_param_prior: Optional[tuple] = None,
+    mixing_param_guide: Optional[tuple] = None
 ) -> ModelConfig:
     """
     Create a ModelConfig with specified distribution configurations and priors.
@@ -274,6 +284,24 @@ def get_model_config(
     else:
         p_capture_guide = None
 
+    # Set mixing distribution model
+    if mixing_distribution_model is not None:
+        if mixing_distribution_model == "dirichlet":
+            mixing_model = dist.Dirichlet(*mixing_param_prior)
+        else:
+            raise ValueError(f"Invalid mixing distribution: {mixing_distribution_model}")
+    else:
+        mixing_model = None
+
+    # Set mixing distribution guide
+    if mixing_distribution_guide is not None:
+        if mixing_distribution_guide == "dirichlet":
+            mixing_guide = dist.Dirichlet(*mixing_param_guide)
+        else:
+            raise ValueError(f"Invalid mixing distribution: {mixing_distribution_guide}")
+    else:
+        mixing_guide = None
+
     # Return model configuration
     return ModelConfig(
         base_model=base_model,
@@ -293,7 +321,11 @@ def get_model_config(
         p_capture_distribution_guide=p_capture_guide,
         p_capture_param_prior=p_capture_param_prior,
         p_capture_param_guide=p_capture_param_guide,
-        n_components=n_components
+        n_components=n_components,
+        mixing_distribution_model=mixing_model,
+        mixing_distribution_guide=mixing_guide,
+        mixing_param_prior=mixing_param_prior,
+        mixing_param_guide=mixing_param_guide
     )
 
 # ------------------------------------------------------------------------------

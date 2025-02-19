@@ -3,7 +3,7 @@ Results classes for SCRIBE inference.
 """
 
 from typing import Dict, Optional, Union, Callable, Tuple, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -275,7 +275,7 @@ class ScribeResults:
         }
 
     # --------------------------------------------------------------------------
-    # Indexing
+    # Indexing by genes
     # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
@@ -372,9 +372,13 @@ class ScribeResults:
                     new_posterior_samples[param_key] = samples[param_key]
         
         # Mixing weights if present
-        if self.n_components is not None and "alpha_mixing" in samples:
-            new_posterior_samples["alpha_mixing"] = samples["alpha_mixing"]
-        
+        if self.model_config.mixing_distribution_guide is not None:
+            mixing_param_names = list(self.model_config.mixing_distribution_guide.arg_constraints.keys())
+            for param_name in mixing_param_names:
+                param_key = f"mixing_{param_name}"
+                if param_key in samples:
+                    new_posterior_samples[param_key] = samples[param_key]
+
         return new_posterior_samples
 
     # --------------------------------------------------------------------------
@@ -475,6 +479,190 @@ class ScribeResults:
             predictive_samples=new_predictive_samples,
             n_components=self.n_components
         )
+    
+    # --------------------------------------------------------------------------
+    # Indexing by component
+    # --------------------------------------------------------------------------
+
+    def get_component(self, component_index):
+        """
+        Create a view of the results selecting a specific mixture component.
+        
+        This method returns a new ScribeResults object that contains parameter
+        values for the specified component, allowing for further gene-based
+        indexing. Only applicable to mixture models.
+        
+        Parameters
+        ----------
+        component_index : int
+            Index of the component to select
+        
+        Returns
+        -------
+        ScribeResults
+            A new ScribeResults object with parameters for the selected component
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Component view only applies to mixture models with multiple components"
+            )
+            
+        # Check if component_index is valid
+        if component_index < 0 or component_index >= self.n_components:
+            raise ValueError(
+                f"Component index {component_index} out of range [0, {self.n_components-1}]"
+            )
+        
+        # Create new params dict with component subset
+        new_params = dict(self.params)
+        
+        # Handle r parameters (always gene-specific)
+        r_param_names = list(
+            self.model_config.r_distribution_guide.arg_constraints.keys()
+        )
+        # Loop through r parameters
+        for param_name in r_param_names:
+            # Create parameter key
+            param_key = f"r_{param_name}"
+            # Check if parameter is present
+            if param_key in self.params:
+                # Select component dimension
+                new_params[param_key] = self.params[param_key][component_index]
+        
+        # Handle gate parameters if present (gene-specific)
+        if self.model_config.gate_distribution_guide is not None:
+            # Get gate parameter names
+            gate_param_names = list(
+                self.model_config.gate_distribution_guide.arg_constraints.keys()
+            )
+            # Loop through gate parameters
+            for param_name in gate_param_names:
+                # Create parameter key
+                param_key = f"gate_{param_name}"
+                # Check if parameter is present
+                if param_key in self.params:
+                    # Select component dimension
+                    new_params[param_key] = self.params[param_key][component_index]
+        
+        # Create new posterior samples if available
+        new_posterior_samples = None
+        if self.posterior_samples is not None:
+            new_posterior_samples = self._subset_posterior_samples_component(
+                self.posterior_samples, component_index
+            )
+        
+        # Create new predictive samples if available - this is more complex
+        # as we would need to condition on the component
+        new_predictive_samples = None
+        
+        # Create new instance with component subset
+        return self._create_component_subset(
+            component_index=component_index,
+            new_params=new_params,
+            new_posterior_samples=new_posterior_samples,
+            new_predictive_samples=new_predictive_samples
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _subset_posterior_samples_component(self, samples: Dict, component_index) -> Dict:
+        """
+        Create a new posterior samples dictionary for the given component index.
+        """
+        if samples is None:
+            return None
+            
+        new_posterior_samples = {}
+        
+        # Check if we have parameter_samples sub-dictionary
+        if 'parameter_samples' in samples:
+            param_samples = samples['parameter_samples']
+            new_param_samples = {}
+            
+            # Handle r parameters (component and gene-specific)
+            if 'r' in param_samples:
+                # Shape is typically (n_samples, n_components, n_genes)
+                # Select component dimension to get (n_samples, n_genes)
+                new_param_samples['r'] = param_samples['r'][:, component_index]
+            
+            # Handle gate parameters if present (component and gene-specific)
+            if 'gate' in param_samples:
+                # Shape is typically (n_samples, n_components, n_genes)
+                # Select component dimension to get (n_samples, n_genes)
+                new_param_samples['gate'] = param_samples['gate'][:, component_index]
+            
+            # Copy global parameters as is (p, mixing_weights)
+            if 'p' in param_samples:
+                new_param_samples['p'] = param_samples['p']
+            
+            # Handle p_capture parameters (cell-specific)
+            if 'p_capture' in param_samples:
+                new_param_samples['p_capture'] = param_samples['p_capture']
+            
+            new_posterior_samples['parameter_samples'] = new_param_samples
+            return new_posterior_samples
+        
+        # Process each parameter type individually if not using parameter_samples dict
+        for param_key, param_value in samples.items():
+            if param_key.startswith('r_') or param_key.startswith('gate_'):
+                # Shape is typically (n_samples, n_components, n_genes) or (n_components, n_genes)
+                if len(param_value.shape) == 3:  # With samples dimension
+                    new_posterior_samples[param_key] = param_value[:, component_index]
+                elif len(param_value.shape) == 2:  # Without samples dimension
+                    new_posterior_samples[param_key] = param_value[component_index]
+            else:
+                # Copy other parameters as is
+                new_posterior_samples[param_key] = param_value
+        
+        return new_posterior_samples
+
+    # --------------------------------------------------------------------------
+
+    def _create_component_subset(
+        self,
+        component_index,
+        new_params: Dict,
+        new_posterior_samples: Optional[Dict],
+        new_predictive_samples: Optional[jnp.ndarray]
+    ) -> 'ScribeResults':
+        """Create a new instance for a specific component."""
+        # Create a non-mixture model type
+        base_model = self.model_type.replace('_mix', '')
+
+        # Create a modified model config with n_components=None to indicate
+        # this is now a non-mixture result after component selection
+        new_model_config = replace(
+            self.model_config,
+            base_model=base_model,
+            n_components=None,
+            mixing_distribution_model=None,
+            mixing_distribution_guide=None
+        )
+               
+        return type(self)(
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=self.n_genes,
+            model_type=base_model,  # Remove _mix suffix
+            model_config=new_model_config,
+            prior_params=self.prior_params,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=self.n_vars,
+            posterior_samples=new_posterior_samples,
+            predictive_samples=new_predictive_samples,
+            n_components=None  # No longer a mixture model
+        )
+
     # --------------------------------------------------------------------------
     # Get model and guide functions
     # --------------------------------------------------------------------------
@@ -518,10 +706,6 @@ class ScribeResults:
         if self.model_type == "nbdm":
             model_args['total_counts'] = None  # Will be filled during sampling
             
-        # Add components if mixture model
-        if self.n_components is not None:
-            model_args['n_components'] = self.n_components
-
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
             guide,
@@ -560,10 +744,6 @@ class ScribeResults:
         if self.model_type == "nbdm":
             model_args['total_counts'] = None  # Will be filled during sampling
             
-        # Add components if mixture model
-        if self.n_components is not None:
-            model_args['n_components'] = self.n_components
-        
         # Check if posterior samples exist
         if self.posterior_samples is None:
             raise ValueError(

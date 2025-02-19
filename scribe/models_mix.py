@@ -8,6 +8,9 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
 
+# Import model config
+from .model_config import ModelConfig
+
 # Import typing
 from typing import Callable, Dict, Tuple, Optional, Union
 
@@ -18,10 +21,7 @@ from typing import Callable, Dict, Tuple, Optional, Union
 def nbdm_mixture_model(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -72,43 +72,32 @@ def nbdm_mixture_model(
         Categorical(mixing_weights), NegativeBinomialProbs(r, p)
     )
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        if len(mixing_prior) != n_components:
-            raise ValueError(
-                f"Length of mixing_prior ({len(mixing_prior)}) must match "
-                f"number of components ({n_components})"
-            )
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
         "mixing_weights",
-        dist.Dirichlet(mixing_concentration)
+        model_config.mixing_distribution_model
     )
     
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
     # Define the prior on the p parameters - one for each component
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
+    p = numpyro.sample("p", model_config.p_distribution_model)
 
     # Define the prior on the r parameters - one for each gene and component
     r = numpyro.sample(
         "r",
-        dist.Gamma(r_prior[0], r_prior[1]).expand([n_components, n_genes])
+        model_config.r_distribution_model.expand([n_components, n_genes])
     )
 
     # Create base negative binomial distribution
     base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
     
     # Create mixture distribution
-    mixture = dist.MixtureSameFamily(
-        mixing_dist, 
-        base_dist
-    )
+    mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
 
     # If we have observed data, condition on it
     if counts is not None:
@@ -139,10 +128,7 @@ def nbdm_mixture_model(
 def nbdm_mixture_guide(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -178,47 +164,58 @@ def nbdm_mixture_guide(
     batch_size : int, optional
         Mini-batch size for stochastic optimization
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
-    # Variational parameters for mixing weights
-    alpha_mixing = numpyro.param(
-        "alpha_mixing",
-        mixing_concentration,
-        constraint=constraints.positive
-    )
+    # Extract mixing distribution values
+    mixing_values = model_config.mixing_distribution_guide.get_args()
+    # Extract mixing distribution parameters and constraints
+    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    mixing_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in mixing_constraints.items():
+        mixing_params[param_name] = numpyro.param(
+            f"mixing_{param_name}",
+            mixing_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for p
-    alpha_p = numpyro.param(
-        "alpha_p",
-        p_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        p_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for r (one per component and gene)
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones((n_components, n_genes)) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones((n_components, n_genes)) * r_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones((n_components, n_genes)) * r_values[param_name],
+            constraint=constraint
+        )
 
     # Sample from variational distributions
-    numpyro.sample("mixing_weights", dist.Dirichlet(alpha_mixing))
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
+    numpyro.sample(
+        "mixing_weights", 
+        model_config.mixing_distribution_guide.__class__(**mixing_params)
+    )
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model

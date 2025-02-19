@@ -15,9 +15,6 @@ from typing import Callable, Dict, Tuple, Optional
 # Import model config
 from .model_config import ModelConfig
 
-# Import mixture models
-from .models_mix import *
-
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------

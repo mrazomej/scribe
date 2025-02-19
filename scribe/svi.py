@@ -185,13 +185,12 @@ def run_scribe(
     n_components: Optional[int] = None,
     # Distribution choices
     r_dist: str = "gamma",
-    p_dist: str = "beta",
     # Prior parameters
     r_prior: Optional[tuple] = None,
     p_prior: Optional[tuple] = None,
     gate_prior: Optional[tuple] = None,
     p_capture_prior: Optional[tuple] = None,
-    mixing_prior: Union[float, tuple] = 1.0,
+    mixing_prior: Optional[tuple] = None,
     # Training parameters
     n_steps: int = 100_000,
     batch_size: Optional[int] = None,
@@ -203,70 +202,98 @@ def run_scribe(
     seed: int = 42,
     stable_update: bool = True,
     r_guide: Optional[str] = None,
+    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ) -> ScribeResults:
     """
-    Run SCRIBE inference with simple configuration.
+    Run SCRIBE inference pipeline to fit a probabilistic model to single-cell
+    RNA sequencing data.
+    
+    This function provides a high-level interface to configure and run SCRIBE
+    models. It handles data preprocessing, model configuration, variational
+    inference, and results packaging.
     
     Parameters
     ----------
     counts : Union[jnp.ndarray, AnnData]
         Count matrix or AnnData object containing counts. If AnnData, counts
-        should be in .X or specified layer.
+        should be in .X or specified layer. Shape should be (cells, genes) if
+        cells_axis=0, or (genes, cells) if cells_axis=1.
+        
+    Model Configuration:
+    -------------------
     zero_inflated : bool, default=False
-        Whether to use a zero-inflated model to account for technical dropouts
-    variable_capture : bool, default=False
-        Whether to model cell-specific mRNA capture probabilities
+        Whether to use zero-inflated negative binomial (ZINB) model to account
+        for dropout events
+    variable_capture : bool, default=False 
+        Whether to model cell-specific mRNA capture efficiencies
     mixture_model : bool, default=False
-        Whether to use a mixture model for heterogeneous cell populations
+        Whether to use mixture model components for heterogeneous populations
     n_components : Optional[int], default=None
-        Number of mixture components (required if mixture_model=True)
+        Number of mixture components. Required if mixture_model=True.
+        
+    Distribution Choices:
+    -------------------
     r_dist : str, default="gamma"
-        Distribution for dispersion parameter: "gamma" or "lognormal"
-    p_dist : str, default="beta"
-        Distribution for success probability parameter (currently only "beta"
-        supported)
+        Distribution family for dispersion parameter. Options:
+            - "gamma": Gamma distribution (default)
+            - "lognormal": Log-normal distribution
+        
+    Prior Parameters:
+    ----------------
     r_prior : Optional[tuple], default=None
-        Prior parameters for r distribution. For gamma: (alpha, beta), for
-        lognormal: (mu, sigma). Defaults to (2, 0.1) for gamma and (1, 1) for
-        lognormal.
-    p_prior : Optional[tuple], default=None 
-        Prior parameters for p distribution (alpha, beta). Defaults to (1, 1).
+        Prior parameters for dispersion (r) distribution:
+            - For gamma: (shape, rate), defaults to (2, 0.1)
+            - For lognormal: (mu, sigma), defaults to (1, 1)
+    p_prior : Optional[tuple], default=None
+        Prior parameters (alpha, beta) for success probability Beta
+        distribution. Defaults to (1, 1).
     gate_prior : Optional[tuple], default=None
-        Prior parameters for dropout gate (alpha, beta). Used when
-        zero_inflated=True. Defaults to (1, 1).
+        Prior parameters (alpha, beta) for dropout gate Beta distribution. Only
+        used if zero_inflated=True. Defaults to (1, 1).
     p_capture_prior : Optional[tuple], default=None
-        Prior parameters for capture probability (alpha, beta). Used when
-        variable_capture=True. Defaults to (1, 1).
-    mixing_prior : Union[float, tuple], default=1.0
-        Prior concentration for mixture weights. Used when mixture_model=True.
-        If float, same concentration used for all components.
+        Prior parameters (alpha, beta) for capture efficiency Beta distribution.
+        Only used if variable_capture=True. Defaults to (1, 1).
+    mixing_prior : Optional[tuple], default=None
+        Prior concentration parameter(s) for mixture weights Dirichlet
+        distribution. Required if mixture_model=True.
+        
+    Training Parameters:
+    ------------------
     n_steps : int, default=100_000
-        Number of optimization steps
+        Number of optimization steps for variational inference
     batch_size : Optional[int], default=None
         Mini-batch size for stochastic optimization. If None, uses full dataset.
     optimizer : numpyro.optim.optimizers, default=Adam(step_size=0.001)
         Optimizer for variational inference
+        
+    Data Handling:
+    -------------
     cells_axis : int, default=0
         Axis for cells in count matrix (0=rows, 1=columns)
     layer : Optional[str], default=None
         Layer in AnnData to use for counts. If None, uses .X.
+        
+    Additional Options:
+    -----------------
     seed : int, default=42
         Random seed for reproducibility
     stable_update : bool, default=True
-        Whether to use stable parameter updates during optimization
+        Whether to use numerically stable parameter updates during optimization
     r_guide : Optional[str], default=None
-        Distribution type for guide of r parameter. If None, uses same as r_dist.
-        Can be "gamma" or "lognormal".
+        Distribution family for guide of dispersion parameter. If None, uses
+        same as r_dist. Options: "gamma" or "lognormal".
+    loss : numpyro.infer.elbo, default=TraceMeanField_ELBO()
+        Loss function for variational inference
         
     Returns
     -------
     ScribeResults
         Results object containing:
-        - Fitted model parameters
-        - Loss history
-        - Model configuration
-        - Prior parameters
-        - Dataset metadata
+            - Fitted model parameters
+            - Loss history
+            - Model configuration
+            - Prior parameters
+            - Dataset metadata
     """
     # Determine model type based on boolean flags
     base_model = "nbdm"
@@ -277,6 +304,11 @@ def run_scribe(
             base_model = "zinbvcp"
         else:
             base_model = "nbvcp"
+    
+    if n_components is not None and not mixture_model:
+        raise ValueError(
+            "n_components must be None when mixture_model=False"
+        )
             
     # Define model type
     model_type = base_model
@@ -287,6 +319,11 @@ def run_scribe(
             raise ValueError(
                 "n_components must be specified and greater than 1 "
                 "when mixture_model=True"
+            )
+        # Validate mixing_prior for mixture models
+        if mixing_prior is None:
+            raise ValueError(
+                "mixing_prior must be specified when mixture_model=True"
             )
         # Add mixture suffix if needed
         model_type = f"{base_model}_mix"
@@ -318,7 +355,9 @@ def run_scribe(
         gate_prior = (1, 1)
     if "vcp" in model_type and p_capture_prior is None:
         p_capture_prior = (1, 1)
-    
+    if "mix" in model_type and mixing_prior is None:
+        mixing_prior = jnp.ones(n_components)
+
     # Create random key
     rng_key = random.PRNGKey(seed)
     
@@ -339,18 +378,13 @@ def run_scribe(
         r_dist_guide = r_dist_model
         
     # Set p distribution for model and guide
-    if p_dist == "beta":
-        p_dist_model = dist.Beta(*p_prior)
-        p_dist_guide = dist.Beta(*p_prior)
-    else:
-        raise ValueError(f"Unsupported p_dist: {p_dist}")
+    p_dist_model = dist.Beta(*p_prior)
+    p_dist_guide = dist.Beta(*p_prior)
 
     # Configure gate distribution if needed
     gate_dist_model = None
     gate_dist_guide = None
     if "zinb" in model_type:
-        if gate_prior is None:
-            gate_prior = (1, 1)
         gate_dist_model = dist.Beta(*gate_prior)
         gate_dist_guide = gate_dist_model
             
@@ -358,11 +392,16 @@ def run_scribe(
     p_capture_dist_model = None
     p_capture_dist_guide = None
     if "vcp" in model_type:
-        if p_capture_prior is None:
-            p_capture_prior = (1, 1)
         p_capture_dist_model = dist.Beta(*p_capture_prior)
         p_capture_dist_guide = p_capture_dist_model
-    
+
+    # Configure mixing distribution if needed
+    mixing_dist_model = None
+    mixing_dist_guide = None
+    if "mix" in model_type:
+        mixing_dist_model = dist.Dirichlet(jnp.array(mixing_prior))
+        mixing_dist_guide = mixing_dist_model
+
     # Create model_config with all the configurations
     model_config = ModelConfig(
         base_model=model_type,
@@ -382,14 +421,18 @@ def run_scribe(
         p_capture_distribution_guide=p_capture_dist_guide,
         p_capture_param_prior=p_capture_prior if p_capture_dist_model else None,
         p_capture_param_guide=p_capture_prior if p_capture_dist_model else None,
-        n_components=n_components
+        n_components=n_components,
+        mixing_distribution_model=mixing_dist_model,
+        mixing_distribution_guide=mixing_dist_guide,
+        mixing_param_prior=mixing_prior,
+        mixing_param_guide=mixing_prior
     )
     
     # Get model and guide functions
     model, guide = get_model_and_guide(model_type)
     
     # Set up SVI
-    svi = SVI(model, guide, optimizer, loss=TraceMeanField_ELBO())
+    svi = SVI(model, guide, optimizer, loss=loss)
     
     # Prepare model arguments
     model_args = {
