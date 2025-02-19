@@ -96,14 +96,46 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
         return zinbvcp_mixture_model, zinbvcp_mixture_guide
     
-    # Handle Negative Binomial-Dirichlet Multinomial Mixture Model with log-normal
-    # prior on r
-    elif model_type == "nbdm_log_mix":
-        # Import model and guide functions locally to avoid circular imports
-        from .models_mix_log import nbdm_log_mixture_model, nbdm_log_mixture_guide
-        return nbdm_log_mixture_model, nbdm_log_mixture_guide
-
     # Raise error for unsupported model types
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+# ------------------------------------------------------------------------------
+# Model log likelihood functions
+# ------------------------------------------------------------------------------
+
+def get_log_likelihood_fn(model_type: str) -> Callable:
+    """Get the log likelihood function for a specified model type."""
+    # Standard models
+    if model_type == "nbdm":
+        from .models import nbdm_log_likelihood
+        return nbdm_log_likelihood
+    elif model_type == "zinb":
+        from .models import zinb_log_likelihood
+        return zinb_log_likelihood
+    elif model_type == "nbvcp":
+        from .models import nbvcp_log_likelihood
+        return nbvcp_log_likelihood
+    elif model_type == "zinbvcp":
+        from .models import zinbvcp_log_likelihood
+        return zinbvcp_log_likelihood
+    
+    # Mixture models
+    elif model_type == "nbdm_mix":
+        from .models_mix import nbdm_mixture_log_likelihood
+        return nbdm_mixture_log_likelihood
+    elif model_type == "zinb_mix":
+        from .models_mix import zinb_mixture_log_likelihood
+        return zinb_mixture_log_likelihood
+    elif model_type == "nbvcp_mix":
+        from .models_mix import nbvcp_mixture_log_likelihood
+        return nbvcp_mixture_log_likelihood
+    elif model_type == "zinbvcp_mix":
+        from .models_mix import zinbvcp_mixture_log_likelihood
+        return zinbvcp_mixture_log_likelihood
+    elif model_type == "nbdm_log_mix":
+        from .models_mix import nbdm_mixture_log_likelihood
+        return nbdm_mixture_log_likelihood
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 

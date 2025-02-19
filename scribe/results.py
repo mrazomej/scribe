@@ -490,38 +490,8 @@ class ScribeResults:
 
     def get_log_likelihood_fn(self) -> Callable:
         """Get the log likelihood function for this model type."""
-        # Standard models
-        if self.model_type == "nbdm":
-            from .models import nbdm_log_likelihood
-            return nbdm_log_likelihood
-        elif self.model_type == "zinb":
-            from .models import zinb_log_likelihood
-            return zinb_log_likelihood
-        elif self.model_type == "nbvcp":
-            from .models import nbvcp_log_likelihood
-            return nbvcp_log_likelihood
-        elif self.model_type == "zinbvcp":
-            from .models import zinbvcp_log_likelihood
-            return zinbvcp_log_likelihood
-        
-        # Mixture models
-        elif self.model_type == "nbdm_mix":
-            from .models_mix import nbdm_mixture_log_likelihood
-            return nbdm_mixture_log_likelihood
-        elif self.model_type == "zinb_mix":
-            from .models_mix import zinb_mixture_log_likelihood
-            return zinb_mixture_log_likelihood
-        elif self.model_type == "nbvcp_mix":
-            from .models_mix import nbvcp_mixture_log_likelihood
-            return nbvcp_mixture_log_likelihood
-        elif self.model_type == "zinbvcp_mix":
-            from .models_mix import zinbvcp_mixture_log_likelihood
-            return zinbvcp_mixture_log_likelihood
-        elif self.model_type == "nbdm_log_mix":
-            from .models_mix import nbdm_mixture_log_likelihood
-            return nbdm_mixture_log_likelihood
-        else:
-            raise ValueError(f"Unknown model type: {self.model_type}")
+        from .model_registry import get_log_likelihood_fn
+        return get_log_likelihood_fn(self.model_type)
 
     # --------------------------------------------------------------------------
     # Posterior sampling methods
