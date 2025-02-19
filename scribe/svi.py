@@ -210,7 +210,8 @@ def run_scribe(
     Parameters
     ----------
     counts : Union[jnp.ndarray, AnnData]
-        Count matrix or AnnData object containing counts
+        Count matrix or AnnData object containing counts. If AnnData, counts
+        should be in .X or specified layer.
     zero_inflated : bool, default=False
         Whether to use a zero-inflated model to account for technical dropouts
     variable_capture : bool, default=False
@@ -225,37 +226,47 @@ def run_scribe(
         Distribution for success probability parameter (currently only "beta"
         supported)
     r_prior : Optional[tuple], default=None
-        Prior parameters for r distribution
+        Prior parameters for r distribution. For gamma: (alpha, beta), for
+        lognormal: (mu, sigma). Defaults to (2, 0.1) for gamma and (1, 1) for
+        lognormal.
     p_prior : Optional[tuple], default=None 
-        Prior parameters for p distribution
+        Prior parameters for p distribution (alpha, beta). Defaults to (1, 1).
     gate_prior : Optional[tuple], default=None
-        Prior parameters for dropout gate (used when zero_inflated=True)
+        Prior parameters for dropout gate (alpha, beta). Used when
+        zero_inflated=True. Defaults to (1, 1).
     p_capture_prior : Optional[tuple], default=None
-        Prior parameters for capture probability (used when
-        variable_capture=True)
+        Prior parameters for capture probability (alpha, beta). Used when
+        variable_capture=True. Defaults to (1, 1).
     mixing_prior : Union[float, tuple], default=1.0
-        Prior concentration for mixture weights (used when mixture_model=True)
+        Prior concentration for mixture weights. Used when mixture_model=True.
+        If float, same concentration used for all components.
     n_steps : int, default=100_000
         Number of optimization steps
     batch_size : Optional[int], default=None
-        Mini-batch size. If None, uses full dataset.
+        Mini-batch size for stochastic optimization. If None, uses full dataset.
     optimizer : numpyro.optim.optimizers, default=Adam(step_size=0.001)
         Optimizer for variational inference
     cells_axis : int, default=0
-        Axis for cells (0=rows, 1=columns)
+        Axis for cells in count matrix (0=rows, 1=columns)
     layer : Optional[str], default=None
-        Layer in AnnData to use (if counts is AnnData)
+        Layer in AnnData to use for counts. If None, uses .X.
     seed : int, default=42
-        Random seed
+        Random seed for reproducibility
     stable_update : bool, default=True
-        Whether to use stable parameter updates
+        Whether to use stable parameter updates during optimization
     r_guide : Optional[str], default=None
-        Distribution type for guide of r parameter (if different from r_dist)
+        Distribution type for guide of r parameter. If None, uses same as r_dist.
+        Can be "gamma" or "lognormal".
         
     Returns
     -------
     ScribeResults
-        Results containing fitted model parameters and metadata
+        Results object containing:
+        - Fitted model parameters
+        - Loss history
+        - Model configuration
+        - Prior parameters
+        - Dataset metadata
     """
     # Determine model type based on boolean flags
     base_model = "nbdm"
