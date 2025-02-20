@@ -25,7 +25,9 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define number of steps for scribe
-n_steps = 50_000
+n_steps = 30_000
+# Define batch size
+batch_size = 4096
 # Define number of cells
 n_cells = 10_000
 # Define number of shared genes
@@ -39,6 +41,10 @@ n_components = 2
 
 # Define model type
 model_type = "nbdm_mix"
+# Define r_distribution
+r_distribution = "gamma"
+# Define suffix
+suffix = f"r-{r_distribution}_{n_steps}steps"
 
 # Define output directory
 OUTPUT_DIR = f"{scribe.utils.git_root()}/output/sim/{model_type}"
@@ -65,12 +71,13 @@ with open(
 
 # Load scribe results
 with open(
-    f"{OUTPUT_DIR}/scribe_nbdm_mix_results_"
+    f"{OUTPUT_DIR}/scribe_{model_type}_r-{r_distribution}_results_"
     f"{n_cells}cells_"
     f"{n_genes}genes_"
     f"{n_shared_genes}shared_"
     f"{n_unique_genes}unique_"
     f"{n_components:02d}components_"
+    f"{batch_size}batch_" \
     f"{n_steps}steps.pkl",
     "rb"
 ) as f:
@@ -91,7 +98,7 @@ ax.set_xlabel("step")
 ax.set_ylabel("ELBO loss")
 
 # Save figure
-fig.savefig(f"{FIG_DIR}/loss_history.png", bbox_inches="tight")
+fig.savefig(f"{FIG_DIR}/loss_history_{suffix}.png", bbox_inches="tight")
 
 plt.show()
 
@@ -105,7 +112,7 @@ unique_genes = data["counts"][:, n_shared_genes:]
 
 print("Plotting ECDF...")
 # Define number of genes to select
-n_genes = 9
+n_genes = 25
 
 # Compute the mean expression of each gene and sort them
 mean_shared = shared_genes.mean(axis=0)
@@ -164,22 +171,6 @@ for ax in axes:
 axes[0].set_title('Shared Genes')
 axes[1].set_title('Unique Genes')
 
-# Add legends outside plots
-axes[0].legend(
-    bbox_to_anchor=(1.05, 1),
-    loc='upper left',
-    fontsize=8,
-    title=r"$\langle U \rangle$",
-    frameon=False
-)
-axes[1].legend(
-    bbox_to_anchor=(1.05, 1),
-    loc='upper left',
-    fontsize=8,
-    title=r"$\langle U \rangle$",
-    frameon=False
-)
-
 plt.tight_layout()
 
 # Save figure with extra space for legends
@@ -188,32 +179,32 @@ fig.savefig(f"{FIG_DIR}/example_ECDF.png", bbox_inches="tight")
 # %% ---------------------------------------------------------------------------
 
 # Index results for shared genes
-results_shared = results[selected_idx_shared]
+results_shared = results[np.sort(selected_idx_shared)]
 
 # %% ---------------------------------------------------------------------------
 
 # Index results for unique genes
-results_unique = results[selected_idx_unique + n_shared_genes]
+results_unique = results[np.sort(selected_idx_unique) + n_shared_genes]
 
 # %% ---------------------------------------------------------------------------
 
 # Define number of samples
-n_samples = 500
+n_samples = 1_500
 
 print("Generating posterior predictive samples for shared genes...")
 # Generate posterior predictive samples
-results_shared.get_ppc_samples(n_samples=500)
+results_shared.get_ppc_samples(n_samples=n_samples)
 
 print("Generating posterior predictive samples for unique genes...")
 # Generate posterior predictive samples
-results_unique.get_ppc_samples(n_samples=500)
+results_unique.get_ppc_samples(n_samples=n_samples)
 
 # %% ---------------------------------------------------------------------------
 
 print("Plotting PPC for shared genes...")
 
 # Single plot example
-fig, axes = plt.subplots(3, 3, figsize=(7, 7))
+fig, axes = plt.subplots(5, 5, figsize=(11, 11))
 
 # Flatten axes
 axes = axes.flatten()
@@ -227,7 +218,7 @@ for i, ax in enumerate(axes):
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        results_shared.posterior_samples["predictive_samples"][:, :, i],
+        results_shared.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
         max_bin=true_counts.max()
     )
@@ -282,7 +273,7 @@ fig.suptitle("Shared Genes", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/example_ppc_shared.png", 
+    f"{FIG_DIR}/example_ppc_shared_{suffix}.png", 
     bbox_inches="tight"
 )
 
@@ -293,7 +284,7 @@ fig.savefig(
 print("Plotting PPC for unique genes...")
 
 # Single plot example
-fig, axes = plt.subplots(3, 3, figsize=(7, 7))
+fig, axes = plt.subplots(5, 5, figsize=(11, 11))
 
 # Flatten axes
 axes = axes.flatten()
@@ -307,7 +298,7 @@ for i, ax in enumerate(axes):
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        results_unique.posterior_samples["predictive_samples"][:, :, i],
+        results_unique.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
         max_bin=true_counts.max()
     )
@@ -362,7 +353,7 @@ fig.suptitle("Unique Genes", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/example_ppc_unique.png", 
+    f"{FIG_DIR}/example_ppc_unique_{suffix}.png", 
     bbox_inches="tight"
 )
 
@@ -373,15 +364,26 @@ fig.savefig(
 # Compute the KL divergence between the posterior Gamma distributions for the
 # r parameters
 
-alpha_r_1 = results.params["alpha_r"][0, :]
-beta_r_1 = results.params["beta_r"][0, :]
+if r_distribution == "gamma":
+    alpha_r_1 = results.params["r_concentration"][0, :]
+    beta_r_1 = results.params["r_rate"][0, :]
 
-alpha_r_2 = results.params["alpha_r"][1, :]
-beta_r_2 = results.params["beta_r"][1, :]
+    alpha_r_2 = results.params["r_concentration"][1, :]
+    beta_r_2 = results.params["r_rate"][1, :]
 
-kl_divergence = scribe.stats.kl_gamma(
-    alpha_r_1, beta_r_1, alpha_r_2, beta_r_2
-)
+    kl_divergence = scribe.stats.kl_gamma(
+        alpha_r_1, beta_r_1, alpha_r_2, beta_r_2
+    )
+elif r_distribution == "lognormal":
+    mu_r_1 = results.params["r_loc"][0, :]
+    sigma_r_1 = results.params["r_scale"][0, :]
+
+    mu_r_2 = results.params["r_loc"][1, :]
+    sigma_r_2 = results.params["r_scale"][1, :]
+
+    kl_divergence = scribe.stats.kl_lognormal(
+        mu_r_1, sigma_r_1, mu_r_2, sigma_r_2
+    )
 
 # %% ---------------------------------------------------------------------------
 
@@ -413,14 +415,14 @@ ax.set_xscale('log')
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/kl_divergence_r.png", 
+    f"{FIG_DIR}/kl_divergence_r_{suffix}.png", 
     bbox_inches="tight"
 )
 
 # %% ---------------------------------------------------------------------------
 
 # Initialize figure
-fig, ax = plt.subplots(3, 3, figsize=(9.5, 9))
+fig, ax = plt.subplots(5, 5, figsize=(11, 11))
 
 # Flatten axes
 ax = ax.flatten()
@@ -430,18 +432,12 @@ fig.suptitle(r"Shared Genes $r$ posterior distributions", y=1.005, fontsize=18)
 # Loop through each gene in shared genes
 for i, ax in enumerate(ax):
     # Extract distribution for first type
-    distribution_first = stats.gamma(
-        results.params["alpha_r"][0, selected_idx_shared[i]],
-        loc=0,
-        scale=1 / results.params["beta_r"][0, selected_idx_shared[i]]
-    )
+    distribution_first = results.get_component(0)[
+        int(np.sort(selected_idx_shared)[i])].get_distributions()["r"]
 
     # Extract distribution for second type
-    distribution_second = stats.gamma(
-        results.params["alpha_r"][1, selected_idx_shared[i]],
-        loc=0,
-        scale=1 / results.params["beta_r"][1, selected_idx_shared[i]]
-    )
+    distribution_second = results.get_component(1)[
+        int(np.sort(selected_idx_shared)[i])].get_distributions()["r"]
 
     # Plot distribution
     scribe.viz.plot_posterior(
@@ -466,14 +462,14 @@ plt.tight_layout()
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/example_r_posterior_shared.png", 
+    f"{FIG_DIR}/example_r_posterior_shared_{suffix}.png", 
     bbox_inches="tight"
 )
 
 # %% ---------------------------------------------------------------------------
 
 # Initialize figure
-fig, ax = plt.subplots(3, 3, figsize=(9.5, 9))
+fig, ax = plt.subplots(5, 5, figsize=(11, 11))
 
 # Flatten axes
 ax = ax.flatten()
@@ -483,25 +479,21 @@ fig.suptitle(r"Unique Genes $r$ posterior distributions", y=1.005, fontsize=18)
 # Loop through each gene in shared genes
 for i, ax in enumerate(ax):
     # Extract distribution for first type
-    distribution_first = stats.gamma(
-        results.params["alpha_r"][0, selected_idx_unique[i] + n_shared_genes],
-        loc=0,
-        scale=1 / results.params["beta_r"][0, selected_idx_unique[i] + n_shared_genes]
-    )
+    distribution_first = results.get_component(0)[
+        int(np.sort(selected_idx_unique)[i] + n_shared_genes)
+    ].get_distributions()["r"]
 
     # Extract distribution for second type
-    distribution_second = stats.gamma(
-        results.params["alpha_r"][1, selected_idx_unique[i] + n_shared_genes],
-        loc=0,
-        scale=1 / results.params["beta_r"][1, selected_idx_unique[i] + n_shared_genes]
-    )
+    distribution_second = results.get_component(1)[
+        int(np.sort(selected_idx_unique)[i] + n_shared_genes)
+    ].get_distributions()["r"]
 
     # Plot distribution
     scribe.viz.plot_posterior(
         ax,
         distribution_first,
         ground_truth=data["r"][0, selected_idx_unique[i] + n_shared_genes],
-        ground_truth_color=scribe.viz.colors()["dark_red"],
+        ground_truth_color=scribe.viz.colors()["dark_blue"],
         color=scribe.viz.colors()["dark_blue"],
         fill_color=scribe.viz.colors()["light_blue"],
     )
@@ -510,7 +502,7 @@ for i, ax in enumerate(ax):
         ax,
         distribution_second,
         ground_truth=data["r"][1, selected_idx_unique[i] + n_shared_genes],
-        ground_truth_color=scribe.viz.colors()["dark_blue"],
+        ground_truth_color=scribe.viz.colors()["dark_red"],
         color=scribe.viz.colors()["dark_red"],
         fill_color=scribe.viz.colors()["light_red"],
     )
@@ -521,7 +513,7 @@ plt.tight_layout()
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/example_r_posterior_unique.png", 
+    f"{FIG_DIR}/example_r_posterior_unique_{suffix}.png", 
     bbox_inches="tight"
 )
 

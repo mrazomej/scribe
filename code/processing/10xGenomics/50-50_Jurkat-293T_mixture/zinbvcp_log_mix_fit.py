@@ -22,20 +22,22 @@ import jax.numpy as jnp
 print("Defining inference parameters...")
 
 # Define model_type
-model_type = "nbdm_mix"
+model_type = "zinbvcp_log_mix"
 
 # Define training parameters
-n_steps = 25_000
+n_steps = 30_000
 
 # Define number of components in mixture model
 n_components = 2
 
+# Define r_distribution
+r_distribution = "lognormal"
+
 # Define prior parameters
-prior_params = {
-    "p_prior": (1, 1),
-    "r_prior": (2, 0.1),
-    "mixing_prior": (1, 1),
-}
+p_prior = (1, 1)
+r_prior = (2, 0.1) if r_distribution == "gamma" else (1, 1)
+mixing_prior = (47, 47)
+gate_prior = (1, 1)
 
 # %% ---------------------------------------------------------------------------
 
@@ -66,7 +68,7 @@ print("Running inference...")
 
 # Define file name
 file_name = f"{OUTPUT_DIR}/" \
-    f"scribe_{model_type}_results_" \
+    f"scribe_{model_type}_r-{r_distribution}_results_" \
     f"{n_components:02d}components_" \
     f"{n_steps}steps.pkl"
 
@@ -74,11 +76,17 @@ file_name = f"{OUTPUT_DIR}/" \
 if not os.path.exists(file_name):
     # Run scribe
     scribe_results = scribe.svi.run_scribe(
-        model_type=model_type,
         counts=data,
+        mixture_model=True,
+        variable_capture=True,
+        zero_inflated=True,
         n_steps=n_steps,
         n_components=n_components,
-        prior_params=prior_params,
+        p_prior=p_prior,
+        r_prior=r_prior,
+        mixing_prior=mixing_prior,
+        r_dist=r_distribution,
+        gate_prior=gate_prior,
     )
 
     # Save the results, the true values, and the counts

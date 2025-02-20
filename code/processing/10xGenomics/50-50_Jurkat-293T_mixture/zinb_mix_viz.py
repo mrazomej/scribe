@@ -28,7 +28,7 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define model type
-model_type = "zinbvcp_mix"
+model_type = "zinb_mix"
 
 # Define number of steps for scribe
 n_steps = 25_000
@@ -395,14 +395,6 @@ fig.savefig(
 )
 # %% ---------------------------------------------------------------------------
 
-# Compute cell-assignment map
-cell_assignments = results.compute_cell_type_assignments_map(
-    counts=jnp.array(counts),
-    batch_size=100
-)
-
-# %% ---------------------------------------------------------------------------
-
 print("Sampling from full posterior distribution...")
 # Sample from full posterior distribution
 results.get_posterior_samples(n_samples=1_500)
@@ -433,19 +425,10 @@ print("Computing cell type assignments...")
 # Use posterior samples to assign cell types
 cell_types = results.compute_cell_type_assignments(
     counts=jnp.array(counts),
-    # ignore_nans=True
+    ignore_nans=True
 )
 
 # %% ---------------------------------------------------------------------------
-
-# with jax.experimental.enable_x64():
-#     # Use posterior samples to assign cell types
-#     cell_types = results.compute_cell_type_assignments(
-#         counts=jnp.array(data.X.toarray()),
-#         ignore_nans=True,
-#         dtype=jnp.float64,
-#         batch_size=100
-#     )
 
 # Extract mean prob assignments
 mean_assignments = cell_types["mean_probabilities"]
@@ -453,3 +436,180 @@ mean_assignments = cell_types["mean_probabilities"]
 # Define cell assignment as class with highest probability
 cell_assignments = np.argmax(mean_assignments, axis=1)
 
+
+# %% ---------------------------------------------------------------------------
+
+print("Plotting Hellinger distance for r parameters...")
+
+# Extract r distribution parameters
+alpha_r_1 = results.params["alpha_r"][0, :]
+beta_r_1 = results.params["beta_r"][0, :]
+
+alpha_r_2 = results.params["alpha_r"][1, :]
+beta_r_2 = results.params["beta_r"][1, :]
+
+with jax.experimental.enable_x64():
+    # Compute Hellinger distance
+    hellinger_distance = scribe.stats.hellinger_gamma(
+        alpha_r_1.astype(jnp.float64), 
+        beta_r_1.astype(jnp.float64),
+        alpha_r_2.astype(jnp.float64), 
+        beta_r_2.astype(jnp.float64)
+    )
+
+# Initialize figure
+fig, ax = plt.subplots(figsize=(3.5, 3))
+
+# Plot Hellinger distance
+sns.ecdfplot(hellinger_distance, ax=ax)
+
+# Set labels
+ax.set_xlabel(r"$H(P_{\text{type}_1}, Q_{\text{type}_2})$")
+ax.set_ylabel("ECDF")
+
+# Set y-axis limits
+ax.set_ylim(-0.01, 1.01)
+
+# Save figure
+fig.savefig(f"{FIG_DIR}/hellinger_distance_{n_steps}steps.png", bbox_inches="tight")
+
+
+# %% ---------------------------------------------------------------------------
+
+print("Plotting ECDF...")
+# Define number of genes to select
+n_genes = 25
+
+# Sort genes by Hellinger distance in descending order
+sorted_idx = np.argsort(-hellinger_distance)  # Negative to sort in descending order
+
+# Select top n_genes with highest Hellinger distance
+selected_idx = np.sort(sorted_idx[:n_genes])
+
+# Initialize figure with extra space for legends
+fig, ax = plt.subplots(1, 1, figsize=(3.5, 3))
+
+# Define step size for ECDF
+step = 1
+
+# Plot shared genes
+for i, idx in enumerate(selected_idx):
+    # Plot the ECDF for shared genes
+    sns.ecdfplot(
+        data=counts[:, idx],
+        ax=ax,
+        color=sns.color_palette('Blues', n_colors=n_genes)[i],
+        lw=1.5,
+        label=None
+    )
+
+# Add axis labels and titles
+ax.set_xlabel('UMI count')
+ax.set_xscale('log')
+ax.set_ylabel('ECDF')
+
+plt.tight_layout()
+
+# Save figure with extra space for legends
+fig.savefig(f"{FIG_DIR}/example_ECDF_hellinger_{n_steps}steps.png", bbox_inches="tight") 
+# %% ---------------------------------------------------------------------------
+
+# Index results for shared genes
+results_subset_hellinger = results[selected_idx]
+
+# %% ---------------------------------------------------------------------------
+
+# Define number of samples
+n_samples = 1_500
+
+print("Generating posterior predictive samples...")
+# Generate posterior predictive samples
+results_subset_hellinger.get_ppc_samples(n_samples=n_samples, resample_parameters=True)
+
+# %% ---------------------------------------------------------------------------
+
+print("Plotting PPC for multiple example genes...")
+
+# Single plot example
+fig, axes = plt.subplots(5, 5, figsize=(10, 10))
+
+# Flatten axes
+axes = axes.flatten()
+
+# Loop through each gene
+for i, ax in enumerate(axes):
+    print(f"Plotting gene {i} PPC...")
+
+    # Extract true counts for this gene
+    true_counts = counts[:, selected_idx[i]]
+
+    # Compute credible regions
+    credible_regions = scribe.stats.compute_histogram_credible_regions(
+        results_subset_hellinger.posterior_samples["predictive_samples"][:, :, i],
+        credible_regions=[68, 50],
+        # max_bin=true_counts.max()
+    )
+
+    # Compute histogram of the real data
+    hist_results = np.histogram(
+        true_counts,
+        bins=credible_regions['bin_edges'],
+        density=True
+    )
+
+    # Get indices where cumsum <= 0.999
+    cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
+    # If no indices found (all values > 0.999), use first bin
+    max_bin = np.max([
+        cumsum_indices[-1] if len(cumsum_indices) > 0 else 0,
+        10
+    ])
+
+    # Plot credible regions
+    scribe.viz.plot_histogram_credible_regions_stairs(
+        ax, 
+        credible_regions,
+        cmap='Blues',
+        alpha=0.5,
+        max_bin=max_bin
+    )
+
+    # Define max_bin for histogram
+    max_bin_hist = max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
+    # Plot histogram of the real data as step plot
+    ax.step(
+        hist_results[1][:max_bin_hist],
+        hist_results[0][:max_bin_hist],
+        where='post',
+        label='data',
+        color='black',
+    )
+
+    # Set axis labels
+    ax.set_xlabel('counts')
+    ax.set_ylabel('frequency')
+
+    # Set title
+    ax.set_title(
+        f"$\\langle U \\rangle = {np.round(mean_counts[selected_idx[i]], 0).astype(int)}$", fontsize=8)
+
+plt.tight_layout()
+
+# Set global title
+fig.suptitle("Example PPC", y=1.02)
+
+# Save figure
+fig.savefig(
+    f"{FIG_DIR}/example_ppc_hellinger_{n_steps}steps.png", 
+    bbox_inches="tight"
+)
+# %% ---------------------------------------------------------------------------
+
+print("Computing cell type assignments...")
+# Use posterior samples to assign cell types
+cell_types_hellinger = results.compute_cell_type_assignments(
+    counts=jnp.array(counts),
+    ignore_nans=True,
+    weights=hellinger_distance
+)
+# %% ---------------------------------------------------------------------------

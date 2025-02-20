@@ -28,13 +28,16 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define model type
-model_type = "zinbvcp_mix"
+model_type = "nbvcp_log_mix"
 
 # Define number of steps for scribe
-n_steps = 25_000
+n_steps = 30_000
 
 # Define number of components in mixture model
 n_components = 2
+
+# Define r_distribution
+r_distribution = "lognormal"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/" \
@@ -65,9 +68,10 @@ counts = data.X.toarray()
 
 print("Loading scribe results...")
 
-results = pickle.load(open(f"{OUTPUT_DIR}/scribe_{model_type}_results_"
-                         f"{n_components:02d}components_"
-                         f"{n_steps}steps.pkl", "rb"))
+results = pickle.load(open(f"{OUTPUT_DIR}/"
+                           f"scribe_{model_type}_r-{r_distribution}_results_"
+                           f"{n_components:02d}components_"
+                           f"{n_steps}steps.pkl", "rb"))
 
 # %% ---------------------------------------------------------------------------
 
@@ -170,7 +174,7 @@ for i, ax in enumerate(axes):
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        results_subset.posterior_samples["predictive_samples"][:, :, i],
+        results_subset.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
         # max_bin=true_counts.max()
     )
@@ -234,15 +238,15 @@ fig.savefig(
 print("Plotting KL divergence for r parameters...")
 
 # Extract r distribution parameters
-alpha_r_1 = results.params["alpha_r"][0, :]
-beta_r_1 = results.params["beta_r"][0, :]
+mu_r_1 = results.params["r_loc"][0, :]
+sigma_r_1 = results.params["r_scale"][0, :]
 
-alpha_r_2 = results.params["alpha_r"][1, :]
-beta_r_2 = results.params["beta_r"][1, :]
+mu_r_2 = results.params["r_loc"][1, :]
+sigma_r_2 = results.params["r_scale"][1, :]
 
 # Compute KL divergence
-kl_divergence = scribe.stats.kl_gamma(
-    alpha_r_1, beta_r_1, alpha_r_2, beta_r_2
+kl_divergence = scribe.stats.kl_lognormal(
+    mu_r_1, sigma_r_1, mu_r_2, sigma_r_2
 )
 
 # Initialize figure
@@ -265,14 +269,94 @@ ax.set_xscale('log')
 fig.savefig(f"{FIG_DIR}/kl_divergence_{n_steps}steps.png", bbox_inches="tight")
 # %% ---------------------------------------------------------------------------
 
+print("Sampling from full posterior distribution...")
+# Sample from full posterior distribution
+results.get_posterior_samples(n_samples=1_500)
+
+# %% ---------------------------------------------------------------------------
+
+print("Compute log-likelihood per cell...")
+
+# Compute log-likelihood per cell
+log_lik = results.compute_log_likelihood(
+    counts=jnp.array(counts),
+    return_by="cell",
+    ignore_nans=True,
+    split_components=True
+)
+
+# Count how many times each component is greater than the other
+# Shape: (n_cells,)
+comp1_greater = np.sum(log_lik[:, :, 0] > log_lik[:, :, 1], axis=0)
+comp2_greater = np.sum(log_lik[:, :, 0] < log_lik[:, :, 1], axis=0)
+
+frac_comp1 = comp1_greater / n_samples
+frac_comp2 = comp2_greater / n_samples
+
+# %% ---------------------------------------------------------------------------
+
+print("Computing cell type assignments...")
+# Use posterior samples to assign cell types
+cell_types = results.compute_cell_type_assignments(
+    counts=jnp.array(counts),
+    ignore_nans=True
+)
+
+# %% ---------------------------------------------------------------------------
+
+# Extract mean prob assignments
+mean_assignments = cell_types["mean_probabilities"]
+
+# Define cell assignment as class with highest probability
+cell_assignments = np.argmax(mean_assignments, axis=1)
+
+
+# %% ---------------------------------------------------------------------------
+
+print("Plotting Hellinger distance for r parameters...")
+
+# Extract r distribution parameters
+mu_r_1 = results.params["r_loc"][0, :]
+sigma_r_1 = results.params["r_scale"][0, :]
+
+mu_r_2 = results.params["r_loc"][1, :]
+sigma_r_2 = results.params["r_scale"][1, :]
+
+# Compute Hellinger distance
+hellinger_distance = scribe.stats.hellinger_lognormal(
+    mu_r_1, 
+    sigma_r_1,
+    mu_r_2, 
+    sigma_r_2
+)
+
+# Initialize figure
+fig, ax = plt.subplots(figsize=(3.5, 3))
+
+# Plot Hellinger distance
+sns.ecdfplot(hellinger_distance, ax=ax)
+
+# Set labels
+ax.set_xlabel(r"$H(P_{\text{type}_1}, Q_{\text{type}_2})$")
+ax.set_ylabel("ECDF")
+
+# Set y-axis limits
+ax.set_ylim(-0.01, 1.01)
+
+# Save figure
+fig.savefig(f"{FIG_DIR}/hellinger_distance_{n_steps}steps.png", bbox_inches="tight")
+
+
+# %% ---------------------------------------------------------------------------
+
 print("Plotting ECDF...")
 # Define number of genes to select
 n_genes = 25
 
-# Sort genes by KL divergence in descending order
-sorted_idx = np.argsort(-kl_divergence)  # Negative to sort in descending order
+# Sort genes by Hellinger distance in descending order
+sorted_idx = np.argsort(-hellinger_distance)  # Negative to sort in descending order
 
-# Select top n_genes with highest KL divergence
+# Select top n_genes with highest Hellinger distance
 selected_idx = np.sort(sorted_idx[:n_genes])
 
 # Initialize figure with extra space for legends
@@ -300,12 +384,11 @@ ax.set_ylabel('ECDF')
 plt.tight_layout()
 
 # Save figure with extra space for legends
-fig.savefig(f"{FIG_DIR}/example_ECDF_kl_{n_steps}steps.png", bbox_inches="tight") 
-
+fig.savefig(f"{FIG_DIR}/example_ECDF_hellinger_{n_steps}steps.png", bbox_inches="tight") 
 # %% ---------------------------------------------------------------------------
 
 # Index results for shared genes
-results_subset_kl = results[selected_idx]
+results_subset_hellinger = results[selected_idx]
 
 # %% ---------------------------------------------------------------------------
 
@@ -314,7 +397,9 @@ n_samples = 1_500
 
 print("Generating posterior predictive samples...")
 # Generate posterior predictive samples
-results_subset_kl.get_ppc_samples(n_samples=n_samples, resample_parameters=True)
+results_subset_hellinger.get_ppc_samples(
+    n_samples=n_samples, resample_parameters=True
+)
 
 # %% ---------------------------------------------------------------------------
 
@@ -335,8 +420,8 @@ for i, ax in enumerate(axes):
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        results_subset_kl.posterior_samples["predictive_samples"][:, :, i],
-        credible_regions=[68, 50],
+        results_subset_hellinger.predictive_samples[:, :, i],
+        credible_regions=[95, 68, 50],
         # max_bin=true_counts.max()
     )
 
@@ -390,66 +475,16 @@ fig.suptitle("Example PPC", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/example_ppc_kl_{n_steps}steps.png", 
+    f"{FIG_DIR}/example_ppc_hellinger_{n_steps}steps.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
 
-# Compute cell-assignment map
-cell_assignments = results.compute_cell_type_assignments_map(
-    counts=jnp.array(counts),
-    batch_size=100
-)
-
-# %% ---------------------------------------------------------------------------
-
-print("Sampling from full posterior distribution...")
-# Sample from full posterior distribution
-results.get_posterior_samples(n_samples=1_500)
-
-# %% ---------------------------------------------------------------------------
-
-print("Compute log-likelihood per cell...")
-
-# Compute log-likelihood per cell
-log_lik = results.compute_log_likelihood(
-    counts=jnp.array(counts),
-    return_by="cell",
-    ignore_nans=True,
-    split_components=True
-)
-
-# Count how many times each component is greater than the other
-# Shape: (n_cells,)
-comp1_greater = np.sum(log_lik[:, :, 0] > log_lik[:, :, 1], axis=0)
-comp2_greater = np.sum(log_lik[:, :, 0] < log_lik[:, :, 1], axis=0)
-
-frac_comp1 = comp1_greater / n_samples
-frac_comp2 = comp2_greater / n_samples
-
-# %% ---------------------------------------------------------------------------
-
 print("Computing cell type assignments...")
 # Use posterior samples to assign cell types
-cell_types = results.compute_cell_type_assignments(
+cell_types_hellinger = results.compute_cell_type_assignments(
     counts=jnp.array(counts),
-    # ignore_nans=True
+    ignore_nans=True,
+    weights=hellinger_distance
 )
-
 # %% ---------------------------------------------------------------------------
-
-# with jax.experimental.enable_x64():
-#     # Use posterior samples to assign cell types
-#     cell_types = results.compute_cell_type_assignments(
-#         counts=jnp.array(data.X.toarray()),
-#         ignore_nans=True,
-#         dtype=jnp.float64,
-#         batch_size=100
-#     )
-
-# Extract mean prob assignments
-mean_assignments = cell_types["mean_probabilities"]
-
-# Define cell assignment as class with highest probability
-cell_assignments = np.argmax(mean_assignments, axis=1)
-

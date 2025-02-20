@@ -56,10 +56,13 @@ batch_size = 4096
 # Define number of steps for scribe
 n_steps = 30_000
 
+# Define r_distribution
+r_distribution = "lognormal"
+
 # Define parameters for prior
 r_alpha = 2
 r_beta = 1
-r_prior = (r_alpha, r_beta)
+r_prior = (r_alpha, r_beta) if r_distribution == "gamma" else (1, 1)
 
 # Define prior for p parameter
 p_prior = (1, 1)
@@ -158,7 +161,7 @@ with open(output_file, 'rb') as f:
 
 # Define file name
 file_name = f"{OUTPUT_DIR}/" \
-    f"scribe_nbdm_mix_results_" \
+    f"scribe_{model_type}_r-{r_distribution}_results_" \
     f"{n_cells}cells_" \
     f"{n_genes}genes_" \
     f"{n_shared_genes}shared_" \
@@ -171,16 +174,15 @@ file_name = f"{OUTPUT_DIR}/" \
 if not os.path.exists(file_name):
     # Run scribe
     scribe_results = scribe.svi.run_scribe(
-        model_type="nbdm_mix",
-        counts=data['counts'],
+        counts=jnp.array(data['counts']),
         n_steps=n_steps,
+        mixture_model=True,
         batch_size=batch_size,
         n_components=n_components,
-        prior_params={
-            "p_prior": p_prior,
-            "r_prior": r_prior,
-            "mixing_prior": mixing_prior
-        }
+        p_prior=p_prior,
+        r_prior=r_prior,
+        mixing_prior=mixing_prior,
+        r_dist=r_distribution,
     )
 
     # Save the results, the true values, and the counts

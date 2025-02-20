@@ -42,15 +42,18 @@ n_cells = 10_000
 n_genes = 20_000
 
 # Define batch size for memory-efficient sampling
-batch_size = 2048
+batch_size = 4096
 
 # Define number of steps for scribe
 n_steps = 25_000
 
+# Define r_distribution
+r_distribution = "lognormal"
+
 # Define parameters for prior
 r_alpha = 2
 r_beta = 1
-r_prior = (r_alpha, r_beta)
+r_prior = (r_alpha, r_beta) if r_distribution == "gamma" else (1, 1)
 
 # Define prior for p parameter
 p_prior = (1, 1)
@@ -129,7 +132,7 @@ with open(output_file, 'rb') as f:
 
 # Define file name
 file_name = f"{OUTPUT_DIR}/" \
-    f"scribe_nbvcp_results_" \
+    f"scribe_{model_type}_r-{r_distribution}_results_" \
     f"{n_cells}cells_" \
     f"{n_genes}genes_" \
     f"{n_steps}steps.pkl"
@@ -138,15 +141,14 @@ file_name = f"{OUTPUT_DIR}/" \
 if not os.path.exists(file_name):
     # Run scribe
     scribe_results = scribe.svi.run_scribe(
-        model_type="nbvcp",
-        counts=data['counts'],
+        counts=jnp.array(data['counts']),
         n_steps=n_steps,
         batch_size=batch_size,
-        prior_params={
-            "p_prior": p_prior,
-            "r_prior": r_prior,
-            "p_capture_prior": p_capture_prior
-        }
+        r_dist=r_distribution,
+        p_prior=p_prior,
+        p_capture_prior=p_capture_prior,
+        r_prior=r_prior,
+        variable_capture=True
     )
 
     # Save the results, the true values, and the counts

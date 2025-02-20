@@ -45,7 +45,10 @@ n_genes = 20_000
 batch_size = 4096
 
 # Define number of steps for scribe
-n_steps = 25_000
+n_steps = 20_000
+
+# Define r_distribution
+r_distribution = "gamma"
 
 # Define parameters for prior
 r_alpha = 2
@@ -115,7 +118,7 @@ with open(output_file, 'rb') as f:
 
 # Define file name
 file_name = f"{OUTPUT_DIR}/" \
-    f"scribe_nbdm_results_" \
+    f"scribe_{model_type}_r-{r_distribution}_results_" \
     f"{n_cells}cells_" \
     f"{n_genes}genes_" \
     f"{n_steps}steps.pkl"
@@ -124,16 +127,22 @@ file_name = f"{OUTPUT_DIR}/" \
 if not os.path.exists(file_name):
     # Run scribe
     scribe_results = scribe.svi.run_scribe(
-        model_type="nbdm",
-        counts=data['counts'],
+        counts=jnp.array(data['counts']),
         n_steps=n_steps,
         batch_size=batch_size,
-        prior_params={
-            "p_prior": p_prior,
-            "r_prior": r_prior
-        }
+        p_prior=p_prior,
+        r_prior=(1, 1),
+        r_dist=r_distribution,
     )
 
     # Save the results, the true values, and the counts
     with open(file_name, "wb") as f:
         pickle.dump(scribe_results, f)
+# %% ---------------------------------------------------------------------------
+
+# Load results
+with open(file_name, "rb") as f:
+    scribe_results = pickle.load(f)
+
+# %% ---------------------------------------------------------------------------
+
