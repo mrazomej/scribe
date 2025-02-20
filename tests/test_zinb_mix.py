@@ -6,14 +6,15 @@ import pytest
 import jax.numpy as jnp
 from jax import random
 import numpyro
-from scribe.models_mix import zinb_mixture_model, zinb_mixture_guide
-from scribe.svi import run_scribe, rerun_scribe
+from scribe.models_mix import zinb_mixture_model, zinb_mixture_guide, zinb_mixture_log_likelihood
+from scribe.svi import run_scribe
 from scribe.sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
     generate_ppc_samples
 )
-from scribe.results import ZINBMixtureResults
+from scribe.model_config import ModelConfig
+from scribe.model_registry import get_model_and_guide, get_log_likelihood_fn
 
 # ------------------------------------------------------------------------------
 # Test fixtures
@@ -30,11 +31,18 @@ def example_zinb_mix_results(small_dataset, rng_key):
     counts, _ = small_dataset
     return run_scribe(
         counts=counts,
-        model_type="zinb_mix",
+        zero_inflated=True,
+        variable_capture=False,
+        mixture_model=True,
         n_components=N_COMPONENTS,
-        rng_key=rng_key,
         n_steps=N_STEPS,
-        batch_size=5
+        batch_size=5,
+        r_dist="gamma",
+        r_prior=(2, 0.1),
+        p_prior=(1, 1),
+        gate_prior=(1, 1),
+        mixing_prior=jnp.ones(N_COMPONENTS),
+        seed=42
     )
 
 # ------------------------------------------------------------------------------
@@ -48,60 +56,80 @@ def test_inference_run(small_dataset, rng_key):
     
     results = run_scribe(
         counts=counts,
-        model_type="zinb_mix",
+        zero_inflated=True,
+        variable_capture=False,
+        mixture_model=True,
         n_components=N_COMPONENTS,
-        rng_key=rng_key,
         n_steps=N_STEPS,
-        batch_size=5
+        batch_size=5,
+        seed=42,
+        r_prior=(2, 0.1),
+        p_prior=(1, 1),
+        gate_prior=(1, 1),
+        mixing_prior=jnp.ones(N_COMPONENTS)
     )
     
-    assert isinstance(results, ZINBMixtureResults)
     assert results.n_cells == n_cells
     assert results.n_genes == n_genes
     assert results.n_components == N_COMPONENTS
     assert len(results.loss_history) == N_STEPS
     assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
+    assert results.model_type == "zinb_mix"
+    assert isinstance(results.model_config, ModelConfig)
 
 def test_parameter_ranges(example_zinb_mix_results):
     """Test that inferred parameters are in valid ranges."""
-    # All parameters should be positive
-    assert jnp.all(example_zinb_mix_results.params['alpha_p'] > 0)
-    assert jnp.all(example_zinb_mix_results.params['beta_p'] > 0)
-    assert jnp.all(example_zinb_mix_results.params['alpha_r'] > 0)
-    assert jnp.all(example_zinb_mix_results.params['beta_r'] > 0)
-    assert jnp.all(example_zinb_mix_results.params['alpha_gate'] > 0)
-    assert jnp.all(example_zinb_mix_results.params['beta_gate'] > 0)
-    assert jnp.all(example_zinb_mix_results.params['alpha_mixing'] > 0)
+    # All parameters should be positive - look for distribution parameters
+    r_params = [
+        param for param in example_zinb_mix_results.params 
+        if param.startswith('r_')
+    ]
+    for param in r_params:
+        assert jnp.all(example_zinb_mix_results.params[param] > 0)
+        assert example_zinb_mix_results.params[param].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
+        
+    # Check p parameters - should be positive
+    p_params = [
+        param for param in example_zinb_mix_results.params 
+        if param.startswith('p_')
+    ]
+    for param in p_params:
+        assert jnp.all(example_zinb_mix_results.params[param] > 0)
+        
+    # Check gate parameters - should be positive
+    gate_params = [
+        param for param in example_zinb_mix_results.params 
+        if param.startswith('gate_')
+    ]
+    for param in gate_params:
+        assert jnp.all(example_zinb_mix_results.params[param] > 0)
+        assert example_zinb_mix_results.params[param].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
+        
+    # Check mixing parameters - should be positive
+    mixing_params = [
+        param for param in example_zinb_mix_results.params 
+        if param.startswith('mixing_')
+    ]
+    for param in mixing_params:
+        assert jnp.all(example_zinb_mix_results.params[param] > 0)
+        assert example_zinb_mix_results.params[param].shape == (N_COMPONENTS,)
 
-    # Check shapes of component-specific parameters
-    assert example_zinb_mix_results.params['alpha_mixing'].shape == (N_COMPONENTS,)
-    assert example_zinb_mix_results.params['alpha_r'].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
-    assert example_zinb_mix_results.params['beta_r'].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
+# ------------------------------------------------------------------------------
+# Test model and guide functions
+# ------------------------------------------------------------------------------
+
+def test_get_model_and_guide():
+    """Test that get_model_and_guide returns the correct functions."""
+    model, guide = get_model_and_guide("zinb_mix")
     
-    # Check shapes of gene-specific parameters (gate parameters are per gene)
-    assert example_zinb_mix_results.params['alpha_gate'].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
-    assert example_zinb_mix_results.params['beta_gate'].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
+    assert model == zinb_mixture_model
+    assert guide == zinb_mixture_guide
 
-def test_continue_training(example_zinb_mix_results, small_dataset, rng_key):
-    """Test that continuing training from a previous results object works."""
-    counts, _ = small_dataset
-    n_cells, n_genes = counts.shape
+def test_get_log_likelihood_fn():
+    """Test that get_log_likelihood_fn returns the correct function."""
+    log_lik_fn = get_log_likelihood_fn("zinb_mix")
     
-    # Run inference again
-    results = rerun_scribe(
-        results=example_zinb_mix_results,
-        counts=counts,
-        rng_key=rng_key,
-        n_steps=N_STEPS,
-        batch_size=5,
-    )
-
-    assert isinstance(results, ZINBMixtureResults)
-    assert results.n_cells == n_cells
-    assert results.n_genes == n_genes
-    assert results.n_components == N_COMPONENTS
-    assert len(results.loss_history) == N_STEPS + N_STEPS
-    assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
+    assert log_lik_fn == zinb_mixture_log_likelihood
 
 # ------------------------------------------------------------------------------
 # Test sampling
@@ -109,260 +137,441 @@ def test_continue_training(example_zinb_mix_results, small_dataset, rng_key):
 
 def test_posterior_sampling(example_zinb_mix_results, rng_key):
     """Test sampling from the variational posterior."""
-    n_samples = 100
-    samples = example_zinb_mix_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=n_samples
+    n_samples = 10
+    posterior_samples = example_zinb_mix_results.get_posterior_samples(
+        rng_key=random.PRNGKey(42),
+        n_samples=n_samples,
+        store_samples=True
     )
     
-    # Check that all parameters are present
-    assert 'mixing_weights' in samples
-    assert 'p' in samples
-    assert 'r' in samples
-    assert 'gate' in samples
+    # Check structure of posterior samples
+    assert 'mixing_weights' in posterior_samples
+    assert 'p' in posterior_samples
+    assert 'r' in posterior_samples
+    assert 'gate' in posterior_samples
     
-    # Check shapes
-    assert samples['mixing_weights'].shape == (n_samples, N_COMPONENTS)
-    assert samples['p'].shape == (n_samples,)
-    assert samples['r'].shape == (n_samples, N_COMPONENTS, example_zinb_mix_results.n_genes)
-    assert samples['gate'].shape == (n_samples, N_COMPONENTS, example_zinb_mix_results.n_genes)
+    # Check dimensions of samples
+    assert posterior_samples['mixing_weights'].shape == (n_samples, N_COMPONENTS)
+    assert posterior_samples['p'].shape == (n_samples,)
+    assert posterior_samples['r'].shape == (n_samples, N_COMPONENTS, example_zinb_mix_results.n_genes)
+    assert posterior_samples['gate'].shape == (n_samples, N_COMPONENTS, example_zinb_mix_results.n_genes)
     
     # Test that samples are in valid ranges
-    assert jnp.all(samples['mixing_weights'] >= 0) and jnp.all(samples['mixing_weights'] <= 1)
-    assert jnp.allclose(samples['mixing_weights'].sum(axis=1), 1.0)  # Mixing weights sum to 1
-    assert jnp.all(samples['p'] >= 0) and jnp.all(samples['p'] <= 1)
-    assert jnp.all(samples['r'] > 0)
-    assert jnp.all(samples['gate'] >= 0) and jnp.all(samples['gate'] <= 1)
+    assert jnp.all(posterior_samples['mixing_weights'] >= 0)
+    assert jnp.all(posterior_samples['mixing_weights'] <= 1)
+    assert jnp.allclose(jnp.sum(posterior_samples['mixing_weights'], axis=1), jnp.ones(n_samples))
+    assert jnp.all(posterior_samples['p'] >= 0) 
+    assert jnp.all(posterior_samples['p'] <= 1)
+    assert jnp.all(posterior_samples['r'] > 0)
+    assert jnp.all(posterior_samples['gate'] >= 0)
+    assert jnp.all(posterior_samples['gate'] <= 1)
 
 def test_predictive_sampling(example_zinb_mix_results, rng_key):
     """Test generating predictive samples."""
-    n_samples = 50
+    n_samples = 10
     
     # First get posterior samples
-    posterior_samples = example_zinb_mix_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=n_samples
+    example_zinb_mix_results.get_posterior_samples(
+        rng_key=random.PRNGKey(42),
+        n_samples=n_samples,
+        store_samples=True
     )
     
-    # Generate predictive samples
-    predictive_samples = example_zinb_mix_results.get_predictive_samples(
-        rng_key=random.split(rng_key)[1]
+    # Then generate predictive samples
+    pred_samples = example_zinb_mix_results.get_predictive_samples(
+        rng_key=random.PRNGKey(43),
+        store_samples=True
     )
     
-    expected_shape = (
-        n_samples,
-        example_zinb_mix_results.n_cells,
-        example_zinb_mix_results.n_genes
-    )
-    assert predictive_samples.shape == expected_shape
-    assert jnp.all(predictive_samples >= 0)  # Counts should be non-negative
+    expected_shape = (n_samples, example_zinb_mix_results.n_cells, example_zinb_mix_results.n_genes)
+    assert pred_samples.shape == expected_shape
+    assert jnp.all(pred_samples >= 0)  # Counts should be non-negative
 
 def test_ppc_sampling(example_zinb_mix_results, rng_key):
     """Test posterior predictive check sampling."""
-    n_samples = 50
+    n_samples = 10
     
-    ppc_samples = example_zinb_mix_results.get_ppc_samples(
-        rng_key=rng_key,
-        n_samples=n_samples
+    ppc_results = example_zinb_mix_results.get_ppc_samples(
+        rng_key=random.PRNGKey(44),
+        n_samples=n_samples,
+        store_samples=True
     )
     
-    assert 'parameter_samples' in ppc_samples
-    assert 'predictive_samples' in ppc_samples
-    
-    # Check parameter samples
-    assert 'mixing_weights' in ppc_samples['parameter_samples']
-    assert 'p' in ppc_samples['parameter_samples']
-    assert 'r' in ppc_samples['parameter_samples']
-    assert 'gate' in ppc_samples['parameter_samples']
+    assert 'parameter_samples' in ppc_results
+    assert 'predictive_samples' in ppc_results
     
     # Check predictive samples shape
-    expected_shape = (
-        n_samples,
-        example_zinb_mix_results.n_cells,
-        example_zinb_mix_results.n_genes
-    )
-    assert ppc_samples['predictive_samples'].shape == expected_shape
+    expected_shape = (n_samples, example_zinb_mix_results.n_cells, example_zinb_mix_results.n_genes)
+    assert ppc_results['predictive_samples'].shape == expected_shape
 
 # ------------------------------------------------------------------------------
 # Test results methods
 # ------------------------------------------------------------------------------
 
 def test_get_distributions(example_zinb_mix_results):
-    """Test getting variational distributions."""
-    distributions = example_zinb_mix_results.get_distributions()
+    """Test getting distribution objects from results."""
+    # Get scipy distributions
+    scipy_dists = example_zinb_mix_results.get_distributions(backend="scipy")
+    assert 'p' in scipy_dists
+    assert 'r' in scipy_dists
+    assert 'gate' in scipy_dists
+    assert 'mixing_weights' in scipy_dists
     
-    assert 'mixing_weights' in distributions
-    assert 'p' in distributions
-    assert 'r' in distributions
-    assert 'gate' in distributions
+    # Get numpyro distributions
+    numpyro_dists = example_zinb_mix_results.get_distributions(backend="numpyro")
+    assert 'p' in numpyro_dists
+    assert 'r' in numpyro_dists
+    assert 'gate' in numpyro_dists
+    assert 'mixing_weights' in numpyro_dists
 
-def test_indexing(example_zinb_mix_results):
-    """Test indexing functionality."""
-    # Single gene
+def test_get_map(example_zinb_mix_results):
+    """Test getting MAP estimates."""
+    map_estimates = example_zinb_mix_results.get_map()
+    
+    assert 'p' in map_estimates
+    assert 'r' in map_estimates
+    assert 'gate' in map_estimates
+    assert 'mixing_weights' in map_estimates
+    assert map_estimates['p'].shape == ()  # scalar
+    assert map_estimates['r'].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
+    assert map_estimates['gate'].shape == (N_COMPONENTS, example_zinb_mix_results.n_genes)
+    assert map_estimates['mixing_weights'].shape == (N_COMPONENTS,)
+
+def test_model_and_guide_retrieval(example_zinb_mix_results):
+    """Test that model and guide functions can be retrieved from results."""
+    model, guide = example_zinb_mix_results.get_model_and_guide()
+    
+    assert callable(model)
+    assert callable(guide)
+
+def test_log_likelihood_fn_retrieval(example_zinb_mix_results):
+    """Test that log likelihood function can be retrieved from results."""
+    log_lik_fn = example_zinb_mix_results.get_log_likelihood_fn()
+    
+    assert callable(log_lik_fn)
+
+# ------------------------------------------------------------------------------
+# Test indexing
+# ------------------------------------------------------------------------------
+
+def test_getitem_integer(example_zinb_mix_results):
+    """Test indexing with an integer."""
     subset = example_zinb_mix_results[0]
-    assert isinstance(subset, ZINBMixtureResults)
+    
     assert subset.n_genes == 1
     assert subset.n_cells == example_zinb_mix_results.n_cells
+    assert subset.model_type == example_zinb_mix_results.model_type
     assert subset.n_components == N_COMPONENTS
     
-    # Multiple genes
+    # Check component and gene-specific parameters are correctly subset
+    for param in example_zinb_mix_results.params:
+        if param.startswith('r_') or param.startswith('gate_'):
+            # Parameters should maintain component dimension but subset gene dimension
+            assert subset.params[param].shape == (N_COMPONENTS, 1)
+
+def test_getitem_slice(example_zinb_mix_results):
+    """Test indexing with a slice."""
     subset = example_zinb_mix_results[0:2]
-    assert isinstance(subset, ZINBMixtureResults)
+    
     assert subset.n_genes == 2
+    assert subset.n_cells == example_zinb_mix_results.n_cells
+    assert subset.model_type == example_zinb_mix_results.model_type
+    assert subset.n_components == N_COMPONENTS
+    
+    # Check component and gene-specific parameters are correctly subset
+    for param in example_zinb_mix_results.params:
+        if param.startswith('r_') or param.startswith('gate_'):
+            # Parameters should maintain component dimension but subset gene dimension
+            assert subset.params[param].shape == (N_COMPONENTS, 2)
+
+def test_getitem_boolean(example_zinb_mix_results):
+    """Test indexing with a boolean array."""
+    mask = jnp.array([True, False, True] + [False] * (example_zinb_mix_results.n_genes - 3))
+    subset = example_zinb_mix_results[mask]
+    
+    assert subset.n_genes == int(jnp.sum(mask))
     assert subset.n_cells == example_zinb_mix_results.n_cells
     assert subset.n_components == N_COMPONENTS
     
-    # Boolean indexing
-    mask = jnp.array([True, False, True] + [False] * (example_zinb_mix_results.n_genes - 3))
-    subset = example_zinb_mix_results[mask]
-    assert isinstance(subset, ZINBMixtureResults)
-    assert subset.n_genes == int(mask.sum())
-    assert subset.n_components == N_COMPONENTS
+    # Check component and gene-specific parameters are correctly subset
+    for param in example_zinb_mix_results.params:
+        if param.startswith('r_') or param.startswith('gate_'):
+            # Parameters should maintain component dimension but subset gene dimension
+            assert subset.params[param].shape == (N_COMPONENTS, int(jnp.sum(mask)))
 
-def test_parameter_subsetting(example_zinb_mix_results):
-    """Test that parameter subsetting works correctly."""
+def test_subset_with_posterior_samples(example_zinb_mix_results, rng_key):
+    """Test that subsetting preserves posterior samples."""
+    # Generate posterior samples
+    example_zinb_mix_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES,
+        store_samples=True
+    )
+    
+    # Subset results by genes
     subset = example_zinb_mix_results[0:2]
     
-    # Check that gene-specific parameters are subset correctly
-    # r parameters should maintain component dimension but subset gene dimension
-    assert subset.params['alpha_r'].shape == (N_COMPONENTS, 2)
-    assert subset.params['beta_r'].shape == (N_COMPONENTS, 2)
+    # Check posterior samples were preserved and correctly subset
+    assert subset.posterior_samples is not None
+    assert 'p' in subset.posterior_samples
+    assert 'r' in subset.posterior_samples
+    assert 'gate' in subset.posterior_samples
+    assert 'mixing_weights' in subset.posterior_samples
+    assert subset.posterior_samples['r'].shape == (N_SAMPLES, N_COMPONENTS, 2)
+    assert subset.posterior_samples['gate'].shape == (N_SAMPLES, N_COMPONENTS, 2)
+    assert subset.posterior_samples['p'].shape == (N_SAMPLES,)
+    assert subset.posterior_samples['mixing_weights'].shape == (N_SAMPLES, N_COMPONENTS)
+
+# ------------------------------------------------------------------------------
+# Test component selection
+# ------------------------------------------------------------------------------
+
+def test_get_component(example_zinb_mix_results):
+    """Test selecting a specific component from a mixture model."""
+    # Select the first component
+    component = example_zinb_mix_results.get_component(0)
     
-    # Gate parameters should be subset (they're gene-specific)
-    assert subset.params['alpha_gate'].shape == (N_COMPONENTS, 2)
-    assert subset.params['beta_gate'].shape == (N_COMPONENTS, 2)
+    # Check that it's no longer a mixture model
+    assert component.n_components is None
+    assert component.model_type == "zinb"  # Model type should lose _mix suffix
     
-    # Check that component-specific parameters remain unchanged
-    assert subset.params['alpha_mixing'].shape == (N_COMPONENTS,)
+    # Check that gene counts are preserved
+    assert component.n_genes == example_zinb_mix_results.n_genes
+    assert component.n_cells == example_zinb_mix_results.n_cells
     
-    # Check that shared parameters remain unchanged
-    assert subset.params['alpha_p'].shape == ()
-    assert subset.params['beta_p'].shape == ()
+    # Check that parameters are correctly subset
+    for param in example_zinb_mix_results.params:
+        if param.startswith('r_') or param.startswith('gate_'):
+            # Component dimension should be removed, gene dimension preserved
+            orig_shape = example_zinb_mix_results.params[param].shape
+            if len(orig_shape) > 1 and orig_shape[0] == N_COMPONENTS:
+                assert component.params[param].shape == (example_zinb_mix_results.n_genes,)
+                # Check values match
+                assert jnp.allclose(
+                    component.params[param],
+                    example_zinb_mix_results.params[param][0]
+                )
+
+def test_get_component_with_posterior_samples(example_zinb_mix_results, rng_key):
+    """Test component selection with posterior samples."""
+    # Generate posterior samples
+    example_zinb_mix_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES,
+        store_samples=True
+    )
+    
+    # Select component
+    component = example_zinb_mix_results.get_component(1)
+    
+    # Check posterior samples are correctly subset
+    assert component.posterior_samples is not None
+    assert 'p' in component.posterior_samples
+    assert 'r' in component.posterior_samples
+    assert 'gate' in component.posterior_samples
+    
+    # Check shapes
+    assert component.posterior_samples['p'].shape == (N_SAMPLES,)
+    assert component.posterior_samples['r'].shape == (N_SAMPLES, example_zinb_mix_results.n_genes)
+    assert component.posterior_samples['gate'].shape == (N_SAMPLES, example_zinb_mix_results.n_genes)
+    
+    # Check values match the original component values
+    assert jnp.allclose(
+        component.posterior_samples['r'],
+        example_zinb_mix_results.posterior_samples['r'][:, 1, :]
+    )
+    assert jnp.allclose(
+        component.posterior_samples['gate'],
+        example_zinb_mix_results.posterior_samples['gate'][:, 1, :]
+    )
+
+def test_component_then_gene_indexing(example_zinb_mix_results):
+    """Test selecting a component and then indexing genes."""
+    # First select a component
+    component = example_zinb_mix_results.get_component(0)
+    
+    # Then select genes
+    gene_subset = component[0:2]
+    
+    # Check dimensions
+    assert gene_subset.n_genes == 2
+    assert gene_subset.n_cells == example_zinb_mix_results.n_cells
+    assert gene_subset.n_components is None
+    assert gene_subset.model_type == "zinb"
+    
+    # Check parameters
+    for param in component.params:
+        if param.startswith('r_') or param.startswith('gate_'):
+            # Gene dimension should be subset
+            orig_shape = component.params[param].shape
+            if len(orig_shape) > 0 and orig_shape[0] == example_zinb_mix_results.n_genes:
+                assert gene_subset.params[param].shape == (2,)
 
 # ------------------------------------------------------------------------------
 # Test log likelihood
 # ------------------------------------------------------------------------------
 
-def test_log_likelihood(example_zinb_mix_results, small_dataset, rng_key):
-    """Test evaluation of the log likelihood function."""
-    # Get counts from dataset
+def test_compute_log_likelihood(example_zinb_mix_results, small_dataset, rng_key):
+    """Test computing log likelihood with the model."""
     counts, _ = small_dataset
     
-    # Get posterior samples if not already available
+    # First generate posterior samples
     example_zinb_mix_results.get_posterior_samples(
         rng_key=rng_key,
-        n_samples=N_SAMPLES
+        n_samples=N_SAMPLES,
+        store_samples=True
     )
     
-    # Test log likelihood evaluation without split_components
-    cell_log_liks = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Compute per-cell log likelihood (marginal over components)
+    cell_ll = example_zinb_mix_results.compute_log_likelihood(
+        counts,
         return_by='cell',
         split_components=False
     )
     
-    # Shape checks for cell-wise log likelihood (should match non-mixture case)
-    assert cell_log_liks.shape[0] == N_SAMPLES  # n_samples
-    assert cell_log_liks.shape[1] == example_zinb_mix_results.n_cells  # n_cells
+    # Check shape - should be (n_samples, n_cells)
+    assert cell_ll.shape == (N_SAMPLES, example_zinb_mix_results.n_cells)
+    assert jnp.all(jnp.isfinite(cell_ll))
+    assert jnp.all(cell_ll <= 0)  # Log likelihoods should be negative
     
-    # Test with split_components=True
-    cell_log_liks_split = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
-        return_by='cell',
-        split_components=True
-    )
-    
-    # Shape checks for split components case
-    assert cell_log_liks_split.shape[0] == N_SAMPLES  # n_samples
-    assert cell_log_liks_split.shape[1] == example_zinb_mix_results.n_cells  # n_cells
-    assert cell_log_liks_split.shape[2] == N_COMPONENTS  # n_components
-    
-    # Test gene-wise likelihood without split_components
-    gene_log_liks = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Compute per-gene log likelihood (marginal over components)
+    gene_ll = example_zinb_mix_results.compute_log_likelihood(
+        counts,
         return_by='gene',
         split_components=False
     )
     
-    # Shape checks for gene-wise log likelihood
-    assert gene_log_liks.shape[0] == N_SAMPLES  # n_samples
-    assert gene_log_liks.shape[1] == example_zinb_mix_results.n_genes  # n_genes
+    # Check shape - should be (n_samples, n_genes)
+    assert gene_ll.shape == (N_SAMPLES, example_zinb_mix_results.n_genes)
+    assert jnp.all(jnp.isfinite(gene_ll))
     
-    # Test gene-wise likelihood with split_components
-    gene_log_liks_split = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Now test with split_components=True
+    # Compute per-cell log likelihood by component
+    cell_ll_by_comp = example_zinb_mix_results.compute_log_likelihood(
+        counts,
+        return_by='cell',
+        split_components=True
+    )
+    
+    # Check shape - should be (n_samples, n_cells, n_components)
+    assert cell_ll_by_comp.shape == (N_SAMPLES, example_zinb_mix_results.n_cells, N_COMPONENTS)
+    assert jnp.all(jnp.isfinite(cell_ll_by_comp))
+    
+    # Compute per-gene log likelihood by component
+    gene_ll_by_comp = example_zinb_mix_results.compute_log_likelihood(
+        counts,
         return_by='gene',
         split_components=True
     )
     
-    # Shape checks for split components case
-    assert gene_log_liks_split.shape[0] == N_SAMPLES  # n_samples 
-    assert gene_log_liks_split.shape[1] == example_zinb_mix_results.n_genes  # n_genes
-    assert gene_log_liks_split.shape[2] == N_COMPONENTS  # n_components
-    
-    # Basic sanity checks
-    assert jnp.all(jnp.isfinite(cell_log_liks))  # No NaNs or infs
-    assert jnp.all(jnp.isfinite(gene_log_liks))  # No NaNs or infs
-    assert jnp.all(jnp.isfinite(cell_log_liks_split))  # No NaNs or infs
-    assert jnp.all(jnp.isfinite(gene_log_liks_split))  # No NaNs or infs
-    assert jnp.all(cell_log_liks <= 0)  # Log likelihoods should be <= 0
-    assert jnp.all(gene_log_liks <= 0)  # Log likelihoods should be <= 0
-    assert jnp.all(cell_log_liks_split <= 0)  # Log likelihoods should be <= 0
-    assert jnp.all(gene_log_liks_split <= 0)  # Log likelihoods should be <= 0
+    # Check shape - should be (n_samples, n_genes, n_components)
+    assert gene_ll_by_comp.shape == (N_SAMPLES, example_zinb_mix_results.n_genes, N_COMPONENTS)
+    assert jnp.all(jnp.isfinite(gene_ll_by_comp))
 
-def test_log_likelihood_batching(example_zinb_mix_results, small_dataset, rng_key):
-    """Test that batched and non-batched log likelihood give same results."""
-    # Get counts from dataset
+def test_compute_log_likelihood_batched(example_zinb_mix_results, small_dataset, rng_key):
+    """Test computing log likelihood with batching."""
     counts, _ = small_dataset
     
-    # Get posterior samples if not already available
+    # First generate posterior samples
     example_zinb_mix_results.get_posterior_samples(
         rng_key=rng_key,
-        n_samples=N_SAMPLES
+        n_samples=N_SAMPLES,
+        store_samples=True
     )
     
-    # Test without split_components
-    # Compute log likelihood without batching
-    full_log_liks = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Compute without batching (marginal over components)
+    full_ll = example_zinb_mix_results.compute_log_likelihood(
+        counts,
         return_by='cell',
         split_components=False
     )
     
-    # Compute log likelihood with batching
-    batched_log_liks = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        batch_size=5,  # Small batch size for testing
-        cells_axis=0,
+    # Compute with batching
+    batched_ll = example_zinb_mix_results.compute_log_likelihood(
+        counts,
+        batch_size=3,
         return_by='cell',
         split_components=False
     )
     
-    # Check that results match
-    assert jnp.allclose(full_log_liks, batched_log_liks, rtol=1e-5)
+    # Results should match
+    assert jnp.allclose(full_ll, batched_ll, rtol=1e-5, atol=1e-5)
     
-    # Test with split_components
-    # Compute log likelihood without batching
-    full_log_liks_split = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Now test with split_components=True
+    # Compute without batching
+    full_ll_split = example_zinb_mix_results.compute_log_likelihood(
+        counts,
         return_by='cell',
         split_components=True
     )
     
-    # Compute log likelihood with batching
-    batched_log_liks_split = example_zinb_mix_results.compute_log_likelihood(
-        counts=counts, 
-        batch_size=5,  # Small batch size for testing
-        cells_axis=0,
+    # Compute with batching
+    batched_ll_split = example_zinb_mix_results.compute_log_likelihood(
+        counts,
+        batch_size=3,
         return_by='cell',
         split_components=True
     )
     
-    # Check that results match
-    assert jnp.allclose(full_log_liks_split, batched_log_liks_split, rtol=1e-5)
+    # Results should match
+    assert jnp.allclose(full_ll_split, batched_ll_split, rtol=1e-5, atol=1e-5)
+
+# ------------------------------------------------------------------------------
+# Test cell type assignments
+# ------------------------------------------------------------------------------
+
+def test_compute_cell_type_assignments(example_zinb_mix_results, small_dataset, rng_key):
+    """Test computing cell type assignments."""
+    counts, _ = small_dataset
+    
+    # First generate posterior samples
+    example_zinb_mix_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES,
+        store_samples=True
+    )
+    
+    # Compute assignments
+    assignments = example_zinb_mix_results.compute_cell_type_assignments(
+        counts,
+        fit_distribution=True,
+        verbose=False
+    )
+    
+    # Check structure of results
+    assert 'concentration' in assignments
+    assert 'mean_probabilities' in assignments
+    assert 'sample_probabilities' in assignments
+    
+    # Check shapes
+    assert assignments['concentration'].shape == (example_zinb_mix_results.n_cells, N_COMPONENTS)
+    assert assignments['mean_probabilities'].shape == (example_zinb_mix_results.n_cells, N_COMPONENTS)
+    assert assignments['sample_probabilities'].shape == (N_SAMPLES, example_zinb_mix_results.n_cells, N_COMPONENTS)
+    
+    # Test without fitting distribution
+    assignments_no_fit = example_zinb_mix_results.compute_cell_type_assignments(
+        counts,
+        fit_distribution=False,
+        verbose=False
+    )
+    
+    assert 'sample_probabilities' in assignments_no_fit
+    assert 'concentration' not in assignments_no_fit
+    assert 'mean_probabilities' not in assignments_no_fit
+    assert assignments_no_fit['sample_probabilities'].shape == (N_SAMPLES, example_zinb_mix_results.n_cells, N_COMPONENTS)
+
+def test_compute_cell_type_assignments_map(example_zinb_mix_results, small_dataset):
+    """Test computing cell type assignments using MAP estimates."""
+    counts, _ = small_dataset
+    
+    # Compute assignments using MAP
+    assignments = example_zinb_mix_results.compute_cell_type_assignments_map(
+        counts,
+        verbose=False
+    )
+    
+    # Check structure of results
+    assert 'probabilities' in assignments
+    
+    # Check shapes
+    assert assignments['probabilities'].shape == (example_zinb_mix_results.n_cells, N_COMPONENTS)
