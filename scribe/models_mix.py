@@ -41,19 +41,8 @@ def nbdm_mixture_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    n_components : int
-        Number of mixture components to fit
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p parameters.
-        Default is (1, 1) for uniform priors.
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters.
-        Default is (2, 0.1).
-    mixing_prior : Union[float, tuple]
-        Concentration parameter for the Dirichlet prior on mixing weights.
-        If float, uses same value for all components.
-        If tuple, uses different concentration for each component.
-        Default is 1.0 for a uniform prior over the simplex.
+    model_config : ModelConfig
+        Model configuration object containing distribution and parameter settings
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes).
         If None, generates samples from the prior.
@@ -64,9 +53,9 @@ def nbdm_mixture_model(
     Model Structure
     --------------
     Global Parameters:
-        - Mixture weights ~ Dirichlet(mixing_prior)
-        - Success probability p ~ Beta(p_prior)
-        - Component-specific dispersion r ~ Gamma(r_prior) per gene and component
+        - Mixture weights ~ model_config.mixing_distribution_model
+        - Success probability p ~ model_config.p_distribution_model
+        - Component-specific dispersion r ~ model_config.r_distribution_model per gene and component
 
     Likelihood: counts ~ MixtureSameFamily(
         Categorical(mixing_weights), NegativeBinomialProbs(r, p)
@@ -133,36 +122,40 @@ def nbdm_mixture_guide(
     batch_size=None,
 ):
     """
-    Variational guide for the NBDM mixture model. This guide function defines
-    the form of the variational distribution that will be optimized to
-    approximate the true posterior.
+    Variational guide for the NBDM mixture model.
 
-    This guide function specifies a mean-field variational family where:
-        - The success probability p follows a Beta distribution
-        - Each gene's overdispersion parameter r follows an independent Gamma
-          distribution
-        - The mixing weights follow a Dirichlet distribution
-    
+    This guide function defines the form of the variational distribution that
+    will be optimized to approximate the true posterior. It specifies a
+    mean-field variational family where each parameter has its own independent
+    distribution:
+
+    - The mixing weights follow a Dirichlet distribution
+    - The success probability p follows a Beta distribution 
+    - Each gene's overdispersion parameter r follows an independent distribution
+      (typically Gamma or LogNormal)
+
+    The specific distributions used are configured via the model_config
+    parameter.
+
     Parameters
     ----------
     n_cells : int
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    n_components : int
-        Number of mixture components
-    p_prior : tuple of float
-        Parameters (alpha, beta) for Beta prior on p (default: (1,1))
-    r_prior : tuple of float
-        Parameters (alpha, beta) for Gamma prior on r (default: (2,0.1))
-    mixing_prior : Union[float, tuple]
-        Concentration parameter(s) for Dirichlet prior on mixing weights. If
-        float, uses same value for all components. If tuple, uses different
-        concentration for each component.
+    model_config : ModelConfig
+        Configuration object specifying the model structure and distributions
     counts : array_like, optional
         Observed counts matrix of shape (n_cells, n_genes)
     batch_size : int, optional
-        Mini-batch size for stochastic optimization
+        Mini-batch size for stochastic optimization. If None, uses full dataset.
+
+    Guide Structure
+    --------------
+    Variational Parameters:
+        - Mixing weights ~ model_config.mixing_distribution_guide
+        - Success probability p ~ model_config.p_distribution_guide
+        - Component-specific dispersion r ~ model_config.r_distribution_guide per gene and component
     """
     # Extract number of components
     n_components = model_config.n_components
@@ -224,119 +217,93 @@ def nbdm_mixture_guide(
 def zinb_mixture_model(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    gate_prior: tuple = (1, 1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
     """
-    Numpyro mixture model for single-cell RNA sequencing data using
-    Zero-Inflated Negative Binomial distributions.
+    Numpyro mixture model for Zero-Inflated Negative Binomial single-cell RNA
+    sequencing data.
     
-    This model assumes a hierarchical mixture structure where:
-        1. Each mixture component has: - A shared success probability p across
-           all genes - Gene-specific dispersion parameters r - Gene-specific
-           dropout probabilities (gate)
-        2. The mixture is handled using Numpyro's MixtureSameFamily
-    
+    This model uses the configuration defined in model_config. It implements a
+    mixture of Zero-Inflated Negative Binomial distributions where each
+    component has:
+        - A shared success probability p across all genes
+        - Gene-specific dispersion parameters r
+        - Gene-specific dropout probabilities (gate)
+
     Parameters
     ----------
     n_cells : int
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    n_components : int
-        Number of mixture components to fit
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p parameters. Default is
-        (1, 1) for uniform priors.
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters. Default is
-        (2, 0.1).
-    gate_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on dropout probabilities.
-        Default is (1, 1).
-    mixing_prior : Union[float, tuple]
-        Concentration parameter for the Dirichlet prior on mixing weights. If
-        float, uses same value for all components. If tuple, uses different
-        concentration for each component. Default is 1.0 for a uniform prior
-        over the simplex.
+    model_config : ModelConfig
+        Configuration object for model distributions containing:
+            - mixing_distribution_model: Distribution for mixture weights
+            - p_distribution_model: Distribution for success probability p
+            - r_distribution_model: Distribution for dispersion parameters r
+            - gate_distribution_model: Distribution for dropout probabilities
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). If None, generates
         samples from the prior.
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference. If None, uses full
-        dataset.
+        Mini-batch size for stochastic optimization. If None, uses full dataset.
 
     Model Structure
     --------------
-    Global Parameters:
-        - Mixture weights ~ Dirichlet(mixing_prior)
-        - Success probability p ~ Beta(p_prior) [shared across components]
-        - Component-specific dispersion r ~ Gamma(r_prior) [per component and gene]
-        - Dropout probabilities gate ~ Beta(gate_prior) [per component and gene]
+    Parameters:
+        - Mixture weights ~ model_config.mixing_distribution_model
+        - Success probability p ~ model_config.p_distribution_model
+        - Gene-specific dispersion r ~ model_config.r_distribution_model
+        - Dropout probabilities gate ~ model_config.gate_distribution_model
 
-    Likelihood: counts ~ MixtureSameFamily(
-        Categorical(mixing_weights), ZeroInflatedNegativeBinomial(r, p, gate)
-    )
+    Likelihood: 
+        counts ~ MixtureSameFamily(
+            Categorical(mixing_weights), 
+            ZeroInflatedNegativeBinomial(r, p, gate)
+        )
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        if len(mixing_prior) != n_components:
-            raise ValueError(
-                f"Length of mixing_prior ({len(mixing_prior)}) must match "
-                f"number of components ({n_components})"
-            )
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
         "mixing_weights",
-        dist.Dirichlet(mixing_concentration)
+        model_config.mixing_distribution_model
     )
     
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
-    # Define the prior on the p parameters
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
+    # Define the prior on the p parameters - one for each component
+    p = numpyro.sample("p", model_config.p_distribution_model)
 
     # Define the prior on the r parameters - one for each gene and component
     r = numpyro.sample(
         "r",
-        dist.Gamma(r_prior[0], r_prior[1]).expand([n_components, n_genes])
+        model_config.r_distribution_model.expand([n_components, n_genes])
     )
 
     # Define the prior on the gate parameters - one for each gene and component
     gate = numpyro.sample(
         "gate",
-        dist.Beta(gate_prior[0], gate_prior[1]).expand([n_components, n_genes])
+        model_config.gate_distribution_model.expand([n_components, n_genes])
     )
+
+    # Create base negative binomial distribution
+    base_dist = dist.NegativeBinomialProbs(r, p)
+    
+    # Create zero-inflated distribution
+    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+    
+    # Create mixture distribution
+    mixture = dist.MixtureSameFamily(mixing_dist, zinb)
 
     # If we have observed data, condition on it
     if counts is not None:
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
-            # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p)
-            
-            # Create zero-inflated distribution
-            zinb = dist.ZeroInflatedDistribution(
-                base_dist, 
-                gate=gate
-            ).to_event(1)
-            
-            # Create mixture distribution
-            mixture = dist.MixtureSameFamily(
-                mixing_dist, 
-                zinb
-            )
-            
             # Define plate for cells
             with numpyro.plate("cells", n_cells):
                 # Sample counts from mixture
@@ -346,31 +313,11 @@ def zinb_mixture_model(
             with numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
-                # Create base negative binomial distribution
-                base_dist = dist.NegativeBinomialProbs(r, p)
-                
-                # Create zero-inflated distribution
-                zinb = dist.ZeroInflatedDistribution(
-                    base_dist, gate=gate).to_event(1)
-                
-                # Create mixture distribution
-                mixture = dist.MixtureSameFamily(mixing_dist, zinb)
-                
                 # Sample counts from mixture
                 numpyro.sample("counts", mixture, obs=counts[idx])
     else:
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
-            # Create base negative binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p)
-            
-            # Create zero-inflated distribution
-            zinb = dist.ZeroInflatedDistribution(
-                base_dist, gate=gate).to_event(1)
-            
-            # Create mixture distribution
-            mixture = dist.MixtureSameFamily(mixing_dist, zinb)
-            
             # Sample counts from mixture
             numpyro.sample("counts", mixture)
 
@@ -382,26 +329,15 @@ def zinb_mixture_model(
 def zinb_mixture_guide(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    gate_prior: tuple = (1, 1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
     """
-    Variational guide for the ZINB mixture model. This guide function defines
-    the form of the variational distribution that will be optimized to
-    approximate the true posterior.
-
-    This guide function specifies a mean-field variational family where:
-        - The mixing weights follow a Dirichlet distribution
-        - Each component's success probability p follows a Beta distribution
-        - Each gene's overdispersion parameter r follows an independent Gamma
-          distribution for each component
-        - Each gene's dropout probability follows a Beta distribution for each
-          component
+    Define the variational distribution for stochastic variational inference.
+    
+    This guide defines the variational distributions for the ZINB mixture model
+    parameters using the configuration specified in model_config.
     
     Parameters
     ----------
@@ -409,76 +345,96 @@ def zinb_mixture_guide(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    n_components : int
-        Number of mixture components
-    p_prior : tuple of float
-        Parameters (alpha, beta) for Beta prior on p (default: (1,1))
-    r_prior : tuple of float
-        Parameters (alpha, beta) for Gamma prior on r (default: (2,0.1))
-    gate_prior : tuple of float
-        Parameters (alpha, beta) for Beta prior on dropout probability
-        (default: (1,1))
-    mixing_prior : Union[float, tuple]
-        Concentration parameter(s) for Dirichlet prior on mixing weights
+    model_config : ModelConfig
+        Configuration object containing the variational distribution
+        specifications:
+            - mixing_distribution_guide: Distribution for mixture weights
+            - p_distribution_guide: Distribution for success probability p
+            - r_distribution_guide: Distribution for dispersion parameters r
+            - gate_distribution_guide: Distribution for dropout probabilities
     counts : array_like, optional
         Observed counts matrix of shape (n_cells, n_genes)
     batch_size : int, optional
         Mini-batch size for stochastic optimization
+
+    Guide Structure
+    --------------
+    Variational Parameters:
+        - Mixture weights ~ model_config.mixing_distribution_guide
+        - Success probability p ~ model_config.p_distribution_guide
+        - Gene-specific dispersion r ~ model_config.r_distribution_guide
+        - Gene-specific dropout gate ~ model_config.gate_distribution_guide
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
-    # Variational parameters for mixing weights
-    alpha_mixing = numpyro.param(
-        "alpha_mixing",
-        mixing_concentration,
-        constraint=constraints.positive
-    )
+    # Extract mixing distribution values
+    mixing_values = model_config.mixing_distribution_guide.get_args()
+    # Extract mixing distribution parameters and constraints
+    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    mixing_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in mixing_constraints.items():
+        mixing_params[param_name] = numpyro.param(
+            f"mixing_{param_name}",
+            mixing_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for p (one per component)
-    alpha_p = numpyro.param(
-        "alpha_p",
-        p_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        p_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for r (one per component and gene)
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones((n_components, n_genes)) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones((n_components, n_genes)) * r_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones((n_components, n_genes)) * r_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for gate (one per component and gene)
-    alpha_gate = numpyro.param(
-        "alpha_gate",
-        jnp.ones((n_components, n_genes)) * gate_prior[0],
-        constraint=constraints.positive
-    )
-    beta_gate = numpyro.param(
-        "beta_gate",
-        jnp.ones((n_components, n_genes)) * gate_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract gate distribution values
+    gate_values = model_config.gate_distribution_guide.get_args()
+    # Extract gate distribution parameters and constraints
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    gate_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones((n_components, n_genes)) * gate_values[param_name],
+            constraint=constraint
+        )
 
     # Sample from variational distributions
-    numpyro.sample("mixing_weights", dist.Dirichlet(alpha_mixing))
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
-    numpyro.sample("gate", dist.Beta(alpha_gate, beta_gate))
+    numpyro.sample(
+        "mixing_weights", 
+        model_config.mixing_distribution_guide.__class__(**mixing_params)
+    )
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    numpyro.sample(
+        "gate", 
+        model_config.gate_distribution_guide.__class__(**gate_params)
+    )
 
 # ------------------------------------------------------------------------------
 # Negative Binomial Mixture Model with Variable Capture Probability
@@ -487,11 +443,7 @@ def zinb_mixture_guide(
 def nbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -501,12 +453,13 @@ def nbvcp_mixture_model(
     
     This model assumes a hierarchical mixture structure where:
         1. Each mixture component has:
-           - A shared success probability p across all genes
-           - Gene-specific dispersion parameters r
+            - A shared success probability p across all genes
+            - Gene-specific dispersion parameters r
         2. Each cell has:
-           - A cell-specific capture probability p_capture (independent of components)
+            - A cell-specific capture probability p_capture (independent of
+              components)
         3. The effective success probability for each gene in each cell is
-           computed as p_hat = p / (p_capture + p * (1 - p_capture))
+           computed as p_hat = p * p_capture / (1 - p * (1 - p_capture))
         4. The mixture is handled using Numpyro's MixtureSameFamily
     
     Parameters
@@ -515,74 +468,56 @@ def nbvcp_mixture_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    n_components : int
-        Number of mixture components to fit
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p parameters.
-        Default is (1, 1) for uniform priors.
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters.
-        Default is (2, 0.1).
-    p_capture_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on capture probabilities.
-        Default is (1, 1).
-    mixing_prior : Union[float, tuple]
-        Concentration parameter for the Dirichlet prior on mixing weights.
-        If float, uses same value for all components.
-        If tuple, uses different concentration for each component.
-        Default is 1.0 for a uniform prior over the simplex.
+    model_config : ModelConfig
+        Configuration object for model distributions containing:
+            - mixing_distribution_model: Distribution for mixture weights
+            - p_distribution_model: Distribution for success probability p
+            - r_distribution_model: Distribution for dispersion parameters r
+            - p_capture_distribution_model: Distribution for capture
+              probabilities
     counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes).
-        If None, generates samples from the prior.
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference.
-        If None, uses full dataset.
+        Mini-batch size for stochastic optimization. If None, uses full dataset.
 
     Model Structure
     --------------
     Global Parameters:
-        - Mixture weights ~ Dirichlet(mixing_prior)
-        - Success probability p ~ Beta(p_prior)
-        - Component-specific dispersion r ~ Gamma(r_prior) per gene
+        - Mixture weights ~ model_config.mixing_distribution_model
+        - Success probability p ~ model_config.p_distribution_model
+        - Component-specific dispersion r ~ model_config.r_distribution_model
+          per gene
 
     Local Parameters:
-        - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
-        - Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))
+        - Cell-specific capture probabilities p_capture ~
+          model_config.p_capture_distribution_model
+        - Effective probability p_hat = p * p_capture / (1 - p * (1 -
+          p_capture))
 
     Likelihood: counts ~ MixtureSameFamily(
         Categorical(mixing_weights), NegativeBinomial(r, p_hat)
     )
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        if len(mixing_prior) != n_components:
-            raise ValueError(
-                f"Length of mixing_prior ({len(mixing_prior)}) must match "
-                f"number of components ({n_components})"
-            )
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
         "mixing_weights",
-        dist.Dirichlet(mixing_concentration)
+        model_config.mixing_distribution_model
     )
     
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
     # Define the prior on the p parameters - one for each component
-    p = numpyro.sample(
-        "p",
-        dist.Beta(p_prior[0], p_prior[1])
-    )
+    p = numpyro.sample("p", model_config.p_distribution_model)
 
     # Define the prior on the r parameters - one for each gene and component
     r = numpyro.sample(
         "r",
-        dist.Gamma(r_prior[0], r_prior[1]).expand([n_components, n_genes])
+        model_config.r_distribution_model.expand([n_components, n_genes])
     )
 
     # If we have observed data, condition on it
@@ -593,7 +528,7 @@ def nbvcp_mixture_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting with components
@@ -621,7 +556,7 @@ def nbvcp_mixture_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting with components
@@ -647,7 +582,7 @@ def nbvcp_mixture_model(
             # Sample cell-specific capture probabilities
             p_capture = numpyro.sample(
                 "p_capture",
-                dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                model_config.p_capture_distribution_model
             )
 
             # Reshape p_capture for broadcasting with components
@@ -676,109 +611,125 @@ def nbvcp_mixture_model(
 def nbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
     """
-    Variational guide for the NBVCP mixture model. This guide function defines
-    the form of the variational distribution that will be optimized to
-    approximate the true posterior.
+    Variational guide for the Negative Binomial mixture model with variable
+    capture probability (NBVCP). This guide function defines the form of the
+    variational distribution that will be optimized to approximate the true
+    posterior.
 
-    This guide function specifies a mean-field variational family where:
-        - The mixing weights follow a Dirichlet distribution
-        - Each component's success probability p follows a Beta distribution
-        - Each gene's overdispersion parameter r follows an independent Gamma
-          distribution for each component
-        - Each cell's capture probability follows an independent Beta
-          distribution
-    
+    This guide function specifies a mean-field variational family where each
+    parameter has an independent variational distribution specified in the
+    model_config:
+        - Mixing weights ~ model_config.mixing_distribution_guide
+        - Success probability p ~ model_config.p_distribution_guide
+        - Component-specific dispersion r ~ model_config.r_distribution_guide
+          per gene and component
+        - Cell-specific capture probability p_capture ~
+          model_config.p_capture_distribution_guide
+
     Parameters
     ----------
     n_cells : int
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    n_components : int
-        Number of mixture components
-    p_prior : tuple of float
-        Parameters (alpha, beta) for Beta prior on p (default: (1,1))
-    r_prior : tuple of float
-        Parameters (alpha, beta) for Gamma prior on r (default: (2,0.1))
-    p_capture_prior : tuple of float
-        Parameters (alpha, beta) for Beta prior on capture probabilities
-        (default: (1,1))
-    mixing_prior : Union[float, tuple]
-        Concentration parameter(s) for Dirichlet prior on mixing weights
-    counts : array_like, optional
+    model_config : ModelConfig
+        Configuration object containing variational distribution specifications:
+            - mixing_distribution_guide: Distribution for mixture weights
+            - p_distribution_guide: Distribution for success probability p
+            - r_distribution_guide: Distribution for dispersion parameters r
+            - p_capture_distribution_guide: Distribution for capture
+              probabilities
+    counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes)
     batch_size : int, optional
-        Mini-batch size for stochastic optimization
+        Mini-batch size for stochastic variational inference
+
+    Guide Structure
+    --------------
+    Variational Parameters:
+        - Mixing weights ~ model_config.mixing_distribution_guide
+        - Success probability p ~ model_config.p_distribution_guide
+        - Component-specific dispersion r ~ model_config.r_distribution_guide
+          per gene and component
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
-    # Variational parameters for mixing weights
-    alpha_mixing = numpyro.param(
-        "alpha_mixing",
-        mixing_concentration,
-        constraint=constraints.positive
-    )
+    # Extract mixing distribution values
+    mixing_values = model_config.mixing_distribution_guide.get_args()
+    # Extract mixing distribution parameters and constraints
+    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    mixing_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in mixing_constraints.items():
+        mixing_params[param_name] = numpyro.param(
+            f"mixing_{param_name}",
+            mixing_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for p (one per component)
-    alpha_p = numpyro.param(
-        "alpha_p",
-        p_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        p_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for r (one per component and gene)
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones((n_components, n_genes)) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones((n_components, n_genes)) * r_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones((n_components, n_genes)) * r_values[param_name],
+            constraint=constraint
+        )
 
     # Sample global parameters outside the plate
-    numpyro.sample("mixing_weights", dist.Dirichlet(alpha_mixing))
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
+    numpyro.sample(
+        "mixing_weights", 
+        model_config.mixing_distribution_guide.__class__(**mixing_params)
+    )
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
 
-    # Initialize p_capture parameters for all cells
-    alpha_p_capture = numpyro.param(
-        "alpha_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p_capture = numpyro.param(
-        "beta_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p_capture distribution values
+    p_capture_values = model_config.p_capture_distribution_guide.get_args()
+    # Extract p_capture distribution parameters and constraints
+    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_capture_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_capture_constraints.items():
+        p_capture_params[param_name] = numpyro.param(
+            f"p_capture_{param_name}",
+            jnp.ones(n_cells) * p_capture_values[param_name],
+            constraint=constraint
+        )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture",
-                dist.Beta(alpha_p_capture, beta_p_capture)
+                "p_capture", 
+                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
             )
     else:
         with numpyro.plate(
@@ -786,9 +737,13 @@ def nbvcp_mixture_guide(
             n_cells,
             subsample_size=batch_size,
         ) as idx:
+            # Index the parameters before creating the distribution
+            batch_params = {
+                name: param[idx] for name, param in p_capture_params.items()
+            }
             numpyro.sample(
                 "p_capture",
-                dist.Beta(alpha_p_capture[idx], beta_p_capture[idx])
+                model_config.p_capture_distribution_guide.__class__(**batch_params)
             )
 
 # ------------------------------------------------------------------------------
@@ -799,12 +754,7 @@ def nbvcp_mixture_guide(
 def zinbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
-    gate_prior: tuple = (1, 1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -824,73 +774,66 @@ def zinbvcp_mixture_model(
         Number of cells in the dataset
     n_genes : int 
         Number of genes in the dataset
-    n_components : int
-        Number of mixture components
-    p_prior : tuple, default=(1, 1)
-        Beta prior parameters (alpha, beta) for success probability p
-    r_prior : tuple, default=(2, 0.1)
-        Gamma prior parameters (shape, rate) for dispersion r
-    p_capture_prior : tuple, default=(1, 1)
-        Beta prior parameters for cell-specific capture probabilities
-    gate_prior : tuple, default=(1, 1)
-        Beta prior parameters for gene-specific dropout probabilities
-    mixing_prior : float or tuple, default=1.0
-        Dirichlet prior concentration parameter(s) for mixture weights
-    counts : array_like, optional
-        Observed count matrix of shape (n_cells, n_genes)
+    model_config : ModelConfig
+        Configuration object for model distributions containing:
+            - mixing_distribution_model: Distribution for mixture weights
+            - p_distribution_model: Distribution for success probability p
+            - r_distribution_model: Distribution for dispersion parameters r
+            - gate_distribution_model: Distribution for dropout probabilities
+            - p_capture_distribution_model: Distribution for capture
+              probabilities
+    counts : array-like, optional
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
     batch_size : int, optional
-        Mini-batch size for stochastic inference. If None, uses full dataset.
+        Mini-batch size for stochastic optimization. If None, uses full dataset.
 
     Model Structure
     --------------
     Global Parameters:
-        - Mixture weights ~ Dirichlet(mixing_prior)
-        - Success probability p ~ Beta(p_prior)
-        - Component-specific dispersion r ~ Gamma(r_prior) per gene
-        - Dropout probabilities gate ~ Beta(gate_prior) per gene
+        - Mixture weights ~ model_config.mixing_distribution_model
+        - Success probability p ~ model_config.p_distribution_model
+        - Component-specific dispersion r ~ model_config.r_distribution_model
+          per gene
+        - Dropout probabilities gate ~ model_config.gate_distribution_model per
+          gene
 
     Local Parameters:
-        - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
-        - Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))
+        - Cell-specific capture probabilities p_capture ~
+          model_config.p_capture_distribution_model
+        - Effective probability p_hat = p * p_capture / (1 - p * (1 -
+          p_capture))
 
     Likelihood: counts ~ MixtureSameFamily(
         Categorical(mixing_weights), ZeroInflatedNegativeBinomial(r, p_hat,
         gate)
     )
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        if len(mixing_prior) != n_components:
-            raise ValueError(
-                f"Length of mixing_prior ({len(mixing_prior)}) must match "
-                f"number of components ({n_components})"
-            )
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
         "mixing_weights",
-        dist.Dirichlet(mixing_concentration)
+        model_config.mixing_distribution_model
     )
     
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
-    # Define the prior on the p parameter (shared across components)
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
+    # Define the prior on the p parameters - one for each component
+    p = numpyro.sample("p", model_config.p_distribution_model)
 
     # Define the prior on the r parameters - one for each gene and component
     r = numpyro.sample(
         "r",
-        dist.Gamma(r_prior[0], r_prior[1]).expand([n_components, n_genes])
+        model_config.r_distribution_model.expand([n_components, n_genes])
     )
     
     # Define the prior on the gate parameters - one for each gene
     gate = numpyro.sample(
         "gate",
-        dist.Beta(gate_prior[0], gate_prior[1]).expand([n_components, n_genes])
+        model_config.gate_distribution_model.expand([n_components, n_genes])
     )
 
     # If we have observed data, condition on it
@@ -901,7 +844,7 @@ def zinbvcp_mixture_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting with components
@@ -932,7 +875,7 @@ def zinbvcp_mixture_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting with components
@@ -961,7 +904,7 @@ def zinbvcp_mixture_model(
             # Sample cell-specific capture probabilities
             p_capture = numpyro.sample(
                 "p_capture",
-                dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                model_config.p_capture_distribution_model
             )
 
             # Reshape p_capture for broadcasting with components
@@ -994,12 +937,7 @@ def zinbvcp_mixture_model(
 def zinbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
-    n_components: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
-    gate_prior: tuple = (1, 1),
-    mixing_prior: Union[float, tuple] = 1.0,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1047,78 +985,96 @@ def zinbvcp_mixture_guide(
         Mini-batch size for stochastic variational inference. If None, uses full
         dataset.
     """
-    # Check if mixing_prior is a tuple
-    if isinstance(mixing_prior, tuple):
-        mixing_concentration = jnp.array(mixing_prior)
-    else:
-        mixing_concentration = jnp.ones(n_components) * mixing_prior
+    # Extract number of components
+    n_components = model_config.n_components
 
-    # Variational parameters for mixing weights
-    alpha_mixing = numpyro.param(
-        "alpha_mixing",
-        mixing_concentration,
-        constraint=constraints.positive
-    )
+    # Extract mixing distribution values
+    mixing_values = model_config.mixing_distribution_guide.get_args()
+    # Extract mixing distribution parameters and constraints
+    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    mixing_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in mixing_constraints.items():
+        mixing_params[param_name] = numpyro.param(
+            f"mixing_{param_name}",
+            mixing_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for p (shared)
-    alpha_p = numpyro.param(
-        "alpha_p",
-        p_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        p_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for r (one per component and gene)
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones((n_components, n_genes)) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones((n_components, n_genes)) * r_prior[1],
-        constraint=constraints.positive
-    )
-    # Variational parameters for gate (one per component and gene)
-    alpha_gate = numpyro.param(
-        "alpha_gate",
-        jnp.ones((n_components, n_genes)) * gate_prior[0],
-        constraint=constraints.positive
-    )
-    beta_gate = numpyro.param(
-        "beta_gate",
-        jnp.ones((n_components, n_genes)) * gate_prior[1],
-        constraint=constraints.positive
-    )
-
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones((n_components, n_genes)) * r_values[param_name],
+            constraint=constraint
+        )
+    # Extract gate distribution values
+    gate_values = model_config.gate_distribution_guide.get_args()
+    # Extract gate distribution parameters and constraints
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    gate_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones((n_components, n_genes)) * gate_values[param_name],
+            constraint=constraint
+        )
+    
     # Sample global parameters outside the plate
-    numpyro.sample("mixing_weights", dist.Dirichlet(alpha_mixing))
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
-    numpyro.sample("gate", dist.Beta(alpha_gate, beta_gate))
+    numpyro.sample(
+        "mixing_weights", 
+        model_config.mixing_distribution_guide.__class__(**mixing_params)
+    )
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    numpyro.sample(
+        "gate", 
+        model_config.gate_distribution_guide.__class__(**gate_params)
+    )
 
-    # Initialize p_capture parameters for all cells
-    alpha_p_capture = numpyro.param(
-        "alpha_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p_capture = numpyro.param(
-        "beta_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p_capture distribution values
+    p_capture_values = model_config.p_capture_distribution_guide.get_args()
+    # Extract p_capture distribution parameters and constraints
+    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_capture_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_capture_constraints.items():
+        p_capture_params[param_name] = numpyro.param(
+            f"p_capture_{param_name}",
+            jnp.ones(n_cells) * p_capture_values[param_name],
+            constraint=constraint
+        )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture",
-                dist.Beta(alpha_p_capture, beta_p_capture)
+                "p_capture", 
+                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
             )
     else:
         with numpyro.plate(
@@ -1126,9 +1082,13 @@ def zinbvcp_mixture_guide(
             n_cells,
             subsample_size=batch_size,
         ) as idx:
+            # Index the parameters before creating the distribution
+            batch_params = {
+                name: param[idx] for name, param in p_capture_params.items()
+            }
             numpyro.sample(
                 "p_capture",
-                dist.Beta(alpha_p_capture[idx], beta_p_capture[idx])
+                model_config.p_capture_distribution_guide.__class__(**batch_params)
             )
 
 # ------------------------------------------------------------------------------

@@ -105,7 +105,7 @@ def numpyro_to_scipy(distribution: dist.Distribution) -> stats.rv_continuous:
         loc = distribution.loc
         scale = distribution.scale
         return stats.lognorm(scale, loc=0, scale=np.exp(loc))
-    elif isinstance(distribution, dist.Normal):
-        return stats.norm
+    elif isinstance(distribution, dist.Dirichlet):
+        return stats.dirichlet(distribution.concentration)
     else:
         raise ValueError(f"Unsupported distribution: {distribution}")

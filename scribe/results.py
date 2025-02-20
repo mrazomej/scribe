@@ -253,12 +253,19 @@ class ScribeResults:
             
         # Add mixing weights if mixture model
         if self.model_config.n_components is not None:
+            # Extract mixing weights
+            mixing_params = self.params[f"mixing_concentration"]
+            
             if backend == "scipy":
-                distributions['mixing_weights'] = stats.dirichlet(
-                    self.params['alpha_mixing'])
+                distributions['mixing_weights'] = numpyro_to_scipy(
+                    self.model_config.mixing_distribution_guide.__class__(
+                        concentration=mixing_params
+                    )
+                )
             else:
-                distributions['mixing_weights'] = dist.Dirichlet(
-                    self.params['alpha_mixing'])
+                distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
+                    concentration=mixing_params
+                )
         
         return distributions
 
@@ -865,14 +872,13 @@ class ScribeResults:
             If posterior samples have not been generated yet
         """
         # Check if posterior samples exist
-        if (self.posterior_samples is None or 
-            'parameter_samples' not in self.posterior_samples):
+        if self.posterior_samples is None:
             raise ValueError(
                 "No posterior samples found. Call get_posterior_samples() first."
             )
         
         # Get parameter samples
-        parameter_samples = self.posterior_samples['parameter_samples']
+        parameter_samples = self.posterior_samples
         
         # Get number of samples from first parameter
         n_samples = parameter_samples[next(iter(parameter_samples))].shape[0]
@@ -929,8 +935,9 @@ class ScribeResults:
             # Filter out samples with NaNs
             if jnp.any(~valid_samples):
                 print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
-                return log_liks
+                return log_liks[valid_samples]
         
+        return log_liks 
     # --------------------------------------------------------------------------
     # Cell type assignment method for mixture models
     # --------------------------------------------------------------------------
@@ -1040,7 +1047,9 @@ class ScribeResults:
             # Fit Dirichlet distribution for each cell
             for cell in range(n_cells):
                 if verbose and cell % 1000 == 0 and cell > 0:
-                    print(f"    - Fitted distributions for {cell}/{n_cells} cells")
+                    print(f"    - Fitting Dirichlet distributions for "
+                          f"cells {cell}-{min(cell+1000, n_cells)} out of "
+                          f"{n_cells} cells")
                     
                 # Get probability vectors for this cell across all samples
                 cell_probs = probabilities[:, cell, :]
