@@ -581,48 +581,29 @@ class ScribeResults:
             
         new_posterior_samples = {}
         
-        # Check if we have parameter_samples sub-dictionary
-        if 'parameter_samples' in samples:
-            param_samples = samples['parameter_samples']
-            new_param_samples = {}
             
-            # Handle r parameters (component and gene-specific)
-            if 'r' in param_samples:
-                # Shape is typically (n_samples, n_components, n_genes)
-                # Select component dimension to get (n_samples, n_genes)
-                new_param_samples['r'] = param_samples['r'][:, component_index]
-            
-            # Handle gate parameters if present (component and gene-specific)
-            if 'gate' in param_samples:
-                # Shape is typically (n_samples, n_components, n_genes)
-                # Select component dimension to get (n_samples, n_genes)
-                new_param_samples['gate'] = param_samples['gate'][:, component_index]
-            
-            # Copy global parameters as is (p, mixing_weights)
-            if 'p' in param_samples:
-                new_param_samples['p'] = param_samples['p']
-            
-            # Handle p_capture parameters (cell-specific)
-            if 'p_capture' in param_samples:
-                new_param_samples['p_capture'] = param_samples['p_capture']
-            
-            new_posterior_samples['parameter_samples'] = new_param_samples
-            return new_posterior_samples
+        # Handle r parameters (component and gene-specific)
+        if 'r' in samples:
+            # Shape is typically (n_samples, n_components, n_genes)
+            # Select component dimension to get (n_samples, n_genes)
+            new_posterior_samples['r'] = samples['r'][:, component_index, :]
         
-        # Process each parameter type individually if not using parameter_samples dict
-        for param_key, param_value in samples.items():
-            if param_key.startswith('r_') or param_key.startswith('gate_'):
-                # Shape is typically (n_samples, n_components, n_genes) or (n_components, n_genes)
-                if len(param_value.shape) == 3:  # With samples dimension
-                    new_posterior_samples[param_key] = param_value[:, component_index]
-                elif len(param_value.shape) == 2:  # Without samples dimension
-                    new_posterior_samples[param_key] = param_value[component_index]
-            else:
-                # Copy other parameters as is
-                new_posterior_samples[param_key] = param_value
+        # Handle gate parameters if present (component and gene-specific)
+        if 'gate' in samples:
+            # Shape is typically (n_samples, n_components, n_genes)
+            # Select component dimension to get (n_samples, n_genes)
+            new_posterior_samples['gate'] = samples['gate'][:, component_index, :]
+        
+        # Copy global parameters as is (p, mixing_weights)
+        if 'p' in samples:
+            new_posterior_samples['p'] = samples['p']
+        
+        # Handle p_capture parameters (cell-specific)
+        if 'p_capture' in samples:
+            new_posterior_samples['p_capture'] = samples['p_capture']
         
         return new_posterior_samples
-
+        
     # --------------------------------------------------------------------------
 
     def _create_component_subset(
