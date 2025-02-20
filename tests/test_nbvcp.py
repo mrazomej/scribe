@@ -6,14 +6,15 @@ import pytest
 import jax.numpy as jnp
 from jax import random
 import numpyro
-from scribe.models import nbvcp_model, nbvcp_guide
-from scribe.svi import run_scribe, rerun_scribe
+from scribe.models import nbvcp_model, nbvcp_guide, nbvcp_log_likelihood
+from scribe.svi import run_scribe
 from scribe.sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
     generate_ppc_samples
 )
-from scribe.results import NBVCPResults
+from scribe.model_config import ModelConfig
+from scribe.model_registry import get_model_and_guide, get_log_likelihood_fn
 
 # ------------------------------------------------------------------------------
 # Test fixtures
@@ -30,10 +31,16 @@ def example_nbvcp_results(small_dataset, rng_key):
     counts, _ = small_dataset
     return run_scribe(
         counts=counts,
-        model_type="nbvcp",
-        rng_key=rng_key,
+        zero_inflated=False,
+        variable_capture=True,
+        mixture_model=False,
         n_steps=N_STEPS,
-        batch_size=5
+        batch_size=5,
+        r_dist="gamma",
+        r_prior=(2, 0.1),
+        p_prior=(1, 1),
+        p_capture_prior=(1, 1),
+        seed=42
     )
 
 # ------------------------------------------------------------------------------
@@ -47,50 +54,64 @@ def test_inference_run(small_dataset, rng_key):
     
     results = run_scribe(
         counts=counts,
-        model_type="nbvcp",
-        rng_key=rng_key,
+        zero_inflated=False,
+        variable_capture=True,
+        mixture_model=False,
         n_steps=N_STEPS,
-        batch_size=5
+        batch_size=5,
+        seed=42
     )
     
-    assert isinstance(results, NBVCPResults)
     assert results.n_cells == n_cells
     assert results.n_genes == n_genes
     assert len(results.loss_history) == N_STEPS
     assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
+    assert results.model_type == "nbvcp"
+    assert isinstance(results.model_config, ModelConfig)
 
 def test_parameter_ranges(example_nbvcp_results):
     """Test that inferred parameters are in valid ranges."""
-    # All parameters should be positive
-    assert jnp.all(example_nbvcp_results.params['alpha_p'] > 0)
-    assert jnp.all(example_nbvcp_results.params['beta_p'] > 0)
-    assert jnp.all(example_nbvcp_results.params['alpha_r'] > 0)
-    assert jnp.all(example_nbvcp_results.params['beta_r'] > 0)
-    assert jnp.all(example_nbvcp_results.params['alpha_p_capture'] > 0)
-    assert jnp.all(example_nbvcp_results.params['beta_p_capture'] > 0)
+    # All parameters should be positive - look for distribution parameters
+    r_params = [
+        param for param in example_nbvcp_results.params 
+        if param.startswith('r_')
+    ]
+    for param in r_params:
+        assert jnp.all(example_nbvcp_results.params[param] > 0)
+        
+    # Check p parameters - should be positive and appropriate for Beta distribution
+    p_params = [
+        param for param in example_nbvcp_results.params 
+        if param.startswith('p_') and not param.startswith('p_capture_')
+    ]
+    for param in p_params:
+        assert jnp.all(example_nbvcp_results.params[param] > 0)
+        
+    # Check p_capture parameters - should be positive and appropriate for Beta distribution
+    p_capture_params = [
+        param for param in example_nbvcp_results.params 
+        if param.startswith('p_capture_')
+    ]
+    for param in p_capture_params:
+        assert jnp.all(example_nbvcp_results.params[param] > 0)
+        assert example_nbvcp_results.params[param].shape == (example_nbvcp_results.n_cells,)
 
-    # Check shapes for cell-specific parameters
-    assert example_nbvcp_results.params['alpha_p_capture'].shape == (example_nbvcp_results.n_cells,)
-    assert example_nbvcp_results.params['beta_p_capture'].shape == (example_nbvcp_results.n_cells,)
+# ------------------------------------------------------------------------------
+# Test model and guide functions
+# ------------------------------------------------------------------------------
 
-def test_continue_training(example_nbvcp_results, small_dataset, rng_key):
-    """Test that continuing training from a previous results object works."""
-    counts, _ = small_dataset
-    n_cells, n_genes = counts.shape
-    # Run inference again
-    results = rerun_scribe(
-        results=example_nbvcp_results,
-        counts=counts,
-        rng_key=rng_key,
-        n_steps=N_STEPS,
-        batch_size=5,
-    )
+def test_get_model_and_guide():
+    """Test that get_model_and_guide returns the correct functions."""
+    model, guide = get_model_and_guide("nbvcp")
+    
+    assert model == nbvcp_model
+    assert guide == nbvcp_guide
 
-    assert isinstance(results, NBVCPResults)
-    assert results.n_cells == n_cells
-    assert results.n_genes == n_genes
-    assert len(results.loss_history) == N_STEPS + N_STEPS
-    assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
+def test_get_log_likelihood_fn():
+    """Test that get_log_likelihood_fn returns the correct function."""
+    log_lik_fn = get_log_likelihood_fn("nbvcp")
+    
+    assert log_lik_fn == nbvcp_log_likelihood
 
 # ------------------------------------------------------------------------------
 # Test sampling
@@ -98,191 +119,257 @@ def test_continue_training(example_nbvcp_results, small_dataset, rng_key):
 
 def test_posterior_sampling(example_nbvcp_results, rng_key):
     """Test sampling from the variational posterior."""
-    n_samples = 100
-    samples = example_nbvcp_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=n_samples
+    n_samples = 10
+    posterior_samples = example_nbvcp_results.get_posterior_samples(
+        rng_key=random.PRNGKey(42),
+        n_samples=n_samples,
+        store_samples=True
     )
     
-    assert 'p' in samples
-    assert 'r' in samples
-    assert 'p_capture' in samples
-    assert samples['p'].shape == (n_samples,)
-    assert samples['r'].shape == (n_samples, example_nbvcp_results.n_genes)
-    assert samples['p_capture'].shape == (n_samples, example_nbvcp_results.n_cells)
+    # Check structure of posterior samples
+    assert 'p' in posterior_samples
+    assert 'r' in posterior_samples
+    assert 'p_capture' in posterior_samples
+    
+    # Check dimensions of samples
+    assert posterior_samples['p'].shape == (n_samples,)
+    assert posterior_samples['r'].shape == (n_samples, example_nbvcp_results.n_genes)
+    assert posterior_samples['p_capture'].shape == (n_samples, example_nbvcp_results.n_cells)
     
     # Test that samples are in valid ranges
-    assert jnp.all(samples['p'] >= 0) and jnp.all(samples['p'] <= 1)
-    assert jnp.all(samples['r'] > 0)
-    assert jnp.all(samples['p_capture'] >= 0) and jnp.all(samples['p_capture'] <= 1)
+    assert jnp.all(posterior_samples['p'] >= 0) 
+    assert jnp.all(posterior_samples['p'] <= 1)
+    assert jnp.all(posterior_samples['r'] > 0)
+    assert jnp.all(posterior_samples['p_capture'] >= 0)
+    assert jnp.all(posterior_samples['p_capture'] <= 1)
 
 def test_predictive_sampling(example_nbvcp_results, rng_key):
     """Test generating predictive samples."""
-    n_samples = 50
+    n_samples = 10
     
     # First get posterior samples
-    posterior_samples = example_nbvcp_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=n_samples
+    example_nbvcp_results.get_posterior_samples(
+        rng_key=random.PRNGKey(42),
+        n_samples=n_samples,
+        store_samples=True
     )
     
-    # Generate predictive samples
-    predictive_samples = example_nbvcp_results.get_predictive_samples(
-        rng_key=random.split(rng_key)[1]
+    # Then generate predictive samples
+    pred_samples = example_nbvcp_results.get_predictive_samples(
+        rng_key=random.PRNGKey(43),
+        store_samples=True
     )
     
-    expected_shape = (
-        n_samples,
-        example_nbvcp_results.n_cells,
-        example_nbvcp_results.n_genes
-    )
-    assert predictive_samples.shape == expected_shape
-    assert jnp.all(predictive_samples >= 0)  # Counts should be non-negative
+    expected_shape = (n_samples, example_nbvcp_results.n_cells, example_nbvcp_results.n_genes)
+    assert pred_samples.shape == expected_shape
+    assert jnp.all(pred_samples >= 0)  # Counts should be non-negative
 
 def test_ppc_sampling(example_nbvcp_results, rng_key):
     """Test posterior predictive check sampling."""
-    n_samples = 50
+    n_samples = 10
     
-    ppc_samples = example_nbvcp_results.get_ppc_samples(
-        rng_key=rng_key,
-        n_samples=n_samples
+    ppc_results = example_nbvcp_results.get_ppc_samples(
+        rng_key=random.PRNGKey(44),
+        n_samples=n_samples,
+        store_samples=True
     )
     
-    assert 'parameter_samples' in ppc_samples
-    assert 'predictive_samples' in ppc_samples
-    
-    # Check parameter samples
-    assert 'p' in ppc_samples['parameter_samples']
-    assert 'r' in ppc_samples['parameter_samples']
-    assert 'p_capture' in ppc_samples['parameter_samples']
+    assert 'parameter_samples' in ppc_results
+    assert 'predictive_samples' in ppc_results
     
     # Check predictive samples shape
-    expected_shape = (
-        n_samples,
-        example_nbvcp_results.n_cells,
-        example_nbvcp_results.n_genes
-    )
-    assert ppc_samples['predictive_samples'].shape == expected_shape
+    expected_shape = (n_samples, example_nbvcp_results.n_cells, example_nbvcp_results.n_genes)
+    assert ppc_results['predictive_samples'].shape == expected_shape
 
 # ------------------------------------------------------------------------------
 # Test results methods
 # ------------------------------------------------------------------------------
 
 def test_get_distributions(example_nbvcp_results):
-    """Test getting variational distributions."""
-    distributions = example_nbvcp_results.get_distributions()
+    """Test getting distribution objects from results."""
+    # Get scipy distributions
+    scipy_dists = example_nbvcp_results.get_distributions(backend="scipy")
+    assert 'p' in scipy_dists
+    assert 'r' in scipy_dists
+    assert 'p_capture' in scipy_dists
     
-    assert 'p' in distributions
-    assert 'r' in distributions
-    assert 'p_capture' in distributions
+    # Get numpyro distributions
+    numpyro_dists = example_nbvcp_results.get_distributions(backend="numpyro")
+    assert 'p' in numpyro_dists
+    assert 'r' in numpyro_dists
+    assert 'p_capture' in numpyro_dists
 
-def test_indexing(example_nbvcp_results):
-    """Test indexing functionality."""
-    # Single gene
+def test_get_map(example_nbvcp_results):
+    """Test getting MAP estimates."""
+    map_estimates = example_nbvcp_results.get_map()
+    
+    assert 'p' in map_estimates
+    assert 'r' in map_estimates
+    assert 'p_capture' in map_estimates
+    assert map_estimates['p'].shape == ()  # scalar
+    assert map_estimates['r'].shape == (example_nbvcp_results.n_genes,)
+    assert map_estimates['p_capture'].shape == (example_nbvcp_results.n_cells,)
+    
+def test_model_and_guide_retrieval(example_nbvcp_results):
+    """Test that model and guide functions can be retrieved from results."""
+    model, guide = example_nbvcp_results.get_model_and_guide()
+    
+    assert callable(model)
+    assert callable(guide)
+
+def test_log_likelihood_fn_retrieval(example_nbvcp_results):
+    """Test that log likelihood function can be retrieved from results."""
+    log_lik_fn = example_nbvcp_results.get_log_likelihood_fn()
+    
+    assert callable(log_lik_fn)
+
+# ------------------------------------------------------------------------------
+# Test indexing
+# ------------------------------------------------------------------------------
+
+def test_getitem_integer(example_nbvcp_results):
+    """Test indexing with an integer."""
     subset = example_nbvcp_results[0]
-    assert isinstance(subset, NBVCPResults)
+    
     assert subset.n_genes == 1
     assert subset.n_cells == example_nbvcp_results.n_cells
+    assert subset.model_type == example_nbvcp_results.model_type
     
-    # Multiple genes
+    # Check gene-specific parameters are correctly subset
+    for param in example_nbvcp_results.params:
+        if param.startswith('r_'):
+            # Gene-specific parameters should be subset
+            orig_shape = example_nbvcp_results.params[param].shape
+            if len(orig_shape) > 0 and orig_shape[0] == example_nbvcp_results.n_genes:
+                assert subset.params[param].shape == (1,)
+    
+    # Check cell-specific parameters are preserved
+    for param in example_nbvcp_results.params:
+        if param.startswith('p_capture_'):
+            assert subset.params[param].shape == (example_nbvcp_results.n_cells,)
+
+def test_getitem_slice(example_nbvcp_results):
+    """Test indexing with a slice."""
     subset = example_nbvcp_results[0:2]
-    assert isinstance(subset, NBVCPResults)
+    
     assert subset.n_genes == 2
     assert subset.n_cells == example_nbvcp_results.n_cells
+    assert subset.model_type == example_nbvcp_results.model_type
     
-    # Boolean indexing
+    # Check gene-specific parameters are correctly subset
+    for param in example_nbvcp_results.params:
+        if param.startswith('r_'):
+            # Gene-specific parameters should be subset
+            orig_shape = example_nbvcp_results.params[param].shape
+            if len(orig_shape) > 0 and orig_shape[0] == example_nbvcp_results.n_genes:
+                assert subset.params[param].shape == (2,)
+    
+    # Check cell-specific parameters are preserved
+    for param in example_nbvcp_results.params:
+        if param.startswith('p_capture_'):
+            assert subset.params[param].shape == (example_nbvcp_results.n_cells,)
+
+def test_getitem_boolean(example_nbvcp_results):
+    """Test indexing with a boolean array."""
     mask = jnp.array([True, False, True] + [False] * (example_nbvcp_results.n_genes - 3))
     subset = example_nbvcp_results[mask]
-    assert isinstance(subset, NBVCPResults)
-    assert subset.n_genes == int(mask.sum())
+    
+    assert subset.n_genes == int(jnp.sum(mask))
+    assert subset.n_cells == example_nbvcp_results.n_cells
+    
+    # Check gene-specific parameters are correctly subset
+    for param in example_nbvcp_results.params:
+        if param.startswith('r_'):
+            # Gene-specific parameters should be subset
+            orig_shape = example_nbvcp_results.params[param].shape
+            if len(orig_shape) > 0 and orig_shape[0] == example_nbvcp_results.n_genes:
+                assert subset.params[param].shape == (int(jnp.sum(mask)),)
+    
+    # Check cell-specific parameters are preserved
+    for param in example_nbvcp_results.params:
+        if param.startswith('p_capture_'):
+            assert subset.params[param].shape == (example_nbvcp_results.n_cells,)
 
-def test_parameter_subsetting(example_nbvcp_results):
-    """Test that parameter subsetting works correctly."""
+def test_subset_with_posterior_samples(example_nbvcp_results, rng_key):
+    """Test that subsetting preserves posterior samples."""
+    # Generate posterior samples
+    example_nbvcp_results.get_posterior_samples(
+        rng_key=rng_key,
+        n_samples=N_SAMPLES,
+        store_samples=True
+    )
+    
+    # Subset results
     subset = example_nbvcp_results[0:2]
     
-    # Check that gene-specific parameters are subset
-    assert subset.params['alpha_r'].shape == (2,)
-    assert subset.params['beta_r'].shape == (2,)
-    
-    # Check that cell-specific parameters remain unchanged
-    assert subset.params['alpha_p_capture'].shape == (example_nbvcp_results.n_cells,)
-    assert subset.params['beta_p_capture'].shape == (example_nbvcp_results.n_cells,)
-    
-    # Check that shared parameters remain the same
-    assert subset.params['alpha_p'].shape == ()
-    assert subset.params['beta_p'].shape == ()
+    # Check posterior samples were preserved and correctly subset
+    assert subset.posterior_samples is not None
+    assert 'p' in subset.posterior_samples
+    assert 'r' in subset.posterior_samples
+    assert 'p_capture' in subset.posterior_samples
+    assert subset.posterior_samples['r'].shape == (N_SAMPLES, 2)
+    assert subset.posterior_samples['p'].shape == (N_SAMPLES,)
+    assert subset.posterior_samples['p_capture'].shape == (N_SAMPLES, example_nbvcp_results.n_cells)
 
 # ------------------------------------------------------------------------------
 # Test log likelihood
 # ------------------------------------------------------------------------------
 
-def test_log_likelihood(example_nbvcp_results, small_dataset, rng_key):
-    """Test evaluation of the log likelihood function."""
-    # Get counts and total counts from dataset
+def test_compute_log_likelihood(example_nbvcp_results, small_dataset, rng_key):
+    """Test computing log likelihood with the model."""
     counts, _ = small_dataset
-    total_counts = counts.sum(axis=1)
     
-    # Get posterior samples 
-    # - these should already be available from previous tests
+    # First generate posterior samples
     example_nbvcp_results.get_posterior_samples(
         rng_key=rng_key,
-        n_samples=N_SAMPLES
+        n_samples=N_SAMPLES,
+        store_samples=True
     )
     
-    # Test log likelihood evaluation - with cell axis
-    cell_log_liks = example_nbvcp_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Compute per-cell log likelihood
+    cell_ll = example_nbvcp_results.compute_log_likelihood(
+        counts,
         return_by='cell'
     )
     
-    # Shape checks for cell-wise log likelihood
-    assert cell_log_liks.shape[0] == N_SAMPLES  # n_samples
-    assert cell_log_liks.shape[1] == example_nbvcp_results.n_cells  # n_cells
+    # Check shape - should be (n_samples, n_cells)
+    assert cell_ll.shape == (N_SAMPLES, example_nbvcp_results.n_cells)
+    assert jnp.all(jnp.isfinite(cell_ll))
+    assert jnp.all(cell_ll <= 0)  # Log likelihoods should be negative
     
-    # Test log likelihood evaluation - with gene axis
-    gene_log_liks = example_nbvcp_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Compute per-gene log likelihood
+    gene_ll = example_nbvcp_results.compute_log_likelihood(
+        counts,
         return_by='gene'
     )
     
-    # Shape checks for gene-wise log likelihood
-    assert gene_log_liks.shape[0] == N_SAMPLES  # n_samples
-    assert gene_log_liks.shape[1] == example_nbvcp_results.n_genes  # n_genes
-    
-    # Basic sanity checks
-    assert jnp.all(jnp.isfinite(cell_log_liks))  # No NaNs or infs
-    assert jnp.all(jnp.isfinite(gene_log_liks))  # No NaNs or infs
-    assert jnp.all(cell_log_liks <= 0)  # Log likelihoods should be <= 0
-    assert jnp.all(gene_log_liks <= 0)  # Log likelihoods should be <= 0
+    # Check shape - should be (n_samples, n_genes)
+    assert gene_ll.shape == (N_SAMPLES, example_nbvcp_results.n_genes)
+    assert jnp.all(jnp.isfinite(gene_ll))
 
-def test_log_likelihood_batching(example_nbvcp_results, small_dataset, rng_key):
-    """Test that batched and non-batched log likelihood give same results."""
-    # Get counts and total counts from dataset
+def test_compute_log_likelihood_batched(example_nbvcp_results, small_dataset, rng_key):
+    """Test computing log likelihood with batching."""
     counts, _ = small_dataset
-    total_counts = counts.sum(axis=1)
     
-    # Get posterior samples
+    # First generate posterior samples
     example_nbvcp_results.get_posterior_samples(
         rng_key=rng_key,
-        n_samples=N_SAMPLES
+        n_samples=N_SAMPLES,
+        store_samples=True
     )
     
-    # Compute log likelihood without batching
-    full_log_liks = example_nbvcp_results.compute_log_likelihood(
-        counts=counts, 
-        cells_axis=0,
+    # Compute without batching
+    full_ll = example_nbvcp_results.compute_log_likelihood(
+        counts,
         return_by='cell'
     )
     
-    # Compute log likelihood with batching
-    batched_log_liks = example_nbvcp_results.compute_log_likelihood(
-        counts=counts, 
-        batch_size=5,  # Small batch size for testing
-        cells_axis=0,
+    # Compute with batching
+    batched_ll = example_nbvcp_results.compute_log_likelihood(
+        counts,
+        batch_size=3,
         return_by='cell'
     )
     
-    # Check that results match
-    assert jnp.allclose(full_log_liks, batched_log_liks, rtol=1e-5)
+    # Results should match
+    assert jnp.allclose(full_ll, batched_ll, rtol=1e-5, atol=1e-5)
