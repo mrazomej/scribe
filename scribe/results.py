@@ -323,68 +323,62 @@ class ScribeResults:
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
         Create a new posterior samples dictionary for the given index.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Dictionary of samples from the posterior distribution, where each
+            key represents a parameter type ('r', 'p', 'gate', etc.) and values
+            are arrays of samples
+        index : array-like
+            Boolean or integer index specifying which genes to keep
+            
+        Returns
+        -------
+        Dict
+            New dictionary containing posterior samples for the selected genes
         """
         if samples is None:
             return None
             
         new_posterior_samples = {}
         
-        # Check if we have parameter_samples sub-dictionary
-        if 'parameter_samples' in samples:
-            param_samples = samples['parameter_samples']
-            new_param_samples = self._subset_params(param_samples, index)
-            new_posterior_samples['parameter_samples'] = new_param_samples
-            return new_posterior_samples
+        # Handle gene-specific parameters
         
-        # Process r parameters (always gene-specific)
-        r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
-        for param_name in r_param_names:
-            param_key = f"r_{param_name}"
-            if param_key in samples:
-                if self.n_components is not None:
-                    # Keep samples and component dimensions, subset gene dimension
-                    new_posterior_samples[param_key] = samples[param_key][..., index]
-                else:
-                    # Keep samples dimension, subset gene dimension
-                    new_posterior_samples[param_key] = samples[param_key][..., index]
+        # r samples (always gene-specific)
+        if 'r' in samples:
+            if self.n_components is not None:
+                # Shape: (n_samples, n_components, n_genes)
+                new_posterior_samples['r'] = samples['r'][..., index]
+            else:
+                # Shape: (n_samples, n_genes)
+                new_posterior_samples['r'] = samples['r'][..., index]
         
-        # Process gate parameters if present (gene-specific)
-        if self.model_config.gate_distribution_guide is not None:
-            gate_param_names = list(self.model_config.gate_distribution_guide.arg_constraints.keys())
-            for param_name in gate_param_names:
-                param_key = f"gate_{param_name}"
-                if param_key in samples:
-                    if self.n_components is not None:
-                        # Keep samples and component dimensions, subset gene dimension
-                        new_posterior_samples[param_key] = samples[param_key][..., index]
-                    else:
-                        # Keep samples dimension, subset gene dimension
-                        new_posterior_samples[param_key] = samples[param_key][..., index]
+        # gate samples (gene-specific if present)
+        if 'gate' in samples:
+            if self.n_components is not None:
+                # Shape: (n_samples, n_components, n_genes)
+                new_posterior_samples['gate'] = samples['gate'][..., index]
+            else:
+                # Shape: (n_samples, n_genes)
+                new_posterior_samples['gate'] = samples['gate'][..., index]
         
         # Copy non-gene-specific parameters as is
         
-        # p parameters (global)
-        p_param_names = list(self.model_config.p_distribution_guide.arg_constraints.keys())
-        for param_name in p_param_names:
-            param_key = f"p_{param_name}"
-            if param_key in samples:
-                new_posterior_samples[param_key] = samples[param_key]
+        # p samples (global)
+        if 'p' in samples:
+            # Shape: (n_samples,) or (n_samples, n_components)
+            new_posterior_samples['p'] = samples['p']
         
-        # p_capture parameters (cell-specific)
-        if self.model_config.p_capture_distribution_guide is not None:
-            p_capture_param_names = list(self.model_config.p_capture_distribution_guide.arg_constraints.keys())
-            for param_name in p_capture_param_names:
-                param_key = f"p_capture_{param_name}"
-                if param_key in samples:
-                    new_posterior_samples[param_key] = samples[param_key]
+        # p_capture samples (cell-specific)
+        if 'p_capture' in samples:
+            # Shape: (n_samples, n_cells)
+            new_posterior_samples['p_capture'] = samples['p_capture']
         
-        # Mixing weights if present
-        if self.model_config.mixing_distribution_guide is not None:
-            mixing_param_names = list(self.model_config.mixing_distribution_guide.arg_constraints.keys())
-            for param_name in mixing_param_names:
-                param_key = f"mixing_{param_name}"
-                if param_key in samples:
-                    new_posterior_samples[param_key] = samples[param_key]
+        # mixing weights if present
+        if 'mixing_weights' in samples:
+            # Shape: (n_samples, n_components)
+            new_posterior_samples['mixing_weights'] = samples['mixing_weights']
 
         return new_posterior_samples
 
