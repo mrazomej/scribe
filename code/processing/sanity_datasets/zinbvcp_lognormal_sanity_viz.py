@@ -27,9 +27,9 @@ scribe.viz.matplotlib_style()
 # %% ---------------------------------------------------------------------------
 
 # Define model_type
-model_type = "nbdm"
+model_type = "zinbvcp"
 # Define r distribution
-r_distribution = "gamma"
+r_distribution = "lognormal"
 
 # Define training parameters
 n_steps = 25_000

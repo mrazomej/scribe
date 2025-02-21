@@ -27,7 +27,7 @@ scribe.viz.matplotlib_style()
 # %% ---------------------------------------------------------------------------
 
 # Define model_type
-model_type = "nbdm"
+model_type = "zinb"
 # Define r distribution
 r_distribution = "gamma"
 

@@ -21,20 +21,19 @@ import numpyro
 # %% ---------------------------------------------------------------------------
 
 # Define model_type
-model_type = "zinbvcp"
+model_type = "nbvcp"
+# Define r distribution
+r_distribution = "gamma"
+
+# Define prior parameters
+p_prior = (1, 1)
+r_prior = (2, 0.075)
+p_capture_prior = (1, 1)
 
 # Define training parameters
 n_steps = 25_000
 optimizer = Adam(step_size=1e-3)
 batch_size_max = 4096
-
-# Define prior parameters
-prior_params = {
-    "p_prior": (1, 1),
-    "r_prior": (2, 0.075),
-    "p_capture_prior": (1, 1),
-    "gate_prior": (1, 1),
-}
 
 # %% ---------------------------------------------------------------------------
 
@@ -60,7 +59,10 @@ for file in files:
     dataset_name = file.split("/")[-1].replace("_counts.txt.gz", "")
 
     # Define output file name
-    output_file = f"{OUTPUT_DIR}/{dataset_name}_" \
+    output_file = f"{OUTPUT_DIR}/" \
+                f"{model_type}_" \
+                f"r-{r_distribution}_" \
+                f"{dataset_name}_" \
                 f"{n_steps}steps_" \
                 f"{batch_size_max}batch.pkl"
 
@@ -78,15 +80,17 @@ for file in files:
 
     # Run SCRIBE
     scribe_result = scribe.svi.run_scribe(
-        model_type=model_type,
-        counts=df.values,
+        counts=jnp.array(df.values),
+        variable_capture=True,
         n_steps=n_steps,
+        p_prior=p_prior,
+        r_prior=r_prior,
+        p_capture_prior=p_capture_prior,
         optimizer=optimizer,
         cells_axis=1,
         batch_size=batch_size,
-        rng_key=random.PRNGKey(42),
-        stable_update=True,
-        prior_params=prior_params
+        seed=42,
+        stable_update=True
     )
 
     # Clear JAX caches

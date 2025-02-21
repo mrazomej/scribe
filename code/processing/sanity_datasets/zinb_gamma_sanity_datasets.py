@@ -21,13 +21,14 @@ import numpyro
 # %% ---------------------------------------------------------------------------
 
 # Define model_type
-model_type = "nbdm"
+model_type = "zinb"
 # Define r distribution
 r_distribution = "gamma"
 
 # Define prior parameters
 p_prior = (1, 1)
 r_prior = (2, 0.075)
+gate_prior = (1, 1)
 
 # Define training parameters
 n_steps = 25_000
@@ -80,9 +81,11 @@ for file in files:
     # Run SCRIBE
     scribe_result = scribe.svi.run_scribe(
         counts=jnp.array(df.values),
+        zero_inflated=True,
         n_steps=n_steps,
         p_prior=p_prior,
         r_prior=r_prior,
+        gate_prior=gate_prior,
         optimizer=optimizer,
         cells_axis=1,
         batch_size=batch_size,
