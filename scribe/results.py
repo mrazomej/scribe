@@ -799,6 +799,7 @@ class ScribeResults:
         ignore_nans: bool = False,
         split_components: bool = False,
         weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
         dtype: jnp.dtype = jnp.float32
     ) -> jnp.ndarray:
         """
@@ -823,6 +824,10 @@ class ScribeResults:
             Only applicable for mixture models.
         weights : Optional[jnp.ndarray], default=None
             Array used to weight the log likelihoods (for mixture models).
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
             
@@ -879,6 +884,7 @@ class ScribeResults:
                     return_by=return_by,
                     split_components=split_components,
                     weights=weights,
+                    weight_type=weight_type,
                     dtype=dtype
                 )
             else:
@@ -913,6 +919,137 @@ class ScribeResults:
                 return log_liks[valid_samples]
         
         return log_liks 
+
+    # --------------------------------------------------------------------------
+    # Compute entropy of component assignments
+    # --------------------------------------------------------------------------
+
+    def compute_component_entropy(
+        self,
+        counts: jnp.ndarray,
+        return_by: str = 'gene',
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        normalize: bool = False,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """
+        Compute the entropy of component assignment probabilities for mixture
+        models.
+        
+        This method calculates the entropy of the posterior component assignment
+        probabilities for each cell or gene, providing a measure of assignment
+        uncertainty. Higher entropy values indicate more uncertainty in the
+        component assignments, while lower values indicate more confident
+        assignments.
+        
+        The entropy is calculated as:
+            H = -∑(p_i * log(p_i))
+        where p_i are the normalized probabilities for each component.
+        
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Input count data to evaluate component assignments for. Shape should
+            be (n_cells, n_genes) if cells_axis=0, or (n_genes, n_cells) if
+            cells_axis=1.
+        
+        return_by : str, default='cell'
+            Specifies how to compute and return the entropy. Must be one of:
+                - 'cell': Compute entropy of component assignments for each cell
+                - 'gene': Compute entropy of component assignments for each gene
+        
+        batch_size : Optional[int], default=None
+            If provided, processes the data in batches of this size to reduce
+            memory usage. Useful for large datasets.
+        
+        cells_axis : int, default=0
+            Specifies which axis in the input counts contains the cells:
+                - 0: cells are rows (shape: n_cells × n_genes)
+                - 1: cells are columns (shape: n_genes × n_cells)
+        
+        ignore_nans : bool, default=False
+            If True, excludes any samples containing NaN values from the entropy
+            calculation.
+        
+        normalize : bool, default=False
+            If True, normalizes the log-likelihoods by the number of genes (when
+            return_by='cell') or number of cells (when return_by='gene') before
+            computing entropy. This makes entropy values comparable across
+            datasets of different sizes.
+        
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations.
+        
+        Returns
+        -------
+        jnp.ndarray
+            Array of entropy values. Shape depends on return_by:
+                - If return_by='cell': shape is (n_samples, n_cells)
+                - If return_by='gene': shape is (n_samples, n_genes)
+            Higher values indicate more uncertainty in component assignments.
+        
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model or if posterior samples haven't
+            been generated.
+        
+        Notes
+        -----
+        - This method requires posterior samples to be available. Call
+          get_posterior_samples() first if they haven't been generated.
+        - The entropy is computed using the full posterior predictive
+          distribution, accounting for uncertainty in the model parameters.
+        - Normalization (normalize=True) is recommended when comparing entropy
+          across datasets or between cells/genes with different numbers of
+          observations.
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Component entropy calculation only applies to mixture models "
+                "with multiple components"
+            )
+        
+        # Check if posterior samples exist
+        if self.posterior_samples is None:
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
+       
+        # Compute log-likelihoods for each component
+        log_liks = self.compute_log_likelihood(
+            counts, 
+            batch_size=batch_size, 
+            cells_axis=cells_axis, 
+            return_by=return_by, 
+            ignore_nans=ignore_nans, 
+            dtype=dtype,
+            split_components=True  # Ensure we get per-component likelihoods
+        )
+
+        # Normalize log-likelihoods if requested
+        if normalize:
+            if return_by == 'cell':
+                log_liks = log_liks / self.n_genes
+            else:  # return_by == 'gene'
+                log_liks = log_liks / self.n_cells
+
+        # Compute log-sum-exp for normalization
+        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+
+        # Compute probabilities (avoiding log space for final entropy calculation)
+        probs = jnp.exp(log_liks - log_sum_exp)
+
+        # Compute entropy: -∑(p_i * log(p_i))
+        # Add small epsilon to avoid log(0)
+        eps = jnp.finfo(dtype).eps
+        entropy = -jnp.sum(probs * jnp.log(probs + eps), axis=-1)
+
+        return entropy
+
     # --------------------------------------------------------------------------
     # Cell type assignment method for mixture models
     # --------------------------------------------------------------------------
@@ -926,6 +1063,7 @@ class ScribeResults:
         dtype: jnp.dtype = jnp.float32,
         fit_distribution: bool = True,
         weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
         verbose: bool = True
     ) -> Dict[str, jnp.ndarray]:
         """
@@ -955,6 +1093,10 @@ class ScribeResults:
             probabilities
         weights : Optional[jnp.ndarray], default=None
             Array used to weight genes when computing log likelihoods
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
         verbose : bool, default=True
             If True, prints progress messages
 
@@ -997,6 +1139,7 @@ class ScribeResults:
             ignore_nans=ignore_nans,
             split_components=True,
             weights=weights,
+            weight_type=weight_type,
             dtype=dtype
         )
 
