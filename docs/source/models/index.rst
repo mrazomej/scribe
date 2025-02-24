@@ -1,24 +1,21 @@
 Models
 ======
 
-Here is a list of the base models currently supported by SCRIBE.
+``SCRIBE`` provides a comprehensive suite of probabilistic models for
+single-cell RNA sequencing data analysis:
 
-* :doc:`Negative Binomial Dirichlet Multinomial (NBDM) <nbdm>`
-* :doc:`Zero-Inflated Negative Binomial (ZINB) <zinb>`
-* :doc:`Negative Binomial with Variable Capture Probability (NBVCP) <nbvcp>`
-* :doc:`Zero-Inflated Negative Binomial with Variable Capture Probability
-  (ZINBVCP) <zinbvcp>`
+* :doc:`Base Models <models>` - Detailed documentation of SCRIBE's core models:
+    * Negative Binomial Dirichlet Multinomial (NBDM)
+    * Zero-Inflated Negative Binomial (ZINB)
+    * Negative Binomial with Variable Capture Probability (NBVCP)
+    * Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVCP)
 
-SCRIBE also supports mixture models for each of these base models.
-
-* :doc:`Mixture Models <models_mix>`
+* :doc:`Mixture Models <models_mix>` - Extensions of base models for
+  heterogeneous cell populations
 
 .. toctree::
    :hidden:
    :titlesonly:
 
-   nbdm
-   zinb
-   nbvcp
-   zinbvcp
+   models
    models_mix

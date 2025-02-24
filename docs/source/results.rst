@@ -1,27 +1,26 @@
-Results Classes
-===============
+Results Class
+=============
 
-The SCRIBE package provides a comprehensive set of result classes to help you
-work with and analyze the output of model inference. These classes provide a
-consistent interface across different model types while exposing model-specific
-functionality where needed.
+The SCRIBE package provides a unified ``ScribeResults`` class that works
+consistently across all model types. This class encapsulates all functionality
+for handling model inference outputs, parameter access, and downstream analysis.
 
 Base Structure
 --------------
 
-All result classes in SCRIBE inherit from ``BaseScribeResults``, which provides
-core functionality for:
+The ``ScribeResults`` class provides core functionality for:
 
 * Accessing variational model parameters and posterior distributions
 * Indexing results by gene (single gene, ranges, boolean indexing)
+* Selecting specific mixture components in mixture models
 * Generating posterior samples and predictive samples
+* Computing log likelihoods and model comparisons
 * Handling metadata from ``AnnData`` objects
 
 Basic Usage
 -----------
 
-After running inference with ``run_scribe``, you'll get a results object
-specific to your model type:
+After running inference with ``run_scribe``, you'll get a results object:
 
 .. code-block:: python
 
@@ -30,7 +29,9 @@ specific to your model type:
     # Run inference
     results = scribe.run_scribe(
         counts=counts,
-        model_type="nbdm",  # or any other model type
+        zero_inflated=False,  # Set to True for ZINB models
+        variable_capture=False,  # Set to True for VCP models
+        mixture_model=False,  # Set to True for mixture models
         n_steps=10000
     )
 
@@ -39,37 +40,42 @@ The results object contains several key attributes:
 * ``params``: Dictionary of learned variational parameters
 * ``loss_history``: Array of ELBO values during training
 * ``n_cells``, ``n_genes``: Dataset dimensions
+* ``model_type``: String indicating the type of model
+* ``model_config``: Configuration object with model architecture and priors
 * ``n_components``: Number of components in mixture models (``None`` for non-mixture models)
-* ``cell_metadata``, ``gene_metadata``: Optional metadata if using ``AnnData``
+* ``obs``, ``var``, ``uns``: Optional metadata if using ``AnnData``
 
 Common Operations
 -----------------
 
-All result objects support basic operations that allow you to access the results
-of the inference.
+Accessing Parameters and Posterior Distributions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Working with Results
-^^^^^^^^^^^^^^^^^^^^
-
-All result objects support these basic operations:
-
-1. **Accessing variational parameters and parameters posteriors**:
+The ``ScribeResults`` class provides several methods to access the learned model
+parameters, either as raw variational parameters, probability distributions, or
+point estimates:
 
 .. code-block:: python
 
     # Get raw parameters for variational posterior
     params = results.params
     
-    # Get posterior distributions for parameters. 
+    # Get posterior distributions for parameters 
+    # (returns scipy.stats distributions by default)
     distributions = results.get_distributions()
+    
+    # Get posterior distributions as numpyro distributions
+    distributions_numpyro = results.get_distributions(backend="numpyro")
+    
+    # Get maximum a posteriori (MAP) estimates
+    map_estimates = results.get_map()
 
-.. note::
+Subsetting Genes
+^^^^^^^^^^^^^^^^
 
-    The ``get_distributions`` method returns a dictionary of parameter names
-    and their corresponding posterior distributions. The backend can be set to
-    either ``scipy`` or ``numpyro`` via the ``backend`` argument.
-
-2. **Subsetting Genes**, i.e., indexing specific genes from the results object:
+The ``ScribeResults`` object supports indexing operations to extract results
+for specific genes of interest. You can use integer indexing, slicing, or
+boolean masks to subset the results:
 
 .. code-block:: python
 
@@ -78,224 +84,292 @@ All result objects support these basic operations:
     
     # Get results for a set of genes
     subset_results = results[0:10]  # First 10 genes
+    
+    # Boolean indexing (with some hypothetical "highly variable" gene mask)
+    highly_variable = results.var['highly_variable'] if results.var is not None else None
+    if highly_variable is not None:
+        hv_results = results[highly_variable]
 
-    ## Get results for a specific gene (if metadata is available)
-    gene_results = results[results.gene_metadata['gene_name'] == 'Gene1']
+Working with Mixture Components
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. warning::
-
-    Indexing with an array of indices is supported, however, the results are
-    returned not in the same order as the input indices but rather in the sorted
-    order of the indices. For example, if you index with ``[3, 1, 2]``, the
-    results will be returned in the order ``[1, 2, 3]``.
-
-3. **Posterior Sampling**. There are two types of posterior sampling:
-
-   * Sampling from the posterior distributions of the model parameters. These are samples from the parameters that describe your data generating process.
-   * Sampling from the posterior predictive distribution of the counts. These
-     are "simulated datasets" of the counts you would expect to see given the
-     posterior distributions of the parameters. They are very useful for
-     diagnosing the model fit.
+For mixture models, you can access specific components:
 
 .. code-block:: python
 
-    # Sample from posterior distributions.
-    results.get_posterior_samples(n_samples=1000)
+    # Get results for the first component
+    component_results = results.get_component(0)
     
-    # Generate predictive samples (this case using the posterior samples already
-    # computed)
-    results.get_predictive_samples()
+    # The component results are a non-mixture ScribeResults object
+    print(component_results.model_type)  # e.g., "nbdm" instead of "nbdm_mix"
 
-    # Get posterior predictive samples (samples both parameters and counts on a single call)
-    results.get_ppc_samples(n_samples=1000)
+Posterior Sampling
+^^^^^^^^^^^^^^^^^
+
+The ``ScribeResults`` class provides several methods for generating different
+types of samples:
+
+1. **Posterior Parameter Samples**: Draw samples directly from the fitted
+   parameter distributions using ``get_posterior_samples()``. These samples
+   represent uncertainty in the model parameters as sampled from the variational
+   posterior distribution.
+
+2. **Predictive Samples**: Generate new data from the model using
+   ``get_predictive_samples()``. This simulates new count data using the MAP
+   parameter estimates.
+
+3. **Posterior Predictive Check (PPC) Samples**: Combine both operations with
+   ``get_ppc_samples()`` to generate data for model validation.
+
+.. code-block:: python
+
+    # Draw 1000 samples from the posterior distributions of parameters
+    posterior_samples = results.get_posterior_samples(n_samples=1000)
+    
+    # Generate new count data using MAP estimates
+    predictive_samples = results.get_predictive_samples()
+    
+    # Generate posterior predictive samples for model checking
+    ppc_samples = results.get_ppc_samples(n_samples=1000)
 
 .. note::
 
-    Generating posterior predictive samples is computationally expensive as each
-    sample simulates an entire dataset. If you don't have a massive GPU that
-    can handle this, we recommend generating samples for a subset of the genes
-    for diagnostic purposes.
+    Generating posterior predictive samples requires simulating entire datasets,
+    which can be computationally intensive. For large datasets, we recommend:
+    
+    * Reducing the number of samples
+    * Subsetting to fewer genes
+    * Using GPU acceleration if available
+    * Running sampling in batches
 
-1. **Log Likelihood function**. This is a function that computes the log
-   likelihood of the data given the parameters. It is useful for diagnosing the
-   model fit and for selecting the best model.
+Log Likelihood Computation
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Computing the log-likelihood of your data under the fitted model can be valuable
+for several purposes:
+
+* Model comparison: Compare different model fits or architectures by their
+  log-likelihood scores
+* Quality control: Identify cells or genes that are poorly explained by the
+  model
+* Outlier detection: Find data points with unusually low likelihood values
+* Model validation: Assess how well the model captures the underlying data
+  distribution
 
 .. code-block:: python
 
-    # Get the log likelihood function
-    log_likelihood = results.get_log_likelihood_fn()
+    # Compute log likelihood of data under the model
+    log_liks = results.compute_log_likelihood(
+        counts,
+        return_by='cell',  # or 'gene'
+        batch_size=512  # Use batching for large datasets
+    )
 
-    # Use the log likelihood function to compute the log likelihood of the data
-    # for a set of parameters
-    log_likelihood(counts, results.params)
+For Mixture Models: Cell Type Assignment
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Model-Specific Results
-----------------------
+For mixture models, ``SCRIBE`` provides methods to compute probabilistic cell
+type assignments. These assignments quantify how likely each cell belongs to
+each component (cell type) in the mixture, while also characterizing the
+uncertainty in these assignments.
 
-The following sections describe the results objects for each model type.
+The computation involves three key steps:
 
-.. _nbdm_results:
+1. For each cell, compute the likelihood that it belongs to each component using
+   the full posterior distribution of model parameters
+2. Convert these likelihoods into proper probability distributions over
+   components
+3. (Optional) Fit a Dirichlet distribution to characterize the uncertainty in
+   these assignments
 
-NBDM Results
-^^^^^^^^^^^^
+The resulting probabilities can be used to:
 
-The ``NBDMResults`` class is for the Negative Binomial-Dirichlet Multinomial
-model:
+* Make soft assignments of cells to types
+* Identify cells with ambiguous type assignments
+* Quantify uncertainty in cell type classifications
+* Study cells that may be transitioning between states
+
+Two methods are provided:
+
+* ``compute_cell_type_assignments()``: Uses the full posterior distribution to
+  compute assignments and uncertainty
+* ``compute_cell_type_assignments_map()``: Uses point estimates for faster but
+  less detailed results
+
+.. code-block:: python
+
+    # Compute cell type assignment probabilities
+    assignments = results.compute_cell_type_assignments(
+        counts,
+        fit_distribution=True  # Fit Dirichlet distribution to characterize uncertainty
+    )
+    
+    # Get Dirichlet concentration parameters
+    concentrations = assignments['concentration']
+    
+    # Get mean assignment probabilities
+    mean_probs = assignments['mean_probabilities']
+    
+    # Get assignment probabilities for each posterior sample
+    sample_probs = assignments['sample_probabilities']
+    
+    # Compute using MAP estimates only (faster but less information about uncertainty)
+    map_assignments = results.compute_cell_type_assignments_map(counts)
+
+Entropy Analysis for Mixture Models
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For mixture models, SCRIBE provides methods to compute the entropy of component
+assignments, which serves as a measure of assignment uncertainty. Higher entropy
+values indicate more uncertainty in the assignments (the cell or gene could
+belong to multiple components), while lower values indicate more confident
+assignments (the cell or gene clearly belongs to one component).
+
+The entropy calculation can be performed:
+
+* Per cell: Measuring how confidently each cell is assigned to a component
+* Per gene: Measuring how component-specific each gene's expression pattern is
+* With optional normalization: Making entropy values comparable across datasets
+  of different sizes
+
+This analysis is particularly useful for:
+
+* Identifying cells that may be transitioning between states
+* Finding marker genes that strongly distinguish between components
+* Quantifying the overall confidence of component assignments
+* Detecting regions of uncertainty in your data
+
+.. code-block:: python
+
+    # Compute entropy of component assignments
+    entropies = results.compute_component_entropy(
+        counts,
+        return_by='cell',  # or 'gene'
+        normalize=False  # Set to True to normalize by dataset size
+    )
+
+Model Types
+-----------
+
+The ``ScribeResults`` class works with all model types supported by SCRIBE:
+
+* **NBDM**: Negative Binomial-Dirichlet Multinomial (base model)
+* **ZINB**: Zero-Inflated Negative Binomial (handles dropout)
+* **NBVCP**: Negative Binomial with Variable Capture Probability (handles batch
+  effects)
+* **ZINBVCP**: Zero-Inflated Negative Binomial with Variable Capture Probability
+  (most comprehensive)
+* **Mixture Variants**: Any of the above with multiple components (suffix
+  "_mix")
+
+Each model type has specific parameters available in the ``params`` dictionary
+based on the distributions used:
+
+NBDM Model
+^^^^^^^^^^
 
 .. code-block:: python
 
     # Run NBDM inference
-    nbdm_results = scribe.run_scribe(counts, model_type="nbdm")
+    nbdm_results = scribe.run_scribe(counts)
     
-    # Access model-specific parameters
+    # Access dispersion parameters (when using LogNormal distribution)
+    r_loc = nbdm_results.params['r_loc']  
+    r_scale = nbdm_results.params['r_scale']
+    
+    # Or (when using Gamma distribution)
+    r_concentration = nbdm_results.params['r_concentration']  
+    r_rate = nbdm_results.params['r_rate']
+    
+    # Access success probability parameters
+    p_concentration1 = nbdm_results.params['p_concentration1']  # Alpha
+    p_concentration0 = nbdm_results.params['p_concentration0']  # Beta
 
-    # Gene-specific dispersion parameters
-    nbdm_results.params['alpha_r']  
-    nbdm_results.params['beta_r']  
-
-    # Global success probability
-    nbdm_results.params['alpha_p']  
-    nbdm_results.params['beta_p']
-
-    # Gene specific dispersion distribution
-    nbdm_results.get_distributions()['r']
-
-    # Global success probability distribution
-    nbdm_results.get_distributions()['p']
-
-Key features:
-
-* Gene-specific dispersion parameters
-* Global success probability
-
-ZINB Results
-^^^^^^^^^^^^
-
-The ``ZINBResults`` class has the same core parameters as the
-:ref:`nbdm_results` class but adds zero-inflation handling:
+ZINB Model
+^^^^^^^^^^
 
 .. code-block:: python
 
-    # Run ZINB inference  
-    zinb_results = scribe.run_scribe(counts, model_type="zinb")
+    # Run ZINB inference
+    zinb_results = scribe.run_scribe(counts, zero_inflated=True)
     
-    # Access dropout probabilities parameters
-    zinb_results.params['alpha_gate']
-    zinb_results.params['beta_gate']
+    # Additional dropout parameters
+    gate_concentration1 = zinb_results.params['gate_concentration1']
+    gate_concentration0 = zinb_results.params['gate_concentration0']
 
-    # Gene-specific dropout probabilities distribution
-    zinb_results.get_distributions()['gate']
-
-Key features:
-
-* Same core parameters as :ref:`nbdm_results`
-* Gene-specific dropout probabilities
-
-NBVCP Results
-^^^^^^^^^^^^^
-
-The ``NBVCPResults`` class has the same core parameters as the
-:ref:`nbdm_results` class but adds variable capture probabilities:
+NBVCP Model
+^^^^^^^^^^^
 
 .. code-block:: python
 
     # Run NBVCP inference
-    nbvcp_results = scribe.run_scribe(counts, model_type="nbvcp")
+    nbvcp_results = scribe.run_scribe(counts, variable_capture=True)
     
-    # Access capture probabilities
-    nbvcp_results.params['alpha_p_capture']
-    nbvcp_results.params['beta_p_capture']
+    # Additional capture probability parameters
+    p_capture_concentration1 = nbvcp_results.params['p_capture_concentration1']
+    p_capture_concentration0 = nbvcp_results.params['p_capture_concentration0']
 
-    # Capture probability distribution
-    nbvcp_results.get_distributions()['p_capture']
-
-Key features:
-
-* Same core parameters as :ref:`nbdm_results`
-* Cell-specific capture probabilities
-
-ZINBVCP Results
-^^^^^^^^^^^^^^^
-
-The ``ZINBVCPResults`` class combines zero-inflation and variable capture:
+ZINBVCP Model
+^^^^^^^^^^^^^
 
 .. code-block:: python
 
     # Run ZINBVCP inference
-    zinbvcp_results = scribe.run_scribe(counts, model_type="zinbvcp")
+    zinbvcp_results = scribe.run_scribe(
+        counts, zero_inflated=True, variable_capture=True)
 
-    # Access dropout probabilities parameters
-    zinbvcp_results.params['alpha_gate']
-    zinbvcp_results.params['beta_gate']
+    # Additional dropout and capture probability parameters
+    gate_concentration1 = zinbvcp_results.params['gate_concentration1']
+    gate_concentration0 = zinbvcp_results.params['gate_concentration0']
+    p_capture_concentration1 = zinbvcp_results.params['p_capture_concentration1']
+    p_capture_concentration0 = zinbvcp_results.params['p_capture_concentration0']
 
-    # Capture probability distribution
-    zinbvcp_results.get_distributions()['p_capture']
-
-    # Gene-specific dropout probabilities distribution
-    zinbvcp_results.get_distributions()['gate']
-
-Key features:
-
-* Cell-specific capture probabilities
-* Gene-specific dropout probabilities
-* Most comprehensive technical artifact handling
-
-.. _mixture_results:
-
-Mixture Model Results
----------------------
-
-For mixture models (e.g., ``NBDMMixtureResults``, ``ZINBMixtureResults``),
-additional functionality is available:
+Mixture Model
+^^^^^^^^^^^^^
 
 .. code-block:: python
-    
+
     # Run mixture model inference
     mix_results = scribe.run_scribe(
-        counts=counts,
-        model_type="nbdm_mix",# or any other of the base models with _mix suffix
-        n_components=2
+        counts,
+        mixture_model=True,
+        n_components=3,
+        mixing_prior=(1.0, 1.0, 1.0)  # Optional: Dirichlet concentration parameters
     )
     
-    # Access mixing weights
-    mix_results.params['alpha_mixing']
+    # Access mixing weights concentration parameters 
+    mixing_concentration = mix_results.params['mixing_concentration']
+    
+    # Component-specific parameters will have additional dimensions
+    # e.g., for r parameters:
+    r_concentration = mix_results.params['r_concentration']  # Shape: (n_components, n_genes)
 
-    # Mixing weights distribution
-    mix_results.get_distributions()['mixing_weights']
+Model Comparison
+----------------
 
-Key features:
-
-* Component-specific parameters
-* Mixing weights
-* Same core functionality as non-mixture versions
-
-Working with Custom Models
---------------------------
-
-The ``CustomResults`` class allows you to work with custom model implementations
-while maintaining compatibility with ``SCRIBE``'s infrastructure. 
+To compare models, you can use the model comparison utilities:
 
 .. code-block:: python
 
-    # Define custom model/guide functions
-    custom_results = scribe.run_scribe(
-        counts=counts,
-        custom_model=my_model,
-        custom_guide=my_guide,
-        param_spec=my_param_spec,
-        n_steps=10000
+    from scribe.model_comparison import compare_models, compare_models_by_gene
+    
+    # Fit multiple models
+    nbdm_results = scribe.run_scribe(counts, zero_inflated=False, variable_capture=False)
+    zinb_results = scribe.run_scribe(counts, zero_inflated=True, variable_capture=False)
+    
+    # Compare models using WAIC
+    comparison = compare_models(
+        [nbdm_results, zinb_results],
+        counts,
+        n_samples=1000
     )
-
-.. note::
-
-    We recommend checking the :doc:`./examples/custom_model` example for
-    more details on how to use the ``CustomResults`` class.
-
-Key requirements:
-
-* Must provide ``param_spec`` dictionary indicating the parameter types
-* Should implement required model methods
-* Can extend with custom functionality
+    
+    # Compare models gene by gene
+    gene_comparison = compare_models_by_gene(
+        [nbdm_results, zinb_results],
+        counts,
+        n_samples=1000
+    )
 
 Best Practices
 --------------
@@ -303,31 +377,31 @@ Best Practices
 1. **Memory Management**:
 
   * Use ``batch_size`` for large datasets
-  * Avoid generating posterior samples for all genes
-  * Use subsetting for gene-specific analysis
+  * Generate posterior samples for specific gene subsets
+  * Use ``compute_log_likelihood`` with batching for large-scale analyses
 
 2. **Working with Parameters**:
 
   * Access raw parameters through ``.params``
-  * Use ``.get_distributions()`` for either sampling or parameter comparison
-  * Remember parameter types (``global``/ ``gene-specific``/ ``cell-specific``)
+  * Use ``.get_distributions()`` for parameter interpretation and sampling
+  * Use ``.get_map()`` for point estimates
 
 3. **Model Selection**:
 
-  * Use simpler models first (e.g., NBDM)
-  * Add complexity (zero-inflation, capture probability) as needed
+  * Start with the simplest model (NBDM)
+  * Add complexity (zero-inflation, capture probability) as justified by data
   * Consider mixture models for heterogeneous populations
+  * Use model comparison tools to select the best model
 
-4. **Error Handling**:
+4. **Diagnostics**:
 
   * Check ``loss_history`` for convergence
-  * Validate parameters are in expected ranges
+  * Use posterior predictive checks to evaluate model fit
+  * For mixture models, examine entropy of component assignments
 
 See Also
 --------
 
-* :doc:`models/nbdm` - Details on the NBDM model
-* :doc:`models/zinb` - Details on the ZINB model
-* :doc:`models/nbvcp` - Details on the NBVCP model
-* :doc:`models/zinbvcp` - Details on the ZINBVCP model
-* :doc:`models/models_mix` - Details on the mixture models
+* Detailed API reference for ``ScribeResults`` class
+* Tutorials on model selection and comparison
+* Example notebooks for common analys

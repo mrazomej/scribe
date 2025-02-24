@@ -110,7 +110,7 @@ For all mixture models:
    - Cell-specific parameters: Updated using that cell's data across all components
 
 Usage Guidelines
----------------
+----------------
 
 When to use mixture models:
 
@@ -171,7 +171,4 @@ References
 
 Base model documentation:
 
-   - :doc:`nbdm`
-   - :doc:`zinb`
-   - :doc:`nbvcp`
-   - :doc:`zinbvcp`
+   - :doc:`models`
