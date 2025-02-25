@@ -4,6 +4,7 @@ Results classes for SCRIBE inference.
 
 from typing import Dict, Optional, Union, Callable, Tuple, Any
 from dataclasses import dataclass, replace
+import warnings
 
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -11,12 +12,12 @@ import pandas as pd
 import numpyro.distributions as dist
 from jax import random, jit, vmap
 
+import numpy as np
 import scipy.stats as stats
 
 from .sampling import (
     sample_variational_posterior, 
     generate_predictive_samples, 
-    generate_ppc_samples
 )
 from .stats import (
     fit_dirichlet_minka, 
@@ -24,6 +25,10 @@ from .stats import (
 )
 from .model_config import ModelConfig
 from .utils import numpyro_to_scipy
+
+from .cell_assignment import (
+    temperature_scaling
+)
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
@@ -271,15 +276,60 @@ class ScribeResults:
 
     # --------------------------------------------------------------------------
 
-    def get_map(self) -> Dict[str, jnp.ndarray]:
+    def get_map(
+        self,
+        use_mean: bool = False,
+        verbose: bool = True
+    ) -> Dict[str, jnp.ndarray]:
         """
-        Get the maximum a posteriori (MAP) estimates from the variational posterior.
+        Get the maximum a posteriori (MAP) estimates from the variational
+        posterior.
+
+        Parameters
+        ----------
+        use_mean : bool, default=False
+            If True, replaces undefined MAP values (NaN) with posterior means
+        verbose : bool, default=True
+            If True, prints a warning if NaNs were replaced with means
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary of MAP estimates for each parameter
         """
+        # Get distributions with NumPyro backend
         distributions = self.get_distributions(backend="numpyro")
-        return {
+        # Get estimate of map
+        map_estimates = {
             param: get_distribution_mode(dist) 
             for param, dist in distributions.items()
         }
+
+        # Replace NaN values with means if requested
+        if use_mean:
+            # Initialize boolean to track if any NaNs were replaced
+            replaced_nans = False
+            # Check each parameter for NaNs and replace with means
+            for param, value in map_estimates.items():
+                # Check if any values are NaN
+                if jnp.any(jnp.isnan(value)):
+                    replaced_nans = True
+                    # Get mean value
+                    mean_value = distributions[param].mean
+                    # Replace NaN values with means
+                    map_estimates[param] = jnp.where(
+                        jnp.isnan(value),
+                        mean_value,
+                        value
+                    )
+            # Print warning if NaNs were replaced
+            if replaced_nans and verbose:
+                warnings.warn(
+                    "NaN values were replaced with means of the distributions",
+                    UserWarning
+                )
+
+        return map_estimates
 
     # --------------------------------------------------------------------------
     # Indexing by genes
@@ -794,13 +844,15 @@ class ScribeResults:
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
+        gene_batch_size: Optional[int] = None,
         return_by: str = 'cell',
         cells_axis: int = 0,
         ignore_nans: bool = False,
         split_components: bool = False,
         weights: Optional[jnp.ndarray] = None,
         weight_type: Optional[str] = None,
-        dtype: jnp.dtype = jnp.float32
+        dtype: jnp.dtype = jnp.float32,
+        use_vmap: bool = True
     ) -> jnp.ndarray:
         """
         Compute log likelihood of data under posterior samples.
@@ -811,6 +863,8 @@ class ScribeResults:
             Count data to evaluate likelihood on
         batch_size : Optional[int], default=None
             Size of mini-batches used for likelihood computation
+        gene_batch_size : Optional[int], default=None
+            Size of mini-batches used for likelihood computation by gene
         return_by : str, default='cell'
             Specifies how to return the log probabilities. Must be one of:
                 - 'cell': returns log probabilities summed over genes
@@ -820,8 +874,8 @@ class ScribeResults:
         ignore_nans : bool, default=False
             If True, removes any samples that contain NaNs.
         split_components : bool, default=False
-            If True, returns log likelihoods for each mixture component separately.
-            Only applicable for mixture models.
+            If True, returns log likelihoods for each mixture component
+            separately. Only applicable for mixture models.
         weights : Optional[jnp.ndarray], default=None
             Array used to weight the log likelihoods (for mixture models).
         weight_type : Optional[str], default=None
@@ -830,13 +884,15 @@ class ScribeResults:
                 - 'additive': add weights to log probabilities
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
+        use_vmap : bool, default=True
+            If True, uses vmap to parallelize computation across samples. If
+            False, processes samples sequentially (uses less memory).
             
         Returns
         -------
         jnp.ndarray
             Array of log likelihoods. Shape depends on model type, return_by and
-            split_components parameters.
-            For standard models:
+            split_components parameters. For standard models:
                 - 'cell': shape (n_samples, n_cells)
                 - 'gene': shape (n_samples, n_genes)
             For mixture models with split_components=False:
@@ -870,7 +926,6 @@ class ScribeResults:
         is_mixture = self.n_components is not None and self.n_components > 1
         
         # Define function to compute likelihood for a single sample
-        @jit
         def compute_sample_lik(i):
             # Extract parameters for this sample
             params_i = {k: v[i] for k, v in parameter_samples.items()}
@@ -880,6 +935,7 @@ class ScribeResults:
                     counts, 
                     params_i, 
                     batch_size=batch_size,
+                    gene_batch_size=gene_batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     split_components=split_components,
@@ -892,13 +948,46 @@ class ScribeResults:
                     counts, 
                     params_i, 
                     batch_size=batch_size,
+                    gene_batch_size=gene_batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     dtype=dtype
                 )
         
-        # Compute log likelihoods for all samples using vmap
-        log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+        # Determine output shape based on return_by and split_components
+        if return_by == 'cell':
+            result_shape = (
+                n_samples, 
+                self.n_cells,
+                self.n_components if split_components else 1, 
+            )
+        else:  # return_by == 'gene'
+            result_shape = (
+                n_samples, 
+                self.n_genes,
+                self.n_components if split_components else 1, 
+            )
+        # Remove singleton dimensions
+        result_shape = tuple(s for s in result_shape if s > 1)  
+        
+        # Choose computation method based on memory constraints
+        if use_vmap:
+            # Use vmap for parallel computation (more memory intensive)
+            log_liks = vmap(jit(compute_sample_lik))(jnp.arange(n_samples))
+        else:
+            # Process samples sequentially (less memory intensive)
+            # Initialize array on CPU to save GPU memory
+            log_liks = np.zeros(result_shape, dtype=dtype)
+            
+            # Process each sample
+            for i in range(n_samples):
+                # Compute log likelihood for this sample
+                sample_log_lik = compute_sample_lik(i)
+                # Store result
+                log_liks[i] = np.array(sample_log_lik)
+            
+            # Convert back to JAX array for consistency
+            log_liks = jnp.array(log_liks)
         
         # Handle NaNs if requested
         if ignore_nans:
@@ -918,7 +1007,7 @@ class ScribeResults:
                 print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
                 return log_liks[valid_samples]
         
-        return log_liks 
+        return log_liks
 
     # --------------------------------------------------------------------------
 
@@ -926,12 +1015,14 @@ class ScribeResults:
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
+        gene_batch_size: Optional[int] = None,
         return_by: str = 'cell',
         cells_axis: int = 0,
         split_components: bool = False,
         weights: Optional[jnp.ndarray] = None,
         weight_type: Optional[str] = None,
-        use_mean: bool = False,
+        use_mean: bool = True,
+        verbose: bool = True,
         dtype: jnp.dtype = jnp.float32
     ) -> jnp.ndarray:
         """
@@ -943,6 +1034,8 @@ class ScribeResults:
             Count data to evaluate likelihood on
         batch_size : Optional[int], default=None
             Size of mini-batches used for likelihood computation
+        gene_batch_size : Optional[int], default=None
+            Size of mini-batches used for likelihood computation by gene
         return_by : str, default='cell'
             Specifies how to return the log probabilities. Must be one of:
                 - 'cell': returns log probabilities summed over genes
@@ -960,6 +1053,8 @@ class ScribeResults:
                 - 'additive': add weights to log probabilities
         use_mean : bool, default=False
             If True, replaces undefined MAP values (NaN) with posterior means
+        verbose : bool, default=True
+            If True, prints a warning if NaNs were replaced with means
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
             
@@ -981,54 +1076,109 @@ class ScribeResults:
         # Get the log likelihood function
         likelihood_fn = self.get_log_likelihood_fn()
         
-        # Get the MAP estimates
-        map_estimates = self.get_map()
-        
-        # Replace NaN values with means if requested
-        if use_mean:
-            # Get distributions to compute means
-            distributions = self.get_distributions(backend="numpyro")
-            
-            # Check each parameter for NaNs and replace with means
-            for param, value in map_estimates.items():
-                # Check if any values are NaN
-                if jnp.any(jnp.isnan(value)):
-                    # Get mean value
-                    mean_value = distributions[param].mean
-                    # Replace NaN values with means
-                    map_estimates[param] = jnp.where(
-                        jnp.isnan(value),
-                        mean_value,
-                        value
-                    )
-        
         # Determine if this is a mixture model
         is_mixture = self.n_components is not None and self.n_components > 1
         
-        # Compute log likelihoods
-        if is_mixture:
-            log_liks = likelihood_fn(
-                counts,
-                map_estimates,
-                batch_size=batch_size,
-                cells_axis=cells_axis,
-                return_by=return_by,
-                split_components=split_components,
-                weights=weights,
-                weight_type=weight_type,
-                dtype=dtype
-            )
-        else:
-            log_liks = likelihood_fn(
-                counts,
-                map_estimates,
-                batch_size=batch_size,
-                cells_axis=cells_axis,
-                return_by=return_by,
-                dtype=dtype
-            )
+        # If computing by gene and gene_batch_size is provided, use batched computation
+        if return_by == 'gene' and gene_batch_size is not None:
+            # Determine output shape
+            if is_mixture and split_components:
+                result_shape = (self.n_genes, self.n_components)
+            else:
+                result_shape = (self.n_genes,)
+                
+            # Initialize result array
+            log_liks = np.zeros(result_shape, dtype=dtype)
+            
+            # Process genes in batches
+            for i in range(0, self.n_genes, gene_batch_size):
+                if verbose and i > 0:
+                    print(f"Processing genes {i}-{min(i+gene_batch_size, self.n_genes)} of {self.n_genes}")
+                    
+                # Get gene indices for this batch
+                end_idx = min(i + gene_batch_size, self.n_genes)
+                gene_indices = list(range(i, end_idx))
+                
+                # Get subset of results for these genes
+                results_subset = self[gene_indices]
+                # Get the MAP estimates
+                map_estimates = results_subset.get_map(
+                    use_mean=use_mean, verbose=False
+                )
+                
+                # Get subset of counts for these genes
+                if cells_axis == 0:
+                    counts_subset = counts[:, gene_indices]
+                else:
+                    counts_subset = counts[gene_indices, :]
+                    
+                # Get subset of weights if provided
+                weights_subset = None
+                if weights is not None:
+                    if weights.ndim == 1:  # Shape: (n_genes,)
+                        weights_subset = weights[gene_indices]
+                    else:
+                        weights_subset = weights
+                
+                # Compute log likelihood for this gene batch
+                if is_mixture:
+                    batch_log_liks = likelihood_fn(
+                        counts_subset,
+                        map_estimates,
+                        batch_size=batch_size,
+                        cells_axis=cells_axis,
+                        return_by=return_by,
+                        split_components=split_components,
+                        weights=weights_subset,
+                        weight_type=weight_type,
+                        dtype=dtype
+                    )
+                else:
+                    batch_log_liks = likelihood_fn(
+                        counts_subset,
+                        map_estimates,
+                        batch_size=batch_size,
+                        cells_axis=cells_axis,
+                        return_by=return_by,
+                        dtype=dtype
+                    )
+                
+                # Store results
+                log_liks[i:end_idx] = np.array(batch_log_liks)
+            
+            # Convert to JAX array for consistency
+            return jnp.array(log_liks)
         
-        return log_liks
+        # Standard computation (no gene batching)
+        else:
+            # Get the MAP estimates
+            map_estimates = self.get_map(use_mean=use_mean, verbose=verbose)
+
+            # Compute log-likelihood for mixture model
+            if is_mixture:
+                log_liks = likelihood_fn(
+                    counts,
+                    map_estimates,
+                    batch_size=batch_size,
+                    cells_axis=cells_axis,
+                    return_by=return_by,
+                    split_components=split_components,
+                    weights=weights,
+                    weight_type=weight_type,
+                    dtype=dtype
+                )
+            # Compute log-likelihood for non-mixture model
+            else:
+                log_liks = likelihood_fn(
+                    counts,
+                    map_estimates,
+                    batch_size=batch_size,
+                    cells_axis=cells_axis,
+                    return_by=return_by,
+                    dtype=dtype
+                )
+            
+            return log_liks
 
 
     # --------------------------------------------------------------------------
@@ -1042,7 +1192,7 @@ class ScribeResults:
         batch_size: Optional[int] = None,
         cells_axis: int = 0,
         ignore_nans: bool = False,
-        normalize: bool = False,
+        temperature: Optional[float] = None,
         dtype: jnp.dtype = jnp.float32,
     ) -> jnp.ndarray:
         """
@@ -1084,11 +1234,11 @@ class ScribeResults:
             If True, excludes any samples containing NaN values from the entropy
             calculation.
         
-        normalize : bool, default=False
-            If True, normalizes the log-likelihoods by the number of genes (when
-            return_by='cell') or number of cells (when return_by='gene') before
-            computing entropy. This makes entropy values comparable across
-            datasets of different sizes.
+        temperature : Optional[float], default=None
+            If provided, applies temperature scaling to the log-likelihoods
+            before computing entropy. Temperature scaling modifies the sharpness
+            of probability distributions by dividing log probabilities by a
+            temperature parameter T:
         
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations.
@@ -1142,11 +1292,8 @@ class ScribeResults:
         )
 
         # Normalize log-likelihoods if requested
-        if normalize:
-            if return_by == 'cell':
-                log_liks = log_liks / self.n_genes
-            else:  # return_by == 'gene'
-                log_liks = log_liks / self.n_cells
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
         # Compute log-sum-exp for normalization
         log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
@@ -1161,6 +1308,97 @@ class ScribeResults:
 
         return entropy
 
+    # --------------------------------------------------------------------------
+
+    def compute_map_component_entropy(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        temperature: Optional[float] = None,
+        use_mean: bool = True,
+        verbose: bool = True,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """
+        Compute the entropy of component assignments for each cell evaluated at
+        the MAP.
+
+        This method calculates the entropy of the posterior component assignment
+        probabilities for each cell or gene, providing a measure of assignment
+        uncertainty. Higher entropy values indicate more uncertainty in the
+        component assignments, while lower values indicate more confident
+        assignments.
+        
+        The entropy is calculated as:
+            H = -∑(p_i * log(p_i))
+        where p_i are the normalized probabilities for each component.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            The count matrix with shape (n_cells, n_genes).
+        batch_size : Optional[int], default=None
+            Size of mini-batches for likelihood computation
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        temperature : Optional[float], default=None
+            If provided, applies temperature scaling to the log-likelihoods
+            before computing entropy.
+        use_mean : bool, default=True
+            If True, uses the mean of the posterior component probabilities
+            instead of the MAP.
+        verbose : bool, default=True
+            If True, prints a warning if NaNs were replaced with means
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+
+        Returns
+        -------
+        jnp.ndarray
+            The component entropy for each cell evaluated at the MAP. Shape:
+            (n_cells,).
+
+        Raises
+        ------
+        ValueError
+            - If the model is not a mixture model
+            - If posterior samples have not been generated yet
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Component entropy calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Compute log-likelihood at the MAP
+        log_liks = self.compute_map_log_likelihood(
+            counts,
+            batch_size=batch_size,
+            cells_axis=cells_axis,
+            use_mean=use_mean,
+            verbose=verbose,
+            dtype=dtype,
+        )
+
+        # Normalize log-likelihoods if requested
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
+
+        # Compute log-sum-exp for normalization
+        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+
+        # Compute probabilities (avoiding log space for final entropy calculation)
+        probs = jnp.exp(log_liks - log_sum_exp)
+
+        # Compute entropy: -∑(p_i * log(p_i))
+        # Add small epsilon to avoid log(0)
+        eps = jnp.finfo(dtype).eps
+        entropy = -jnp.sum(probs * jnp.log(probs + eps), axis=-1)
+
+        return entropy
+    
     # --------------------------------------------------------------------------
     # Cell type assignment method for mixture models
     # --------------------------------------------------------------------------
