@@ -844,7 +844,6 @@ class ScribeResults:
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
-        gene_batch_size: Optional[int] = None,
         return_by: str = 'cell',
         cells_axis: int = 0,
         ignore_nans: bool = False,
@@ -852,7 +851,6 @@ class ScribeResults:
         weights: Optional[jnp.ndarray] = None,
         weight_type: Optional[str] = None,
         dtype: jnp.dtype = jnp.float32,
-        use_vmap: bool = True
     ) -> jnp.ndarray:
         """
         Compute log likelihood of data under posterior samples.
@@ -863,8 +861,6 @@ class ScribeResults:
             Count data to evaluate likelihood on
         batch_size : Optional[int], default=None
             Size of mini-batches used for likelihood computation
-        gene_batch_size : Optional[int], default=None
-            Size of mini-batches used for likelihood computation by gene
         return_by : str, default='cell'
             Specifies how to return the log probabilities. Must be one of:
                 - 'cell': returns log probabilities summed over genes
@@ -884,9 +880,6 @@ class ScribeResults:
                 - 'additive': add weights to log probabilities
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
-        use_vmap : bool, default=True
-            If True, uses vmap to parallelize computation across samples. If
-            False, processes samples sequentially (uses less memory).
             
         Returns
         -------
@@ -926,6 +919,7 @@ class ScribeResults:
         is_mixture = self.n_components is not None and self.n_components > 1
         
         # Define function to compute likelihood for a single sample
+        @jit
         def compute_sample_lik(i):
             # Extract parameters for this sample
             params_i = {k: v[i] for k, v in parameter_samples.items()}
@@ -935,7 +929,6 @@ class ScribeResults:
                     counts, 
                     params_i, 
                     batch_size=batch_size,
-                    gene_batch_size=gene_batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     split_components=split_components,
@@ -948,46 +941,13 @@ class ScribeResults:
                     counts, 
                     params_i, 
                     batch_size=batch_size,
-                    gene_batch_size=gene_batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
                     dtype=dtype
                 )
         
-        # Determine output shape based on return_by and split_components
-        if return_by == 'cell':
-            result_shape = (
-                n_samples, 
-                self.n_cells,
-                self.n_components if split_components else 1, 
-            )
-        else:  # return_by == 'gene'
-            result_shape = (
-                n_samples, 
-                self.n_genes,
-                self.n_components if split_components else 1, 
-            )
-        # Remove singleton dimensions
-        result_shape = tuple(s for s in result_shape if s > 1)  
-        
-        # Choose computation method based on memory constraints
-        if use_vmap:
-            # Use vmap for parallel computation (more memory intensive)
-            log_liks = vmap(jit(compute_sample_lik))(jnp.arange(n_samples))
-        else:
-            # Process samples sequentially (less memory intensive)
-            # Initialize array on CPU to save GPU memory
-            log_liks = np.zeros(result_shape, dtype=dtype)
-            
-            # Process each sample
-            for i in range(n_samples):
-                # Compute log likelihood for this sample
-                sample_log_lik = compute_sample_lik(i)
-                # Store result
-                log_liks[i] = np.array(sample_log_lik)
-            
-            # Convert back to JAX array for consistency
-            log_liks = jnp.array(log_liks)
+        # Use vmap for parallel computation (more memory intensive)
+        log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
         
         # Handle NaNs if requested
         if ignore_nans:
