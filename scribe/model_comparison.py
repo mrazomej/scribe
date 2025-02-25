@@ -19,6 +19,10 @@ def _compute_log_liks(
     batch_size: Optional[int] = None,
     ignore_nans: bool = False,
     return_by: str = 'cell',
+    cells_axis: int = 0,
+    split_components: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
     dtype: jnp.dtype = jnp.float32
 ) -> jnp.ndarray:
     """
@@ -40,29 +44,68 @@ def _compute_log_liks(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    cells_axis : int, default=0
+        Axis along which cells are arranged. 0 means cells are rows.
+    split_components : bool, default=False
+        If True, returns log likelihoods for each mixture component separately.
+        Only applicable for mixture models.
+    weights : Optional[jnp.ndarray], default=None
+        Array used to weight the log likelihoods (for mixture models).
+    weight_type : Optional[str], default=None
+        How to apply weights. Must be one of:
+            - 'multiplicative': multiply log probabilities by weights
+            - 'additive': add weights to log probabilities
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
     """
     n_samples = params_dict[next(iter(params_dict))].shape[0]
     
-    @partial(jit, static_argnums=(0,))
+    # Determine if this is a mixture model based on parameters
+    is_mixture = any('mix' in k for k in params_dict.keys())
+    
+    @jit
     def compute_sample_lik(i):
         params_i = {k: v[i] for k, v in params_dict.items()}
-        return likelihood_fn(
-            counts, 
-            params_i, 
-            batch_size, 
-            return_by=return_by,
-            dtype=dtype
-        )
+        if is_mixture:
+            return likelihood_fn(
+                counts,
+                params_i,
+                batch_size=batch_size,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                split_components=split_components,
+                weights=weights,
+                weight_type=weight_type,
+                dtype=dtype
+            )
+        else:
+            return likelihood_fn(
+                counts,
+                params_i,
+                batch_size=batch_size,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                dtype=dtype
+            )
     
     # Compute log likelihoods for all samples
     log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
     
     if ignore_nans:
-        valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=1)
-        print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
-        return log_liks[valid_samples]
+        if is_mixture and split_components:
+            # Handle case with component dimension
+            valid_samples = ~jnp.any(
+                jnp.any(jnp.isnan(log_liks), axis=-1),
+                axis=-1
+            )
+        else:
+            # Standard case
+            valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=-1)
+            
+        if jnp.any(~valid_samples):
+            print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
+            return log_liks[valid_samples]
+    
     return log_liks
 
 # ------------------------------------------------------------------------------
@@ -268,13 +311,15 @@ def _compute_waic_stats(
 # ------------------------------------------------------------------------------
 
 def compute_waic(
-    results: BaseScribeResults,
+    results: ScribeResults,
     counts: jnp.ndarray,
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
     rng_key: random.PRNGKey = random.PRNGKey(42),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
     dtype: jnp.dtype = jnp.float32
 ) -> Dict:
     """
@@ -302,10 +347,12 @@ def compute_waic(
     ignore_nans: bool = False,
         If True, removes any samples that contain NaNs when evaluating the log
         likelihood.
-    aggregate: bool = True
-        If True, returns the evaluation of the WAIC statistics for the entire
-        model. If False, returns the evaluation of the WAIC statistics for each
-        data point.
+    weights: Optional[jnp.ndarray] = None,
+        Array used to weight the log likelihoods (for mixture models).
+    weight_type: Optional[str] = None,
+        How to apply weights. Must be one of:
+            - 'multiplicative': multiply log probabilities by weights
+            - 'additive': add weights to log probabilities
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
         
@@ -325,25 +372,23 @@ def compute_waic(
                 The log pointwise predictive density
     """
     # Get posterior samples if not already present
-    if (results.posterior_samples is None or 
-        'parameter_samples' not in results.posterior_samples):
+    if results.posterior_samples is None:
         results.get_posterior_samples(rng_key, n_samples)
-    
-    # Get likelihood function and parameters
-    likelihood_fn = results.get_log_likelihood_fn()
-    params_dict = results.posterior_samples['parameter_samples']
     
     # If cells_axis is 1, transpose counts
     if cells_axis == 1:
         counts = counts.T
     
-    # Compute log likelihoods directly using _compute_log_liks
-    log_liks = _compute_log_liks(
-        params_dict, 
-        likelihood_fn, 
-        counts, 
-        batch_size, 
-        ignore_nans, 
+    # Compute log likelihoods using results object's method
+    log_liks = results.compute_log_likelihood(
+        counts=counts,
+        batch_size=batch_size,
+        return_by='cell',
+        cells_axis=cells_axis,
+        ignore_nans=ignore_nans,
+        split_components=False,  # Always use aggregated likelihoods
+        weights=weights,
+        weight_type=weight_type,
         dtype=dtype
     )
     
@@ -361,6 +406,8 @@ def compute_waic_by_gene(
     rng_key: random.PRNGKey = random.PRNGKey(42),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
     dtype: jnp.dtype = jnp.float32
 ) -> Dict:
     """
@@ -388,6 +435,12 @@ def compute_waic_by_gene(
         cells are columns
     ignore_nans : bool, default=False
         Whether to ignore NaN values in computation
+    weights: Optional[jnp.ndarray] = None,
+        Array used to weight the log likelihoods (for mixture models).
+    weight_type: Optional[str] = None,
+        How to apply weights. Must be one of:
+            - 'multiplicative': multiply log probabilities by weights
+            - 'additive': add weights to log probabilities
     dtype : jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -407,22 +460,24 @@ def compute_waic_by_gene(
                 WAIC computed using p_waic_2 penalty for each gene
     """
     # Get posterior samples if not already present
-    if (results.posterior_samples is None or 
-        'parameter_samples' not in results.posterior_samples):
+    if results.posterior_samples is None:
         results.get_posterior_samples(rng_key, n_samples)
-    
-    # Get likelihood function and parameters
-    likelihood_fn = results.get_log_likelihood_fn()
-    params_dict = results.posterior_samples['parameter_samples']
     
     # If cells_axis is 1, transpose counts
     if cells_axis == 1:
         counts = counts.T
     
-    # Compute log likelihoods directly using _compute_log_liks
-    log_liks = _compute_log_liks(
-        params_dict, likelihood_fn, counts, batch_size, ignore_nans, 
-        return_by='gene', dtype=dtype
+    # Compute log likelihoods using results object's method
+    log_liks = results.compute_log_likelihood(
+        counts=counts,
+        batch_size=batch_size,
+        return_by='gene',
+        cells_axis=cells_axis,
+        ignore_nans=ignore_nans,
+        split_components=False,  # Always use aggregated likelihoods
+        weights=weights,
+        weight_type=weight_type,
+        dtype=dtype
     )
     
     # Compute WAIC statistics
@@ -468,13 +523,15 @@ def _compute_waic_weights(
 # ------------------------------------------------------------------------------
 
 def compare_models(
-    results_list: List[BaseScribeResults],
+    results_list: List[ScribeResults],
     counts: Union[np.ndarray, jnp.ndarray],
     n_samples: int = 1000,
-    batch_size: int = 512,
+    batch_size: Optional[int] = None,
     rng_key: random.PRNGKey = random.PRNGKey(0),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
     dtype: jnp.dtype = jnp.float32
 ) -> pd.DataFrame:
     """
@@ -482,22 +539,28 @@ def compare_models(
     
     Parameters
     ----------
-    results_list : List[BaseScribeResults]
+    results_list : List[ScribeResults]
         List of results objects from different model fits
-    counts : jnp.ndarray
+    counts : Union[np.ndarray, jnp.ndarray]
         Observed count data
-    n_samples : int
+    n_samples : int, default=1000
         Number of posterior samples for WAIC computation
-    batch_size : int
-        Batch size for likelihood computation
-    rng_key : random.PRNGKey
+    batch_size : Optional[int], default=None
+        Size of mini-batches for likelihood computation. If None, uses full dataset.
+    rng_key : random.PRNGKey, default=random.PRNGKey(0)
         Random key for reproducibility
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
-    ignore_nans: bool = False,
+    ignore_nans: bool, default=False
         If True, removes any samples that contain NaNs when evaluating the log
         likelihood.
+    weights: Optional[jnp.ndarray], default=None
+        Array used to weight the log likelihoods (for mixture models).
+    weight_type: Optional[str], default=None
+        How to apply weights. Must be one of:
+            - 'multiplicative': multiply log probabilities by weights
+            - 'additive': add weights to log probabilities
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
     
@@ -527,11 +590,20 @@ def compare_models(
     for results, key in zip(results_list, rng_keys):
         print(f"Computing WAIC for {results.model_type}...")
         waic = compute_waic(
-            results, counts, n_samples, batch_size, key, 
-            ignore_nans=ignore_nans, dtype=dtype
+            results=results,
+            counts=counts,
+            n_samples=n_samples,
+            batch_size=batch_size,
+            rng_key=key,
+            cells_axis=cells_axis,
+            ignore_nans=ignore_nans,
+            weights=weights,
+            weight_type=weight_type,
+            dtype=dtype
         )
-        # Add model type to results
+        # Add model type and config info to results
         waic['model'] = results.model_type
+        waic['n_components'] = results.n_components
         # Append results to list
         waic_results.append(waic)
 
@@ -541,7 +613,6 @@ def compare_models(
     # Convert DataFrame columns to numeric arrays
     waic1_values = jnp.array(df["waic_1"].values, dtype=dtype)
     waic2_values = jnp.array(df["waic_2"].values, dtype=dtype)
-    
     
     # Compute weights using JIT for both WAIC versions
     weights1 = _compute_waic_weights(waic1_values, dtype=dtype)
@@ -555,18 +626,23 @@ def compare_models(
     df['weight_1'] = weights1
     df['weight_2'] = weights2
     
+    # Sort by WAIC1 (lower is better)
+    df = df.sort_values('waic_1')
+    
     return df
 
 # ------------------------------------------------------------------------------
 
 def compare_models_by_gene(
-    results_list: List[BaseScribeResults],
+    results_list: List[ScribeResults],
     counts: Union[np.ndarray, jnp.ndarray],
     n_samples: int = 1000,
-    batch_size: int = 512,
+    batch_size: Optional[int] = None,
     rng_key: random.PRNGKey = random.PRNGKey(0),
     cells_axis: int = 0,
     ignore_nans: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
     dtype: jnp.dtype = jnp.float32
 ) -> pd.DataFrame:
     """
@@ -574,22 +650,28 @@ def compare_models_by_gene(
     
     Parameters
     ----------
-    results_list : List[BaseScribeResults]
+    results_list : List[ScribeResults]
         List of results objects from different model fits
-    counts : jnp.ndarray
+    counts : Union[np.ndarray, jnp.ndarray]
         Observed count data
-    n_samples : int
+    n_samples : int, default=1000
         Number of posterior samples for WAIC computation
-    batch_size : int
-        Batch size for likelihood computation
-    rng_key : random.PRNGKey
+    batch_size : Optional[int], default=None
+        Size of mini-batches for likelihood computation. If None, uses full dataset.
+    rng_key : random.PRNGKey, default=random.PRNGKey(0)
         Random key for reproducibility
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
-    ignore_nans: bool = False,
+    ignore_nans: bool, default=False
         If True, removes any samples that contain NaNs when evaluating the log
         likelihood.
+    weights: Optional[jnp.ndarray], default=None
+        Array used to weight the log likelihoods (for mixture models).
+    weight_type: Optional[str], default=None
+        How to apply weights. Must be one of:
+            - 'multiplicative': multiply log probabilities by weights
+            - 'additive': add weights to log probabilities
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
     
@@ -599,6 +681,7 @@ def compare_models_by_gene(
         DataFrame containing model comparison metrics for each gene:
             - Model type
             - Gene index
+            - Number of components (for mixture models)
             - WAIC1 and WAIC2
             - Effective parameters (p_waic_1 and p_waic_2)
             - Delta WAIC (difference from best model) for both versions
@@ -623,11 +706,20 @@ def compare_models_by_gene(
     for results, key in zip(results_list, rng_keys):
         print(f"Computing WAIC by gene for {results.model_type}...")
         waic = compute_waic_by_gene(
-            results, counts, n_samples, batch_size, key, 
-            ignore_nans=ignore_nans
+            results=results,
+            counts=counts,
+            n_samples=n_samples,
+            batch_size=batch_size,
+            rng_key=key,
+            cells_axis=cells_axis,
+            ignore_nans=ignore_nans,
+            weights=weights,
+            weight_type=weight_type,
+            dtype=dtype
         )
-        # Add model type to results
+        # Add model type and config info to results
         waic['model'] = results.model_type
+        waic['n_components'] = results.n_components
         # Add gene indices to results
         waic['gene'] = np.arange(n_genes)
         # Append results to list dataframe
@@ -671,5 +763,8 @@ def compare_models_by_gene(
     df['delta_waic_2'] = delta_waic2
     df['weight_1'] = weights1
     df['weight_2'] = weights2
+    
+    # Sort by gene index and WAIC1 (lower is better)
+    df = df.sort_values(['gene', 'waic_1'])
     
     return df
