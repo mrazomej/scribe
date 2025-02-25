@@ -921,6 +921,117 @@ class ScribeResults:
         return log_liks 
 
     # --------------------------------------------------------------------------
+
+    def compute_map_log_likelihood(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        return_by: str = 'cell',
+        cells_axis: int = 0,
+        split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        use_mean: bool = False,
+        dtype: jnp.dtype = jnp.float32
+    ) -> jnp.ndarray:
+        """
+        Compute log likelihood of data using MAP parameter estimates.
+        
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data to evaluate likelihood on
+        batch_size : Optional[int], default=None
+            Size of mini-batches used for likelihood computation
+        return_by : str, default='cell'
+            Specifies how to return the log probabilities. Must be one of:
+                - 'cell': returns log probabilities summed over genes
+                - 'gene': returns log probabilities summed over cells
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        split_components : bool, default=False
+            If True, returns log likelihoods for each mixture component separately.
+            Only applicable for mixture models.
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight the log likelihoods (for mixture models).
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
+        use_mean : bool, default=False
+            If True, replaces undefined MAP values (NaN) with posterior means
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        jnp.ndarray
+            Array of log likelihoods. Shape depends on model type, return_by and
+            split_components parameters.
+            For standard models:
+                - 'cell': shape (n_cells,)
+                - 'gene': shape (n_genes,)
+            For mixture models with split_components=False:
+                - 'cell': shape (n_cells,)
+                - 'gene': shape (n_genes,)
+            For mixture models with split_components=True:
+                - 'cell': shape (n_cells, n_components)
+                - 'gene': shape (n_genes, n_components)
+        """
+        # Get the log likelihood function
+        likelihood_fn = self.get_log_likelihood_fn()
+        
+        # Get the MAP estimates
+        map_estimates = self.get_map()
+        
+        # Replace NaN values with means if requested
+        if use_mean:
+            # Get distributions to compute means
+            distributions = self.get_distributions(backend="numpyro")
+            
+            # Check each parameter for NaNs and replace with means
+            for param, value in map_estimates.items():
+                # Check if any values are NaN
+                if jnp.any(jnp.isnan(value)):
+                    # Get mean value
+                    mean_value = distributions[param].mean
+                    # Replace NaN values with means
+                    map_estimates[param] = jnp.where(
+                        jnp.isnan(value),
+                        mean_value,
+                        value
+                    )
+        
+        # Determine if this is a mixture model
+        is_mixture = self.n_components is not None and self.n_components > 1
+        
+        # Compute log likelihoods
+        if is_mixture:
+            log_liks = likelihood_fn(
+                counts,
+                map_estimates,
+                batch_size=batch_size,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                split_components=split_components,
+                weights=weights,
+                weight_type=weight_type,
+                dtype=dtype
+            )
+        else:
+            log_liks = likelihood_fn(
+                counts,
+                map_estimates,
+                batch_size=batch_size,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                dtype=dtype
+            )
+        
+        return log_liks
+
+
+    # --------------------------------------------------------------------------
     # Compute entropy of component assignments
     # --------------------------------------------------------------------------
 
@@ -1199,6 +1310,8 @@ class ScribeResults:
         cells_axis: int = 0,
         dtype: jnp.dtype = jnp.float32,
         weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        use_mean: bool = False,
         verbose: bool = True
     ) -> Dict[str, jnp.ndarray]:
         """
@@ -1207,7 +1320,7 @@ class ScribeResults:
         
         For each cell, this method:
             1. Computes component-specific log-likelihoods using MAP parameter
-               estimates
+            estimates
             2. Converts these to probability distributions over cell types
         
         Parameters
@@ -1222,6 +1335,12 @@ class ScribeResults:
             Data type for numerical precision in computations
         weights : Optional[jnp.ndarray], default=None
             Array used to weight genes when computing log likelihoods
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
+        use_mean : bool, default=False
+            If True, replaces undefined MAP values (NaN) with posterior means
         verbose : bool, default=True
             If True, prints progress messages
         
@@ -1230,8 +1349,8 @@ class ScribeResults:
         Dict[str, jnp.ndarray]
             Dictionary containing:
                 - 'probabilities': Assignment probabilities for each cell.
-                  Shape: (n_cells, n_components)
-                  
+                Shape: (n_cells, n_components)
+                
         Raises
         ------
         ValueError
@@ -1253,6 +1372,30 @@ class ScribeResults:
         # Get the MAP estimates
         map_estimates = self.get_map()
         
+        # Replace NaN values with means if requested
+        if use_mean:
+            # Get distributions to compute means
+            distributions = self.get_distributions(backend="numpyro")
+            
+            # Check each parameter for NaNs and replace with means
+            any_replaced = False
+            for param, value in map_estimates.items():
+                # Check if any values are NaN
+                if jnp.any(jnp.isnan(value)):
+                    # Update flag
+                    any_replaced = True
+                    # Get mean value
+                    mean_value = distributions[param].mean
+                    # Replace NaN values with means
+                    map_estimates[param] = jnp.where(
+                        jnp.isnan(value),
+                        mean_value,
+                        value
+                    )
+            
+            if any_replaced and verbose:
+                print("    - Replaced undefined MAP values with posterior means")
+        
         # Compute component-specific log-likelihoods using MAP estimates
         # Shape: (n_cells, n_components)
         log_liks = likelihood_fn(
@@ -1263,8 +1406,12 @@ class ScribeResults:
             return_by='cell',
             split_components=True,
             weights=weights,
+            weight_type=weight_type,
             dtype=dtype
         )
+
+        # Assert shape of log_liks
+        assert log_liks.shape == (self.n_cells, self.n_components)
 
         if verbose:
             print("- Converting log-likelihoods to probabilities...")
