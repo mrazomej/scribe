@@ -1253,7 +1253,7 @@ def nbdm_mixture_log_likelihood(
                 weighted_log_probs = gene_log_probs + weights[:, None, None]
             
             # Sum over cells and add mixing weights
-            log_probs = jnp.sum(weighted_log_probs, axis=0).T + jnp.log(mixing_weights)
+            log_probs = jnp.sum(weighted_log_probs, axis=(0, 1)).T + jnp.log(mixing_weights)
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_genes, n_components))
@@ -1275,7 +1275,7 @@ def nbdm_mixture_log_likelihood(
                     weighted_batch_log_probs = batch_log_probs + weights[:, None, None]
                 
                 # Add weighted log probs for batch
-                log_probs += jnp.sum(weighted_batch_log_probs, axis=0).T
+                log_probs += jnp.sum(weighted_batch_log_probs, axis=(0, 1)).T
             
             # Add mixing weights
             log_probs += jnp.log(mixing_weights)
@@ -1452,7 +1452,7 @@ def zinb_mixture_log_likelihood(
                 
             # Sum over cells and add mixing weights
             # (n_genes, n_components)
-            log_probs = (jnp.sum(weighted_log_probs, axis=0).T + 
+            log_probs = (jnp.sum(weighted_log_probs, axis=(0, 1)).T + 
                          jnp.log(mixing_weights))
         else:
             # Initialize array for gene-wise sums
@@ -1476,7 +1476,7 @@ def zinb_mixture_log_likelihood(
                     weighted_batch_log_probs = batch_log_probs + weights[:, None, None]
 
                 # Add weighted log probs for batch
-                log_probs += jnp.sum(weighted_batch_log_probs, axis=0).T
+                log_probs += jnp.sum(weighted_batch_log_probs, axis=(0, 1)).T
             
             # Add mixing weights
             log_probs += jnp.log(mixing_weights)
@@ -1648,6 +1648,8 @@ def nbvcp_mixture_log_likelihood(
                 log_probs = log_probs.at[start_idx:end_idx].set(
                     jnp.sum(weighted_batch_log_probs, axis=-1) + jnp.log(mixing_weights)
                 )
+        # Assert shape of log_probs
+        assert log_probs.shape == (n_cells, n_components)
     
     else:  # return_by == 'gene'
         if batch_size is None:
@@ -1668,7 +1670,7 @@ def nbvcp_mixture_log_likelihood(
                 weighted_log_probs = gene_log_probs + weights[:, None, None]
             
             # Sum over cells and add mixing weights
-            log_probs = (jnp.sum(weighted_log_probs, axis=0).T + 
+            log_probs = (jnp.sum(weighted_log_probs, axis=(0, 1)).T + 
                         jnp.log(mixing_weights))  # (n_genes, n_components)
         else:
             # Initialize array for gene-wise sums
@@ -1700,10 +1702,13 @@ def nbvcp_mixture_log_likelihood(
                     weighted_batch_log_probs = batch_log_probs + weights[:, None, None]
 
                 # Add weighted log probs for batch
-                log_probs += jnp.sum(weighted_batch_log_probs, axis=0).T
+                log_probs += jnp.sum(weighted_batch_log_probs, axis=(0, 1)).T
             
             # Add mixing weights
             log_probs += jnp.log(mixing_weights)
+            
+            # Assert shape of log_probs
+            assert log_probs.shape == (n_genes, n_components)
             
     if split_components:
         return log_probs
@@ -1904,7 +1909,7 @@ def zinbvcp_mixture_log_likelihood(
             
             # Sum over cells and add mixing weights
             # (n_genes, n_components)
-            log_probs = (jnp.sum(weighted_gene_log_probs, axis=0).T + \
+            log_probs = (jnp.sum(weighted_gene_log_probs, axis=(0, 1)).T + \
                          jnp.log(mixing_weights))
         else:
             # Initialize array for gene-wise sums
@@ -1938,7 +1943,7 @@ def zinbvcp_mixture_log_likelihood(
                     weighted_batch_log_probs = batch_log_probs + weights[:, None, None]
 
                 # Add weighted log probs for batch
-                log_probs += jnp.sum(weighted_batch_log_probs, axis=0).T
+                log_probs += jnp.sum(weighted_batch_log_probs, axis=(0, 1)).T
             
             # Add mixing weights
             log_probs += jnp.log(mixing_weights)
