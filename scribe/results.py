@@ -21,7 +21,13 @@ from .sampling import (
 )
 from .stats import (
     fit_dirichlet_minka, 
-    get_distribution_mode
+    get_distribution_mode,
+    hellinger_gamma,
+    hellinger_lognormal,
+    kl_gamma,
+    kl_lognormal,
+    jensen_shannon_gamma,
+    jensen_shannon_lognormal
 )
 from .model_config import ModelConfig
 from .utils import numpyro_to_scipy
@@ -699,7 +705,7 @@ class ScribeResults:
     # Get model and guide functions
     # --------------------------------------------------------------------------
 
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
+    def _model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the model and guide functions based on model type."""
         from .model_registry import get_model_and_guide
         return get_model_and_guide(self.model_type)
@@ -708,7 +714,7 @@ class ScribeResults:
     # Get log likelihood function
     # --------------------------------------------------------------------------
 
-    def get_log_likelihood_fn(self) -> Callable:
+    def _log_likelihood_fn(self) -> Callable:
         """Get the log likelihood function for this model type."""
         from .model_registry import get_log_likelihood_fn
         return get_log_likelihood_fn(self.model_type)
@@ -725,7 +731,7 @@ class ScribeResults:
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
         # Get the guide function 
-        _, guide = self.get_model_and_guide()
+        _, guide = self._model_and_guide()
         
         # Prepare base model arguments
         model_args = {
@@ -763,7 +769,7 @@ class ScribeResults:
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
         # Get the model and guide functions
-        model, _ = self.get_model_and_guide()
+        model, _ = self._model_and_guide()
         
         # Prepare base model arguments
         model_args = {
@@ -840,7 +846,7 @@ class ScribeResults:
     # Compute log likelihood methods 
     # --------------------------------------------------------------------------
 
-    def compute_log_likelihood(
+    def log_likelihood(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
@@ -913,7 +919,7 @@ class ScribeResults:
         n_samples = parameter_samples[next(iter(parameter_samples))].shape[0]
         
         # Get likelihood function
-        likelihood_fn = self.get_log_likelihood_fn()
+        likelihood_fn = self._log_likelihood_fn()
         
         # Determine if this is a mixture model
         is_mixture = self.n_components is not None and self.n_components > 1
@@ -971,7 +977,7 @@ class ScribeResults:
 
     # --------------------------------------------------------------------------
 
-    def compute_map_log_likelihood(
+    def log_likelihood_map(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
@@ -1034,7 +1040,7 @@ class ScribeResults:
                 - 'gene': shape (n_genes, n_components)
         """
         # Get the log likelihood function
-        likelihood_fn = self.get_log_likelihood_fn()
+        likelihood_fn = self._log_likelihood_fn()
         
         # Determine if this is a mixture model
         is_mixture = self.n_components is not None and self.n_components > 1
@@ -1145,7 +1151,7 @@ class ScribeResults:
     # Compute entropy of component assignments
     # --------------------------------------------------------------------------
 
-    def compute_component_entropy(
+    def assignment_entropy(
         self,
         counts: jnp.ndarray,
         return_by: str = 'gene',
@@ -1241,7 +1247,7 @@ class ScribeResults:
             )
        
         # Compute log-likelihoods for each component
-        log_liks = self.compute_log_likelihood(
+        log_liks = self.log_likelihood(
             counts, 
             batch_size=batch_size, 
             cells_axis=cells_axis, 
@@ -1251,7 +1257,7 @@ class ScribeResults:
             split_components=True  # Ensure we get per-component likelihoods
         )
 
-        # Normalize log-likelihoods if requested
+        # Apply temperature scaling if requested
         if temperature is not None:
             log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
@@ -1270,9 +1276,10 @@ class ScribeResults:
 
     # --------------------------------------------------------------------------
 
-    def compute_map_component_entropy(
+    def assignment_entropy_map(
         self,
         counts: jnp.ndarray,
+        return_by: str = 'gene',
         batch_size: Optional[int] = None,
         cells_axis: int = 0,
         temperature: Optional[float] = None,
@@ -1298,6 +1305,8 @@ class ScribeResults:
         ----------
         counts : jnp.ndarray
             The count matrix with shape (n_cells, n_genes).
+        return_by : str, default='gene'
+            Whether to return the entropy by cell or gene.
         batch_size : Optional[int], default=None
             Size of mini-batches for likelihood computation
         cells_axis : int, default=0
@@ -1333,16 +1342,18 @@ class ScribeResults:
             )
 
         # Compute log-likelihood at the MAP
-        log_liks = self.compute_map_log_likelihood(
+        log_liks = self.log_likelihood_map(
             counts,
             batch_size=batch_size,
             cells_axis=cells_axis,
             use_mean=use_mean,
             verbose=verbose,
             dtype=dtype,
+            return_by=return_by,
+            split_components=True,
         )
 
-        # Normalize log-likelihoods if requested
+        # Apply temperature scaling if requested
         if temperature is not None:
             log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
@@ -1360,10 +1371,266 @@ class ScribeResults:
         return entropy
     
     # --------------------------------------------------------------------------
+    # Hellinger distance for mixture models
+    # --------------------------------------------------------------------------
+
+    def hellinger_distance(
+        self,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """
+        Compute pairwise Hellinger distances between mixture model components.
+        
+        This method calculates the Hellinger distance between each pair of
+        components in the mixture model based on their inferred parameter
+        distributions. The Hellinger distance is a metric that quantifies the
+        similarity between two probability distributions, ranging from 0
+        (identical) to 1 (completely different).
+        
+        The specific distance calculation depends on the distribution type used
+        for the dispersion parameter (r): 
+            - For LogNormal: Uses location and scale parameters 
+            - For Gamma: Uses concentration and rate parameters
+        
+        Parameters
+        ----------
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing pairwise Hellinger distances between
+            components. Keys are of the form 'i_j' where i,j are component
+            indices. Values are the Hellinger distances between components i and
+            j.
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model with multiple components, or if
+            the distribution type is not supported (must be LogNormal or Gamma)
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Hellinger distance calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Get r distribution from ModelConfig
+        r_distribution = self.model_config.r_distribution_guide
+        # Define corresponding Hellinger distance function
+        if r_distribution == dist.LogNormal:
+            hellinger_distance_fn = hellinger_lognormal
+        elif r_distribution == dist.Gamma:
+            hellinger_distance_fn = hellinger_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
+
+        # Extract parameters from r distribution based on distribution type
+        if r_distribution == dist.LogNormal:
+            r_param1 = self.params['r_loc'].astype(dtype)
+            r_param2 = self.params['r_scale'].astype(dtype)
+        elif r_distribution == dist.Gamma:
+            r_param1 = self.params['r_concentration'].astype(dtype)
+            r_param2 = self.params['r_rate'].astype(dtype)
+
+        # Initialize dictionary to store distances
+        hellinger_distances = {}
+
+        # Compute pairwise distances for each component
+        for i in range(self.n_components):
+            for j in range(i + 1, self.n_components):
+                # Compute Hellinger distance between component i and j
+                hellinger_distances[f'{i}_{j}'] = hellinger_distance_fn(
+                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                )
+
+        return hellinger_distances
+                
+    # --------------------------------------------------------------------------
+    # KL Divergence for mixture models
+    # --------------------------------------------------------------------------
+
+    def kl_divergence(
+        self,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute pairwise KL divergences between mixture model components.
+        
+        This method calculates the Kullback-Leibler (KL) divergence between each
+        pair of components in the mixture model based on their inferred
+        parameter distributions. The KL divergence is a measure of how one
+        probability distribution diverges from a second reference distribution,
+        with larger values indicating greater difference.
+        
+        Note that KL divergence is asymmetric: KL(P||Q) ≠ KL(Q||P).
+        
+        The specific divergence calculation depends on the distribution type
+        used for the dispersion parameter (r): 
+            - For LogNormal: Uses location and scale parameters 
+            - For Gamma: Uses concentration and rate parameters
+        
+        Parameters
+        ----------
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing pairwise KL divergences between components.
+            Keys are of the form 'i_j' where i,j are component indices. Values
+            are the KL divergences from component i to component j.
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model with multiple components, or if
+            the distribution type is not supported (must be LogNormal or Gamma)
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "KL divergence calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Get r distribution from ModelConfig
+        r_distribution = self.model_config.r_distribution_guide
+        # Define corresponding KL divergence function
+        if r_distribution == dist.LogNormal:
+            kl_divergence_fn = kl_lognormal
+        elif r_distribution == dist.Gamma:
+            kl_divergence_fn = kl_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
+
+        # Extract parameters from r distribution based on distribution type
+        if r_distribution == dist.LogNormal:
+            r_param1 = self.params['r_loc'].astype(dtype)
+            r_param2 = self.params['r_scale'].astype(dtype)
+        elif r_distribution == dist.Gamma:
+            r_param1 = self.params['r_concentration'].astype(dtype)
+            r_param2 = self.params['r_rate'].astype(dtype)
+
+        # Initialize dictionary to store divergences
+        kl_divergences = {}
+
+        # Compute pairwise divergences for each component
+        for i in range(self.n_components):
+            for j in range(self.n_components):
+                if i != j:  # Skip self-comparisons
+                    # Compute KL divergence from component i to j
+                    kl_divergences[f'{i}_{j}'] = kl_divergence_fn(
+                        r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                    )
+
+        return kl_divergences
+
+    # --------------------------------------------------------------------------
+    # Jensen-Shannon divergence for mixture models
+    # --------------------------------------------------------------------------
+
+    def jensen_shannon_divergence(
+        self,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute pairwise Jensen-Shannon divergences between mixture model
+        components.
+        
+        This method calculates the Jensen-Shannon (JS) divergence between each
+        pair of components in the mixture model based on their inferred
+        parameter distributions. The JS divergence is a symmetrized and smoothed
+        version of the Kullback-Leibler divergence, defined as:
+        
+            JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+            
+        where M = 1/2 × (P + Q) is the average of the two distributions.
+        
+        Unlike KL divergence, JS divergence is symmetric and bounded between 0
+        and 1 (when using log base 2) or between 0 and ln(2) (when using natural
+        logarithm).
+        
+        The specific divergence calculation depends on the distribution type
+        used for the dispersion parameter (r): 
+            - For LogNormal: Uses location and scale parameters 
+            - For Gamma: Uses concentration and rate parameters
+        
+        Parameters
+        ----------
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing pairwise JS divergences between components.
+            Keys are of the form 'i_j' where i,j are component indices. Values
+            are the JS divergences between components i and j.
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model with multiple components, or if
+            the distribution type is not supported (must be LogNormal or Gamma)
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Jensen-Shannon divergence calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Get r distribution from ModelConfig
+        r_distribution = self.model_config.r_distribution_guide
+        
+        # Define corresponding JS divergence function based on distribution type
+        if r_distribution == dist.LogNormal:
+            js_divergence_fn = jensen_shannon_lognormal
+        elif r_distribution == dist.Gamma:
+            js_divergence_fn = jensen_shannon_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
+
+        # Extract parameters from r distribution based on distribution type
+        if r_distribution == dist.LogNormal:
+            r_param1 = self.params['r_loc'].astype(dtype)
+            r_param2 = self.params['r_scale'].astype(dtype)
+        elif r_distribution == dist.Gamma:
+            r_param1 = self.params['r_concentration'].astype(dtype)
+            r_param2 = self.params['r_rate'].astype(dtype)
+
+        # Initialize dictionary to store divergences
+        js_divergences = {}
+
+        # Compute pairwise divergences for each component
+        for i in range(self.n_components):
+            for j in range(i + 1, self.n_components):  # Only compute for i < j since JS is symmetric
+                # Compute JS divergence between components i and j
+                js_divergences[f'{i}_{j}'] = js_divergence_fn(
+                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                )
+
+        return js_divergences
+
+    # --------------------------------------------------------------------------
     # Cell type assignment method for mixture models
     # --------------------------------------------------------------------------
     
-    def compute_cell_type_assignments(
+    def cell_type_assignments(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
@@ -1371,6 +1638,7 @@ class ScribeResults:
         ignore_nans: bool = False,
         dtype: jnp.dtype = jnp.float32,
         fit_distribution: bool = True,
+        temperature: Optional[float] = None,
         weights: Optional[jnp.ndarray] = None,
         weight_type: Optional[str] = None,
         verbose: bool = True
@@ -1380,7 +1648,8 @@ class ScribeResults:
         distributions to characterize assignment uncertainty.
 
         For each cell, this method:
-            1. Computes component-specific log-likelihoods using posterior samples
+            1. Computes component-specific log-likelihoods using posterior
+               samples
             2. Converts these to probability distributions over cell types
             3. Fits a Dirichlet distribution to characterize the uncertainty in
                these assignments
@@ -1400,6 +1669,8 @@ class ScribeResults:
         fit_distribution : bool, default=True
             If True, fits a Dirichlet distribution to the assignment
             probabilities
+        temperature : Optional[float], default=None
+            If provided, apply temperature scaling to log probabilities
         weights : Optional[jnp.ndarray], default=None
             Array used to weight genes when computing log likelihoods
         weight_type : Optional[str], default=None
@@ -1440,7 +1711,7 @@ class ScribeResults:
 
         # Compute component-specific log-likelihoods
         # Shape: (n_samples, n_cells, n_components)
-        log_liks = self.compute_log_likelihood(
+        log_liks = self.log_likelihood(
             counts,
             batch_size=batch_size,
             return_by='cell',
@@ -1454,6 +1725,10 @@ class ScribeResults:
 
         if verbose:
             print("- Converting log-likelihoods to probabilities...")
+
+        # Apply temperature scaling if requested
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
         # Convert log-likelihoods to probabilities using log-sum-exp for
         # stability. First compute log(sum(exp(x))) along component axis.
@@ -1501,12 +1776,13 @@ class ScribeResults:
 
     # --------------------------------------------------------------------------
 
-    def compute_cell_type_assignments_map(
+    def cell_type_assignments_map(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
         cells_axis: int = 0,
         dtype: jnp.dtype = jnp.float32,
+        temperature: Optional[float] = None,
         weights: Optional[jnp.ndarray] = None,
         weight_type: Optional[str] = None,
         use_mean: bool = False,
@@ -1531,6 +1807,8 @@ class ScribeResults:
             Axis along which cells are arranged. 0 means cells are rows.
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
+        temperature : Optional[float], default=None
+            If provided, apply temperature scaling to log probabilities
         weights : Optional[jnp.ndarray], default=None
             Array used to weight genes when computing log likelihoods
         weight_type : Optional[str], default=None
@@ -1565,7 +1843,7 @@ class ScribeResults:
             print("- Computing component-specific log-likelihoods...")
 
         # Get the log likelihood function
-        likelihood_fn = self.get_log_likelihood_fn()
+        likelihood_fn = self._log_likelihood_fn()
 
         # Get the MAP estimates
         map_estimates = self.get_map()
@@ -1613,6 +1891,10 @@ class ScribeResults:
 
         if verbose:
             print("- Converting log-likelihoods to probabilities...")
+
+        # Apply temperature scaling if requested
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
         # Convert log-likelihoods to probabilities using log-sum-exp for
         # stability. First compute log(sum(exp(x))) along component axis
