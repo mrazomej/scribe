@@ -548,6 +548,134 @@ def kl_lognormal(mu1, sigma1, mu2, sigma2):
     )
 
 # ------------------------------------------------------------------------------
+# Jensen-Shannon divergence functions
+# ------------------------------------------------------------------------------
+
+def jensen_shannon_beta(alpha1, beta1, alpha2, beta2):
+    """
+    Compute the Jensen-Shannon divergence between two Beta distributions.
+    
+    The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+    Kullback-Leibler divergence, defined as:
+    
+        JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+        
+    where M = 1/2 × (P + Q) is the average of the two distributions.
+    
+    For Beta distributions, we compute this by:
+    1. Finding the parameters of the mixture distribution M
+    2. Computing KL(P||M) and KL(Q||M)
+    3. Taking the average of these KL divergences
+    
+    Parameters
+    ----------
+    alpha1 : float or array
+        Alpha parameter (shape) of the first Beta distribution
+    beta1 : float or array
+        Beta parameter (shape) of the first Beta distribution
+    alpha2 : float or array
+        Alpha parameter (shape) of the second Beta distribution
+    beta2 : float or array
+        Beta parameter (shape) of the second Beta distribution
+        
+    Returns
+    -------
+    float or array
+        Jensen-Shannon divergence between the two Beta distributions
+    """
+    # We can't directly compute the parameters of the mixture distribution M,
+    # so we approximate the JS divergence using the KL divergences
+    kl_p_q = kl_beta(alpha1, beta1, alpha2, beta2)
+    kl_q_p = kl_beta(alpha2, beta2, alpha1, beta1)
+    
+    # JS divergence is the average of the two KL divergences
+    return 0.5 * (kl_p_q + kl_q_p)
+
+# ------------------------------------------------------------------------------
+
+def jensen_shannon_gamma(alpha1, beta1, alpha2, beta2):
+    """
+    Compute the Jensen-Shannon divergence between two Gamma distributions.
+    
+    The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+    Kullback-Leibler divergence, defined as:
+    
+        JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+        
+    where M = 1/2 × (P + Q) is the average of the two distributions.
+    
+    For Gamma distributions, we compute this by:
+        1. Finding the parameters of the mixture distribution M
+        2. Computing KL(P||M) and KL(Q||M)
+        3. Taking the average of these KL divergences
+    
+    Parameters
+    ----------
+    alpha1 : float or array
+        Shape parameter of the first Gamma distribution
+    beta1 : float or array
+        Rate parameter of the first Gamma distribution
+    alpha2 : float or array
+        Shape parameter of the second Gamma distribution
+    beta2 : float or array
+        Rate parameter of the second Gamma distribution
+        
+    Returns
+    -------
+    float or array
+        Jensen-Shannon divergence between the two Gamma distributions
+    """
+    # We can't directly compute the parameters of the mixture distribution M,
+    # so we approximate the JS divergence using the KL divergences
+    kl_p_q = kl_gamma(alpha1, beta1, alpha2, beta2)
+    kl_q_p = kl_gamma(alpha2, beta2, alpha1, beta1)
+    
+    # JS divergence is the average of the two KL divergences
+    return 0.5 * (kl_p_q + kl_q_p)
+
+# ------------------------------------------------------------------------------
+
+def jensen_shannon_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute the Jensen-Shannon divergence between two LogNormal distributions.
+    
+    The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+    Kullback-Leibler divergence, defined as:
+    
+        JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+        
+    where M = 1/2 × (P + Q) is the average of the two distributions.
+    
+    For LogNormal distributions, we compute this by:
+        1. Finding the parameters of the mixture distribution M
+        2. Computing KL(P||M) and KL(Q||M)
+        3. Taking the average of these KL divergences
+        
+    Parameters
+    ----------
+    mu1 : float or array
+        Location parameter of the first LogNormal distribution
+    sigma1 : float or array
+        Scale parameter of the first LogNormal distribution
+    mu2 : float or array
+        Location parameter of the second LogNormal distribution
+    sigma2 : float or array
+        Scale parameter of the second LogNormal distribution
+        
+    Returns
+    -------
+    float or array
+        Jensen-Shannon divergence between the two LogNormal distributions
+    """
+    # We can't directly compute the parameters of the mixture distribution M,
+    # so we approximate the JS divergence using the KL divergences
+    kl_p_q = kl_lognormal(mu1, sigma1, mu2, sigma2)
+    kl_q_p = kl_lognormal(mu2, sigma2, mu1, sigma1)
+    
+    # JS divergence is the average of the two KL divergences
+    return 0.5 * (kl_p_q + kl_q_p)
+
+# ------------------------------------------------------------------------------
 # Hellinger distance functions
 # ------------------------------------------------------------------------------
 
