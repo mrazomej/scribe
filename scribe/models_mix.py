@@ -1217,7 +1217,7 @@ def nbdm_mixture_log_likelihood(
             if weight_type == 'multiplicative':
                 gene_log_probs *= weights
             elif weight_type == 'additive':
-                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
             
             # Sum over genes (axis=1) to get (n_cells, n_components)
             log_probs = (
@@ -1240,7 +1240,7 @@ def nbdm_mixture_log_likelihood(
                 if weight_type == 'multiplicative':
                     batch_log_probs *= weights
                 elif weight_type == 'additive':
-                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
                 
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
@@ -1421,7 +1421,7 @@ def zinb_mixture_log_likelihood(
             if weight_type == 'multiplicative':
                 gene_log_probs *= weights
             elif weight_type == 'additive':
-                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
             
             # Sum over genes (axis=1) to get (n_cells, n_components)
             log_probs = (
@@ -1444,7 +1444,7 @@ def zinb_mixture_log_likelihood(
                 if weight_type == 'multiplicative':
                     batch_log_probs *= weights
                 elif weight_type == 'additive':
-                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
                 
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
@@ -1626,7 +1626,7 @@ def nbvcp_mixture_log_likelihood(
             if weight_type == 'multiplicative':
                 gene_log_probs *= weights
             elif weight_type == 'additive':
-                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
             
             # Sum over genes (axis=1) to get (n_cells, n_components)
             log_probs = (
@@ -1655,7 +1655,7 @@ def nbvcp_mixture_log_likelihood(
                 if weight_type == 'multiplicative':
                     batch_log_probs *= weights
                 elif weight_type == 'additive':
-                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
                 
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
@@ -1857,7 +1857,7 @@ def zinbvcp_mixture_log_likelihood(
             if weight_type == 'multiplicative':
                 gene_log_probs *= weights
             elif weight_type == 'additive':
-                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
             
             # Sum over genes (axis=1) to get (n_cells, n_components)
             log_probs = (
@@ -1890,7 +1890,7 @@ def zinbvcp_mixture_log_likelihood(
                 if weight_type == 'multiplicative':
                     batch_log_probs *= weights
                 elif weight_type == 'additive':
-                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
                 
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
