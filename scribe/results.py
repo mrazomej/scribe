@@ -1419,7 +1419,7 @@ class ScribeResults:
             )
 
         # Get r distribution from ModelConfig
-        r_distribution = self.model_config.r_distribution_guide
+        r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding Hellinger distance function
         if r_distribution == dist.LogNormal:
             hellinger_distance_fn = hellinger_lognormal
@@ -1502,7 +1502,7 @@ class ScribeResults:
             )
 
         # Get r distribution from ModelConfig
-        r_distribution = self.model_config.r_distribution_guide
+        r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding KL divergence function
         if r_distribution == dist.LogNormal:
             kl_divergence_fn = kl_lognormal
@@ -1592,7 +1592,7 @@ class ScribeResults:
             )
 
         # Get r distribution from ModelConfig
-        r_distribution = self.model_config.r_distribution_guide
+        r_distribution = type(self.model_config.r_distribution_guide)
         
         # Define corresponding JS divergence function based on distribution type
         if r_distribution == dist.LogNormal:
@@ -1748,7 +1748,7 @@ class ScribeResults:
 
             # Fit Dirichlet distribution for each cell
             for cell in range(n_cells):
-                if verbose and cell % 1000 == 0 and cell > 0:
+                if verbose and cell % 1000 == 0:
                     print(f"    - Fitting Dirichlet distributions for "
                           f"cells {cell}-{min(cell+1000, n_cells)} out of "
                           f"{n_cells} cells")
