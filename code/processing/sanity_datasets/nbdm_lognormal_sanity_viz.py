@@ -44,7 +44,7 @@ DATA_DIR = f"/app/data/sanity"
 MODEL_DIR = f"{scribe.utils.git_root()}/output/sanity/{model_type}"
 
 # Define figure directory
-FIG_DIR = f"{scribe.utils.git_root()}/fig/sanity/{model_type}/{n_steps}steps"
+FIG_DIR = f"{scribe.utils.git_root()}/fig/sanity/{model_type}/{r_distribution}_{n_steps}steps"
 
 # Create figure directory if it does not exist
 if not os.path.exists(FIG_DIR):

@@ -62,7 +62,7 @@ print("Loading data...")
 data = sc.read_h5ad(f"{DATA_DIR}/data.h5ad")
 
 # Extract counts
-counts = data.X.toarray()
+counts = jnp.array(data.X.toarray())
 
 # %% ---------------------------------------------------------------------------
 
