@@ -3,8 +3,8 @@ Results classes for SCRIBE inference.
 """
 
 from typing import Dict, Optional, Union, Callable, Tuple, Any
-from dataclasses import dataclass
-from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
+import warnings
 
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -12,23 +12,43 @@ import pandas as pd
 import numpyro.distributions as dist
 from jax import random, jit, vmap
 
+import numpy as np
 import scipy.stats as stats
 
-from .sampling import sample_variational_posterior, generate_predictive_samples, generate_ppc_samples
-from .stats import fit_dirichlet_minka
+from .sampling import (
+    sample_variational_posterior, 
+    generate_predictive_samples, 
+)
+from .stats import (
+    fit_dirichlet_minka, 
+    get_distribution_mode,
+    hellinger_gamma,
+    hellinger_lognormal,
+    kl_gamma,
+    kl_lognormal,
+    jensen_shannon_gamma,
+    jensen_shannon_lognormal
+)
+from .model_config import ModelConfig
+from .utils import numpyro_to_scipy
+
+from .cell_assignment import (
+    temperature_scaling
+)
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
 # ------------------------------------------------------------------------------
 
 @dataclass
-class BaseScribeResults(ABC):
+class ScribeResults:
     """
     Base class for SCRIBE inference results.
     
     This class stores the results from SCRIBE's variational inference procedure,
-    including model parameters, loss history, and dataset dimensions. It can
-    optionally store metadata from an AnnData object and posterior samples.
+    including model parameters, loss history, dataset dimensions, and model
+    configuration. It can optionally store metadata from an AnnData object and
+    posterior/predictive samples.
 
     Attributes
     ----------
@@ -42,18 +62,24 @@ class BaseScribeResults(ABC):
         Number of genes in the dataset
     model_type : str
         Type of model used for inference
-    param_spec: Dict[str, Dict]
-        Specification for parameters. Each parameter has a type ('global',
-        'gene-specific', or 'cell-specific') and optionally 'component_specific'
-        for mixture models.
-    cell_metadata : Optional[pd.DataFrame]
+    model_config : ModelConfig
+        Configuration object specifying model architecture and priors
+    prior_params : Dict[str, Any]
+        Dictionary of prior parameter values used during inference
+    obs : Optional[pd.DataFrame]
         Cell-level metadata from adata.obs, if provided
-    gene_metadata : Optional[pd.DataFrame]
+    var : Optional[pd.DataFrame]
         Gene-level metadata from adata.var, if provided
     uns : Optional[Dict]
         Unstructured metadata from adata.uns, if provided
+    n_obs : Optional[int]
+        Number of observations (cells), if provided
+    n_vars : Optional[int]
+        Number of variables (genes), if provided
     posterior_samples : Optional[Dict]
-        Samples from the posterior distribution, if generated
+        Samples of parameters from the posterior distribution, if generated
+    predictive_samples : Optional[Dict]
+        Predictive samples generated from the model, if generated
     n_components : Optional[int]
         Number of mixture components, if using a mixture model
     """
@@ -63,101 +89,78 @@ class BaseScribeResults(ABC):
     n_cells: int
     n_genes: int
     model_type: str
-    param_spec: Dict[str, Dict[str, Any]]
+    model_config: ModelConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
-    cell_metadata: Optional[pd.DataFrame] = None
-    gene_metadata: Optional[pd.DataFrame] = None
+    obs: Optional[pd.DataFrame] = None
+    var: Optional[pd.DataFrame] = None
     uns: Optional[Dict] = None
+    n_obs: Optional[int] = None
+    n_vars: Optional[int] = None
     
     # Optional results
     posterior_samples: Optional[Dict] = None
+    predictive_samples: Optional[Dict] = None
     n_components: Optional[int] = None
 
     # --------------------------------------------------------------------------
 
     def __post_init__(self):
-        """Validate parameters against specification."""
-        self._validate_param_spec()
+        """Validate model configuration and parameters."""
+        # Set n_components from model_config if not explicitly provided
+        if self.n_components is None and self.model_config.n_components is not None:
+            self.n_components = self.model_config.n_components
+            
+        self._validate_model_config()
 
     # --------------------------------------------------------------------------
-    
-    def _validate_param_spec(self):
-        """
-        Validate that parameter specifications match actual parameters.
+
+    def _validate_model_config(self):
+        """Validate model configuration matches model type."""
+        # Validate base model
+        if self.model_config.base_model != self.model_type:
+            raise ValueError(
+                f"Model type '{self.model_type}' does not match config "
+                f"base model '{self.model_config.base_model}'"
+            )
         
-        This method checks:
-            1. All parameters have specifications and all specified parameters
-               exist
-            2. Parameter types are valid
-            3. Parameter shapes match their specification
-        """
-        # Check that all parameters have specifications
-        for param_name in self.params.keys():
-            if param_name not in self.param_spec:
+        # Validate n_components consistency
+        if self.n_components is not None:
+            if not self.model_type.endswith('_mix'):
                 raise ValueError(
-                    f"Parameter {param_name} found in params but not in param_spec"
+                    f"Model type '{self.model_type}' is not a mixture model "
+                    f"but n_components={self.n_components} was specified"
                 )
-        
-        # Check that all specified parameters exist
-        for param_name in self.param_spec.keys():
-            if param_name not in self.params:
+            if self.model_config.n_components != self.n_components:
                 raise ValueError(
-                    f"Parameter {param_name} specified but not found in params"
+                    f"n_components mismatch: {self.n_components} vs "
+                    f"{self.model_config.n_components} in model_config"
                 )
-            
-            # Get specification and validate type
-            spec = self.param_spec[param_name]
-            if 'type' not in spec:
-                raise ValueError(f"No type specified for parameter {param_name}")
-            
-            if spec['type'] not in ['global', 'gene-specific', 'cell-specific']:
+                
+        # Validate required distributions based on model type
+        if "zinb" in self.model_type:
+            if (self.model_config.gate_distribution_model is None or 
+                self.model_config.gate_distribution_guide is None):
+                raise ValueError("ZINB models require gate distributions")
+        else:
+            if (self.model_config.gate_distribution_model is not None or 
+                self.model_config.gate_distribution_guide is not None):
+                raise ValueError("Non-ZINB models should not have gate distributions")
+                
+        if "vcp" in self.model_type:
+            if (self.model_config.p_capture_distribution_model is None or
+                self.model_config.p_capture_distribution_guide is None):
+                raise ValueError("VCP models require capture probability distributions")
+        else:
+            if (self.model_config.p_capture_distribution_model is not None or
+                self.model_config.p_capture_distribution_guide is not None):
                 raise ValueError(
-                    f"Invalid parameter type {spec['type']} for {param_name}"
+                    "Non-VCP models should not have capture probability distributions"
                 )
-            
-            # Get parameter shape
-            param_shape = self.params[param_name].shape
-            
-            # Check if parameter should be component-specific
-            if spec.get('component_specific', False):
-                if isinstance(self, MixtureResults):
-                    # Validate component dimension is first
-                    if param_shape[0] != self.n_components:
-                        raise ValueError(
-                            f"Component-specific parameter {param_name} should have "
-                            f"n_components ({self.n_components}) as first dimension"
-                        )
-                    # For gene/cell specific params, check last dimension
-                    if spec['type'] == 'gene-specific':
-                        if param_shape[-1] != self.n_genes:
-                            raise ValueError(f"Gene dimension mismatch for {param_name}")
-                    elif spec['type'] == 'cell-specific':
-                        if param_shape[-1] != self.n_cells:
-                            raise ValueError(f"Cell dimension mismatch for {param_name}")
-                else:
-                    raise ValueError(
-                        f"Parameter {param_name} specified as component-specific "
-                        f"but this is not a mixture model"
-                    )
-            else:
-                # Regular validation for non-component parameters
-                if spec['type'] == 'gene-specific':
-                    if param_shape[-1] != self.n_genes:
-                        raise ValueError(
-                            f"Gene-specific parameter {param_name} should have "
-                            f"n_genes ({self.n_genes}) as last dimension"
-                        )
-                elif spec['type'] == 'cell-specific':
-                    if param_shape[-1] != self.n_cells:
-                        raise ValueError(
-                            f"Cell-specific parameter {param_name} should have "
-                            f"n_cells ({self.n_cells}) as last dimension"
-                        )
 
     # --------------------------------------------------------------------------
-    # Create BaseScribeResults from AnnData object
+    # Create ScribeResults from AnnData object
     # --------------------------------------------------------------------------
 
     @classmethod
@@ -166,6 +169,7 @@ class BaseScribeResults(ABC):
         adata: "AnnData",
         params: Dict,
         loss_history: jnp.ndarray,
+        model_config: ModelConfig,
         **kwargs
     ):
         """Create ScribeResults from AnnData object."""
@@ -174,20 +178,22 @@ class BaseScribeResults(ABC):
             loss_history=loss_history,
             n_cells=adata.n_obs,
             n_genes=adata.n_vars,
-            cell_metadata=adata.obs.copy(),
-            gene_metadata=adata.var.copy(),
+            model_config=model_config,
+            obs=adata.obs.copy(),
+            var=adata.var.copy(),
             uns=adata.uns.copy(),
+            n_obs=adata.n_obs,
+            n_vars=adata.n_vars,
             **kwargs
         )
-
+    
     # --------------------------------------------------------------------------
-    # Abstract methods for model-specific results
+    # Get distributions using configs
     # --------------------------------------------------------------------------
 
-    @abstractmethod
     def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
         """
-        Get the variational distributions for all parameters.
+        Get the variational distributions for all parameters using model config.
         
         Parameters
         ----------
@@ -201,15 +207,138 @@ class BaseScribeResults(ABC):
         Dict[str, Any]
             Dictionary mapping parameter names to their distributions
         """
-        pass
+        if backend not in ["scipy", "numpyro"]:
+            raise ValueError(f"Invalid backend: {backend}")
+            
+        distributions = {}
+        
+        # Handle r distribution
+        r_params = {}
+        for param_name in self.model_config.r_distribution_guide.arg_constraints:
+            r_params[param_name] = self.params[f"r_{param_name}"]
+        
+        if backend == "scipy":
+            distributions['r'] = numpyro_to_scipy(
+                self.model_config.r_distribution_guide.__class__(**r_params)
+            )
+        else:  # numpyro
+            distributions['r'] = self.model_config.r_distribution_guide.__class__(**r_params)
+        
+        # Handle p distribution
+        p_params = {}
+        for param_name in self.model_config.p_distribution_guide.arg_constraints:
+            p_params[param_name] = self.params[f"p_{param_name}"]
+        
+        if backend == "scipy":
+            distributions['p'] = numpyro_to_scipy(
+                self.model_config.p_distribution_guide.__class__(**p_params)
+            )
+        else:  # numpyro
+            distributions['p'] = self.model_config.p_distribution_guide.__class__(**p_params)
+        
+        # Add gate distribution if present
+        if self.model_config.gate_distribution_guide is not None:
+            gate_params = {}
+            for param_name in self.model_config.gate_distribution_guide.arg_constraints:
+                gate_params[param_name] = self.params[f"gate_{param_name}"]
+                
+            if backend == "scipy":
+                distributions['gate'] = numpyro_to_scipy(
+                    self.model_config.gate_distribution_guide.__class__(**gate_params)
+                )
+            else:  # numpyro
+                distributions['gate'] = self.model_config.gate_distribution_guide.__class__(**gate_params)
+            
+        # Add p_capture distribution if present
+        if self.model_config.p_capture_distribution_guide is not None:
+            p_capture_params = {}
+            for param_name in self.model_config.p_capture_distribution_guide.arg_constraints:
+                p_capture_params[param_name] = self.params[f"p_capture_{param_name}"]
+                
+            if backend == "scipy":
+                distributions['p_capture'] = numpyro_to_scipy(
+                    self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                )
+            else:  # numpyro
+                distributions['p_capture'] = self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+            
+        # Add mixing weights if mixture model
+        if self.model_config.n_components is not None:
+            # Extract mixing weights
+            mixing_params = self.params[f"mixing_concentration"]
+            
+            if backend == "scipy":
+                distributions['mixing_weights'] = numpyro_to_scipy(
+                    self.model_config.mixing_distribution_guide.__class__(
+                        concentration=mixing_params
+                    )
+                )
+            else:
+                distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
+                    concentration=mixing_params
+                )
+        
+        return distributions
 
     # --------------------------------------------------------------------------
 
-    @abstractmethod
-    def get_model_args(self) -> Dict:
-        """Get the model and guide arguments for this model type."""
-        pass
+    def get_map(
+        self,
+        use_mean: bool = False,
+        verbose: bool = True
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Get the maximum a posteriori (MAP) estimates from the variational
+        posterior.
 
+        Parameters
+        ----------
+        use_mean : bool, default=False
+            If True, replaces undefined MAP values (NaN) with posterior means
+        verbose : bool, default=True
+            If True, prints a warning if NaNs were replaced with means
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary of MAP estimates for each parameter
+        """
+        # Get distributions with NumPyro backend
+        distributions = self.get_distributions(backend="numpyro")
+        # Get estimate of map
+        map_estimates = {
+            param: get_distribution_mode(dist) 
+            for param, dist in distributions.items()
+        }
+
+        # Replace NaN values with means if requested
+        if use_mean:
+            # Initialize boolean to track if any NaNs were replaced
+            replaced_nans = False
+            # Check each parameter for NaNs and replace with means
+            for param, value in map_estimates.items():
+                # Check if any values are NaN
+                if jnp.any(jnp.isnan(value)):
+                    replaced_nans = True
+                    # Get mean value
+                    mean_value = distributions[param].mean
+                    # Replace NaN values with means
+                    map_estimates[param] = jnp.where(
+                        jnp.isnan(value),
+                        mean_value,
+                        value
+                    )
+            # Print warning if NaNs were replaced
+            if replaced_nans and verbose:
+                warnings.warn(
+                    "NaN values were replaced with means of the distributions",
+                    UserWarning
+                )
+
+        return map_estimates
+
+    # --------------------------------------------------------------------------
+    # Indexing by genes
     # --------------------------------------------------------------------------
 
     def _subset_params(self, params: Dict, index) -> Dict:
@@ -218,15 +347,30 @@ class BaseScribeResults(ABC):
         """
         new_params = dict(params)
         
-        # Subset only gene-specific parameters
-        for param_name, spec in self.param_spec.items():
-            if spec['type'] == 'gene-specific':
-                if spec.get('component_specific', False):
+        # Handle r parameters (always gene-specific)
+        r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
+        for param_name in r_param_names:
+            param_key = f"r_{param_name}"
+            if param_key in params:
+                if self.n_components is not None:
                     # Keep component dimension but subset gene dimension
-                    new_params[param_name] = params[param_name][..., index]
+                    new_params[param_key] = params[param_key][..., index]
                 else:
                     # Just subset gene dimension
-                    new_params[param_name] = params[param_name][index]
+                    new_params[param_key] = params[param_key][index]
+        
+        # Handle gate parameters if present (gene-specific)
+        if self.model_config.gate_distribution_guide is not None:
+            gate_param_names = list(self.model_config.gate_distribution_guide.arg_constraints.keys())
+            for param_name in gate_param_names:
+                param_key = f"gate_{param_name}"
+                if param_key in params:
+                    if self.n_components is not None:
+                        # Keep component dimension but subset gene dimension
+                        new_params[param_key] = params[param_key][..., index]
+                    else:
+                        # Just subset gene dimension
+                        new_params[param_key] = params[param_key][index]
         
         return new_params
 
@@ -235,40 +379,80 @@ class BaseScribeResults(ABC):
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
         Create a new posterior samples dictionary for the given index.
+        
+        Parameters
+        ----------
+        samples : Dict
+            Dictionary of samples from the posterior distribution, where each
+            key represents a parameter type ('r', 'p', 'gate', etc.) and values
+            are arrays of samples
+        index : array-like
+            Boolean or integer index specifying which genes to keep
+            
+        Returns
+        -------
+        Dict
+            New dictionary containing posterior samples for the selected genes
         """
+        if samples is None:
+            return None
+            
         new_posterior_samples = {}
         
-        if "parameter_samples" in samples:
-            param_samples = samples["parameter_samples"]
-            new_param_samples = {}
-            
-            # Use param_spec to determine how to subset each parameter
-            for param_name, spec in self.param_spec.items():
-                if param_name in param_samples:
-                    if spec['type'] == 'gene-specific':
-                        if spec.get('component_specific', False):
-                            # Keep samples and component dimensions, subset gene dimension
-                            new_param_samples[param_name] = param_samples[param_name][..., index]
-                        else:
-                            # Keep samples dimension, subset gene dimension
-                            new_param_samples[param_name] = param_samples[param_name][..., index]
-                    else:
-                        # Keep non-gene-specific parameters as is
-                        new_param_samples[param_name] = param_samples[param_name]
-            
-            new_posterior_samples["parameter_samples"] = new_param_samples
+        # Handle gene-specific parameters
         
-        if "predictive_samples" in samples:
-            # Keep samples and cells dimensions, subset gene dimension
-            new_posterior_samples["predictive_samples"] = samples["predictive_samples"][..., index]
+        # r samples (always gene-specific)
+        if 'r' in samples:
+            if self.n_components is not None:
+                # Shape: (n_samples, n_components, n_genes)
+                new_posterior_samples['r'] = samples['r'][..., index]
+            else:
+                # Shape: (n_samples, n_genes)
+                new_posterior_samples['r'] = samples['r'][..., index]
         
+        # gate samples (gene-specific if present)
+        if 'gate' in samples:
+            if self.n_components is not None:
+                # Shape: (n_samples, n_components, n_genes)
+                new_posterior_samples['gate'] = samples['gate'][..., index]
+            else:
+                # Shape: (n_samples, n_genes)
+                new_posterior_samples['gate'] = samples['gate'][..., index]
+        
+        # Copy non-gene-specific parameters as is
+        
+        # p samples (global)
+        if 'p' in samples:
+            # Shape: (n_samples,) or (n_samples, n_components)
+            new_posterior_samples['p'] = samples['p']
+        
+        # p_capture samples (cell-specific)
+        if 'p_capture' in samples:
+            # Shape: (n_samples, n_cells)
+            new_posterior_samples['p_capture'] = samples['p_capture']
+        
+        # mixing weights if present
+        if 'mixing_weights' in samples:
+            # Shape: (n_samples, n_components)
+            new_posterior_samples['mixing_weights'] = samples['mixing_weights']
+
         return new_posterior_samples
+
+    # --------------------------------------------------------------------------
+
+    def _subset_predictive_samples(self, samples: jnp.ndarray, index) -> jnp.ndarray:
+        """Create a new predictive samples array for the given index."""
+        if samples is None:
+            return None
+            
+        # For predictive samples, subset the gene dimension (last dimension)
+        return samples[..., index]
 
     # --------------------------------------------------------------------------
 
     def __getitem__(self, index):
         """
-        Enable indexing of BaseScribeResults object.
+        Enable indexing of ScribeResults object.
         """
         # Handle integer indexing
         if isinstance(index, int):
@@ -303,51 +487,237 @@ class BaseScribeResults(ABC):
         new_params = self._subset_params(self.params, index)
         
         # Create new metadata if available
-        new_gene_metadata = self.gene_metadata.iloc[index] if self.gene_metadata is not None else None
+        new_var = self.var.iloc[index] if self.var is not None else None
 
         # Create new posterior samples if available
-        new_posterior_samples = None
-        if self.posterior_samples is not None:
-            new_posterior_samples = self._subset_posterior_samples(self.posterior_samples, index)
+        new_posterior_samples = self._subset_posterior_samples(
+            self.posterior_samples, index
+        ) if self.posterior_samples is not None else None
             
-        # Let subclass create its own instance with additional attributes
+        # Create new predictive samples if available
+        new_predictive_samples = self._subset_predictive_samples(
+            self.predictive_samples, index
+        ) if self.predictive_samples is not None else None
+            
+        # Create new instance with subset data
         return self._create_subset(
             index=index,
             new_params=new_params,
-            new_gene_metadata=new_gene_metadata,
-            new_posterior_samples=new_posterior_samples
+            new_var=new_var,
+            new_posterior_samples=new_posterior_samples,
+            new_predictive_samples=new_predictive_samples
         )
 
     # --------------------------------------------------------------------------
 
-    @abstractmethod
     def _create_subset(
         self,
         index,
         new_params: Dict,
-        new_gene_metadata: Optional[pd.DataFrame],
-        new_posterior_samples: Optional[Dict]
-    ) -> 'BaseScribeResults':
+        new_var: Optional[pd.DataFrame],
+        new_posterior_samples: Optional[Dict],
+        new_predictive_samples: Optional[jnp.ndarray]
+    ) -> 'ScribeResults':
         """Create a new instance with a subset of genes."""
-        pass
+        return type(self)(
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            model_type=self.model_type,
+            model_config=self.model_config,
+            prior_params=self.prior_params,
+            obs=self.obs,
+            var=new_var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=new_var.shape[0] if new_var is not None else None,
+            posterior_samples=new_posterior_samples,
+            predictive_samples=new_predictive_samples,
+            n_components=self.n_components
+        )
+    
+    # --------------------------------------------------------------------------
+    # Indexing by component
+    # --------------------------------------------------------------------------
+
+    def get_component(self, component_index):
+        """
+        Create a view of the results selecting a specific mixture component.
+        
+        This method returns a new ScribeResults object that contains parameter
+        values for the specified component, allowing for further gene-based
+        indexing. Only applicable to mixture models.
+        
+        Parameters
+        ----------
+        component_index : int
+            Index of the component to select
+        
+        Returns
+        -------
+        ScribeResults
+            A new ScribeResults object with parameters for the selected component
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Component view only applies to mixture models with multiple components"
+            )
+            
+        # Check if component_index is valid
+        if component_index < 0 or component_index >= self.n_components:
+            raise ValueError(
+                f"Component index {component_index} out of range [0, {self.n_components-1}]"
+            )
+        
+        # Create new params dict with component subset
+        new_params = dict(self.params)
+        
+        # Handle r parameters (always gene-specific)
+        r_param_names = list(
+            self.model_config.r_distribution_guide.arg_constraints.keys()
+        )
+        # Loop through r parameters
+        for param_name in r_param_names:
+            # Create parameter key
+            param_key = f"r_{param_name}"
+            # Check if parameter is present
+            if param_key in self.params:
+                # Select component dimension
+                new_params[param_key] = self.params[param_key][component_index]
+        
+        # Handle gate parameters if present (gene-specific)
+        if self.model_config.gate_distribution_guide is not None:
+            # Get gate parameter names
+            gate_param_names = list(
+                self.model_config.gate_distribution_guide.arg_constraints.keys()
+            )
+            # Loop through gate parameters
+            for param_name in gate_param_names:
+                # Create parameter key
+                param_key = f"gate_{param_name}"
+                # Check if parameter is present
+                if param_key in self.params:
+                    # Select component dimension
+                    new_params[param_key] = self.params[param_key][component_index]
+        
+        # Create new posterior samples if available
+        new_posterior_samples = None
+        if self.posterior_samples is not None:
+            new_posterior_samples = self._subset_posterior_samples_component(
+                self.posterior_samples, component_index
+            )
+        
+        # Create new predictive samples if available - this is more complex
+        # as we would need to condition on the component
+        new_predictive_samples = None
+        
+        # Create new instance with component subset
+        return self._create_component_subset(
+            component_index=component_index,
+            new_params=new_params,
+            new_posterior_samples=new_posterior_samples,
+            new_predictive_samples=new_predictive_samples
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _subset_posterior_samples_component(self, samples: Dict, component_index) -> Dict:
+        """
+        Create a new posterior samples dictionary for the given component index.
+        """
+        if samples is None:
+            return None
+            
+        new_posterior_samples = {}
+        
+            
+        # Handle r parameters (component and gene-specific)
+        if 'r' in samples:
+            # Shape is typically (n_samples, n_components, n_genes)
+            # Select component dimension to get (n_samples, n_genes)
+            new_posterior_samples['r'] = samples['r'][:, component_index, :]
+        
+        # Handle gate parameters if present (component and gene-specific)
+        if 'gate' in samples:
+            # Shape is typically (n_samples, n_components, n_genes)
+            # Select component dimension to get (n_samples, n_genes)
+            new_posterior_samples['gate'] = samples['gate'][:, component_index, :]
+        
+        # Copy global parameters as is (p, mixing_weights)
+        if 'p' in samples:
+            new_posterior_samples['p'] = samples['p']
+        
+        # Handle p_capture parameters (cell-specific)
+        if 'p_capture' in samples:
+            new_posterior_samples['p_capture'] = samples['p_capture']
+        
+        return new_posterior_samples
+        
+    # --------------------------------------------------------------------------
+
+    def _create_component_subset(
+        self,
+        component_index,
+        new_params: Dict,
+        new_posterior_samples: Optional[Dict],
+        new_predictive_samples: Optional[jnp.ndarray]
+    ) -> 'ScribeResults':
+        """Create a new instance for a specific component."""
+        # Create a non-mixture model type
+        base_model = self.model_type.replace('_mix', '')
+
+        # Create a modified model config with n_components=None to indicate
+        # this is now a non-mixture result after component selection
+        new_model_config = replace(
+            self.model_config,
+            base_model=base_model,
+            n_components=None,
+            mixing_distribution_model=None,
+            mixing_distribution_guide=None
+        )
+               
+        return type(self)(
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=self.n_genes,
+            model_type=base_model,  # Remove _mix suffix
+            model_config=new_model_config,
+            prior_params=self.prior_params,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=self.n_vars,
+            posterior_samples=new_posterior_samples,
+            predictive_samples=new_predictive_samples,
+            n_components=None  # No longer a mixture model
+        )
 
     # --------------------------------------------------------------------------
     # Get model and guide functions
     # --------------------------------------------------------------------------
 
-    @abstractmethod
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the model and guide functions for this model type."""
-        pass
+    def _model_and_guide(self) -> Tuple[Callable, Callable]:
+        """Get the model and guide functions based on model type."""
+        from .model_registry import get_model_and_guide
+        return get_model_and_guide(self.model_type)
 
     # --------------------------------------------------------------------------
     # Get log likelihood function
     # --------------------------------------------------------------------------
 
-    @abstractmethod
-    def get_log_likelihood_fn(self) -> Callable:
+    def _log_likelihood_fn(self) -> Callable:
         """Get the log likelihood function for this model type."""
-        pass
+        from .model_registry import get_log_likelihood_fn
+        return get_log_likelihood_fn(self.model_type)
 
     # --------------------------------------------------------------------------
     # Posterior sampling methods
@@ -358,19 +728,22 @@ class BaseScribeResults(ABC):
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
         store_samples: bool = True,
-        custom_args: Optional[Dict] = None,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
-        # Get the guide function for this model type
-        _, guide = self.get_model_and_guide()
+        # Get the guide function 
+        _, guide = self._model_and_guide()
         
-        # Get the model arguments
-        model_args = self.get_model_args()
-
-        # Add custom arguments to model_args if provided
-        if custom_args is not None:
-            model_args.update(custom_args)
+        # Prepare base model arguments
+        model_args = {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes,
+            'model_config': self.model_config
+        }
         
+        # Add specialized arguments based on model type
+        if self.model_type == "nbdm":
+            model_args['total_counts'] = None  # Will be filled during sampling
+            
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
             guide,
@@ -382,40 +755,53 @@ class BaseScribeResults(ABC):
         
         # Store samples if requested
         if store_samples:
-            if self.posterior_samples is not None:
-                self.posterior_samples['parameter_samples'] = posterior_samples
-            else:
-                self.posterior_samples = {'parameter_samples': posterior_samples}
+            self.posterior_samples = posterior_samples
             
         return posterior_samples
-    
+
     # --------------------------------------------------------------------------
 
     def get_predictive_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         batch_size: Optional[int] = None,
-        custom_args: Optional[Dict] = None,
+        store_samples: bool = True,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
-        # Get the model function
-        model, _ = self.get_model_and_guide()
+        # Get the model and guide functions
+        model, _ = self._model_and_guide()
         
-        # Get the model arguments
-        model_args = self.get_model_args()
-
-        # Add custom arguments to model_args if provided
-        if custom_args is not None:
-            model_args.update(custom_args)
+        # Prepare base model arguments
+        model_args = {
+            'n_cells': self.n_cells,
+            'n_genes': self.n_genes,
+            'model_config': self.model_config,
+        }
         
-        # Generate samples
-        return generate_predictive_samples(
+        # Add specialized arguments based on model type
+        if self.model_type == "nbdm":
+            model_args['total_counts'] = None  # Will be filled during sampling
+            
+        # Check if posterior samples exist
+        if self.posterior_samples is None:
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
+        
+        # Generate predictive samples
+        predictive_samples = generate_predictive_samples(
             model,
-            self.posterior_samples["parameter_samples"],
+            self.posterior_samples,
             model_args,
             rng_key=rng_key,
             batch_size=batch_size
         )
+        
+        # Store samples if requested
+        if store_samples:
+            self.predictive_samples = predictive_samples
+            
+        return predictive_samples
 
     # --------------------------------------------------------------------------
 
@@ -426,151 +812,51 @@ class BaseScribeResults(ABC):
         batch_size: Optional[int] = None,
         store_samples: bool = True,
         resample_parameters: bool = False,
-        custom_args: Optional[Dict] = None,
     ) -> Dict:
         """Generate posterior predictive check samples."""
-        # Get the model and guide functions
-        model, guide = self.get_model_and_guide()
-        
-        # Get the model arguments
-        model_args = self.get_model_args()
-
-        # Add custom arguments to model_args if provided
-        if custom_args is not None:
-            model_args.update(custom_args)
-        
         # Check if we need to resample parameters
         need_params = (
             resample_parameters or 
-            self.posterior_samples is None or 
-            'parameter_samples' not in self.posterior_samples
+            self.posterior_samples is None
         )
-        
+
+        # Generate posterior samples if needed
         if need_params:
-            # Generate both parameter and predictive samples
-            samples = generate_ppc_samples(
-                model,
-                guide,
-                self.params,
-                model_args,
+            # Sample parameters and generate predictive samples
+            self.get_posterior_samples(
                 rng_key=rng_key,
                 n_samples=n_samples,
-                batch_size=batch_size
+                store_samples=store_samples,
             )
-        else:
-            # Split RNG key for predictive sampling only
-            _, key_pred = random.split(rng_key)
-            # Use existing parameter samples and generate new predictive samples
-            samples = {
-                'parameter_samples': self.posterior_samples['parameter_samples'],
-                'predictive_samples': generate_predictive_samples(
-                    model,
-                    self.posterior_samples['parameter_samples'],
-                    model_args,
-                    rng_key=key_pred,
-                    batch_size=batch_size
-                )
-            }
-        
-        if store_samples:
-            self.posterior_samples = samples
-            
-        return samples
 
-# ------------------------------------------------------------------------------
-# Base classes for standard models
-# ------------------------------------------------------------------------------
+        # Generate predictive samples using existing parameters
+        _, key_pred = random.split(rng_key)
 
-@dataclass
-class StandardResults(BaseScribeResults):
-    """
-    Base class for standard (non-mixture) models.
-
-    This class extends BaseScribeResults to handle single-component models that
-    don't use mixture distributions. It provides implementations for getting
-    model arguments and creating subsets of the results.
-
-    Methods
-    -------
-    get_model_args() -> Dict
-        Returns a dictionary with the default model arguments (n_cells, n_genes)
-    
-    get_param_spec() -> Dict
-        Abstract method that must be implemented by subclasses to specify
-        parameter types and shapes for validation
-    
-    _create_subset(index, new_params, new_gene_metadata, new_posterior_samples)
-    -> StandardResults
-        Creates a new StandardResults instance containing only a subset of genes
-    """
-    def get_model_args(self) -> Dict:
-        """Standard models just need cells and genes."""
-        return {
-            'n_cells': self.n_cells,
-            'n_genes': self.n_genes,
-        }
-
-    # --------------------------------------------------------------------------
-
-    @abstractmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        pass
-    
-    # --------------------------------------------------------------------------
-
-    def _create_subset(
-        self,
-        index,
-        new_params: Dict,
-        new_gene_metadata: Optional[pd.DataFrame],
-        new_posterior_samples: Optional[Dict]
-    ) -> 'StandardResults':
-        """
-        Create a new StandardResults instance containing only a subset of genes.
-
-        Parameters
-        ----------
-        index : Union[np.ndarray, List[int]]
-            Boolean mask or list of indices indicating which genes to keep
-        new_params : Dict
-            Dictionary of model parameters for the subset of genes
-        new_gene_metadata : Optional[pd.DataFrame]
-            Gene metadata for the subset of genes
-        new_posterior_samples : Optional[Dict]
-            Posterior samples for the subset of genes
-
-        Returns
-        -------
-        StandardResults
-            A new StandardResults instance containing only the specified subset
-            of genes, with all cell-level information preserved
-        """
-        return type(self)(
-            model_type=self.model_type,
-            params=new_params,
-            prior_params=self.prior_params,
-            loss_history=self.loss_history,
-            n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
-            n_components=None,
-            cell_metadata=self.cell_metadata,
-            gene_metadata=new_gene_metadata,
-            uns=self.uns,
-            posterior_samples=new_posterior_samples,
-            param_spec=self.param_spec
+        self.get_predictive_samples(
+            rng_key=key_pred,
+            batch_size=batch_size,
+            store_samples=store_samples,
         )
-
+            
+        return {
+            'parameter_samples': self.posterior_samples,
+            'predictive_samples': self.predictive_samples
+        }
+    # --------------------------------------------------------------------------
+    # Compute log likelihood methods 
     # --------------------------------------------------------------------------
 
-    def compute_log_likelihood(
+    def log_likelihood(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
         return_by: str = 'cell',
         cells_axis: int = 0,
         ignore_nans: bool = False,
-        dtype: jnp.dtype = jnp.float32
+        split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        dtype: jnp.dtype = jnp.float32,
     ) -> jnp.ndarray:
         """
         Compute log likelihood of data under posterior samples.
@@ -589,15 +875,31 @@ class StandardResults(BaseScribeResults):
             Axis along which cells are arranged. 0 means cells are rows.
         ignore_nans : bool, default=False
             If True, removes any samples that contain NaNs.
+        split_components : bool, default=False
+            If True, returns log likelihoods for each mixture component
+            separately. Only applicable for mixture models.
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight the log likelihoods (for mixture models).
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
             
         Returns
         -------
         jnp.ndarray
-            Array of log likelihoods. Shape depends on return_by:
+            Array of log likelihoods. Shape depends on model type, return_by and
+            split_components parameters. For standard models:
                 - 'cell': shape (n_samples, n_cells)
                 - 'gene': shape (n_samples, n_genes)
+            For mixture models with split_components=False:
+                - 'cell': shape (n_samples, n_cells)
+                - 'gene': shape (n_samples, n_genes)
+            For mixture models with split_components=True:
+                - 'cell': shape (n_samples, n_cells, n_components)
+                - 'gene': shape (n_samples, n_genes, n_components)
                 
         Raises
         ------
@@ -605,157 +907,92 @@ class StandardResults(BaseScribeResults):
             If posterior samples have not been generated yet
         """
         # Check if posterior samples exist
-        if (self.posterior_samples is None or 
-            'parameter_samples' not in self.posterior_samples):
+        if self.posterior_samples is None:
             raise ValueError(
                 "No posterior samples found. Call get_posterior_samples() first."
             )
         
         # Get parameter samples
-        parameter_samples = self.posterior_samples['parameter_samples']
+        parameter_samples = self.posterior_samples
         
         # Get number of samples from first parameter
-        n_samples = next(iter(parameter_samples.values())).shape[0]
+        n_samples = parameter_samples[next(iter(parameter_samples))].shape[0]
         
         # Get likelihood function
-        likelihood_fn = self.get_log_likelihood_fn()
+        likelihood_fn = self._log_likelihood_fn()
+        
+        # Determine if this is a mixture model
+        is_mixture = self.n_components is not None and self.n_components > 1
         
         # Define function to compute likelihood for a single sample
         @jit
         def compute_sample_lik(i):
             # Extract parameters for this sample
             params_i = {k: v[i] for k, v in parameter_samples.items()}
-            # Return likelihood
-            return likelihood_fn(
-                counts, 
-                params_i, 
-                batch_size=batch_size,
-                cells_axis=cells_axis,
-                return_by=return_by,
-                dtype=dtype
-            )
+            # For mixture models we need to pass split_components and weights
+            if is_mixture:
+                return likelihood_fn(
+                    counts, 
+                    params_i, 
+                    batch_size=batch_size,
+                    cells_axis=cells_axis,
+                    return_by=return_by,
+                    split_components=split_components,
+                    weights=weights,
+                    weight_type=weight_type,
+                    dtype=dtype
+                )
+            else:
+                return likelihood_fn(
+                    counts, 
+                    params_i, 
+                    batch_size=batch_size,
+                    cells_axis=cells_axis,
+                    return_by=return_by,
+                    dtype=dtype
+                )
         
-        # Compute log likelihoods for all samples using vmap
+        # Use vmap for parallel computation (more memory intensive)
         log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
         
         # Handle NaNs if requested
         if ignore_nans:
-            valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=1)
-            print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
-            return log_liks[valid_samples]
+            # Check for NaNs appropriately based on dimensions
+            if is_mixture and split_components:
+                # Handle case with component dimension
+                valid_samples = ~jnp.any(
+                    jnp.any(jnp.isnan(log_liks), axis=-1), 
+                    axis=-1
+                )
+            else:
+                # Standard case
+                valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=-1)
+                
+            # Filter out samples with NaNs
+            if jnp.any(~valid_samples):
+                print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
+                return log_liks[valid_samples]
         
         return log_liks
 
-# ------------------------------------------------------------------------------
-# Base classes for mixture models
-# ------------------------------------------------------------------------------
-
-@dataclass
-class MixtureResults(BaseScribeResults):
-    """
-    Base class for mixture model results.
-    
-    This class extends BaseScribeResults to handle mixture models which have
-    multiple components. It provides functionality for managing
-    component-specific parameters and validation.
-
-    The class enforces validation of component-specific parameters through the
-    param_spec attribute, ensuring parameters have the correct shape with
-    respect to the number of components.
-
-    Methods
-    -------
-    get_model_args() -> Dict
-        Returns a dictionary of model arguments including n_components
-    
-    get_param_spec() -> Dict
-        Abstract method that must be implemented by subclasses to specify
-        parameter types and shapes for validation
-    
-    _create_subset(index, new_params, new_gene_metadata, new_posterior_samples)
-    -> MixtureResults
-        Creates a new MixtureResults instance containing only a subset of genes
-    """
-    def get_model_args(self) -> Dict:
-        """
-        Get arguments needed for mixture model initialization.
-
-        Returns
-        -------
-        Dict
-            Dictionary containing n_cells, n_genes, and n_components
-        """
-        return {
-            'n_cells': self.n_cells,
-            'n_genes': self.n_genes,
-            'n_components': self.n_components,
-        }
-    
     # --------------------------------------------------------------------------
 
-    @abstractmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        pass
-
-    # --------------------------------------------------------------------------
-
-    def _create_subset(
-        self,
-        index,
-        new_params: Dict,
-        new_gene_metadata: Optional[pd.DataFrame],
-        new_posterior_samples: Optional[Dict]
-    ) -> 'MixtureResults':
-        """
-        Create a new instance with a subset of genes.
-
-        Parameters
-        ----------
-        index : array-like
-            Boolean mask or integer indices for selecting genes
-        new_params : Dict
-            Parameter dictionary for the subset
-        new_gene_metadata : Optional[pd.DataFrame]
-            Gene metadata for the subset
-        new_posterior_samples : Optional[Dict]
-            Posterior samples for the subset
-
-        Returns
-        -------
-        MixtureResults
-            New instance containing only the selected genes
-        """
-        return type(self)(
-            model_type=self.model_type,
-            params=new_params,
-            loss_history=self.loss_history,
-            n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
-            n_components=self.n_components,
-            cell_metadata=self.cell_metadata,
-            gene_metadata=new_gene_metadata,
-            uns=self.uns,
-            posterior_samples=new_posterior_samples,
-            param_spec=self.param_spec,
-            prior_params=self.prior_params
-        )
-    
-    # --------------------------------------------------------------------------
-
-    def compute_log_likelihood(
+    def log_likelihood_map(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
+        gene_batch_size: Optional[int] = None,
         return_by: str = 'cell',
         cells_axis: int = 0,
-        ignore_nans: bool = False,
         split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        use_mean: bool = True,
+        verbose: bool = True,
         dtype: jnp.dtype = jnp.float32
     ) -> jnp.ndarray:
         """
-        Compute log likelihood of data under posterior samples for mixture
-        model.
+        Compute log likelihood of data using MAP parameter estimates.
         
         Parameters
         ----------
@@ -763,89 +1000,637 @@ class MixtureResults(BaseScribeResults):
             Count data to evaluate likelihood on
         batch_size : Optional[int], default=None
             Size of mini-batches used for likelihood computation
+        gene_batch_size : Optional[int], default=None
+            Size of mini-batches used for likelihood computation by gene
         return_by : str, default='cell'
             Specifies how to return the log probabilities. Must be one of:
                 - 'cell': returns log probabilities summed over genes
                 - 'gene': returns log probabilities summed over cells
         cells_axis : int, default=0
             Axis along which cells are arranged. 0 means cells are rows.
-        ignore_nans : bool, default=False
-            If True, removes any samples that contain NaNs.
         split_components : bool, default=False
-            If True, returns log likelihoods for each mixture component
-            separately. If False, returns marginalized log likelihoods.
+            If True, returns log likelihoods for each mixture component separately.
+            Only applicable for mixture models.
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight the log likelihoods (for mixture models).
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
+        use_mean : bool, default=False
+            If True, replaces undefined MAP values (NaN) with posterior means
+        verbose : bool, default=True
+            If True, prints a warning if NaNs were replaced with means
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
             
         Returns
         -------
         jnp.ndarray
-            Array of log likelihoods. Shape depends on return_by and
-            split_components: If split_components=False:
-                - 'cell': shape (n_samples, n_cells)
-                - 'gene': shape (n_samples, n_genes)
-            If split_components=True:
-                - 'cell': shape (n_samples, n_components, n_cells)
-                - 'gene': shape (n_samples, n_components, n_genes)
+            Array of log likelihoods. Shape depends on model type, return_by and
+            split_components parameters.
+            For standard models:
+                - 'cell': shape (n_cells,)
+                - 'gene': shape (n_genes,)
+            For mixture models with split_components=False:
+                - 'cell': shape (n_cells,)
+                - 'gene': shape (n_genes,)
+            For mixture models with split_components=True:
+                - 'cell': shape (n_cells, n_components)
+                - 'gene': shape (n_genes, n_components)
+        """
+        # Get the log likelihood function
+        likelihood_fn = self._log_likelihood_fn()
+        
+        # Determine if this is a mixture model
+        is_mixture = self.n_components is not None and self.n_components > 1
+        
+        # If computing by gene and gene_batch_size is provided, use batched computation
+        if return_by == 'gene' and gene_batch_size is not None:
+            # Determine output shape
+            if is_mixture and split_components:
+                result_shape = (self.n_genes, self.n_components)
+            else:
+                result_shape = (self.n_genes,)
                 
+            # Initialize result array
+            log_liks = np.zeros(result_shape, dtype=dtype)
+            
+            # Process genes in batches
+            for i in range(0, self.n_genes, gene_batch_size):
+                if verbose and i > 0:
+                    print(f"Processing genes {i}-{min(i+gene_batch_size, self.n_genes)} of {self.n_genes}")
+                    
+                # Get gene indices for this batch
+                end_idx = min(i + gene_batch_size, self.n_genes)
+                gene_indices = list(range(i, end_idx))
+                
+                # Get subset of results for these genes
+                results_subset = self[gene_indices]
+                # Get the MAP estimates
+                map_estimates = results_subset.get_map(
+                    use_mean=use_mean, verbose=False
+                )
+                
+                # Get subset of counts for these genes
+                if cells_axis == 0:
+                    counts_subset = counts[:, gene_indices]
+                else:
+                    counts_subset = counts[gene_indices, :]
+                    
+                # Get subset of weights if provided
+                weights_subset = None
+                if weights is not None:
+                    if weights.ndim == 1:  # Shape: (n_genes,)
+                        weights_subset = weights[gene_indices]
+                    else:
+                        weights_subset = weights
+                
+                # Compute log likelihood for this gene batch
+                if is_mixture:
+                    batch_log_liks = likelihood_fn(
+                        counts_subset,
+                        map_estimates,
+                        batch_size=batch_size,
+                        cells_axis=cells_axis,
+                        return_by=return_by,
+                        split_components=split_components,
+                        weights=weights_subset,
+                        weight_type=weight_type,
+                        dtype=dtype
+                    )
+                else:
+                    batch_log_liks = likelihood_fn(
+                        counts_subset,
+                        map_estimates,
+                        batch_size=batch_size,
+                        cells_axis=cells_axis,
+                        return_by=return_by,
+                        dtype=dtype
+                    )
+                
+                # Store results
+                log_liks[i:end_idx] = np.array(batch_log_liks)
+            
+            # Convert to JAX array for consistency
+            return jnp.array(log_liks)
+        
+        # Standard computation (no gene batching)
+        else:
+            # Get the MAP estimates
+            map_estimates = self.get_map(use_mean=use_mean, verbose=verbose)
+
+            # Compute log-likelihood for mixture model
+            if is_mixture:
+                log_liks = likelihood_fn(
+                    counts,
+                    map_estimates,
+                    batch_size=batch_size,
+                    cells_axis=cells_axis,
+                    return_by=return_by,
+                    split_components=split_components,
+                    weights=weights,
+                    weight_type=weight_type,
+                    dtype=dtype
+                )
+            # Compute log-likelihood for non-mixture model
+            else:
+                log_liks = likelihood_fn(
+                    counts,
+                    map_estimates,
+                    batch_size=batch_size,
+                    cells_axis=cells_axis,
+                    return_by=return_by,
+                    dtype=dtype
+                )
+            
+            return log_liks
+
+
+    # --------------------------------------------------------------------------
+    # Compute entropy of component assignments
+    # --------------------------------------------------------------------------
+
+    def assignment_entropy(
+        self,
+        counts: jnp.ndarray,
+        return_by: str = 'gene',
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        temperature: Optional[float] = None,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """
+        Compute the entropy of component assignment probabilities for mixture
+        models.
+        
+        This method calculates the entropy of the posterior component assignment
+        probabilities for each cell or gene, providing a measure of assignment
+        uncertainty. Higher entropy values indicate more uncertainty in the
+        component assignments, while lower values indicate more confident
+        assignments.
+        
+        The entropy is calculated as:
+            H = -∑(p_i * log(p_i))
+        where p_i are the normalized probabilities for each component.
+        
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Input count data to evaluate component assignments for. Shape should
+            be (n_cells, n_genes) if cells_axis=0, or (n_genes, n_cells) if
+            cells_axis=1.
+        
+        return_by : str, default='cell'
+            Specifies how to compute and return the entropy. Must be one of:
+                - 'cell': Compute entropy of component assignments for each cell
+                - 'gene': Compute entropy of component assignments for each gene
+        
+        batch_size : Optional[int], default=None
+            If provided, processes the data in batches of this size to reduce
+            memory usage. Useful for large datasets.
+        
+        cells_axis : int, default=0
+            Specifies which axis in the input counts contains the cells:
+                - 0: cells are rows (shape: n_cells × n_genes)
+                - 1: cells are columns (shape: n_genes × n_cells)
+        
+        ignore_nans : bool, default=False
+            If True, excludes any samples containing NaN values from the entropy
+            calculation.
+        
+        temperature : Optional[float], default=None
+            If provided, applies temperature scaling to the log-likelihoods
+            before computing entropy. Temperature scaling modifies the sharpness
+            of probability distributions by dividing log probabilities by a
+            temperature parameter T:
+        
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations.
+        
+        Returns
+        -------
+        jnp.ndarray
+            Array of entropy values. Shape depends on return_by:
+                - If return_by='cell': shape is (n_samples, n_cells)
+                - If return_by='gene': shape is (n_samples, n_genes)
+            Higher values indicate more uncertainty in component assignments.
+        
         Raises
         ------
         ValueError
-            If posterior samples have not been generated yet
+            If the model is not a mixture model or if posterior samples haven't
+            been generated.
+        
+        Notes
+        -----
+        - This method requires posterior samples to be available. Call
+          get_posterior_samples() first if they haven't been generated.
+        - The entropy is computed using the full posterior predictive
+          distribution, accounting for uncertainty in the model parameters.
+        - Normalization (normalize=True) is recommended when comparing entropy
+          across datasets or between cells/genes with different numbers of
+          observations.
         """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Component entropy calculation only applies to mixture models "
+                "with multiple components"
+            )
+        
         # Check if posterior samples exist
-        if (self.posterior_samples is None or 
-            'parameter_samples' not in self.posterior_samples):
+        if self.posterior_samples is None:
             raise ValueError(
                 "No posterior samples found. Call get_posterior_samples() first."
             )
-        
-        # Get parameter samples
-        parameter_samples = self.posterior_samples['parameter_samples']
-        
-        # Get number of samples from first parameter
-        n_samples = parameter_samples[next(iter(parameter_samples))].shape[0]
-        
-        # Get likelihood function
-        likelihood_fn = self.get_log_likelihood_fn()
-        
-        # Define function to compute likelihood for a single sample
-        @jit
-        def compute_sample_lik(i):
-            # Extract parameters for this sample
-            params_i = {k: v[i] for k, v in parameter_samples.items()}
-            # Return likelihood
-            return likelihood_fn(
-                counts, 
-                params_i, 
-                batch_size=batch_size,
-                cells_axis=cells_axis,
-                return_by=return_by,
-                split_components=split_components,
-                dtype=dtype
-            )
-        
-        # Compute log likelihoods for all samples using vmap
-        log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
-        
-        # Handle NaNs if requested
-        if ignore_nans:
-            # Adjust nan checking for component dimension if present
-            if split_components:
-                valid_samples = ~jnp.any(
-                    jnp.any(jnp.isnan(log_liks), axis=2), 
-                    axis=1
-                )
-            else:
-                valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=1)
-            print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
-            return log_liks[valid_samples]
-        
-        return log_liks
+       
+        # Compute log-likelihoods for each component
+        log_liks = self.log_likelihood(
+            counts, 
+            batch_size=batch_size, 
+            cells_axis=cells_axis, 
+            return_by=return_by, 
+            ignore_nans=ignore_nans, 
+            dtype=dtype,
+            split_components=True  # Ensure we get per-component likelihoods
+        )
+
+        # Apply temperature scaling if requested
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
+
+        # Compute log-sum-exp for normalization
+        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+
+        # Compute probabilities (avoiding log space for final entropy calculation)
+        probs = jnp.exp(log_liks - log_sum_exp)
+
+        # Compute entropy: -∑(p_i * log(p_i))
+        # Add small epsilon to avoid log(0)
+        eps = jnp.finfo(dtype).eps
+        entropy = -jnp.sum(probs * jnp.log(probs + eps), axis=-1)
+
+        return entropy
 
     # --------------------------------------------------------------------------
 
-    def compute_cell_type_assignments(
+    def assignment_entropy_map(
+        self,
+        counts: jnp.ndarray,
+        return_by: str = 'gene',
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        temperature: Optional[float] = None,
+        use_mean: bool = True,
+        verbose: bool = True,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """
+        Compute the entropy of component assignments for each cell evaluated at
+        the MAP.
+
+        This method calculates the entropy of the posterior component assignment
+        probabilities for each cell or gene, providing a measure of assignment
+        uncertainty. Higher entropy values indicate more uncertainty in the
+        component assignments, while lower values indicate more confident
+        assignments.
+        
+        The entropy is calculated as:
+            H = -∑(p_i * log(p_i))
+        where p_i are the normalized probabilities for each component.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            The count matrix with shape (n_cells, n_genes).
+        return_by : str, default='gene'
+            Whether to return the entropy by cell or gene.
+        batch_size : Optional[int], default=None
+            Size of mini-batches for likelihood computation
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        temperature : Optional[float], default=None
+            If provided, applies temperature scaling to the log-likelihoods
+            before computing entropy.
+        use_mean : bool, default=True
+            If True, uses the mean of the posterior component probabilities
+            instead of the MAP.
+        verbose : bool, default=True
+            If True, prints a warning if NaNs were replaced with means
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+
+        Returns
+        -------
+        jnp.ndarray
+            The component entropy for each cell evaluated at the MAP. Shape:
+            (n_cells,).
+
+        Raises
+        ------
+        ValueError
+            - If the model is not a mixture model
+            - If posterior samples have not been generated yet
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Component entropy calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Compute log-likelihood at the MAP
+        log_liks = self.log_likelihood_map(
+            counts,
+            batch_size=batch_size,
+            cells_axis=cells_axis,
+            use_mean=use_mean,
+            verbose=verbose,
+            dtype=dtype,
+            return_by=return_by,
+            split_components=True,
+        )
+
+        # Apply temperature scaling if requested
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
+
+        # Compute log-sum-exp for normalization
+        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+
+        # Compute probabilities (avoiding log space for final entropy calculation)
+        probs = jnp.exp(log_liks - log_sum_exp)
+
+        # Compute entropy: -∑(p_i * log(p_i))
+        # Add small epsilon to avoid log(0)
+        eps = jnp.finfo(dtype).eps
+        entropy = -jnp.sum(probs * jnp.log(probs + eps), axis=-1)
+
+        return entropy
+    
+    # --------------------------------------------------------------------------
+    # Hellinger distance for mixture models
+    # --------------------------------------------------------------------------
+
+    def hellinger_distance(
+        self,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """
+        Compute pairwise Hellinger distances between mixture model components.
+        
+        This method calculates the Hellinger distance between each pair of
+        components in the mixture model based on their inferred parameter
+        distributions. The Hellinger distance is a metric that quantifies the
+        similarity between two probability distributions, ranging from 0
+        (identical) to 1 (completely different).
+        
+        The specific distance calculation depends on the distribution type used
+        for the dispersion parameter (r): 
+            - For LogNormal: Uses location and scale parameters 
+            - For Gamma: Uses concentration and rate parameters
+        
+        Parameters
+        ----------
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing pairwise Hellinger distances between
+            components. Keys are of the form 'i_j' where i,j are component
+            indices. Values are the Hellinger distances between components i and
+            j.
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model with multiple components, or if
+            the distribution type is not supported (must be LogNormal or Gamma)
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Hellinger distance calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Get r distribution from ModelConfig
+        r_distribution = type(self.model_config.r_distribution_guide)
+        # Define corresponding Hellinger distance function
+        if r_distribution == dist.LogNormal:
+            hellinger_distance_fn = hellinger_lognormal
+        elif r_distribution == dist.Gamma:
+            hellinger_distance_fn = hellinger_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
+
+        # Extract parameters from r distribution based on distribution type
+        if r_distribution == dist.LogNormal:
+            r_param1 = self.params['r_loc'].astype(dtype)
+            r_param2 = self.params['r_scale'].astype(dtype)
+        elif r_distribution == dist.Gamma:
+            r_param1 = self.params['r_concentration'].astype(dtype)
+            r_param2 = self.params['r_rate'].astype(dtype)
+
+        # Initialize dictionary to store distances
+        hellinger_distances = {}
+
+        # Compute pairwise distances for each component
+        for i in range(self.n_components):
+            for j in range(i + 1, self.n_components):
+                # Compute Hellinger distance between component i and j
+                hellinger_distances[f'{i}_{j}'] = hellinger_distance_fn(
+                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                )
+
+        return hellinger_distances
+                
+    # --------------------------------------------------------------------------
+    # KL Divergence for mixture models
+    # --------------------------------------------------------------------------
+
+    def kl_divergence(
+        self,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute pairwise KL divergences between mixture model components.
+        
+        This method calculates the Kullback-Leibler (KL) divergence between each
+        pair of components in the mixture model based on their inferred
+        parameter distributions. The KL divergence is a measure of how one
+        probability distribution diverges from a second reference distribution,
+        with larger values indicating greater difference.
+        
+        Note that KL divergence is asymmetric: KL(P||Q) ≠ KL(Q||P).
+        
+        The specific divergence calculation depends on the distribution type
+        used for the dispersion parameter (r): 
+            - For LogNormal: Uses location and scale parameters 
+            - For Gamma: Uses concentration and rate parameters
+        
+        Parameters
+        ----------
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing pairwise KL divergences between components.
+            Keys are of the form 'i_j' where i,j are component indices. Values
+            are the KL divergences from component i to component j.
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model with multiple components, or if
+            the distribution type is not supported (must be LogNormal or Gamma)
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "KL divergence calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Get r distribution from ModelConfig
+        r_distribution = type(self.model_config.r_distribution_guide)
+        # Define corresponding KL divergence function
+        if r_distribution == dist.LogNormal:
+            kl_divergence_fn = kl_lognormal
+        elif r_distribution == dist.Gamma:
+            kl_divergence_fn = kl_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
+
+        # Extract parameters from r distribution based on distribution type
+        if r_distribution == dist.LogNormal:
+            r_param1 = self.params['r_loc'].astype(dtype)
+            r_param2 = self.params['r_scale'].astype(dtype)
+        elif r_distribution == dist.Gamma:
+            r_param1 = self.params['r_concentration'].astype(dtype)
+            r_param2 = self.params['r_rate'].astype(dtype)
+
+        # Initialize dictionary to store divergences
+        kl_divergences = {}
+
+        # Compute pairwise divergences for each component
+        for i in range(self.n_components):
+            for j in range(self.n_components):
+                if i != j:  # Skip self-comparisons
+                    # Compute KL divergence from component i to j
+                    kl_divergences[f'{i}_{j}'] = kl_divergence_fn(
+                        r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                    )
+
+        return kl_divergences
+
+    # --------------------------------------------------------------------------
+    # Jensen-Shannon divergence for mixture models
+    # --------------------------------------------------------------------------
+
+    def jensen_shannon_divergence(
+        self,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute pairwise Jensen-Shannon divergences between mixture model
+        components.
+        
+        This method calculates the Jensen-Shannon (JS) divergence between each
+        pair of components in the mixture model based on their inferred
+        parameter distributions. The JS divergence is a symmetrized and smoothed
+        version of the Kullback-Leibler divergence, defined as:
+        
+            JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+            
+        where M = 1/2 × (P + Q) is the average of the two distributions.
+        
+        Unlike KL divergence, JS divergence is symmetric and bounded between 0
+        and 1 (when using log base 2) or between 0 and ln(2) (when using natural
+        logarithm).
+        
+        The specific divergence calculation depends on the distribution type
+        used for the dispersion parameter (r): 
+            - For LogNormal: Uses location and scale parameters 
+            - For Gamma: Uses concentration and rate parameters
+        
+        Parameters
+        ----------
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+            
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing pairwise JS divergences between components.
+            Keys are of the form 'i_j' where i,j are component indices. Values
+            are the JS divergences between components i and j.
+            
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model with multiple components, or if
+            the distribution type is not supported (must be LogNormal or Gamma)
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Jensen-Shannon divergence calculation only applies to mixture models "
+                "with multiple components"
+            )
+
+        # Get r distribution from ModelConfig
+        r_distribution = type(self.model_config.r_distribution_guide)
+        
+        # Define corresponding JS divergence function based on distribution type
+        if r_distribution == dist.LogNormal:
+            js_divergence_fn = jensen_shannon_lognormal
+        elif r_distribution == dist.Gamma:
+            js_divergence_fn = jensen_shannon_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
+
+        # Extract parameters from r distribution based on distribution type
+        if r_distribution == dist.LogNormal:
+            r_param1 = self.params['r_loc'].astype(dtype)
+            r_param2 = self.params['r_scale'].astype(dtype)
+        elif r_distribution == dist.Gamma:
+            r_param1 = self.params['r_concentration'].astype(dtype)
+            r_param2 = self.params['r_rate'].astype(dtype)
+
+        # Initialize dictionary to store divergences
+        js_divergences = {}
+
+        # Compute pairwise divergences for each component
+        for i in range(self.n_components):
+            for j in range(i + 1, self.n_components):  # Only compute for i < j since JS is symmetric
+                # Compute JS divergence between components i and j
+                js_divergences[f'{i}_{j}'] = js_divergence_fn(
+                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                )
+
+        return js_divergences
+
+    # --------------------------------------------------------------------------
+    # Cell type assignment method for mixture models
+    # --------------------------------------------------------------------------
+    
+    def cell_type_assignments(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
@@ -853,6 +1638,9 @@ class MixtureResults(BaseScribeResults):
         ignore_nans: bool = False,
         dtype: jnp.dtype = jnp.float32,
         fit_distribution: bool = True,
+        temperature: Optional[float] = None,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
         verbose: bool = True
     ) -> Dict[str, jnp.ndarray]:
         """
@@ -881,18 +1669,26 @@ class MixtureResults(BaseScribeResults):
         fit_distribution : bool, default=True
             If True, fits a Dirichlet distribution to the assignment
             probabilities
+        temperature : Optional[float], default=None
+            If provided, apply temperature scaling to log probabilities
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight genes when computing log likelihoods
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
         verbose : bool, default=True
-            If True, prints progress
+            If True, prints progress messages
 
         Returns
         -------
         Dict[str, jnp.ndarray]
             Dictionary containing:
                 - 'concentration': Dirichlet concentration parameters for each
-                  cell Shape: (n_cells, n_components). Only returned if
+                  cell. Shape: (n_cells, n_components). Only returned if
                   fit_distribution is True.
                 - 'mean_probabilities': Mean assignment probabilities for each
-                  cell Shape: (n_cells, n_components). Only returned if
+                  cell. Shape: (n_cells, n_components). Only returned if
                   fit_distribution is True.
                 - 'sample_probabilities': Assignment probabilities for each
                   posterior sample. Shape: (n_samples, n_cells, n_components)
@@ -900,13 +1696,14 @@ class MixtureResults(BaseScribeResults):
         Raises
         ------
         ValueError
-            If posterior samples have not been generated yet
+            - If the model is not a mixture model
+            - If posterior samples have not been generated yet
         """
-        # Check if posterior samples exist
-        if (self.posterior_samples is None or 
-            'parameter_samples' not in self.posterior_samples):
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
             raise ValueError(
-                "No posterior samples found. Call get_posterior_samples() first."
+                "Cell type assignment only applies to mixture models with "
+                "multiple components"
             )
 
         if verbose:
@@ -914,21 +1711,27 @@ class MixtureResults(BaseScribeResults):
 
         # Compute component-specific log-likelihoods
         # Shape: (n_samples, n_cells, n_components)
-        log_liks = self.compute_log_likelihood(
+        log_liks = self.log_likelihood(
             counts,
             batch_size=batch_size,
             return_by='cell',
             cells_axis=cells_axis,
             ignore_nans=ignore_nans,
             split_components=True,
+            weights=weights,
+            weight_type=weight_type,
             dtype=dtype
         )
 
         if verbose:
             print("- Converting log-likelihoods to probabilities...")
 
+        # Apply temperature scaling if requested
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
+
         # Convert log-likelihoods to probabilities using log-sum-exp for
-        # stability First compute log(sum(exp(x))) along component axis
+        # stability. First compute log(sum(exp(x))) along component axis.
         log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
         # Then subtract and exponentiate to get probabilities
         probabilities = jnp.exp(log_liks - log_sum_exp)
@@ -945,8 +1748,11 @@ class MixtureResults(BaseScribeResults):
 
             # Fit Dirichlet distribution for each cell
             for cell in range(n_cells):
-                if cell % 1_000 == 0:
-                    print(f"    - Fitting Dirichlet distribution for cell {cell} of {n_cells}")
+                if verbose and cell % 1000 == 0:
+                    print(f"    - Fitting Dirichlet distributions for "
+                          f"cells {cell}-{min(cell+1000, n_cells)} out of "
+                          f"{n_cells} cells")
+                    
                 # Get probability vectors for this cell across all samples
                 cell_probs = probabilities[:, cell, :]
                 # Fit Dirichlet using Minka's fixed-point method
@@ -968,755 +1774,134 @@ class MixtureResults(BaseScribeResults):
                 'sample_probabilities': probabilities
             }
 
-# ------------------------------------------------------------------------------
-# Negative Binomial-Dirichlet Multinomial model
-# ------------------------------------------------------------------------------
-
-@dataclass
-class NBDMResults(StandardResults):
-    """
-    Results for Negative Binomial-Dirichlet Multinomial model.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific'},
-            'beta_r': {'type': 'gene-specific'}
-        }
-    
     # --------------------------------------------------------------------------
 
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "nbdm", f"Invalid model type: {self.model_type}"
-        # Set n_components to None since this is not a mixture model
-        self.n_components = None
-        # Call superclass post-init
-        super().__post_init__()
-
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for NBDM parameters."""
-        if backend == "scipy":
-            return {
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'], 
-                    loc=0, 
-                    scale=1/self.params['beta_r']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r'])
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the NBDM model and guide functions."""
-        from .models import nbdm_model, nbdm_guide
-        return nbdm_model, nbdm_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for NBDM model."""
-        from .models import nbdm_log_likelihood
-        return nbdm_log_likelihood
-
-# ------------------------------------------------------------------------------
-# Zero-Inflated Negative Binomial model
-# ------------------------------------------------------------------------------
-
-@dataclass
-class ZINBResults(StandardResults):
-    """
-    Results for Zero-Inflated Negative Binomial model.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific'},
-            'beta_r': {'type': 'gene-specific'},
-            'alpha_gate': {'type': 'gene-specific'},
-            'beta_gate': {'type': 'gene-specific'}
-        }
-    
-    # --------------------------------------------------------------------------
-
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "zinb", f"Invalid model type: {self.model_type}"
-        # Set n_components to None since this is not a mixture model
-        self.n_components = None
-        # Call superclass post-init
-        super().__post_init__()
-
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for ZINB parameters."""
-        if backend == "scipy":
-            return {
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'], 
-                    loc=0, 
-                    scale=1/self.params['beta_r']
-                ),
-                'gate': stats.beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-                'gate': dist.Beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                )
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the ZINB model and guide functions."""
-        from .models import zinb_model, zinb_guide
-        return zinb_model, zinb_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for ZINB model."""
-        from .models import zinb_log_likelihood
-        return zinb_log_likelihood
-
-# ------------------------------------------------------------------------------
-# Negative Binomial with variable capture probability model
-# ------------------------------------------------------------------------------
-
-@dataclass
-class NBVCPResults(StandardResults):
-    """
-    Results for Negative Binomial model with variable capture probability.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific'},
-            'beta_r': {'type': 'gene-specific'},
-            'alpha_p_capture': {'type': 'cell-specific'},
-            'beta_p_capture': {'type': 'cell-specific'}
-        }
-    
-    # --------------------------------------------------------------------------
-
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "nbvcp", f"Invalid model type: {self.model_type}"
-        # Set n_components to None since this is not a mixture model
-        self.n_components = None
-        # Call superclass post-init
-        super().__post_init__()
-
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for NBVCP parameters."""
-        if backend == "scipy":
-            return {
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'], 
-                    loc=0, 
-                    scale=1/self.params['beta_r']
-                ),
-                'p_capture': stats.beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-                'p_capture': dist.Beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the NBVCP model and guide functions."""
-        from .models import nbvcp_model, nbvcp_guide
-        return nbvcp_model, nbvcp_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for NBVCP model."""
-        from .models import nbvcp_log_likelihood
-        return nbvcp_log_likelihood
-
-# ------------------------------------------------------------------------------
-# Zero-Inflated Negative Binomial with variable capture probability
-# ------------------------------------------------------------------------------
-
-@dataclass
-class ZINBVCPResults(StandardResults):
-    """
-    Results for Zero-Inflated Negative Binomial model with variable capture
-    probability.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific'},
-            'beta_r': {'type': 'gene-specific'},
-            'alpha_gate': {'type': 'gene-specific'},
-            'beta_gate': {'type': 'gene-specific'},
-            'alpha_p_capture': {'type': 'cell-specific'},
-            'beta_p_capture': {'type': 'cell-specific'}
-        }
-    
-    # --------------------------------------------------------------------------
-
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "zinbvcp", f"Invalid model type: {self.model_type}"
-        # Set n_components to 1 since this is not a mixture model
-        self.n_components = 1
-        # Call superclass post-init
-        super().__post_init__()
-
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for ZINBVCP parameters."""
-        if backend == "scipy":
-            return {
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'], 
-                    loc=0, 
-                    scale=1/self.params['beta_r']
-                ),
-                'gate': stats.beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                ),
-                'p_capture': stats.beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-                'gate': dist.Beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                ),
-                'p_capture': dist.Beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the ZINBVCP model and guide functions."""
-        from .models import zinbvcp_model, zinbvcp_guide
-        return zinbvcp_model, zinbvcp_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for ZINBVCP model."""
-        from .models import zinbvcp_log_likelihood
-        return zinbvcp_log_likelihood
-
-# Previous code remains the same...
-
-# ------------------------------------------------------------------------------
-# Negative Binomial-Dirichlet Multinomial Mixture Model
-# ------------------------------------------------------------------------------
-
-@dataclass
-class NBDMMixtureResults(MixtureResults):
-    """
-    Results for Negative Binomial-Dirichlet Multinomial mixture model.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_mixing': {'type': 'global', 'component_specific': True},
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific', 'component_specific': True},
-            'beta_r': {'type': 'gene-specific', 'component_specific': True}
-        }
-    
-    # --------------------------------------------------------------------------
-
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "nbdm_mix", f"Invalid model type: {self.model_type}"
-        # Call superclass post-init
-        super().__post_init__()
-
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for mixture model parameters."""
-        if backend == "scipy":
-            return {
-                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'],
-                    loc=0,
-                    scale=1/self.params['beta_r']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r'])
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the NBDMMixture model and guide functions."""
-        from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
-        return nbdm_mixture_model, nbdm_mixture_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for NBDMMixture model."""
-        from .models_mix import nbdm_mixture_log_likelihood
-        return nbdm_mixture_log_likelihood
-
-# ------------------------------------------------------------------------------
-# Zero-Inflated Negative Binomial Mixture Model
-# ------------------------------------------------------------------------------
-
-@dataclass
-class ZINBMixtureResults(MixtureResults):
-    """
-    Results for Zero-Inflated Negative Binomial mixture model.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_mixing': {'type': 'global', 'component_specific': True},
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific', 'component_specific': True},
-            'beta_r': {'type': 'gene-specific', 'component_specific': True},
-            'alpha_gate': {'type': 'gene-specific', 'component_specific': True},
-            'beta_gate': {'type': 'gene-specific', 'component_specific': True}
-        }
-    
-    # --------------------------------------------------------------------------
-
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "zinb_mix", f"Invalid model type: {self.model_type}"
-        super().__post_init__()
-
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for mixture model parameters."""
-        if backend == "scipy":
-            return {
-                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'],
-                    loc=0,
-                    scale=1/self.params['beta_r']
-                ),
-                'gate': stats.beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-                'gate': dist.Beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                )
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the ZINB mixture model and guide functions."""
-        from .models_mix import zinb_mixture_model, zinb_mixture_guide
-        return zinb_mixture_model, zinb_mixture_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for ZINB mixture model."""
-        from .models_mix import zinb_mixture_log_likelihood
-        return zinb_mixture_log_likelihood
-
-# ------------------------------------------------------------------------------
-# Negative Binomial-Variable Capture Probability Mixture Model
-# ------------------------------------------------------------------------------
-
-@dataclass
-class NBVCPMixtureResults(MixtureResults):
-    """
-    Results for Negative Binomial mixture model with variable capture
-    probability.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_mixing': {'type': 'global', 'component_specific': True},
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific', 'component_specific': True},
-            'beta_r': {'type': 'gene-specific', 'component_specific': True},
-            'alpha_p_capture': {'type': 'cell-specific'},
-            'beta_p_capture': {'type': 'cell-specific'}
-        }
-    
-    # --------------------------------------------------------------------------
-
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "nbvcp_mix", f"Invalid model type: {self.model_type}"
-        # Call superclass post-init
-        super().__post_init__()
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for mixture model parameters."""
-        if backend == "scipy":
-            return {
-                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'],
-                    loc=0,
-                    scale=1/self.params['beta_r']
-                ),
-                'p_capture': stats.beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-                'p_capture': dist.Beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the NBVCP mixture model and guide functions."""
-        from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
-        return nbvcp_mixture_model, nbvcp_mixture_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for NBVCP mixture model."""
-        from .models_mix import nbvcp_mixture_log_likelihood
-        return nbvcp_mixture_log_likelihood
-
-# ------------------------------------------------------------------------------
-# Zero-Inflated Negative Binomial-Variable Capture Probability Mixture Model
-# ------------------------------------------------------------------------------
-
-@dataclass
-class ZINBVCPMixtureResults(MixtureResults):
-    """
-    Results for Zero-Inflated Negative Binomial mixture model with variable
-    capture probability.
-    """
-    @classmethod
-    def get_param_spec(self) -> Dict:
-        """Get the parameter specification for this model type."""
-        return {
-            'alpha_mixing': {'type': 'global', 'component_specific': True},
-            'alpha_p': {'type': 'global'},
-            'beta_p': {'type': 'global'},
-            'alpha_r': {'type': 'gene-specific', 'component_specific': True},
-            'beta_r': {'type': 'gene-specific', 'component_specific': True},
-            'alpha_p_capture': {'type': 'cell-specific'},
-            'beta_p_capture': {'type': 'cell-specific'},
-            'alpha_gate': {'type': 'gene-specific', 'component_specific': True},
-            'beta_gate': {'type': 'gene-specific', 'component_specific': True}
-        }
-    
-    # --------------------------------------------------------------------------
-
-    def __post_init__(self):
-        # Set parameter spec
-        self.param_spec = self.get_param_spec()
-        # Verify model type and validate parameters
-        assert self.model_type == "zinbvcp_mix", f"Invalid model type: {self.model_type}"
-        # Call superclass post-init
-        super().__post_init__()
-
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get the variational distributions for mixture model parameters."""
-        if backend == "scipy":
-            return {
-                'mixing_weights': stats.dirichlet(self.params['alpha_mixing']),
-                'p': stats.beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': stats.gamma(
-                    self.params['alpha_r'],
-                    loc=0,
-                    scale=1/self.params['beta_r']
-                ),
-                'gate': stats.beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                ),
-                'p_capture': stats.beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_weights': dist.Dirichlet(self.params['alpha_mixing']),
-                'p': dist.Beta(self.params['alpha_p'], self.params['beta_p']),
-                'r': dist.Gamma(self.params['alpha_r'], self.params['beta_r']),
-                'gate': dist.Beta(
-                    self.params['alpha_gate'],
-                    self.params['beta_gate']
-                ),
-                'p_capture': dist.Beta(
-                    self.params['alpha_p_capture'],
-                    self.params['beta_p_capture']
-                )
-            }
-        else:
-            raise ValueError(f"Invalid backend: {backend}")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the ZINBVCP mixture model and guide functions."""
-        from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
-        return zinbvcp_mixture_model, zinbvcp_mixture_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function for ZINBVCP mixture model."""
-        from .models_mix import zinbvcp_mixture_log_likelihood
-        return zinbvcp_mixture_log_likelihood
-
-# ------------------------------------------------------------------------------
-# Custom Model Results
-# ------------------------------------------------------------------------------
-
-@dataclass
-class CustomResults(BaseScribeResults):
-    """
-    Results class for custom user-defined models.
-    
-    This class provides a flexible framework for handling custom models while
-    maintaining compatibility with SCRIBE's parameter handling and results
-    infrastructure.
-
-    Parameters
-    ----------
-    params : Dict
-        Dictionary of inferred model parameters
-    loss_history : jnp.ndarray
-        Array containing the ELBO loss values during training
-    n_cells : int
-        Number of cells in the dataset
-    n_genes : int
-        Number of genes in the dataset
-    model_type : str
-        Identifier for the custom model
-    param_spec : Dict[str, Dict]
-        Specification of parameter types. Each parameter name should match
-        exactly as it appears in params, with entries specifying:
-            - 'type': one of ['global', 'gene-specific', 'cell-specific']
-            - 'component_specific': True/False (for mixture models)
-    custom_model : Callable
-        The user's custom model function
-    custom_guide : Callable
-        The user's custom guide function
-    custom_log_likelihood_fn : Optional[Callable]
-        Optional function to compute log likelihood for the custom model
-    get_distributions_fn : Optional[Callable]
-        Optional function to implement get_distributions behavior
-    get_model_args_fn : Optional[Callable]
-        Optional function to customize model arguments
-    n_components : Optional[int]
-        Number of mixture components (if mixture model)
-    cell_metadata : Optional[pd.DataFrame]
-        Cell-level metadata from adata.obs
-    gene_metadata : Optional[pd.DataFrame]
-        Gene-level metadata from adata.var
-    uns : Optional[Dict]
-        Unstructured metadata from adata.uns
-    posterior_samples : Optional[Dict]
-        Samples from the posterior distribution
-    """
-    # Additional attributes for custom models
-    custom_model: Optional[Callable] = None
-    custom_guide: Optional[Callable] = None
-    custom_log_likelihood_fn: Optional[Callable] = None
-    get_distributions_fn: Optional[Callable] = None
-    get_model_args_fn: Optional[Callable] = None
-
-    
-    def __post_init__(self):
-        """Set model type to 'custom' and validate parameters."""
-        # Set model type to 'custom' if not already set
-        if not hasattr(self, 'model_type') or self.model_type is None:
-            self.model_type = "custom"
-        # Call superclass post-init for parameter validation
-        super().__post_init__()
-    
-    # --------------------------------------------------------------------------
-
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
-        """Get distributions using provided get_distributions_fn if available."""
-        if self.get_distributions_fn is not None:
-            return self.get_distributions_fn(self.params, backend)
-        return {}
-
-    # --------------------------------------------------------------------------
-
-    def get_model_and_guide(self) -> Tuple[Callable, Callable]:
-        """Get the custom model and guide functions."""
-        if self.custom_model is None or self.custom_guide is None:
-            raise ValueError("Custom model and guide functions not provided")
-        return self.custom_model, self.custom_guide
-
-    # --------------------------------------------------------------------------
-
-    def get_log_likelihood_fn(self) -> Callable:
-        """Get the log likelihood function if provided."""
-        if self.custom_log_likelihood_fn is not None:
-            return self.custom_log_likelihood_fn
-        raise ValueError("No custom log likelihood function provided")
-
-    # --------------------------------------------------------------------------
-
-    def get_model_args(self) -> Dict:
-        """
-        Get model arguments using provided get_model_args_fn if available,
-        otherwise return standard arguments based on presence of n_components.
-        """
-        if self.get_model_args_fn is not None:
-            return self.get_model_args_fn(self)
-        
-        # Default implementation based on whether it's a mixture model
-        args = {
-            'n_cells': self.n_cells,
-            'n_genes': self.n_genes
-        }
-        if self.n_components is not None:
-            args['n_components'] = self.n_components
-        return args
-
-    # --------------------------------------------------------------------------
-
-    def _create_subset(
+    def cell_type_assignments_map(
         self,
-        index,
-        new_params: Dict,
-        new_gene_metadata: Optional[pd.DataFrame],
-        new_posterior_samples: Optional[Dict]
-    ) -> 'CustomResults':
-        """Create a new CustomResults instance with a subset of genes."""
-        return CustomResults(
-            model_type=self.model_type,
-            params=new_params,
-            loss_history=self.loss_history,
-            n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
-            n_components=self.n_components,
-            param_spec=self.param_spec,
-            cell_metadata=self.cell_metadata,
-            gene_metadata=new_gene_metadata,
-            uns=self.uns,
-            posterior_samples=new_posterior_samples,
-            custom_model=self.custom_model,
-            custom_guide=self.custom_guide,
-            custom_log_likelihood_fn=self.custom_log_likelihood_fn,
-            get_distributions_fn=self.get_distributions_fn,
-            get_model_args_fn=self.get_model_args_fn,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        dtype: jnp.dtype = jnp.float32,
+        temperature: Optional[float] = None,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        use_mean: bool = False,
+        verbose: bool = True
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute probabilistic cell type assignments using MAP estimates of
+        parameters.
+        
+        For each cell, this method:
+            1. Computes component-specific log-likelihoods using MAP parameter
+            estimates
+            2. Converts these to probability distributions over cell types
+        
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data to evaluate assignments for
+        batch_size : Optional[int], default=None
+            Size of mini-batches for likelihood computation
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+        temperature : Optional[float], default=None
+            If provided, apply temperature scaling to log probabilities
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight genes when computing log likelihoods
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
+        use_mean : bool, default=False
+            If True, replaces undefined MAP values (NaN) with posterior means
+        verbose : bool, default=True
+            If True, prints progress messages
+        
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing:
+                - 'probabilities': Assignment probabilities for each cell.
+                Shape: (n_cells, n_components)
+                
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Cell type assignment only applies to mixture models with "
+                "multiple components"
+            )
+
+        if verbose:
+            print("- Computing component-specific log-likelihoods...")
+
+        # Get the log likelihood function
+        likelihood_fn = self._log_likelihood_fn()
+
+        # Get the MAP estimates
+        map_estimates = self.get_map()
+        
+        # Replace NaN values with means if requested
+        if use_mean:
+            # Get distributions to compute means
+            distributions = self.get_distributions(backend="numpyro")
+            
+            # Check each parameter for NaNs and replace with means
+            any_replaced = False
+            for param, value in map_estimates.items():
+                # Check if any values are NaN
+                if jnp.any(jnp.isnan(value)):
+                    # Update flag
+                    any_replaced = True
+                    # Get mean value
+                    mean_value = distributions[param].mean
+                    # Replace NaN values with means
+                    map_estimates[param] = jnp.where(
+                        jnp.isnan(value),
+                        mean_value,
+                        value
+                    )
+            
+            if any_replaced and verbose:
+                print("    - Replaced undefined MAP values with posterior means")
+        
+        # Compute component-specific log-likelihoods using MAP estimates
+        # Shape: (n_cells, n_components)
+        log_liks = likelihood_fn(
+            counts,
+            map_estimates,
+            batch_size=batch_size,
+            cells_axis=cells_axis,
+            return_by='cell',
+            split_components=True,
+            weights=weights,
+            weight_type=weight_type,
+            dtype=dtype
         )
+
+        # Assert shape of log_liks
+        assert log_liks.shape == (self.n_cells, self.n_components)
+
+        if verbose:
+            print("- Converting log-likelihoods to probabilities...")
+
+        # Apply temperature scaling if requested
+        if temperature is not None:
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
+
+        # Convert log-likelihoods to probabilities using log-sum-exp for
+        # stability. First compute log(sum(exp(x))) along component axis
+        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+        # Then subtract and exponentiate to get probabilities
+        probabilities = jnp.exp(log_liks - log_sum_exp)
+
+        return {
+            'probabilities': probabilities
+        }

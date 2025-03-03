@@ -12,8 +12,8 @@ from numpyro.distributions import constraints
 # Import typing
 from typing import Callable, Dict, Tuple, Optional
 
-# Import mixture models
-from .models_mix import *
+# Import model config
+from .model_config import ModelConfig
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
@@ -22,19 +22,20 @@ from .models_mix import *
 def nbdm_model(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
+    model_config: ModelConfig,
     counts=None,
     total_counts=None,
     batch_size=None,
 ):
     """
-    Numpyro model for Dirichlet-Multinomial single-cell RNA sequencing data.
-
-    This model assumes a hierarchical structure where:
-    0. Each cell has a total count drawn from a Negative Binomial distribution
-    1. The counts for individual genes are drawn from a Dirichlet-Multinomial
-    distribution conditioned on the total count.
+    Numpyro model for Negative Binomial-Dirichlet Multinomial single-cell RNA
+    sequencing data.
+    
+    This model assumes that for each cell:
+        1. The total UMI count follows a Negative Binomial distribution with
+           parameters r_total and p
+        2. Given the total count, the individual gene counts follow a
+           Dirichlet-Multinomial distribution with concentration parameters r
     
     Parameters
     ----------
@@ -42,38 +43,35 @@ def nbdm_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p parameter.
-        Default is (1, 1) for a uniform prior.
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters.
-        Default is (2, 0.1).
+    model_config : ModelConfig
+        Configuration object containing prior distributions for model
+        parameters: - p_distribution_model: Prior for success probability p -
+        r_distribution_model: Prior for dispersion parameters r
     counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes).
-        If None, generates samples from the prior.
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
     total_counts : array-like, optional
-        Total counts per cell of shape (n_cells,).
-        Required if counts is provided.
+        Total UMI counts per cell of shape (n_cells,). Required if counts is
+        provided.
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference.
-        If None, uses full dataset.
+        Mini-batch size for stochastic variational inference. If None, uses full
+        dataset.
 
     Model Structure
     --------------
     Global Parameters:
-        - Success probability p ~ Beta(p_prior)
-        - Gene-specific dispersion r ~ Gamma(r_prior)
-        - Total dispersion r_total = sum(r)
+        - Success probability p ~ model_config.p_distribution_model
+        - Gene-specific dispersion r ~ model_config.r_distribution_model
 
     Likelihood:
-        - total_counts ~ NegativeBinomial(r_total, p)
-        - counts ~ DirichletMultinomial(r, total_counts)
+        - total_counts ~ NegativeBinomialProbs(r_total, p)
+        - counts ~ DirichletMultinomial(r, total_count=total_counts)
     """
-    # Define the prior on the p parameter
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
-
-    # Define the prior on the r parameters - one for each category (gene)
-    r = numpyro.sample("r", dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes]))
+    # Sample p
+    p = numpyro.sample("p", model_config.p_distribution_model)
+    
+    # Sample r
+    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
 
     # Sum of r parameters
     r_total = numpyro.deterministic("r_total", jnp.sum(r))
@@ -142,8 +140,7 @@ def nbdm_model(
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
+    model_config: ModelConfig,
     counts=None,
     total_counts=None,
     batch_size=None,
@@ -151,12 +148,8 @@ def nbdm_guide(
     """
     Define the variational distribution for stochastic variational inference.
     
-    This guide function specifies the form of the variational distribution that
-    will be optimized to approximate the true posterior. It defines a mean-field
-    variational family where:
-    - The success probability p follows a Beta distribution
-    - Each gene's overdispersion parameter r follows an independent Gamma
-    distribution
+    This guide defines the variational distributions for the NBDM model
+    parameters using the configuration specified in model_config.
     
     Parameters
     ----------
@@ -164,46 +157,56 @@ def nbdm_guide(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p (default: (0,1))
-    r_prior : tuple of float
-        Parameters (alpha, beta) for the Gamma prior on r (default: (1,2))
+    model_config : ModelConfig
+        Configuration object containing the variational distribution
+        specifications:
+            - p_distribution_guide: Distribution for success probability p
+            - r_distribution_guide: Distribution for dispersion parameters r
     counts : array_like, optional
         Observed counts matrix of shape (n_cells, n_genes)
     total_counts : array_like, optional
         Total counts per cell of shape (n_cells,)
     batch_size : int, optional
         Mini-batch size for stochastic optimization
+
+    Guide Structure
+    --------------
+    Variational Parameters:
+        - Success probability p ~ model_config.p_distribution_guide
+        - Gene-specific dispersion r ~ model_config.r_distribution_guide
     """
-    # register alpha_p and beta_p parameters for the Beta distribution in the
-    # variational posterior
-    alpha_p = numpyro.param(
-        "alpha_p",
-        jnp.array(p_prior[0]),
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        jnp.array(p_prior[1]),
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # register one alpha_r and one beta_r parameters for the Gamma distributions
-    # for each of the n_genes categories
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones(n_genes) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones(n_genes) * r_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones(n_genes) * r_values[param_name],
+            constraint=constraint
+        )
 
-    # Sample from the variational posterior parameters
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
+    # Sample p from variational distribution using unpacked parameters
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    # Sample r from variational distribution using unpacked parameters
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Model
@@ -212,53 +215,58 @@ def nbdm_guide(
 def zinb_model(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 2),
-    gate_prior: tuple = (1, 1),
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
     """
     Numpyro model for Zero-Inflated Negative Binomial single-cell RNA sequencing
-    data. Uses a single shared p parameter across all genes.
+    data.
     
+    This model uses the configuration defined in model_config. It implements a
+    Zero-Inflated Negative Binomial distribution with shared success probability
+    p across all genes, but gene-specific dispersion and dropout parameters.
+
     Parameters
     ----------
     n_cells : int
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on shared p parameter
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on r parameters
-    gate_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on dropout probabilities
+    model_config : ModelConfig
+        Configuration object for model distributions containing:
+            - p_distribution_model: Distribution for success probability p
+            - r_distribution_model: Distribution for dispersion parameters r
+            - gate_distribution_model: Distribution for dropout probabilities
     counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes)
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference
+        Mini-batch size for stochastic variational inference. If None, uses full
+        dataset.
 
     Model Structure
     --------------
     Global Parameters:
-        - Success probability p ~ Beta(p_prior)
-        - Gene-specific dispersion r ~ Gamma(r_prior)
-        - Gene-specific dropout probabilities gate ~ Beta(gate_prior)
+        - Success probability p ~ model_config.p_distribution_model
+        - Gene-specific dispersion r ~ model_config.r_distribution_model
+        - Gene-specific dropout probabilities gate ~
+          model_config.gate_distribution_model
 
     Likelihood:
         - counts ~ ZeroInflatedNegativeBinomial(r, p, gate)
     """
-    # Single shared p parameter for all genes
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
+    # Sample p
+    p = numpyro.sample("p", model_config.p_distribution_model)
     
-    # Sample r parameters for all genes simultaneously
-    r = numpyro.sample(
-        "r", dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes]))
+    # Sample r
+    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
     
     # Sample gate (dropout) parameters for all genes simultaneously
     gate = numpyro.sample(
-        "gate", dist.Beta(gate_prior[0], gate_prior[1]).expand([n_genes]))
+        "gate", 
+        model_config.gate_distribution_model.expand([n_genes])
+    )
 
     # Create base negative binomial distribution
     base_dist = dist.NegativeBinomialProbs(r, p)
@@ -296,9 +304,7 @@ def zinb_model(
 def zinb_guide(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 2),
-    gate_prior: tuple = (1, 1),
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -308,12 +314,8 @@ def zinb_guide(
     
     This guide function specifies the form of the variational distribution that
     will be optimized to approximate the true posterior. It defines a mean-field
-    variational family where:
-        - The success probability p follows a Beta distribution
-        - Each gene's overdispersion parameter r follows an independent Gamma
-          distribution
-        - Each gene's dropout probability (gate) follows an independent Beta
-          distribution
+    variational family where each parameter has its own independent distribution
+    specified by the model_config object.
     
     Parameters
     ----------
@@ -321,57 +323,74 @@ def zinb_guide(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on p (default: (1,1))
-    r_prior : tuple of float
-        Parameters (alpha, beta) for the Gamma prior on r (default: (2,2))
-    gate_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on gate (default: (1,1))
+    model_config : ModelConfig
+        Configuration object containing guide distributions for model parameters:
+        - p_distribution_guide: Guide distribution for success probability p
+        - r_distribution_guide: Guide distribution for dispersion parameters r
+        - gate_distribution_guide: Guide distribution for dropout probabilities
     counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes)
+        Observed counts matrix of shape (n_cells, n_genes). Not directly used in
+        the guide but included for API consistency with the model
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference
-    """
-    # Variational parameters for shared p
-    alpha_p = numpyro.param(
-        "alpha_p",
-        p_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        p_prior[1],
-        constraint=constraints.positive
-    )
-    
-    # Variational parameters for r (one per gene)
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones(n_genes) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones(n_genes) * r_prior[1],
-        constraint=constraints.positive
-    )
-    
-    # Variational parameters for gate (one per gene)
-    alpha_gate = numpyro.param(
-        "alpha_gate",
-        jnp.ones(n_genes) * gate_prior[0],
-        constraint=constraints.positive
-    )
-    beta_gate = numpyro.param(
-        "beta_gate",
-        jnp.ones(n_genes) * gate_prior[1],
-        constraint=constraints.positive
-    )
+        Mini-batch size for stochastic variational inference. Not used in this
+        guide since all parameters are global.
 
-    # Sample from variational posterior parameters
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
-    numpyro.sample("gate", dist.Beta(alpha_gate, beta_gate))
+    Guide Structure
+    --------------
+    Variational Parameters:
+        - Success probability p ~ model_config.p_distribution_guide
+        - Gene-specific dispersion r ~ model_config.r_distribution_guide
+        - Gene-specific dropout probabilities gate ~
+          model_config.gate_distribution_guide
+    """
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
+
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones(n_genes) * r_values[param_name],
+            constraint=constraint
+        )
+
+    # Extract gate distribution values
+    gate_values = model_config.gate_distribution_guide.get_args()
+    # Extract gate distribution parameters and constraints
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    gate_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones(n_genes) * gate_values[param_name],
+            constraint=constraint
+        )
+    
+    # Sample p from variational distribution using unpacked parameters
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    # Sample r from variational distribution using unpacked parameters
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    # Sample gate from variational distribution using unpacked parameters
+    numpyro.sample("gate", model_config.gate_distribution_guide.__class__(**gate_params))
 
 # ------------------------------------------------------------------------------
 # Negative Binomial with variable capture probability
@@ -380,22 +399,20 @@ def zinb_guide(
 def nbvcp_model(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
     """
     Numpyro model for Negative Binomial with variable mRNA capture probability.
 
-    This model assumes that each gene's mRNA count follow a Negative Binomial
+    This model assumes that each gene's mRNA count follows a Negative Binomial
     distribution, but with a cell-specific mRNA capture probability that
     modifies the success probability parameter. The model structure is:
         1. Each gene has a base success probability p and dispersion r
         2. Each cell has a capture probability p_capture
         3. The effective success probability for each gene in each cell is
-           computed as p_hat = p / (p_capture + p * (1 - p_capture)). This comes
+           computed as p_hat = p * p_capture / (1 - p * (1 - p_capture)). This comes
            from the composition of a negative binomial distribution with a
            binomial distribution.
         4. Counts are drawn from NB(r, p_hat)
@@ -406,15 +423,11 @@ def nbvcp_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on base success probability
-        p. Default is (1, 1) for a uniform prior.
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on dispersion parameters.
-        Default is (2, 0.1).
-    p_capture_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on capture probabilities.
-        Default is (1, 1) for a uniform prior.
+    model_config : ModelConfig
+        Configuration object containing prior distributions for model parameters:
+        - p_distribution_model: Prior for success probability p
+        - r_distribution_model: Prior for dispersion parameters r
+        - p_capture_distribution_model: Prior for capture probabilities p_capture
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). If None, generates
         samples from the prior.
@@ -425,11 +438,11 @@ def nbvcp_model(
     Model Structure
     --------------
     Global Parameters:
-        - Success probability p ~ Beta(p_prior)
-        - Gene-specific dispersion r ~ Gamma(r_prior)
+        - Success probability p ~ model_config.p_distribution_model
+        - Gene-specific dispersion r ~ model_config.r_distribution_model
 
     Local Parameters:
-        - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
+        - Cell-specific capture probabilities p_capture ~ model_config.p_capture_distribution_model
         - Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     Likelihood:
@@ -437,13 +450,10 @@ def nbvcp_model(
     """
     # Define global parameters
     # Sample base success probability
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
+    p = numpyro.sample("p", model_config.p_distribution_model)
 
     # Sample gene-specific dispersion parameters
-    r = numpyro.sample(
-        "r", 
-        dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes])
-    )
+    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
 
     # If we have observed data, condition on it
     if counts is not None:
@@ -453,7 +463,7 @@ def nbvcp_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting and compute effective
@@ -479,7 +489,7 @@ def nbvcp_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting and compute effective probability
@@ -501,7 +511,7 @@ def nbvcp_model(
             # Sample cell-specific capture probabilities
             p_capture = numpyro.sample(
                 "p_capture",
-                dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                model_config.p_capture_distribution_model
             )
 
             # Reshape p_capture for broadcasting and compute effective probability
@@ -525,9 +535,7 @@ def nbvcp_model(
 def nbvcp_guide(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -536,19 +544,8 @@ def nbvcp_guide(
     with variable capture probability.
 
     This guide specifies a factorized variational distribution that approximates
-    the true posterior:
-        1. A Beta distribution for the global success probability p
-        2. Independent Gamma distributions for each gene's dispersion parameter
-           r
-        3. Independent Beta distributions for each cell's capture probability
-           p_capture
-
-    The variational parameters are:
-        - alpha_p, beta_p: Parameters for p's Beta distribution
-        - alpha_r, beta_r: Parameters for each gene's Gamma distribution (shape:
-          n_genes)
-        - alpha_p_capture, beta_p_capture: Parameters for each cell's Beta
-          distribution (shape: n_cells)
+    the true posterior. The variational parameters are initialized using the
+    distributions specified in model_config.
 
     Parameters
     ----------
@@ -556,68 +553,81 @@ def nbvcp_guide(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float, default=(1, 1)
-        Parameters (alpha, beta) for initializing the Beta variational
-        distribution of the global success probability p
-    r_prior : tuple of float, default=(2, 0.1)
-        Parameters (shape, rate) for initializing the Gamma variational
-        distributions of gene-specific dispersion parameters
-    p_capture_prior : tuple of float, default=(1, 1)
-        Parameters (alpha, beta) for initializing the Beta variational
-        distributions of cell-specific capture probabilities
+    model_config : ModelConfig
+        Configuration object containing the variational distribution
+        specifications:
+            - p_distribution_guide: Distribution for success probability p
+            - r_distribution_guide: Distribution for dispersion parameters r
+            - p_capture_distribution_guide: Distribution for capture
+              probabilities
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). Not directly used in
         the guide but included for API consistency with the model
     batch_size : int, optional
         Mini-batch size for stochastic variational inference. If provided, only
         updates a random subset of cells in each iteration
+
+    Guide Structure
+    --------------
+    Variational Parameters:
+        - Success probability p ~ model_config.p_distribution_guide
+        - Gene-specific dispersion r ~ model_config.r_distribution_guide
+        - Cell-specific capture probability p_capture ~
+          model_config.p_capture_distribution_guide
     """
-    # Variational parameters for base success probability p (global)
-    alpha_p = numpyro.param(
-        "alpha_p",
-        p_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        p_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for r (global per gene)
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones(n_genes) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones(n_genes) * r_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones(n_genes) * r_values[param_name],
+            constraint=constraint
+        )
 
-    # Sample global parameters outside the plate
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
+    # Sample p from variational distribution using unpacked parameters
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    # Sample r from variational distribution using unpacked parameters
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
 
-    # Initialize p_capture parameters for all cells
-    alpha_p_capture = numpyro.param(
-        "alpha_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p_capture = numpyro.param(
-        "beta_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p_capture distribution values
+    p_capture_values = model_config.p_capture_distribution_guide.get_args()
+    # Extract p_capture distribution parameters and constraints
+    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_capture_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_capture_constraints.items():
+        p_capture_params[param_name] = numpyro.param(
+            f"p_capture_{param_name}",
+            jnp.ones(n_cells) * p_capture_values[param_name],
+            constraint=constraint
+        )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture",
-                dist.Beta(alpha_p_capture, beta_p_capture)
+                "p_capture", 
+                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
             )
     else:
         with numpyro.plate(
@@ -625,11 +635,14 @@ def nbvcp_guide(
             n_cells,
             subsample_size=batch_size,
         ) as idx:
+            # Index the parameters before creating the distribution
+            batch_params = {
+                name: param[idx] for name, param in p_capture_params.items()
+            }
             numpyro.sample(
                 "p_capture",
-                dist.Beta(alpha_p_capture[idx], beta_p_capture[idx])
+                model_config.p_capture_distribution_guide.__class__(**batch_params)
             )
-
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial with variable capture probability
 # ------------------------------------------------------------------------------
@@ -637,10 +650,7 @@ def nbvcp_guide(
 def zinbvcp_model(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
-    gate_prior: tuple = (1, 1),  # Added for zero-inflation
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -654,9 +664,9 @@ def zinbvcp_model(
         2. Each cell has a capture probability p_capture
         3. Each gene has a dropout probability (gate)
         4. The effective success probability for each gene in each cell is
-           computed as p_hat = p / (p_capture + p * (1 - p_capture)). This comes
-           from the composition of a negative binomial distribution with a
-           binomial distribution.  
+           computed as p_hat = p * p_capture / (1 - p * (1 - p_capture)). This
+           comes from the composition of a negative binomial distribution with a
+           binomial distribution.
         5. Counts are drawn from ZINB(r, p_hat, gate)
 
     Parameters
@@ -665,48 +675,48 @@ def zinbvcp_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    p_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on base success probability
-        p
-    r_prior : tuple of float
-        Parameters (shape, rate) for the Gamma prior on dispersion parameters
-    p_capture_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on capture probabilities
-    gate_prior : tuple of float
-        Parameters (alpha, beta) for the Beta prior on dropout probabilities
+    model_config : ModelConfig
+        Configuration object containing prior distributions for model
+        parameters:
+            - p_distribution_model: Prior for success probability p
+            - r_distribution_model: Prior for dispersion parameters r
+            - gate_distribution_model: Prior for dropout probabilities
+            - p_capture_distribution_model: Prior for capture probabilities
     counts : array-like, optional
-        Observed counts matrix of shape (n_cells, n_genes)
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
     batch_size : int, optional
-        Mini-batch size for stochastic variational inference
+        Mini-batch size for stochastic variational inference. If None, uses full
+        dataset.
 
     Model Structure
     --------------
     Global Parameters:
-        - Success probability p ~ Beta(p_prior)
-        - Gene-specific dispersion r ~ Gamma(r_prior)
-        - Gene-specific dropout probabilities gate ~ Beta(gate_prior)
+        - Success probability p ~ model_config.p_distribution_model
+        - Gene-specific dispersion r ~ model_config.r_distribution_model
+        - Gene-specific dropout probabilities gate ~
+          model_config.gate_distribution_model
 
     Local Parameters:
-        - Cell-specific capture probabilities p_capture ~ Beta(p_capture_prior)
-        - Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))
+        - Cell-specific capture probabilities p_capture ~
+          model_config.p_capture_distribution_model
+        - Effective probability p_hat = p * p_capture / (1 - p * (1 -
+          p_capture))
 
     Likelihood:
         - counts ~ ZeroInflatedNegativeBinomial(r, p_hat, gate)
     """
     # Define global parameters
     # Sample base success probability
-    p = numpyro.sample("p", dist.Beta(p_prior[0], p_prior[1]))
+    p = numpyro.sample("p", model_config.p_distribution_model)
 
     # Sample gene-specific dispersion parameters
-    r = numpyro.sample(
-        "r", 
-        dist.Gamma(r_prior[0], r_prior[1]).expand([n_genes])
-    )
+    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
 
     # Sample gate (dropout) parameters for all genes simultaneously
     gate = numpyro.sample(
         "gate", 
-        dist.Beta(gate_prior[0], gate_prior[1]).expand([n_genes])
+        model_config.gate_distribution_model.expand([n_genes])
     )
 
     # If we have observed data, condition on it
@@ -717,17 +727,19 @@ def zinbvcp_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
-                # Reshape p_capture for broadcasting and compute effective probability
+                # Reshape p_capture for broadcasting and compute effective
+                # probability
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
                     p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
-                # Create base negative binomial distribution with adjusted probabilities
+                # Create base negative binomial distribution with adjusted
+                # probabilities
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
@@ -743,17 +755,19 @@ def zinbvcp_model(
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                    model_config.p_capture_distribution_model
                 )
 
-                # Reshape p_capture for broadcasting and compute effective probability
+                # Reshape p_capture for broadcasting and compute effective
+                # probability
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
                     p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
-                # Create base negative binomial distribution with adjusted probabilities
+                # Create base negative binomial distribution with adjusted
+                # probabilities
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
@@ -766,7 +780,7 @@ def zinbvcp_model(
             # Sample cell-specific capture probabilities
             p_capture = numpyro.sample(
                 "p_capture",
-                dist.Beta(p_capture_prior[0], p_capture_prior[1])
+                model_config.p_capture_distribution_model
             )
 
             # Reshape p_capture for broadcasting and compute effective
@@ -794,10 +808,7 @@ def zinbvcp_model(
 def zinbvcp_guide(
     n_cells: int,
     n_genes: int,
-    p_prior: tuple = (1, 1),
-    r_prior: tuple = (2, 0.1),
-    p_capture_prior: tuple = (1, 1),
-    gate_prior: tuple = (1, 1),
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -849,65 +860,75 @@ def zinbvcp_guide(
         Mini-batch size for stochastic variational inference. If provided, only
         updates a random subset of cells in each iteration
     """
-    # Variational parameters for base success probability p
-    alpha_p = numpyro.param(
-        "alpha_p",
-        p_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p = numpyro.param(
-        "beta_p",
-        p_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p distribution values
+    p_values = model_config.p_distribution_guide.get_args()
+    # Extract p distribution parameters and constraints
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for r (one per gene)
-    alpha_r = numpyro.param(
-        "alpha_r",
-        jnp.ones(n_genes) * r_prior[0],
-        constraint=constraints.positive
-    )
-    beta_r = numpyro.param(
-        "beta_r",
-        jnp.ones(n_genes) * r_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract r distribution values
+    r_values = model_config.r_distribution_guide.get_args()
+    # Extract r distribution parameters and constraints 
+    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    r_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in r_constraints.items():
+        r_params[param_name] = numpyro.param(
+            f"r_{param_name}",
+            jnp.ones(n_genes) * r_values[param_name],
+            constraint=constraint
+        )
 
-    # Variational parameters for gate (one per gene)
-    alpha_gate = numpyro.param(
-        "alpha_gate",
-        jnp.ones(n_genes) * gate_prior[0],
-        constraint=constraints.positive
-    )
-    beta_gate = numpyro.param(
-        "beta_gate",
-        jnp.ones(n_genes) * gate_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract gate distribution values
+    gate_values = model_config.gate_distribution_guide.get_args()
+    # Extract gate distribution parameters and constraints
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    gate_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones(n_genes) * gate_values[param_name],
+            constraint=constraint
+        )
+    
+    # Sample p from variational distribution using unpacked parameters
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    # Sample r from variational distribution using unpacked parameters
+    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    # Sample gate from variational distribution using unpacked parameters
+    numpyro.sample("gate", model_config.gate_distribution_guide.__class__(**gate_params))
 
-    # Sample global parameters outside the plate
-    numpyro.sample("p", dist.Beta(alpha_p, beta_p))
-    numpyro.sample("r", dist.Gamma(alpha_r, beta_r))
-    numpyro.sample("gate", dist.Beta(alpha_gate, beta_gate))
-
-    # Initialize p_capture parameters for all cells
-    alpha_p_capture = numpyro.param(
-        "alpha_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[0],
-        constraint=constraints.positive
-    )
-    beta_p_capture = numpyro.param(
-        "beta_p_capture",
-        jnp.ones(n_cells) * p_capture_prior[1],
-        constraint=constraints.positive
-    )
+    # Extract p_capture distribution values
+    p_capture_values = model_config.p_capture_distribution_guide.get_args()
+    # Extract p_capture distribution parameters and constraints
+    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_capture_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_capture_constraints.items():
+        p_capture_params[param_name] = numpyro.param(
+            f"p_capture_{param_name}",
+            jnp.ones(n_cells) * p_capture_values[param_name],
+            constraint=constraint
+        )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture",
-                dist.Beta(alpha_p_capture, beta_p_capture)
+                "p_capture", 
+                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
             )
     else:
         with numpyro.plate(
@@ -915,205 +936,14 @@ def zinbvcp_guide(
             n_cells,
             subsample_size=batch_size,
         ) as idx:
+            # Index the parameters before creating the distribution
+            batch_params = {
+                name: param[idx] for name, param in p_capture_params.items()
+            }
             numpyro.sample(
                 "p_capture",
-                dist.Beta(alpha_p_capture[idx], beta_p_capture[idx])
+                model_config.p_capture_distribution_guide.__class__(**batch_params)
             )
-
-# ------------------------------------------------------------------------------
-# Model registry
-# ------------------------------------------------------------------------------
-
-def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
-    """
-    Get model and guide functions for a specified model type.
-
-    This function returns the appropriate model and guide functions based on the
-    requested model type. Currently supports:
-        - "nbdm": Negative Binomial-Dirichlet Multinomial model
-        - "zinb": Zero-Inflated Negative Binomial model
-        - "nbvcp": Negative Binomial with variable mRNA capture probability
-        - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
-          probability
-
-    Parameters
-    ----------
-    model_type : str
-        The type of model to retrieve functions for. Must be one of ["nbdm",
-        "zinb", "nbvcp", "zinbvcp", "nbdm_mix", "zinb_mix", "nbvcp_mix",
-        "zinbvcp_mix"].
-
-    Returns
-    -------
-    Tuple[Callable, Callable]
-        A tuple containing (model_function, guide_function) for the requested
-        model type.
-
-    Raises
-    ------
-    ValueError
-        If an unsupported model type is provided.
-    """
-    # Handle Negative Binomial-Dirichlet Multinomial model
-    if model_type == "nbdm":
-        # Import model and guide functions locally to avoid circular imports
-        from .models import nbdm_model, nbdm_guide
-        return nbdm_model, nbdm_guide
-    
-    # Handle Zero-Inflated Negative Binomial model
-    elif model_type == "zinb":
-        # Import model and guide functions locally to avoid circular imports
-        from .models import zinb_model, zinb_guide
-        return zinb_model, zinb_guide
-    
-    # Handle Negative Binomial with variable mRNA capture probability model
-    elif model_type == "nbvcp":
-        # Import model and guide functions locally to avoid circular imports
-        from .models import nbvcp_model, nbvcp_guide
-        return nbvcp_model, nbvcp_guide
-    
-    # Handle Zero-Inflated Negative Binomial with variable capture probability
-    elif model_type == "zinbvcp":
-        # Import model and guide functions locally to avoid circular imports
-        from .models import zinbvcp_model, zinbvcp_guide
-        return zinbvcp_model, zinbvcp_guide
-    
-    # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
-    elif model_type == "nbdm_mix":
-        # Import model and guide functions locally to avoid circular imports
-        from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
-        return nbdm_mixture_model, nbdm_mixture_guide
-
-    # Handle Zero-Inflated Negative Binomial Mixture Model
-    elif model_type == "zinb_mix":
-        # Import model and guide functions locally to avoid circular imports
-        from .models_mix import zinb_mixture_model, zinb_mixture_guide
-        return zinb_mixture_model, zinb_mixture_guide
-    
-    # Handle Negative Binomial-Variable Capture Probability Mixture Model
-    elif model_type == "nbvcp_mix":
-        # Import model and guide functions locally to avoid circular imports
-        from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
-        return nbvcp_mixture_model, nbvcp_mixture_guide
-    
-    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability
-    # Mixture Model
-    elif model_type == "zinbvcp_mix":
-        # Import model and guide functions locally to avoid circular imports
-        from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
-        return zinbvcp_mixture_model, zinbvcp_mixture_guide
-    
-    # Raise error for unsupported model types
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
-
-# ------------------------------------------------------------------------------
-# Model default priors
-# ------------------------------------------------------------------------------
-
-def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
-    """
-    Get default prior parameters for a specified model type.
-
-    This function returns a dictionary of default prior parameters based on the
-    requested model type. Currently supports:
-        - "nbdm": Negative Binomial-Dirichlet Multinomial model
-        - "zinb": Zero-Inflated Negative Binomial model
-        - "nbvcp": Negative Binomial with variable mRNA capture probability
-          model
-        - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
-          probability model
-
-    Parameters
-    ----------
-    model_type : str
-        The type of model to get default priors for. Must be one of ["nbdm",
-        "zinb", "nbvcp", "zinbvcp"]. For custom models, returns an empty
-        dictionary.
-
-    Returns
-    -------
-    Dict[str, Tuple[float, float]]
-        A dictionary mapping parameter names to prior parameter tuples: - For
-        "nbdm":
-            - 'p_prior': (alpha, beta) for Beta prior on p parameter
-            - 'r_prior': (shape, rate) for Gamma prior on r parameter
-        - For "zinb":
-            - 'p_prior': (alpha, beta) for Beta prior on p parameter  
-            - 'r_prior': (shape, rate) for Gamma prior on r parameter
-            - 'gate_prior': (alpha, beta) for Beta prior on gate parameter
-        - For "nbvcp":
-            - 'p_prior': (alpha, beta) for Beta prior on base success
-              probability p
-            - 'r_prior': (shape, rate) for Gamma prior on dispersion parameters
-            - 'p_capture_prior': (alpha, beta) for Beta prior on capture
-              probabilities
-        - For "zinbvcp":
-            - 'p_prior': (alpha, beta) for Beta prior on base success
-              probability p
-            - 'r_prior': (shape, rate) for Gamma prior on dispersion parameters
-            - 'p_capture_prior': (alpha, beta) for Beta prior on capture
-              probabilities
-            - 'gate_prior': (alpha, beta) for Beta prior on dropout
-              probabilities
-        - For custom models: empty dictionary
-    """
-    if model_type == "nbdm":
-        prior_params = {
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1)
-        }
-    elif model_type == "zinb":
-        prior_params = {
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1),
-            'gate_prior': (1, 1)
-        }
-    elif model_type == "nbvcp":
-        prior_params = {
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1),
-            'p_capture_prior': (1, 1)
-        }
-    elif model_type == "zinbvcp":
-        prior_params = {
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1),
-            'p_capture_prior': (1, 1),
-            'gate_prior': (1, 1)
-        }
-    elif model_type == "nbdm_mix":
-        prior_params = {
-            'mixing_prior': (1, 1),
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1)
-        }
-    elif model_type == "zinb_mix":
-        prior_params = {
-            'mixing_prior': (1, 1),
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1),
-            'gate_prior': (1, 1)
-        }
-    elif model_type == "nbvcp_mix":
-        prior_params = {
-            'mixing_prior': (1, 1),
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1),
-            'p_capture_prior': (1, 1)
-        }
-    elif model_type == "zinbvcp_mix":
-        prior_params = {
-            'mixing_prior': (1, 1),
-            'p_prior': (1, 1),
-            'r_prior': (2, 0.1),
-            'p_capture_prior': (1, 1),
-            'gate_prior': (1, 1)
-        }
-    else:
-        prior_params = {}  # Empty dict for custom models if none provided
-
-    return prior_params
 
 # ------------------------------------------------------------------------------
 # Log Likelihood functions
@@ -1140,11 +970,10 @@ def nbdm_log_likelihood(
         Array of shape (n_cells, n_genes) containing observed counts
     params : Dict
         Dictionary containing model parameters: 
-            - 'p': success probability parameter
-            - 'r': dispersion parameters for each gene
+            - 'p': success probability parameter (scalar)
+            - 'r': dispersion parameters for each gene (vector of length n_genes)
     batch_size : Optional[int]
-        Size of mini-batches for stochastic computation. If None, uses full
-        dataset.
+        Size of mini-batches for stochastic computation. If None, uses full dataset.
     cells_axis: int = 0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
@@ -1166,7 +995,7 @@ def nbdm_log_likelihood(
     if return_by not in ['cell', 'gene']:
         raise ValueError("return_by must be one of ['cell', 'gene']")
 
-    # Extract parameters from dictionary
+    # Extract parameters from dictionary - handle both old and new formats
     p = jnp.squeeze(params['p']).astype(dtype)
     r = jnp.squeeze(params['r']).astype(dtype)
     r_total = jnp.sum(r)

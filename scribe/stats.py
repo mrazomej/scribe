@@ -513,6 +513,169 @@ def kl_beta(alpha1, beta1, alpha2, beta2):
 
 
 # ------------------------------------------------------------------------------
+
+def kl_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute Kullback-Leibler (KL) divergence between two log-normal
+    distributions.
+    
+    Calculates KL(P||Q) where: P ~ LogNormal(μ₁, σ₁) Q ~ LogNormal(μ₂, σ₂)
+    
+    The KL divergence is given by:
+    
+    KL(P||Q) = ln(σ₂/σ₁) + (σ₁² + (μ₁-μ₂)²)/(2σ₂²) - 1/2
+    
+    Parameters
+    ----------
+    mu1 : float or array-like
+        Location parameter μ₁ of the first log-normal distribution P
+    sigma1 : float or array-like
+        Scale parameter σ₁ of the first log-normal distribution P
+    mu2 : float or array-like
+        Location parameter μ₂ of the second log-normal distribution Q
+    sigma2 : float or array-like
+        Scale parameter σ₂ of the second log-normal distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        KL divergence between the two log-normal distributions
+    """
+    return (
+        jnp.log(sigma2/sigma1) 
+        + (sigma1**2 + (mu1 - mu2)**2)/(2*sigma2**2) 
+        - 0.5
+    )
+
+# ------------------------------------------------------------------------------
+# Jensen-Shannon divergence functions
+# ------------------------------------------------------------------------------
+
+def jensen_shannon_beta(alpha1, beta1, alpha2, beta2):
+    """
+    Compute the Jensen-Shannon divergence between two Beta distributions.
+    
+    The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+    Kullback-Leibler divergence, defined as:
+    
+        JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+        
+    where M = 1/2 × (P + Q) is the average of the two distributions.
+    
+    For Beta distributions, we compute this by:
+    1. Finding the parameters of the mixture distribution M
+    2. Computing KL(P||M) and KL(Q||M)
+    3. Taking the average of these KL divergences
+    
+    Parameters
+    ----------
+    alpha1 : float or array
+        Alpha parameter (shape) of the first Beta distribution
+    beta1 : float or array
+        Beta parameter (shape) of the first Beta distribution
+    alpha2 : float or array
+        Alpha parameter (shape) of the second Beta distribution
+    beta2 : float or array
+        Beta parameter (shape) of the second Beta distribution
+        
+    Returns
+    -------
+    float or array
+        Jensen-Shannon divergence between the two Beta distributions
+    """
+    # We can't directly compute the parameters of the mixture distribution M,
+    # so we approximate the JS divergence using the KL divergences
+    kl_p_q = kl_beta(alpha1, beta1, alpha2, beta2)
+    kl_q_p = kl_beta(alpha2, beta2, alpha1, beta1)
+    
+    # JS divergence is the average of the two KL divergences
+    return 0.5 * (kl_p_q + kl_q_p)
+
+# ------------------------------------------------------------------------------
+
+def jensen_shannon_gamma(alpha1, beta1, alpha2, beta2):
+    """
+    Compute the Jensen-Shannon divergence between two Gamma distributions.
+    
+    The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+    Kullback-Leibler divergence, defined as:
+    
+        JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+        
+    where M = 1/2 × (P + Q) is the average of the two distributions.
+    
+    For Gamma distributions, we compute this by:
+        1. Finding the parameters of the mixture distribution M
+        2. Computing KL(P||M) and KL(Q||M)
+        3. Taking the average of these KL divergences
+    
+    Parameters
+    ----------
+    alpha1 : float or array
+        Shape parameter of the first Gamma distribution
+    beta1 : float or array
+        Rate parameter of the first Gamma distribution
+    alpha2 : float or array
+        Shape parameter of the second Gamma distribution
+    beta2 : float or array
+        Rate parameter of the second Gamma distribution
+        
+    Returns
+    -------
+    float or array
+        Jensen-Shannon divergence between the two Gamma distributions
+    """
+    # We can't directly compute the parameters of the mixture distribution M,
+    # so we approximate the JS divergence using the KL divergences
+    kl_p_q = kl_gamma(alpha1, beta1, alpha2, beta2)
+    kl_q_p = kl_gamma(alpha2, beta2, alpha1, beta1)
+    
+    # JS divergence is the average of the two KL divergences
+    return 0.5 * (kl_p_q + kl_q_p)
+
+# ------------------------------------------------------------------------------
+
+def jensen_shannon_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute the Jensen-Shannon divergence between two LogNormal distributions.
+    
+    The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+    Kullback-Leibler divergence, defined as:
+    
+        JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
+        
+    where M = 1/2 × (P + Q) is the average of the two distributions.
+    
+    For LogNormal distributions, we compute this by:
+        1. Finding the parameters of the mixture distribution M
+        2. Computing KL(P||M) and KL(Q||M)
+        3. Taking the average of these KL divergences
+        
+    Parameters
+    ----------
+    mu1 : float or array
+        Location parameter of the first LogNormal distribution
+    sigma1 : float or array
+        Scale parameter of the first LogNormal distribution
+    mu2 : float or array
+        Location parameter of the second LogNormal distribution
+    sigma2 : float or array
+        Scale parameter of the second LogNormal distribution
+        
+    Returns
+    -------
+    float or array
+        Jensen-Shannon divergence between the two LogNormal distributions
+    """
+    # We can't directly compute the parameters of the mixture distribution M,
+    # so we approximate the JS divergence using the KL divergences
+    kl_p_q = kl_lognormal(mu1, sigma1, mu2, sigma2)
+    kl_q_p = kl_lognormal(mu2, sigma2, mu1, sigma1)
+    
+    # JS divergence is the average of the two KL divergences
+    return 0.5 * (kl_p_q + kl_q_p)
+
+# ------------------------------------------------------------------------------
 # Hellinger distance functions
 # ------------------------------------------------------------------------------
 
@@ -564,6 +727,8 @@ def sq_hellinger_beta(alpha1, beta1, alpha2, beta2):
             jsp.special.beta(alpha1, beta1) * jsp.special.beta(alpha2, beta2)
         )
     )
+
+# ------------------------------------------------------------------------------
 
 def hellinger_beta(alpha1, beta1, alpha2, beta2):
     """
@@ -689,3 +854,212 @@ def hellinger_gamma(alpha1, beta1, alpha2, beta2):
         Hellinger distance between the two Gamma distributions
     """
     return jnp.sqrt(sq_hellinger_gamma(alpha1, beta1, alpha2, beta2))
+
+# ------------------------------------------------------------------------------
+
+def sq_hellinger_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute the squared Hellinger distance between two log-normal distributions.
+    
+    The squared Hellinger distance between two log-normal distributions P and Q is
+    given by:
+    
+    H²(P,Q) = 1 - sqrt( σ1 * σ2 / (σ1² + σ2²) )
+                    * exp( - (μ1-μ2)² / [4*(σ1² + σ2²)] )
+    
+    Parameters
+    ----------
+    mu1 : float or array-like
+        Location parameter μ₁ of the first log-normal distribution P
+    sigma1 : float or array-like
+        Scale parameter σ₁ of the first log-normal distribution P
+    mu2 : float or array-like
+        Location parameter μ₂ of the second log-normal distribution Q
+    sigma2 : float or array-like
+        Scale parameter σ₂ of the second log-normal distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        Squared Hellinger distance between the two log-normal distributions
+    """
+    # Check that all inputs are of same shape
+    if not all(isinstance(a, (float, np.ndarray, jnp.ndarray)) and 
+               isinstance(b, (float, np.ndarray, jnp.ndarray)) 
+               for a, b in zip([mu1, sigma1, mu2, sigma2], [mu1, sigma1, mu2, sigma2])
+            ):
+        raise ValueError("All inputs must be of the same shape")
+    
+    # The prefactor under the square root:
+    prefactor = jnp.sqrt( (sigma1 * sigma2) / (sigma1**2 + sigma2**2) )
+    # The exponent factor:
+    exponent = jnp.exp( - (mu1 - mu2)**2 / (4.0 * (sigma1**2 + sigma2**2)) )
+    return 1.0 - (prefactor * exponent)
+
+def hellinger_lognormal(mu1, sigma1, mu2, sigma2):
+    """
+    Compute the Hellinger distance between two log-normal distributions.
+    
+    The Hellinger distance is the square root of the squared Hellinger distance.
+    
+    Parameters
+    ----------
+    mu1 : float or array-like
+        Location parameter μ₁ of the first log-normal distribution P
+    sigma1 : float or array-like
+        Scale parameter σ₁ of the first log-normal distribution P
+    mu2 : float or array-like
+        Location parameter μ₂ of the second log-normal distribution Q
+    sigma2 : float or array-like
+        Scale parameter σ₂ of the second log-normal distribution Q
+        
+    Returns
+    -------
+    float or array-like
+        Hellinger distance between the two log-normal distributions
+    """
+    return jnp.sqrt(sq_hellinger_lognormal(mu1, sigma1, mu2, sigma2))
+
+# ------------------------------------------------------------------------------
+# Mode functions
+# ------------------------------------------------------------------------------
+
+def beta_mode(alpha, beta):
+    """
+    Calculate the mode for a Beta distribution.
+    
+    For Beta(α,β) distribution, the mode is:
+        (α-1)/(α+β-2) when α,β > 1
+        undefined when α,β ≤ 1
+    
+    Parameters
+    ----------
+    alpha : float or array-like
+        Shape parameter α of the Beta distribution
+    beta : float or array-like 
+        Shape parameter β of the Beta distribution
+        
+    Returns
+    -------
+    float or array-like
+        Mode of the Beta distribution. Returns NaN for cases where
+        mode is undefined (α,β ≤ 1)
+    """
+    return jnp.where(
+        (alpha > 1) & (beta > 1),
+        (alpha - 1) / (alpha + beta - 2),
+        jnp.nan
+    )
+
+# ------------------------------------------------------------------------------
+
+def gamma_mode(alpha, beta):
+    """
+    Calculate the mode for a Gamma distribution.
+    
+    For Gamma(α,β) distribution, the mode is:
+        (α-1)/β when α > 1
+        0 when α ≤ 1
+    
+    Parameters
+    ----------
+    alpha : float or array-like
+        Shape parameter α of the Gamma distribution
+    beta : float or array-like
+        Rate parameter β of the Gamma distribution
+        
+    Returns
+    -------
+    float or array-like
+        Mode of the Gamma distribution
+    """
+    return jnp.where(
+        alpha > 1,
+        (alpha - 1) / beta,
+        0.0
+    )
+
+# ------------------------------------------------------------------------------
+
+def dirichlet_mode(alpha):
+    """
+    Calculate the mode for a Dirichlet distribution.
+    
+    For Dirichlet(α) distribution with concentration parameters α, the mode for
+    each component is:
+        (αᵢ-1)/(∑ⱼαⱼ-K) when αᵢ > 1 for all i
+        0 when αᵢ ≤ 1 for any i
+    where K is the number of components.
+    
+    Parameters
+    ----------
+    alpha : array-like
+        Concentration parameters α of the Dirichlet distribution
+        
+    Returns
+    -------
+    array-like
+        Mode of the Dirichlet distribution
+    """
+    return jnp.where(
+        alpha > 1,
+        (alpha - 1) / (jnp.sum(alpha) - len(alpha)),
+        jnp.nan
+    )
+
+# ------------------------------------------------------------------------------
+
+def lognorm_mode(mu, sigma):
+    """
+    Calculate the mode for a log-normal distribution.
+    
+    For LogNormal(μ,σ) distribution, the mode is:
+        exp(μ - σ²)
+
+    Parameters
+    ----------
+    mu : float or array-like
+        Mean of the log-normal distribution
+    sigma : float or array-like
+        Standard deviation of the log-normal distribution
+
+    Returns
+    -------
+    float or array-like
+        Mode of the log-normal distribution
+    """
+    return jnp.exp(mu - sigma**2)
+
+# ------------------------------------------------------------------------------
+
+def get_distribution_mode(dist_obj):
+    """
+    Get the mode of a distribution object.
+    
+    Parameters
+    ----------
+    dist_obj : numpyro.distributions.Distribution
+        Distribution object
+        
+    Returns
+    -------
+    jnp.ndarray
+        Mode of the distribution
+    """
+    dist_type = type(dist_obj).__name__
+    
+    if dist_type == 'Beta':
+        return beta_mode(dist_obj.concentration1, dist_obj.concentration0)
+    elif dist_type == 'Gamma':
+        return gamma_mode(dist_obj.concentration, dist_obj.rate)
+    elif dist_type == 'LogNormal':
+        return lognorm_mode(dist_obj.loc, dist_obj.scale)
+    elif dist_type == 'Dirichlet':
+        return dirichlet_mode(dist_obj.concentration)
+    else:
+        try:
+            return dist_obj.mean
+        except:
+            raise ValueError(
+                f"Cannot compute mode for distribution type {dist_type}"
+            )

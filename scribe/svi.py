@@ -24,7 +24,7 @@ import scipy.sparse
 from anndata import AnnData
 
 # Imports for model-specific functions
-from .models import get_model_and_guide, get_default_priors
+from .model_registry import get_model_and_guide
 
 # ------------------------------------------------------------------------------
 # Stochastic Variational Inference with Numpyro
@@ -32,8 +32,6 @@ from .models import get_model_and_guide, get_default_priors
 
 def create_svi_instance(
     model_type: Optional[str] = None,
-    custom_model: Optional[Callable] = None,
-    custom_guide: Optional[Callable] = None,
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ):
@@ -43,21 +41,18 @@ def create_svi_instance(
     Parameters
     ----------
     model_type : str, optional
-        Type of model to use. Options are:
-            - "nbdm": Negative Binomial-Dirichlet Multinomial model.
-            - "zinb": Zero-Inflated Negative Binomial model.
-            - "nbvcp": Negative Binomial with variable capture probability.
+        Type of model to use. Must be one of:
+            - "nbdm": Negative Binomial model
+            - "zinb": Zero-Inflated Negative Binomial model
+            - "nbvcp": Negative Binomial with variable capture probability
             - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
-              probability. 
-        Ignored if custom_model and custom_guide are provided.
-    custom_model : callable, optional
-        Custom model function to use instead of built-in models
-    custom_guide : callable, optional
-        Custom guide function to use instead of built-in guides
+              probability
+            - Mixture variants with "_mix" suffix (e.g. "nbdm_mix")
     optimizer : numpyro.optim.optimizers, optional
-        Optimizer to use. Default is Adam with step_size=0.001
+        Optimizer to use for stochastic optimization. Default is Adam with 
+        step_size=0.001
     loss : numpyro.infer.elbo, optional
-        Loss function to use. Default is TraceMeanField_ELBO
+        Loss function for variational inference. Default is TraceMeanField_ELBO()
 
     Returns
     -------
@@ -67,21 +62,10 @@ def create_svi_instance(
     Raises
     ------
     ValueError
-        If model_type is invalid or if only one of custom_model/custom_guide is
-        provided
+        If model_type is invalid
     """
-    # If custom model/guide are provided, use those
-    if custom_model is not None or custom_guide is not None:
-        if custom_model is None or custom_guide is None:
-            raise ValueError(
-                "Both custom_model and custom_guide must be provided together"
-            )
-        model_fn = custom_model
-        guide_fn = custom_guide
-    
-    # Otherwise use built-in models from the registry
-    else:
-        model_fn, guide_fn = get_model_and_guide(model_type)
+    # Get model and guide functions
+    model_fn, guide_fn = get_model_and_guide(model_type)
 
     return SVI(
         model_fn,
@@ -96,13 +80,11 @@ def run_inference(
     svi_instance: SVI,
     rng_key: random.PRNGKey,
     counts: jnp.ndarray,
-    n_steps: int = 100_000,
-    batch_size: int = 512,
     model_type: str = "nbdm",
-    n_components: Optional[int] = None,
-    prior_params: Optional[Dict] = None,
+    model_config: Optional[ModelConfig] = None,
+    n_steps: int = 100_000,
+    batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    custom_args: Optional[Dict] = None,
     stable_update: bool = True,
 ) -> numpyro.infer.svi.SVIRunResult:
     """
@@ -153,15 +135,9 @@ def run_inference(
     # Extract dimensions and compute total counts based on cells axis
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
-        total_counts = counts.sum(axis=1)
     else:
         n_genes, n_cells = counts.shape
-        total_counts = counts.sum(axis=0)
         counts = counts.T  # Transpose to make cells rows for model
-
-    # Set default prior parameters for built-in models if none provided
-    if prior_params is None:
-        prior_params = get_default_priors(model_type)
 
     # Prepare base arguments that all models should receive
     model_args = {
@@ -169,32 +145,24 @@ def run_inference(
         'n_genes': n_genes,
         'counts': counts,
         'batch_size': batch_size,
+        'model_config': model_config,
     }
 
     # Add model-specific parameters
     if model_type == "nbdm":
-        model_args['total_counts'] = total_counts
+        model_args['total_counts'] = counts.sum(axis=1)
 
     # Check if mixture model
     if model_type is not None and "mix" in model_type:
         # Check if n_components is provided
-        if n_components is None:
+        if model_config.n_components is None:
             raise ValueError(
                 f"n_components must be specified for mixture model {model_type}"
             )
-        elif n_components == 1:
+        elif model_config.n_components == 1:
             raise ValueError(
                 f"n_components must be greater than 1 for mixture model {model_type}"
             )
-        # Add n_components to model args
-        model_args['n_components'] = n_components
-    
-    # Add all prior parameters to model args
-    model_args.update(prior_params)
-
-    # Add any custom arguments
-    if custom_args is not None:
-        model_args.update(custom_args)
 
     # Run the inference algorithm
     return svi_instance.run(
@@ -210,87 +178,155 @@ def run_inference(
 
 def run_scribe(
     counts: Union[jnp.ndarray, "AnnData"],
-    model_type: Optional[str] = None,
+    # Model configuration
+    zero_inflated: bool = False,
+    variable_capture: bool = False, 
+    mixture_model: bool = False,
     n_components: Optional[int] = None,
-    custom_model: Optional[Callable] = None,
-    custom_guide: Optional[Callable] = None,
-    custom_args: Optional[Dict] = None,
-    param_spec: Optional[Dict] = None,  # For custom models
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    # Distribution choices
+    r_dist: str = "gamma",
+    # Prior parameters
+    r_prior: Optional[tuple] = None,
+    p_prior: Optional[tuple] = None,
+    gate_prior: Optional[tuple] = None,
+    p_capture_prior: Optional[tuple] = None,
+    mixing_prior: Optional[tuple] = None,
+    # Training parameters
     n_steps: int = 100_000,
-    batch_size: int = 512,
-    prior_params: Optional[Dict] = None,
-    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
+    batch_size: Optional[int] = None,
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
+    # Data handling options
     cells_axis: int = 0,
     layer: Optional[str] = None,
+    # Extra options
+    seed: int = 42,
     stable_update: bool = True,
-) -> Union[
-    NBDMResults, 
-    ZINBResults, 
-    NBVCPResults, 
-    ZINBVCPResults, 
-    NBDMMixtureResults, 
-    ZINBMixtureResults, 
-    NBVCPMixtureResults,
-    ZINBVCPMixtureResults,
-    CustomResults
-]:
+    r_guide: Optional[str] = None,
+    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
+) -> ScribeResults:
     """
-    Run the complete SCRIBE inference pipeline.
+    Run SCRIBE inference pipeline to fit a probabilistic model to single-cell
+    RNA sequencing data.
+    
+    This function provides a high-level interface to configure and run SCRIBE
+    models. It handles data preprocessing, model configuration, variational
+    inference, and results packaging.
     
     Parameters
     ----------
-    counts : Union[jax.numpy.ndarray, AnnData]
-        Either a count matrix or an AnnData object. 
-        - If ndarray and cells_axis=0 (default), shape is (n_cells, n_genes)
-        - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
-        - If AnnData, will use .X or specified layer
-    model_type : str
-        Type of model to use or identifier for custom model
-    n_components : int, optional
-        Number of components to fit for mixture models. Default is None.
-    custom_model : Callable, optional
-        Custom model function. If provided, custom_guide must also be provided.
-    custom_guide : Callable, optional
-        Custom guide function. If provided, custom_model must also be provided.
-    param_spec : Dict, optional
-        Parameter specification for custom models. Required if custom_model is
-        provided. Maps parameter names to their types ('global', 'gene-specific',
-        or 'cell-specific').
-    prior_params : Dict, optional
-        Dictionary of prior parameters specific to the model.
-    loss : numpyro.infer.elbo, optional
-        Loss function to use for the SVI. Default is TraceMeanField_ELBO
-    optimizer : numpyro.optim.optimizers, optional
-        Optimizer to use for SVI. Default is Adam with step_size=0.001
-    cells_axis : int, optional
-        Axis along which cells are arranged. 0 means cells are rows (default),
-        1 means cells are columns
-    layer : str, optional
-        If counts is AnnData, specifies which layer to use. If None, uses .X
-    stable_update : bool, optional
-        Whether to use stable update method. Default is True.
-
+    counts : Union[jnp.ndarray, AnnData]
+        Count matrix or AnnData object containing counts. If AnnData, counts
+        should be in .X or specified layer. Shape should be (cells, genes) if
+        cells_axis=0, or (genes, cells) if cells_axis=1.
+        
+    Model Configuration:
+    -------------------
+    zero_inflated : bool, default=False
+        Whether to use zero-inflated negative binomial (ZINB) model to account
+        for dropout events
+    variable_capture : bool, default=False 
+        Whether to model cell-specific mRNA capture efficiencies
+    mixture_model : bool, default=False
+        Whether to use mixture model components for heterogeneous populations
+    n_components : Optional[int], default=None
+        Number of mixture components. Required if mixture_model=True.
+        
+    Distribution Choices:
+    -------------------
+    r_dist : str, default="gamma"
+        Distribution family for dispersion parameter. Options:
+            - "gamma": Gamma distribution (default)
+            - "lognormal": Log-normal distribution
+        
+    Prior Parameters:
+    ----------------
+    r_prior : Optional[tuple], default=None
+        Prior parameters for dispersion (r) distribution:
+            - For gamma: (shape, rate), defaults to (2, 0.1)
+            - For lognormal: (mu, sigma), defaults to (1, 1)
+    p_prior : Optional[tuple], default=None
+        Prior parameters (alpha, beta) for success probability Beta
+        distribution. Defaults to (1, 1).
+    gate_prior : Optional[tuple], default=None
+        Prior parameters (alpha, beta) for dropout gate Beta distribution. Only
+        used if zero_inflated=True. Defaults to (1, 1).
+    p_capture_prior : Optional[tuple], default=None
+        Prior parameters (alpha, beta) for capture efficiency Beta distribution.
+        Only used if variable_capture=True. Defaults to (1, 1).
+    mixing_prior : Optional[tuple], default=None
+        Prior concentration parameter(s) for mixture weights Dirichlet
+        distribution. Required if mixture_model=True.
+        
+    Training Parameters:
+    ------------------
+    n_steps : int, default=100_000
+        Number of optimization steps for variational inference
+    batch_size : Optional[int], default=None
+        Mini-batch size for stochastic optimization. If None, uses full dataset.
+    optimizer : numpyro.optim.optimizers, default=Adam(step_size=0.001)
+        Optimizer for variational inference
+        
+    Data Handling:
+    -------------
+    cells_axis : int, default=0
+        Axis for cells in count matrix (0=rows, 1=columns)
+    layer : Optional[str], default=None
+        Layer in AnnData to use for counts. If None, uses .X.
+        
+    Additional Options:
+    -----------------
+    seed : int, default=42
+        Random seed for reproducibility
+    stable_update : bool, default=True
+        Whether to use numerically stable parameter updates during optimization
+    r_guide : Optional[str], default=None
+        Distribution family for guide of dispersion parameter. If None, uses
+        same as r_dist. Options: "gamma" or "lognormal".
+    loss : numpyro.infer.elbo, default=TraceMeanField_ELBO()
+        Loss function for variational inference
+        
     Returns
     -------
-    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults, NBDMMixtureResults, ZINBMixtureResults, NBVCPMixtureResults, ZINBVCPMixtureResults, CustomResults]
-        Results container with inference results and optional metadata
+    ScribeResults
+        Results object containing:
+            - Fitted model parameters
+            - Loss history
+            - Model configuration
+            - Prior parameters
+            - Dataset metadata
     """
-    # Validate custom model inputs
-    if custom_model is not None or custom_guide is not None:
-        if custom_model is None or custom_guide is None:
+    # Determine model type based on boolean flags
+    base_model = "nbdm"
+    if zero_inflated:
+        base_model = "zinb"
+    if variable_capture:
+        if zero_inflated:
+            base_model = "zinbvcp"
+        else:
+            base_model = "nbvcp"
+    
+    if n_components is not None and not mixture_model:
+        raise ValueError(
+            "n_components must be None when mixture_model=False"
+        )
+            
+    # Define model type
+    model_type = base_model
+    # Check if mixture model
+    if mixture_model:
+        # Validate n_components for mixture models
+        if n_components is None or n_components < 2:
             raise ValueError(
-                "Both custom_model and custom_guide must be provided together"
+                "n_components must be specified and greater than 1 "
+                "when mixture_model=True"
             )
-        if param_spec is None:
+        # Validate mixing_prior for mixture models
+        if mixing_prior is None:
             raise ValueError(
-                "param_spec must be provided when using custom models"
+                "mixing_prior must be specified when mixture_model=True"
             )
-
-    # Set default prior parameters if none provided and using built-in model
-    if prior_params is None and custom_model is None:
-        prior_params = get_default_priors(model_type)
+        # Add mixture suffix if needed
+        model_type = f"{base_model}_mix"
     
     # Handle AnnData input
     if hasattr(counts, "obs"):
@@ -309,434 +345,149 @@ def run_scribe(
     else:
         n_genes, n_cells = count_data.shape
         count_data = count_data.T
-
-    # Create SVI instance
-    if custom_model is not None:
-        # Use custom model and guide
-        svi = create_svi_instance(
-            custom_model=custom_model,
-            custom_guide=custom_guide,
-            optimizer=optimizer,
-            loss=loss
-        )
-    else:
-        # Use built-in model
-        svi = create_svi_instance(
-            model_type=model_type,
-            optimizer=optimizer,
-            loss=loss
-        )
-
-    # Run inference
-    svi_results = run_inference(
-        svi,
-        rng_key,
-        jnp.array(count_data),
-        n_steps=n_steps,
-        batch_size=batch_size,
-        model_type=model_type,
-        prior_params=prior_params,
-        cells_axis=0,
-        stable_update=stable_update,
-        n_components=n_components,
-        custom_args=custom_args
-    )
-
-    # Create results object
-    if custom_model is not None:
-        # Create CustomResults for custom model
-        if adata is not None:
-            results = CustomResults.from_anndata(
-                adata=adata,
-                params=svi_results.params,
-                loss_history=svi_results.losses,
-                model_type=model_type,
-                param_spec=param_spec,
-                custom_model=custom_model,
-                custom_guide=custom_guide,
-                n_components=n_components,
-                prior_params=prior_params
-            )
-        else:
-            results = CustomResults(
-                params=svi_results.params,
-                loss_history=svi_results.losses,
-                n_cells=n_cells,
-                n_genes=n_genes,
-                model_type=model_type,
-                param_spec=param_spec,
-                custom_model=custom_model,
-                custom_guide=custom_guide,
-                n_components=n_components,
-                prior_params=prior_params
-            )
-    else:
-        # Get the appropriate results class
-        results_class = {
-            "nbdm": NBDMResults,
-            "zinb": ZINBResults,
-            "nbvcp": NBVCPResults,
-            "zinbvcp": ZINBVCPResults,
-            "nbdm_mix": NBDMMixtureResults,
-            "zinb_mix": ZINBMixtureResults,
-            "nbvcp_mix": NBVCPMixtureResults,
-            "zinbvcp_mix": ZINBVCPMixtureResults,
-        }.get(model_type)
-
-        if results_class is None:
-            raise ValueError(f"Unknown model type: {model_type}")
-
-        # Get default param_spec if not provided
-        param_spec = results_class.get_param_spec()
-
-        # Create results object
-        if adata is not None:
-            # Create results object from AnnData
-            results = results_class.from_anndata(
-                adata=adata,
-                params=svi_results.params,
-                loss_history=svi_results.losses,
-                model_type=model_type,
-                param_spec=param_spec,
-                n_components=n_components,
-                prior_params=prior_params
-            )
-        else:
-            # Create results object
-            results = results_class(
-                params=svi_results.params,
-                loss_history=svi_results.losses,
-                n_cells=n_cells,
-                n_genes=n_genes,
-                model_type=model_type,
-                param_spec=param_spec,
-                n_components=n_components,
-                prior_params=prior_params
-            )
-
-    return results
-
-# ------------------------------------------------------------------------------
-# Continue training from a previous SCRIBE results object
-# ------------------------------------------------------------------------------
-
-def rerun_scribe(
-    results: Union[
-        NBDMResults, 
-        ZINBResults, 
-        NBVCPResults, 
-        ZINBVCPResults, 
-        NBDMMixtureResults,
-        ZINBMixtureResults,
-        NBVCPMixtureResults,
-        ZINBVCPMixtureResults,
-        CustomResults
-    ],
-    counts: Union[jnp.ndarray, "AnnData"],
-    n_steps: int = 100_000,
-    batch_size: int = 512,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
-    custom_args: Optional[Dict] = None,
-    loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
-    optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
-    cells_axis: int = 0,
-    layer: Optional[str] = None,
-    stable_update: bool = True,
-) -> Union[
-    NBDMResults, 
-    ZINBResults, 
-    NBVCPResults, 
-    ZINBVCPResults, 
-    NBDMMixtureResults,
-    ZINBMixtureResults,
-    NBVCPMixtureResults,
-    ZINBVCPMixtureResults,
-    CustomResults
-]:
-    """
-    Continue training from a previous SCRIBE results object.
-
-    This function creates a new results object starting from the parameters
-    of a previous run. This is useful when:
-        1. You want to run more iterations to improve convergence
-        2. You're doing incremental training as new data arrives
-        3. You're fine-tuning a model that was previously trained
-
-    Parameters
-    ----------
-    results : Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]
-        Previous results object containing trained parameters
-    counts : Union[jax.numpy.ndarray, AnnData]
-        Either a count matrix or an AnnData object. 
-        - If ndarray and cells_axis=0 (default), shape is (n_cells, n_genes)
-        - If ndarray and cells_axis=1, shape is (n_genes, n_cells)
-        - If AnnData, will use .X or specified layer
-    n_steps : int, optional
-        Number of optimization steps (default: 100,000)
-    batch_size : int, optional
-        Mini-batch size for stochastic optimization (default: 512)
-    rng_key : random.PRNGKey, optional
-        Random key for reproducibility (default: PRNGKey(42))
-    custom_args : Dict, optional
-        Dictionary of custom arguments for the model
-    loss : numpyro.infer.elbo, optional
-        Loss function to use (default: TraceMeanField_ELBO)
-    optimizer : numpyro.optim.optimizers, optional
-        Optimizer to use (default: Adam with step_size=0.001)
-    cells_axis : int, optional
-        Axis along which cells are arranged. 0 means cells are rows (default),
-        1 means cells are columns
-    layer : str, optional
-        If counts is AnnData, specifies which layer to use. If None, uses .X
-    stable_update : bool, optional
-        Whether to use stable update method. Default is True. If true,  returns
-        the current state if the the loss or the new state contains invalid
-        values.
-
-    Returns
-    -------
-    Union[NBDMResults, ZINBResults, NBVCPResults, ZINBVCPResults]
-        A new results object containing the continued training results
-    """
-    # Handle AnnData input
-    if hasattr(counts, "obs"):
-        adata = counts
-        count_data = adata.layers[layer] if layer else adata.X
-        if scipy.sparse.issparse(count_data):
-            count_data = count_data.toarray()
-        count_data = jnp.array(count_data)
-    else:
-        count_data = jnp.array(counts)
-        adata = None
-
-    # Extract dimensions and transpose if needed
-    if cells_axis == 0:
-        n_cells, n_genes = count_data.shape
-    else:
-        n_genes, n_cells = count_data.shape
-        count_data = count_data.T
-
-    # Verify dimensions match
-    if n_genes != results.n_genes:
-        raise ValueError(
-            f"Number of genes in counts ({n_genes}) doesn't match model "
-            f"({results.n_genes})"
-        )
-
-    # Get model and guide functions
-    model, guide = results.get_model_and_guide()
-
-    # Create SVI instance
-    svi = SVI(model, guide, optimizer, loss=loss)
-
-    # Get base model arguments from results class
-    model_args = results.get_model_args()
     
-    # Update with runtime-specific arguments
-    model_args.update({
+    # Set default priors based on distribution choices
+    if r_prior is None:
+        r_prior = (2, 0.1) if r_dist == "gamma" else (1, 1)
+    if p_prior is None:
+        p_prior = (1, 1)
+    if "zinb" in model_type and gate_prior is None:
+        gate_prior = (1, 1)
+    if "vcp" in model_type and p_capture_prior is None:
+        p_capture_prior = (1, 1)
+    if "mix" in model_type and mixing_prior is None:
+        mixing_prior = jnp.ones(n_components)
+
+    # Create random key
+    rng_key = random.PRNGKey(seed)
+    
+    # Create model config based on model type and specified distributions
+
+    # Set r distribution for model
+    if r_dist == "gamma":
+        r_dist_model = dist.Gamma(*r_prior)
+    elif r_dist == "lognormal":
+        r_dist_model = dist.LogNormal(*r_prior)
+    else:
+        raise ValueError(f"Unsupported r_dist: {r_dist}")
+
+    # Set r distribution for guide
+    if r_guide is not None:
+        r_dist_guide = dist.Gamma(*r_guide) if r_guide == "gamma" else dist.LogNormal(*r_guide)
+    else:
+        r_dist_guide = r_dist_model
+        
+    # Set p distribution for model and guide
+    p_dist_model = dist.Beta(*p_prior)
+    p_dist_guide = dist.Beta(*p_prior)
+
+    # Configure gate distribution if needed
+    gate_dist_model = None
+    gate_dist_guide = None
+    if "zinb" in model_type:
+        gate_dist_model = dist.Beta(*gate_prior)
+        gate_dist_guide = gate_dist_model
+            
+    # Configure capture probability distribution if needed
+    p_capture_dist_model = None
+    p_capture_dist_guide = None
+    if "vcp" in model_type:
+        p_capture_dist_model = dist.Beta(*p_capture_prior)
+        p_capture_dist_guide = p_capture_dist_model
+
+    # Configure mixing distribution if needed
+    mixing_dist_model = None
+    mixing_dist_guide = None
+    if "mix" in model_type:
+        mixing_dist_model = dist.Dirichlet(jnp.array(mixing_prior))
+        mixing_dist_guide = mixing_dist_model
+
+    # Create model_config with all the configurations
+    model_config = ModelConfig(
+        base_model=model_type,
+        r_distribution_model=r_dist_model,
+        r_distribution_guide=r_dist_guide,
+        r_param_prior=r_prior,
+        r_param_guide=r_prior,
+        p_distribution_model=p_dist_model,
+        p_distribution_guide=p_dist_guide,
+        p_param_prior=p_prior,
+        p_param_guide=p_prior,
+        gate_distribution_model=gate_dist_model,
+        gate_distribution_guide=gate_dist_guide,
+        gate_param_prior=gate_prior if gate_dist_model else None,
+        gate_param_guide=gate_prior if gate_dist_model else None,
+        p_capture_distribution_model=p_capture_dist_model,
+        p_capture_distribution_guide=p_capture_dist_guide,
+        p_capture_param_prior=p_capture_prior if p_capture_dist_model else None,
+        p_capture_param_guide=p_capture_prior if p_capture_dist_model else None,
+        n_components=n_components,
+        mixing_distribution_model=mixing_dist_model,
+        mixing_distribution_guide=mixing_dist_guide,
+        mixing_param_prior=mixing_prior,
+        mixing_param_guide=mixing_prior
+    )
+    
+    # Get model and guide functions
+    model, guide = get_model_and_guide(model_type)
+    
+    # Set up SVI
+    svi = SVI(model, guide, optimizer, loss=loss)
+    
+    # Prepare model arguments
+    model_args = {
+        'n_cells': n_cells,
+        'n_genes': n_genes,
         'counts': count_data,
         'batch_size': batch_size,
-    })
-
-    # Add prior parameters
-    model_args.update(results.prior_params)
-
-    # Add model-specific parameters
-    if results.model_type == "nbdm":
-        model_args['total_counts'] = count_data.sum(axis=1)
-   
-    # Add prior current parameters
-    model_args['init_params'] = results.params
-
-    # Add custom arguments
-    if custom_args is not None:
-        model_args.update(custom_args)
+        'model_config': model_config
+    }
     
-    # Initialize and run SVI
-    svi_state = svi.init(rng_key, **model_args)
+    # Add total_counts for NBDM model
+    if model_type == "nbdm":
+        model_args['total_counts'] = count_data.sum(axis=1)
+    
+    # Run inference
     svi_results = svi.run(
         rng_key,
         n_steps,
-        init_state=svi_state,
         stable_update=stable_update,
         **model_args
     )
-
-    # Create new results object
-    results_class = type(results)
-    combined_losses = jnp.concatenate([results.loss_history, svi_results.losses])
-
-    # Build common kwargs
-    results_kwargs = {
-        "params": svi_results.params,
-        "loss_history": combined_losses,
-        "model_type": results.model_type,
-        "param_spec": results.param_spec,
-        "n_components": results.n_components,
-        "prior_params": results.prior_params
-    }
-
-    # Add custom model specific arguments if needed
-    if results_class.__name__ == "CustomResults":
-        results_kwargs.update({
-            "custom_model": results.custom_model,
-            "custom_guide": results.custom_guide,
-        })
-
+    
+    # Create results object
     if adata is not None:
-        return results_class.from_anndata(
+        results = ScribeResults.from_anndata(
             adata=adata,
-            **results_kwargs
+            params=svi_results.params,
+            loss_history=svi_results.losses,
+            model_type=model_type,
+            model_config=model_config,
+            n_components=n_components,
+            prior_params={
+                'r_prior': r_prior,
+                'p_prior': p_prior,
+                'gate_prior': gate_prior if "zinb" in model_type else None,
+                'p_capture_prior': p_capture_prior if "vcp" in model_type else None,
+                'mixing_prior': mixing_prior if n_components is not None else None
+            }
         )
     else:
-        return results_class(
+        results = ScribeResults(
+            params=svi_results.params,
+            loss_history=svi_results.losses,
             n_cells=n_cells,
             n_genes=n_genes,
-            **results_kwargs
+            model_type=model_type,
+            model_config=model_config,
+            n_components=n_components,
+            prior_params={
+                'r_prior': r_prior,
+                'p_prior': p_prior,
+                'gate_prior': gate_prior if "zinb" in model_type else None,
+                'p_capture_prior': p_capture_prior if "vcp" in model_type else None,
+                'mixing_prior': mixing_prior if n_components is not None else None
+            }
         )
-
-# ------------------------------------------------------------------------------
-# Convert variational parameters to distributions
-# ------------------------------------------------------------------------------
-
-def params_to_dist(params: Dict, model: str, backend: str = "scipy") -> Dict[str, Any]:
-    """
-    Convert variational parameters to their corresponding distributions.
     
-    Parameters
-    ----------
-    params : Dict
-        Dictionary containing variational parameters with keys:
-            - alpha_p, beta_p: Beta distribution parameters for p
-            - alpha_r, beta_r: Gamma distribution parameters for r
-            - alpha_mixing: Dirichlet distribution parameters for mixing weights
-            - alpha_gate, beta_gate: Beta distribution parameters for gate
-    model : str
-        Model type. Must be one of: 'nbdm', 'zinb', 'nbvcp', 'zinbvcp',
-        'nbdm_mix', 'zinb_mix'
-    backend : str, optional
-        Statistical package to use for distributions. Must be one of:
-            - "scipy": Returns scipy.stats distributions (default)
-            - "numpyro": Returns numpyro.distributions
-        
-    Returns
-    -------
-    Dict[str, Any]
-        Dictionary mapping parameter names to their distributions
-    """
-    if model == "nbdm":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
-            }
-    elif model == "zinb":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    elif model == "nbvcp":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-    elif model == "zinbvcp":
-        if backend == "scipy":
-            return {
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    elif model == "nbdm_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r'])
-            }
-    elif model == "zinb_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    elif model == "nbvcp_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture'])
-            }
-    elif model == "zinbvcp_mix":
-        if backend == "scipy":
-            return {
-                'mixing_probs': stats.dirichlet(params['alpha_mixing']),
-                'p': stats.beta(params['alpha_p'], params['beta_p']),
-                'r': stats.gamma(params['alpha_r'], loc=0, scale=1/params['beta_r']),
-                'p_capture': stats.beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': stats.beta(params['alpha_gate'], params['beta_gate'])
-            }
-        elif backend == "numpyro":
-            return {
-                'mixing_probs': dist.Dirichlet(params['alpha_mixing']),
-                'p': dist.Beta(params['alpha_p'], params['beta_p']),
-                'r': dist.Gamma(params['alpha_r'], params['beta_r']),
-                'p_capture': dist.Beta(params['alpha_p_capture'], params['beta_p_capture']),
-                'gate': dist.Beta(params['alpha_gate'], params['beta_gate'])
-            }
-    else:
-        raise ValueError(f"Invalid model type: {model}")
-
-    raise ValueError(f"Invalid backend: {backend}")
+    return results
