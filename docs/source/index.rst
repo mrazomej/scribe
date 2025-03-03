@@ -42,35 +42,34 @@ Features
 Available Models
 -----------------
 
-SCRIBE includes several probabilistic models for scRNA-seq data:
+SCRIBE includes several probabilistic models for scRNA-seq data, all documented
+in detail in :doc:`models/models`:
 
-1. :doc:`Negative Binomial-Dirichlet Multinomial (NBDM) <models/nbdm>`
+1. :ref:`Core Model: Negative Binomial-Dirichlet Multinomial (NBDM) <nbdm-model>`
 
-  - Models both count magnitudes and proportions
-  - Accounts for overdispersion in count data
+   - Models both count magnitudes and proportions
+   - Accounts for overdispersion in count data
+   - Forms the foundation of SCRIBE's modeling approach
 
-2. :doc:`Zero-Inflated Negative Binomial (ZINB) <models/zinb>`
+2. :ref:`Zero-Inflated Negative Binomial (ZINB) <zinb-model>`
 
-  - Handles excess zeros in scRNA-seq data
-  - Models technical and biological dropouts
-  - Includes gene-specific dropout rates
+   - Handles excess zeros in scRNA-seq data
+   - Models technical and biological dropouts
+   - Includes gene-specific dropout rates
 
-3. :doc:`Negative Binomial with Variable Capture Probability (NBVCP) <models/nbvcp>` 
+3. :ref:`Negative Binomial with Variable Capture Probability (NBVCP) <nbvcp-model>`
 
-  - Accounts for cell-specific mRNA capture efficiency 
-  - Models technical variation in library preparation 
-  - Suitable for datasets with varying sequencing depths per cell
+   - Accounts for cell-specific mRNA capture efficiency 
+   - Models technical variation in library preparation 
+   - Suitable for datasets with varying sequencing depths per cell
 
-4. :doc:`Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVCP) <models/zinbvcp>` 
+4. :ref:`Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVCP) <zinbvcp-model>`
 
-  - Combines zero-inflation and variable capture probability 
-  - Most comprehensive model for technical variation 
-  - Handles both dropouts and capture efficiency
+   - Combines zero-inflation and variable capture probability 
+   - Most comprehensive model for technical variation 
+   - Handles both dropouts and capture efficiency
 
-5. :doc:`Mixture Models <models/models_mix>`
-
-  - Any of the above models can be turned into a mixture model to account for
-    subpopulations.
+All these models can be extended to mixture variants as documented in :doc:`models/models_mix` to account for heterogeneous cell populations.
 
 .. toctree::
    :maxdepth: 2
@@ -82,11 +81,12 @@ SCRIBE includes several probabilistic models for scRNA-seq data:
    quickstart
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Available Models
+   :maxdepth: 2
+   :caption: Models
    :hidden:
 
-   models/index
+   models/models
+   models/models_mix
 
 .. toctree::
    :maxdepth: 2
