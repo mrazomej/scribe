@@ -1,0 +1,322 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Negative Binomial with Variable Capture Probability Model (NBVCP) &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Negative Binomial with Variable Capture Probability Model (NBVCP)</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/models/nbvcp.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="negative-binomial-with-variable-capture-probability-model-nbvcp">
+<h1>Negative Binomial with Variable Capture Probability Model (NBVCP)<a class="headerlink" href="#negative-binomial-with-variable-capture-probability-model-nbvcp" title="Link to this heading"></a></h1>
+<p>The Negative Binomial with Variable Capture Probability (NBVCP) model extends
+the <a class="reference internal" href="nbdm.html"><span class="doc">Negative Binomial-Dirichlet Multinomial (NBDM)</span></a> model by
+explicitly modeling cell-specific capture efficiencies. This model is
+particularly useful when cells exhibit significant variation in their total UMI
+counts, which may indicate differences in mRNA capture rates rather than true
+biological differences in expression.</p>
+<p>Like the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>, the NBVCP model captures overdispersion in
+molecular counts. However, it differs in two key aspects:</p>
+<ol class="arabic simple">
+<li><p>It explicitly models cell-specific capture probabilities that modify the
+success probability of the negative binomial</p></li>
+<li><p>It does not use the Dirichlet-multinomial in the likelihood, instead treating
+each gene independently</p></li>
+</ol>
+<section id="model-comparison-with-nbdm">
+<h2>Model Comparison with <a class="reference internal" href="nbdm.html"><span class="doc">NBDM</span></a><a class="headerlink" href="#model-comparison-with-nbdm" title="Link to this heading"></a></h2>
+<p>In the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>, we assume a single success probability
+<span class="math notranslate nohighlight">\(p\)</span> that is shared across all cells. The NBVCP model relaxes this
+assumption by introducing cell-specific capture probabilities that modify how
+the base success probability manifests in each cell.</p>
+<p>The key insight is that variations in capture efficiency can make the same
+underlying mRNA abundance appear different in the UMI counts. The NBVCP model
+handles this by:</p>
+<ol class="arabic simple">
+<li><p>Maintaining a base success probability <span class="math notranslate nohighlight">\(p\)</span> that represents the “true”
+biological probability</p></li>
+<li><p>Introducing cell-specific capture probabilities <span class="math notranslate nohighlight">\(\nu^{(c)}\)</span>
+that modify this base probability</p></li>
+<li><p>Computing an effective success probability for each cell <span class="math notranslate nohighlight">\(c\)</span> as:</p></li>
+</ol>
+<div class="math notranslate nohighlight">
+\[\hat{p}^{(c)} = \frac{p \nu^{(c)}}{1 - p (1 - \nu^{(c)})}
+\tag{1}\]</div>
+<p>This adjusted probability accounts for how the capture efficiency of each cell
+affects our ability to observe its true mRNA content.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Eq. (1) differs from the one shown in the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>. Although
+they are both mathematically equivalent, given the way that <a class="reference external" href="https://num.pyro.ai/">Numpyro</a>
+defines the meaning of the <span class="math notranslate nohighlight">\(p\)</span> parameters in the negative binomial, the
+NBVCP model uses Eq. (1) to define the effective probability.</p>
+</div>
+<p>Given the explicit modeling of the cell-specific capture probabilities, the
+NBVCP model can remove technical variability, allowing for the same
+normalization methods as the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a> based on the
+Dirichlet-Multinomial model. In other words, since the NBVCP model fits a
+parameter to account for significant technical variations in the total number of
+counts per cell, once this effect is removed, the remaining variation can be
+modeled using the same <span class="math notranslate nohighlight">\(\underline{r}\)</span> parameters as the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>. Thus, the NBVCP model presents a more principled approach to
+normalization compared to other methods in the scRNA-seq literature.</p>
+</section>
+<section id="model-structure">
+<h2>Model Structure<a class="headerlink" href="#model-structure" title="Link to this heading"></a></h2>
+<p>The NBVCP model follows a hierarchical structure where:</p>
+<ol class="arabic simple">
+<li><p>Each cell has an associated capture probability <span class="math notranslate nohighlight">\(\nu^{(c)}\)</span></p></li>
+<li><p>The base success probability <span class="math notranslate nohighlight">\(p\)</span> is modified by each cell’s capture
+probability to give an effective success probability <span class="math notranslate nohighlight">\(\hat{p}^{(c)}\)</span></p></li>
+<li><p>Gene counts follow independent negative binomial distributions with
+cell-specific effective probabilities</p></li>
+</ol>
+<p>Formally, for a dataset with <span class="math notranslate nohighlight">\(N\)</span> cells and <span class="math notranslate nohighlight">\(G\)</span> genes, let
+<span class="math notranslate nohighlight">\(u_{g}^{(c)}\)</span> be the UMI count for gene <span class="math notranslate nohighlight">\(g\)</span> in cell <span class="math notranslate nohighlight">\(c\)</span>. The
+generative process is:</p>
+<ol class="arabic simple">
+<li><p>Draw global success probability: <span class="math notranslate nohighlight">\(p \sim \text{Beta}(\alpha_p, \beta_p)\)</span></p></li>
+<li><p>Draw gene-specific dispersion parameters: <span class="math notranslate nohighlight">\(r_g \sim
+\text{Gamma}(\alpha_r, \beta_r)\)</span> for <span class="math notranslate nohighlight">\(g = 1,\ldots,G\)</span></p></li>
+<li><p>For each cell <span class="math notranslate nohighlight">\(c = 1,\ldots,N\)</span>:</p>
+<ul class="simple">
+<li><p>Draw capture probability: <span class="math notranslate nohighlight">\(\nu^{(c)} \sim \text{Beta}(\alpha_{\nu},
+\beta_{\nu})\)</span></p></li>
+<li><p>Compute effective probability: <span class="math notranslate nohighlight">\(\hat{p}^{(c)} = \frac{p \nu^{(c)}}{1
+- p (1 - \nu^{(c)})}\)</span></p></li>
+<li><p>For each gene <span class="math notranslate nohighlight">\(g = 1,\ldots,G\)</span>: - Draw count: <span class="math notranslate nohighlight">\(u_g^{(c)} \sim
+\text{NegativeBinomial}(r_g, \hat{p}^{(c)})\)</span></p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="model-derivation">
+<h2>Model Derivation<a class="headerlink" href="#model-derivation" title="Link to this heading"></a></h2>
+<p>The NBVCP model can be derived by considering how the mRNA capture efficiency
+affects the observed UMI counts. Starting with the standard negative binomial
+model for mRNA counts:</p>
+<div class="math notranslate nohighlight">
+\[m_g^{(c)} \sim \text{NegativeBinomial}(r_g, p),
+\tag{2}\]</div>
+<p>where <span class="math notranslate nohighlight">\(m_g^{(c)}\)</span> is the unobserved mRNA count for gene <span class="math notranslate nohighlight">\(g\)</span> in cell
+<span class="math notranslate nohighlight">\(c\)</span>, <span class="math notranslate nohighlight">\(r_g\)</span> is the dispersion parameter, and <span class="math notranslate nohighlight">\(p\)</span> is the base
+success probability shared across all cells. We then model the capture process
+as a binomial sampling where each mRNA molecule has probability <span class="math notranslate nohighlight">\(\nu^{(c)}\)</span>
+of being captured:</p>
+<div class="math notranslate nohighlight">
+\[u_g^{(c)} \mid m_g^{(c)} \sim \text{Binomial}(m_g^{(c)}, \nu^{(c)})
+\tag{3}\]</div>
+<p>Marginalizing over the unobserved mRNA counts <span class="math notranslate nohighlight">\(m_g^{(c)}\)</span>, we get:</p>
+<div class="math notranslate nohighlight">
+\[u_g^{(c)} \sim \text{NegativeBinomial}(r_g, \hat{p}^{(c)})
+\tag{4}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\hat{p}^{(c)}\)</span> is the effective probability defined in Eq. (1).</p>
+<p>For more details, see the <a class="reference internal" href="nbdm.html#nbdm-model-derivation"><span class="std std-ref">Model Derivation</span></a> section in the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM
+model</span></a> documentation.</p>
+</section>
+<section id="prior-distributions">
+<h2>Prior Distributions<a class="headerlink" href="#prior-distributions" title="Link to this heading"></a></h2>
+<p>The model uses the following prior distributions:</p>
+<p>For the base success probability <span class="math notranslate nohighlight">\(p\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[p \sim \text{Beta}(\alpha_p, \beta_p)
+\tag{5}\]</div>
+<p>For each gene’s dispersion parameter <span class="math notranslate nohighlight">\(r_g\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[r_g \sim \text{Gamma}(\alpha_r, \beta_r)
+\tag{6}\]</div>
+<p>For each cell’s capture probability <span class="math notranslate nohighlight">\(\nu^{(c)}\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[\nu^{(c)} \sim \text{Beta}(\alpha_{\nu}, \beta_{\nu})
+\tag{7}\]</div>
+</section>
+<section id="variational-posterior-distribution">
+<h2>Variational Posterior Distribution<a class="headerlink" href="#variational-posterior-distribution" title="Link to this heading"></a></h2>
+<p>The model uses stochastic variational inference with a mean-field variational
+family. The variational distributions are:</p>
+<p>For the base success probability <span class="math notranslate nohighlight">\(p\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(p) = \text{Beta}(\hat{\alpha}_p, \hat{\beta}_p)
+\tag{8}\]</div>
+<p>For each gene’s dispersion parameter <span class="math notranslate nohighlight">\(r_g\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(r_g) = \text{Gamma}(\hat{\alpha}_{r,g}, \hat{\beta}_{r,g})
+\tag{9}\]</div>
+<p>For each cell’s capture probability <span class="math notranslate nohighlight">\(\nu^{(c)}\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(\nu^{(c)}) = \text{Beta}(\hat{\alpha}_{\nu}^{(c)}, \hat{\beta}_{\nu}^{(c)})
+\tag{10}\]</div>
+<p>where hatted parameters are learnable variational parameters.</p>
+</section>
+<section id="learning-algorithm">
+<h2>Learning Algorithm<a class="headerlink" href="#learning-algorithm" title="Link to this heading"></a></h2>
+<p>The training process follows similar steps to the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>:</p>
+<ol class="arabic simple">
+<li><p>Initialize variational parameters:</p>
+<ul class="simple">
+<li><p><span class="math notranslate nohighlight">\(\hat{\alpha}_p = \alpha_p\)</span>, <span class="math notranslate nohighlight">\(\hat{\beta}_p = \beta_p\)</span></p></li>
+<li><p><span class="math notranslate nohighlight">\(\hat{\alpha}_{r,g} = \alpha_r\)</span>, <span class="math notranslate nohighlight">\(\hat{\beta}_{r,g} = \beta_r\)</span>
+for all genes <span class="math notranslate nohighlight">\(g\)</span></p></li>
+<li><p><span class="math notranslate nohighlight">\(\hat{\alpha}_{\nu}^{(c)} = \alpha_{\nu}\)</span>,
+<span class="math notranslate nohighlight">\(\hat{\beta}_{\nu}^{(c)} = \beta_{\nu}\)</span> for all cells <span class="math notranslate nohighlight">\(c\)</span></p></li>
+</ul>
+</li>
+<li><p>For each iteration:</p>
+<ul class="simple">
+<li><p>Sample mini-batch of cells</p></li>
+<li><p>Compute ELBO gradients</p></li>
+<li><p>Update parameters (using Adam optimizer as default)</p></li>
+</ul>
+</li>
+<li><p>Continue until maximum iterations reached</p></li>
+</ol>
+<p>The key difference is the addition of cell-specific capture probability
+parameters that must be learned.</p>
+</section>
+<section id="implementation-details">
+<h2>Implementation Details<a class="headerlink" href="#implementation-details" title="Link to this heading"></a></h2>
+<p>Like the other models, the NBVCP model is implemented using <a class="reference external" href="https://num.pyro.ai/">NumPyro</a>. Key features include:</p>
+<ul class="simple">
+<li><p>Cell-specific parameter handling for capture probabilities</p></li>
+<li><p>Effective probability computation through deterministic transformations</p></li>
+<li><p>Independent fitting of genes</p></li>
+<li><p>Mini-batch support for scalable inference</p></li>
+<li><p>GPU acceleration through <a class="reference external" href="https://jax.readthedocs.io/en/latest/">JAX</a></p></li>
+</ul>
+</section>
+<section id="model-assumptions">
+<h2>Model Assumptions<a class="headerlink" href="#model-assumptions" title="Link to this heading"></a></h2>
+<p>The NBVCP model makes several key assumptions:</p>
+<ul class="simple">
+<li><p>Variation in total UMI counts partially reflects technical capture differences</p></li>
+<li><p>Each cell has its own capture efficiency that affects all genes equally</p></li>
+<li><p>Genes are independent given the cell-specific capture probability</p></li>
+<li><p>The base success probability <span class="math notranslate nohighlight">\(p\)</span> represents true biological variation</p></li>
+<li><p>Capture probabilities modify observed counts but not underlying biology</p></li>
+</ul>
+</section>
+<section id="usage-considerations">
+<h2>Usage Considerations<a class="headerlink" href="#usage-considerations" title="Link to this heading"></a></h2>
+<p>The NBVCP model is particularly suitable when:</p>
+<ul class="simple">
+<li><p>Cells show high variability in total UMI counts</p></li>
+<li><p>Technical variation in capture efficiency is suspected</p></li>
+<li><p>Library size normalization alone seems insufficient</p></li>
+</ul>
+<p>It may be less suitable when:</p>
+<ul class="simple">
+<li><p>Zero-inflation is a dominant feature (consider <a class="reference internal" href="zinbvcp.html"><span class="doc">ZINBVCP model</span></a>)</p></li>
+<li><p>Capture efficiency variations are minimal</p></li>
+<li><p>The data contains multiple distinct cell populations (consider mixture models)</p></li>
+</ul>
+<p>The model provides a principled way to account for technical variation in
+capture efficiency while still capturing biological variation in gene
+expression. This can be particularly important in situations where differences
+in total UMI counts between cells might otherwise be mistaken for biological
+differences.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

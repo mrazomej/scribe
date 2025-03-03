@@ -1,0 +1,544 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Results Class &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="API Reference" href="api/index.html" />
+    <link rel="prev" title="Mixture Models" href="models/models_mix.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="models/index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Results Class</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#base-structure">Base Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#basic-usage">Basic Usage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#common-operations">Common Operations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#accessing-parameters-and-posterior-distributions">Accessing Parameters and Posterior Distributions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#subsetting-genes">Subsetting Genes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#working-with-mixture-components">Working with Mixture Components</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#posterior-sampling">Posterior Sampling</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#log-likelihood-computation">Log Likelihood Computation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#for-mixture-models-cell-type-assignment">For Mixture Models: Cell Type Assignment</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#entropy-analysis-for-mixture-models">Entropy Analysis for Mixture Models</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#model-types">Model Types</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#nbdm-model">NBDM Model</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#zinb-model">ZINB Model</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#nbvcp-model">NBVCP Model</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#zinbvcp-model">ZINBVCP Model</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mixture-model">Mixture Model</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#model-comparison">Model Comparison</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#best-practices">Best Practices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#see-also">See Also</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Results Class</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/results.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="results-class">
+<h1>Results Class<a class="headerlink" href="#results-class" title="Link to this heading"></a></h1>
+<p>The SCRIBE package provides a unified <code class="docutils literal notranslate"><span class="pre">ScribeResults</span></code> class that works
+consistently across all model types. This class encapsulates all functionality
+for handling model inference outputs, parameter access, and downstream analysis.</p>
+<section id="base-structure">
+<h2>Base Structure<a class="headerlink" href="#base-structure" title="Link to this heading"></a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">ScribeResults</span></code> class provides core functionality for:</p>
+<ul class="simple">
+<li><p>Accessing variational model parameters and posterior distributions</p></li>
+<li><p>Indexing results by gene (single gene, ranges, boolean indexing)</p></li>
+<li><p>Selecting specific mixture components in mixture models</p></li>
+<li><p>Generating posterior samples and predictive samples</p></li>
+<li><p>Computing log likelihoods and model comparisons</p></li>
+<li><p>Handling metadata from <code class="docutils literal notranslate"><span class="pre">AnnData</span></code> objects</p></li>
+</ul>
+</section>
+<section id="basic-usage">
+<h2>Basic Usage<a class="headerlink" href="#basic-usage" title="Link to this heading"></a></h2>
+<p>After running inference with <code class="docutils literal notranslate"><span class="pre">run_scribe</span></code>, you’ll get a results object:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">scribe</span>
+
+<span class="c1"># Run inference</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+    <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Set to True for ZINB models</span>
+    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Set to True for VCP models</span>
+    <span class="n">mixture_model</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># Set to True for mixture models</span>
+    <span class="n">n_steps</span><span class="o">=</span><span class="mi">10000</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The results object contains several key attributes:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">params</span></code>: Dictionary of learned variational parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">loss_history</span></code>: Array of ELBO values during training</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">n_cells</span></code>, <code class="docutils literal notranslate"><span class="pre">n_genes</span></code>: Dataset dimensions</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">model_type</span></code>: String indicating the type of model</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">model_config</span></code>: Configuration object with model architecture and priors</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">n_components</span></code>: Number of components in mixture models (<code class="docutils literal notranslate"><span class="pre">None</span></code> for non-mixture models)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">obs</span></code>, <code class="docutils literal notranslate"><span class="pre">var</span></code>, <code class="docutils literal notranslate"><span class="pre">uns</span></code>: Optional metadata if using <code class="docutils literal notranslate"><span class="pre">AnnData</span></code></p></li>
+</ul>
+</section>
+<section id="common-operations">
+<h2>Common Operations<a class="headerlink" href="#common-operations" title="Link to this heading"></a></h2>
+<section id="accessing-parameters-and-posterior-distributions">
+<h3>Accessing Parameters and Posterior Distributions<a class="headerlink" href="#accessing-parameters-and-posterior-distributions" title="Link to this heading"></a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">ScribeResults</span></code> class provides several methods to access the learned model
+parameters, either as raw variational parameters, probability distributions, or
+point estimates:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Get raw parameters for variational posterior</span>
+<span class="n">params</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">params</span>
+
+<span class="c1"># Get posterior distributions for parameters</span>
+<span class="c1"># (returns scipy.stats distributions by default)</span>
+<span class="n">distributions</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_distributions</span><span class="p">()</span>
+
+<span class="c1"># Get posterior distributions as numpyro distributions</span>
+<span class="n">distributions_numpyro</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_distributions</span><span class="p">(</span><span class="n">backend</span><span class="o">=</span><span class="s2">&quot;numpyro&quot;</span><span class="p">)</span>
+
+<span class="c1"># Get maximum a posteriori (MAP) estimates</span>
+<span class="n">map_estimates</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_map</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="subsetting-genes">
+<h3>Subsetting Genes<a class="headerlink" href="#subsetting-genes" title="Link to this heading"></a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">ScribeResults</span></code> object supports indexing operations to extract results
+for specific genes of interest. You can use integer indexing, slicing, or
+boolean masks to subset the results:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Get results for first gene</span>
+<span class="n">gene_results</span> <span class="o">=</span> <span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+<span class="c1"># Get results for a set of genes</span>
+<span class="n">subset_results</span> <span class="o">=</span> <span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="mi">10</span><span class="p">]</span>  <span class="c1"># First 10 genes</span>
+
+<span class="c1"># Boolean indexing (with some hypothetical &quot;highly variable&quot; gene mask)</span>
+<span class="n">highly_variable</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">var</span><span class="p">[</span><span class="s1">&#39;highly_variable&#39;</span><span class="p">]</span> <span class="k">if</span> <span class="n">results</span><span class="o">.</span><span class="n">var</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+<span class="k">if</span> <span class="n">highly_variable</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">hv_results</span> <span class="o">=</span> <span class="n">results</span><span class="p">[</span><span class="n">highly_variable</span><span class="p">]</span>
+</pre></div>
+</div>
+</section>
+<section id="working-with-mixture-components">
+<h3>Working with Mixture Components<a class="headerlink" href="#working-with-mixture-components" title="Link to this heading"></a></h3>
+<p>For mixture models, you can access specific components:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Get results for the first component</span>
+<span class="n">component_results</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_component</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># The component results are a non-mixture ScribeResults object</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">component_results</span><span class="o">.</span><span class="n">model_type</span><span class="p">)</span>  <span class="c1"># e.g., &quot;nbdm&quot; instead of &quot;nbdm_mix&quot;</span>
+</pre></div>
+</div>
+</section>
+<section id="posterior-sampling">
+<h3>Posterior Sampling<a class="headerlink" href="#posterior-sampling" title="Link to this heading"></a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">ScribeResults</span></code> class provides several methods for generating different
+types of samples:</p>
+<ol class="arabic simple">
+<li><p><strong>Posterior Parameter Samples</strong>: Draw samples directly from the fitted
+parameter distributions using <code class="docutils literal notranslate"><span class="pre">get_posterior_samples()</span></code>. These samples
+represent uncertainty in the model parameters as sampled from the variational
+posterior distribution.</p></li>
+<li><p><strong>Predictive Samples</strong>: Generate new data from the model using
+<code class="docutils literal notranslate"><span class="pre">get_predictive_samples()</span></code>. This simulates new count data using the MAP
+parameter estimates.</p></li>
+<li><p><strong>Posterior Predictive Check (PPC) Samples</strong>: Combine both operations with
+<code class="docutils literal notranslate"><span class="pre">get_ppc_samples()</span></code> to generate data for model validation.</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Draw 1000 samples from the posterior distributions of parameters</span>
+<span class="n">posterior_samples</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_posterior_samples</span><span class="p">(</span><span class="n">n_samples</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+
+<span class="c1"># Generate new count data using MAP estimates</span>
+<span class="n">predictive_samples</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_predictive_samples</span><span class="p">()</span>
+
+<span class="c1"># Generate posterior predictive samples for model checking</span>
+<span class="n">ppc_samples</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_ppc_samples</span><span class="p">(</span><span class="n">n_samples</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Generating posterior predictive samples requires simulating entire datasets,
+which can be computationally intensive. For large datasets, we recommend:</p>
+<ul class="simple">
+<li><p>Reducing the number of samples</p></li>
+<li><p>Subsetting to fewer genes</p></li>
+<li><p>Using GPU acceleration if available</p></li>
+<li><p>Running sampling in batches</p></li>
+</ul>
+</div>
+</section>
+<section id="log-likelihood-computation">
+<h3>Log Likelihood Computation<a class="headerlink" href="#log-likelihood-computation" title="Link to this heading"></a></h3>
+<p>Computing the log-likelihood of your data under the fitted model can be valuable
+for several purposes:</p>
+<ul class="simple">
+<li><p>Model comparison: Compare different model fits or architectures by their
+log-likelihood scores</p></li>
+<li><p>Quality control: Identify cells or genes that are poorly explained by the
+model</p></li>
+<li><p>Outlier detection: Find data points with unusually low likelihood values</p></li>
+<li><p>Model validation: Assess how well the model captures the underlying data
+distribution</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Compute log likelihood of data under the model</span>
+<span class="n">log_liks</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">compute_log_likelihood</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">,</span>
+    <span class="n">return_by</span><span class="o">=</span><span class="s1">&#39;cell&#39;</span><span class="p">,</span>  <span class="c1"># or &#39;gene&#39;</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="mi">512</span>  <span class="c1"># Use batching for large datasets</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="for-mixture-models-cell-type-assignment">
+<h3>For Mixture Models: Cell Type Assignment<a class="headerlink" href="#for-mixture-models-cell-type-assignment" title="Link to this heading"></a></h3>
+<p>For mixture models, <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> provides methods to compute probabilistic cell
+type assignments. These assignments quantify how likely each cell belongs to
+each component (cell type) in the mixture, while also characterizing the
+uncertainty in these assignments.</p>
+<p>The computation involves three key steps:</p>
+<ol class="arabic simple">
+<li><p>For each cell, compute the likelihood that it belongs to each component using
+the full posterior distribution of model parameters</p></li>
+<li><p>Convert these likelihoods into proper probability distributions over
+components</p></li>
+<li><p>(Optional) Fit a Dirichlet distribution to characterize the uncertainty in
+these assignments</p></li>
+</ol>
+<p>The resulting probabilities can be used to:</p>
+<ul class="simple">
+<li><p>Make soft assignments of cells to types</p></li>
+<li><p>Identify cells with ambiguous type assignments</p></li>
+<li><p>Quantify uncertainty in cell type classifications</p></li>
+<li><p>Study cells that may be transitioning between states</p></li>
+</ul>
+<p>Two methods are provided:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">compute_cell_type_assignments()</span></code>: Uses the full posterior distribution to
+compute assignments and uncertainty</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">compute_cell_type_assignments_map()</span></code>: Uses point estimates for faster but
+less detailed results</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Compute cell type assignment probabilities</span>
+<span class="n">assignments</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">compute_cell_type_assignments</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">,</span>
+    <span class="n">fit_distribution</span><span class="o">=</span><span class="kc">True</span>  <span class="c1"># Fit Dirichlet distribution to characterize uncertainty</span>
+<span class="p">)</span>
+
+<span class="c1"># Get Dirichlet concentration parameters</span>
+<span class="n">concentrations</span> <span class="o">=</span> <span class="n">assignments</span><span class="p">[</span><span class="s1">&#39;concentration&#39;</span><span class="p">]</span>
+
+<span class="c1"># Get mean assignment probabilities</span>
+<span class="n">mean_probs</span> <span class="o">=</span> <span class="n">assignments</span><span class="p">[</span><span class="s1">&#39;mean_probabilities&#39;</span><span class="p">]</span>
+
+<span class="c1"># Get assignment probabilities for each posterior sample</span>
+<span class="n">sample_probs</span> <span class="o">=</span> <span class="n">assignments</span><span class="p">[</span><span class="s1">&#39;sample_probabilities&#39;</span><span class="p">]</span>
+
+<span class="c1"># Compute using MAP estimates only (faster but less information about uncertainty)</span>
+<span class="n">map_assignments</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">compute_cell_type_assignments_map</span><span class="p">(</span><span class="n">counts</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="entropy-analysis-for-mixture-models">
+<h3>Entropy Analysis for Mixture Models<a class="headerlink" href="#entropy-analysis-for-mixture-models" title="Link to this heading"></a></h3>
+<p>For mixture models, SCRIBE provides methods to compute the entropy of component
+assignments, which serves as a measure of assignment uncertainty. Higher entropy
+values indicate more uncertainty in the assignments (the cell or gene could
+belong to multiple components), while lower values indicate more confident
+assignments (the cell or gene clearly belongs to one component).</p>
+<p>The entropy calculation can be performed:</p>
+<ul class="simple">
+<li><p>Per cell: Measuring how confidently each cell is assigned to a component</p></li>
+<li><p>Per gene: Measuring how component-specific each gene’s expression pattern is</p></li>
+<li><p>With optional normalization: Making entropy values comparable across datasets
+of different sizes</p></li>
+</ul>
+<p>This analysis is particularly useful for:</p>
+<ul class="simple">
+<li><p>Identifying cells that may be transitioning between states</p></li>
+<li><p>Finding marker genes that strongly distinguish between components</p></li>
+<li><p>Quantifying the overall confidence of component assignments</p></li>
+<li><p>Detecting regions of uncertainty in your data</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Compute entropy of component assignments</span>
+<span class="n">entropies</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">compute_component_entropy</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">,</span>
+    <span class="n">return_by</span><span class="o">=</span><span class="s1">&#39;cell&#39;</span><span class="p">,</span>  <span class="c1"># or &#39;gene&#39;</span>
+    <span class="n">normalize</span><span class="o">=</span><span class="kc">False</span>  <span class="c1"># Set to True to normalize by dataset size</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="model-types">
+<h2>Model Types<a class="headerlink" href="#model-types" title="Link to this heading"></a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">ScribeResults</span></code> class works with all model types supported by SCRIBE:</p>
+<ul class="simple">
+<li><p><strong>NBDM</strong>: Negative Binomial-Dirichlet Multinomial (base model)</p></li>
+<li><p><strong>ZINB</strong>: Zero-Inflated Negative Binomial (handles dropout)</p></li>
+<li><p><strong>NBVCP</strong>: Negative Binomial with Variable Capture Probability (handles batch
+effects)</p></li>
+<li><p><strong>ZINBVCP</strong>: Zero-Inflated Negative Binomial with Variable Capture Probability
+(most comprehensive)</p></li>
+<li><p><strong>Mixture Variants</strong>: Any of the above with multiple components (suffix
+“_mix”)</p></li>
+</ul>
+<p>Each model type has specific parameters available in the <code class="docutils literal notranslate"><span class="pre">params</span></code> dictionary
+based on the distributions used:</p>
+<section id="nbdm-model">
+<h3>NBDM Model<a class="headerlink" href="#nbdm-model" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run NBDM inference</span>
+<span class="n">nbdm_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">)</span>
+
+<span class="c1"># Access dispersion parameters (when using LogNormal distribution)</span>
+<span class="n">r_loc</span> <span class="o">=</span> <span class="n">nbdm_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;r_loc&#39;</span><span class="p">]</span>
+<span class="n">r_scale</span> <span class="o">=</span> <span class="n">nbdm_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;r_scale&#39;</span><span class="p">]</span>
+
+<span class="c1"># Or (when using Gamma distribution)</span>
+<span class="n">r_concentration</span> <span class="o">=</span> <span class="n">nbdm_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;r_concentration&#39;</span><span class="p">]</span>
+<span class="n">r_rate</span> <span class="o">=</span> <span class="n">nbdm_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;r_rate&#39;</span><span class="p">]</span>
+
+<span class="c1"># Access success probability parameters</span>
+<span class="n">p_concentration1</span> <span class="o">=</span> <span class="n">nbdm_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;p_concentration1&#39;</span><span class="p">]</span>  <span class="c1"># Alpha</span>
+<span class="n">p_concentration0</span> <span class="o">=</span> <span class="n">nbdm_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;p_concentration0&#39;</span><span class="p">]</span>  <span class="c1"># Beta</span>
+</pre></div>
+</div>
+</section>
+<section id="zinb-model">
+<h3>ZINB Model<a class="headerlink" href="#zinb-model" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run ZINB inference</span>
+<span class="n">zinb_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Additional dropout parameters</span>
+<span class="n">gate_concentration1</span> <span class="o">=</span> <span class="n">zinb_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;gate_concentration1&#39;</span><span class="p">]</span>
+<span class="n">gate_concentration0</span> <span class="o">=</span> <span class="n">zinb_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;gate_concentration0&#39;</span><span class="p">]</span>
+</pre></div>
+</div>
+</section>
+<section id="nbvcp-model">
+<h3>NBVCP Model<a class="headerlink" href="#nbvcp-model" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run NBVCP inference</span>
+<span class="n">nbvcp_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Additional capture probability parameters</span>
+<span class="n">p_capture_concentration1</span> <span class="o">=</span> <span class="n">nbvcp_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;p_capture_concentration1&#39;</span><span class="p">]</span>
+<span class="n">p_capture_concentration0</span> <span class="o">=</span> <span class="n">nbvcp_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;p_capture_concentration0&#39;</span><span class="p">]</span>
+</pre></div>
+</div>
+</section>
+<section id="zinbvcp-model">
+<h3>ZINBVCP Model<a class="headerlink" href="#zinbvcp-model" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run ZINBVCP inference</span>
+<span class="n">zinbvcp_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">,</span> <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Additional dropout and capture probability parameters</span>
+<span class="n">gate_concentration1</span> <span class="o">=</span> <span class="n">zinbvcp_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;gate_concentration1&#39;</span><span class="p">]</span>
+<span class="n">gate_concentration0</span> <span class="o">=</span> <span class="n">zinbvcp_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;gate_concentration0&#39;</span><span class="p">]</span>
+<span class="n">p_capture_concentration1</span> <span class="o">=</span> <span class="n">zinbvcp_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;p_capture_concentration1&#39;</span><span class="p">]</span>
+<span class="n">p_capture_concentration0</span> <span class="o">=</span> <span class="n">zinbvcp_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;p_capture_concentration0&#39;</span><span class="p">]</span>
+</pre></div>
+</div>
+</section>
+<section id="mixture-model">
+<h3>Mixture Model<a class="headerlink" href="#mixture-model" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run mixture model inference</span>
+<span class="n">mix_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">,</span>
+    <span class="n">mixture_model</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">n_components</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">mixing_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># Optional: Dirichlet concentration parameters</span>
+<span class="p">)</span>
+
+<span class="c1"># Access mixing weights concentration parameters</span>
+<span class="n">mixing_concentration</span> <span class="o">=</span> <span class="n">mix_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;mixing_concentration&#39;</span><span class="p">]</span>
+
+<span class="c1"># Component-specific parameters will have additional dimensions</span>
+<span class="c1"># e.g., for r parameters:</span>
+<span class="n">r_concentration</span> <span class="o">=</span> <span class="n">mix_results</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;r_concentration&#39;</span><span class="p">]</span>  <span class="c1"># Shape: (n_components, n_genes)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="model-comparison">
+<h2>Model Comparison<a class="headerlink" href="#model-comparison" title="Link to this heading"></a></h2>
+<p>To compare models, you can use the model comparison utilities:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">scribe.model_comparison</span> <span class="kn">import</span> <span class="n">compare_models</span><span class="p">,</span> <span class="n">compare_models_by_gene</span>
+
+<span class="c1"># Fit multiple models</span>
+<span class="n">nbdm_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">zinb_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="c1"># Compare models using WAIC</span>
+<span class="n">comparison</span> <span class="o">=</span> <span class="n">compare_models</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">nbdm_results</span><span class="p">,</span> <span class="n">zinb_results</span><span class="p">],</span>
+    <span class="n">counts</span><span class="p">,</span>
+    <span class="n">n_samples</span><span class="o">=</span><span class="mi">1000</span>
+<span class="p">)</span>
+
+<span class="c1"># Compare models gene by gene</span>
+<span class="n">gene_comparison</span> <span class="o">=</span> <span class="n">compare_models_by_gene</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">nbdm_results</span><span class="p">,</span> <span class="n">zinb_results</span><span class="p">],</span>
+    <span class="n">counts</span><span class="p">,</span>
+    <span class="n">n_samples</span><span class="o">=</span><span class="mi">1000</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="best-practices">
+<h2>Best Practices<a class="headerlink" href="#best-practices" title="Link to this heading"></a></h2>
+<ol class="arabic simple">
+<li><p><strong>Memory Management</strong>:</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">batch_size</span></code> for large datasets</p></li>
+<li><p>Generate posterior samples for specific gene subsets</p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">compute_log_likelihood</span></code> with batching for large-scale analyses</p></li>
+</ul>
+</div></blockquote>
+<ol class="arabic simple" start="2">
+<li><p><strong>Working with Parameters</strong>:</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p>Access raw parameters through <code class="docutils literal notranslate"><span class="pre">.params</span></code></p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">.get_distributions()</span></code> for parameter interpretation and sampling</p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">.get_map()</span></code> for point estimates</p></li>
+</ul>
+</div></blockquote>
+<ol class="arabic simple" start="3">
+<li><p><strong>Model Selection</strong>:</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p>Start with the simplest model (NBDM)</p></li>
+<li><p>Add complexity (zero-inflation, capture probability) as justified by data</p></li>
+<li><p>Consider mixture models for heterogeneous populations</p></li>
+<li><p>Use model comparison tools to select the best model</p></li>
+</ul>
+</div></blockquote>
+<ol class="arabic simple" start="4">
+<li><p><strong>Diagnostics</strong>:</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p>Check <code class="docutils literal notranslate"><span class="pre">loss_history</span></code> for convergence</p></li>
+<li><p>Use posterior predictive checks to evaluate model fit</p></li>
+<li><p>For mixture models, examine entropy of component assignments</p></li>
+</ul>
+</div></blockquote>
+</section>
+<section id="see-also">
+<h2>See Also<a class="headerlink" href="#see-also" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>Detailed API reference for <code class="docutils literal notranslate"><span class="pre">ScribeResults</span></code> class</p></li>
+<li><p>Tutorials on model selection and comparison</p></li>
+<li><p>Example notebooks for common analys</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="models/models_mix.html" class="btn btn-neutral float-left" title="Mixture Models" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="api/index.html" class="btn btn-neutral float-right" title="API Reference" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,802 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>models_mix &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="svi" href="svi.html" />
+    <link rel="prev" title="models" href="models.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="models.html">models</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">models_mix</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.nbdm_mixture_model"><code class="docutils literal notranslate"><span class="pre">nbdm_mixture_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.nbdm_mixture_guide"><code class="docutils literal notranslate"><span class="pre">nbdm_mixture_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.zinb_mixture_model"><code class="docutils literal notranslate"><span class="pre">zinb_mixture_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.zinb_mixture_guide"><code class="docutils literal notranslate"><span class="pre">zinb_mixture_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.nbvcp_mixture_model"><code class="docutils literal notranslate"><span class="pre">nbvcp_mixture_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.nbvcp_mixture_guide"><code class="docutils literal notranslate"><span class="pre">nbvcp_mixture_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.zinbvcp_mixture_model"><code class="docutils literal notranslate"><span class="pre">zinbvcp_mixture_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.zinbvcp_mixture_guide"><code class="docutils literal notranslate"><span class="pre">zinbvcp_mixture_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.nbdm_mixture_log_likelihood"><code class="docutils literal notranslate"><span class="pre">nbdm_mixture_log_likelihood()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.zinb_mixture_log_likelihood"><code class="docutils literal notranslate"><span class="pre">zinb_mixture_log_likelihood()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.nbvcp_mixture_log_likelihood"><code class="docutils literal notranslate"><span class="pre">nbvcp_mixture_log_likelihood()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models_mix.zinbvcp_mixture_log_likelihood"><code class="docutils literal notranslate"><span class="pre">zinbvcp_mixture_log_likelihood()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="svi.html">svi</a></li>
+<li class="toctree-l2"><a class="reference internal" href="results.html">results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sampling.html">sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="stats.html">stats</a></li>
+<li class="toctree-l2"><a class="reference internal" href="utils.html">utils</a></li>
+<li class="toctree-l2"><a class="reference internal" href="viz.html">viz</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">models_mix</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/models_mix.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-scribe.models_mix">
+<span id="models-mix"></span><h1>models_mix<a class="headerlink" href="#module-scribe.models_mix" title="Link to this heading"></a></h1>
+<p>Mixture model implementations for single-cell RNA sequencing data.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.nbdm_mixture_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">nbdm_mixture_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#nbdm_mixture_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.nbdm_mixture_model" title="Link to this definition"></a></dt>
+<dd><p>Numpyro mixture model for single-cell RNA sequencing data using Negative
+Binomial distributions with shared p parameter per component.</p>
+<dl class="simple">
+<dt>This model assumes a hierarchical mixture structure where:</dt><dd><ol class="arabic simple">
+<li><p>Each mixture component has:
+- A shared success probability p across all genes
+- Gene-specific dispersion parameters r</p></li>
+<li><p>The mixture is handled using Numpyro’s MixtureSameFamily</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – Model configuration object containing distribution and parameter settings</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes).
+If None, generates samples from the prior.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference.
+If None, uses full dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Global</em>) – <ul>
+<li><p>Mixture weights ~ model_config.mixing_distribution_model</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Component-specific dispersion r ~ model_config.r_distribution_model per gene and component</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> (<em>counts ~ MixtureSameFamily</em><em>(</em>) – Categorical(mixing_weights), NegativeBinomialProbs(r, p)</p></li>
+<li><p><strong>)</strong></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.nbdm_mixture_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">nbdm_mixture_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#nbdm_mixture_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.nbdm_mixture_guide" title="Link to this definition"></a></dt>
+<dd><p>Variational guide for the NBDM mixture model.</p>
+<p>This guide function defines the form of the variational distribution that
+will be optimized to approximate the true posterior. It specifies a
+mean-field variational family where each parameter has its own independent
+distribution:</p>
+<ul class="simple">
+<li><p>The mixing weights follow a Dirichlet distribution</p></li>
+<li><p>The success probability p follows a Beta distribution</p></li>
+<li><p>Each gene’s overdispersion parameter r follows an independent distribution
+(typically Gamma or LogNormal)</p></li>
+</ul>
+<p>The specific distributions used are configured via the model_config
+parameter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – Configuration object specifying the model structure and distributions</p></li>
+<li><p><strong>counts</strong> (<em>array_like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic optimization. If None, uses full dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Guide</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Variational</em>) – <ul>
+<li><p>Mixing weights ~ model_config.mixing_distribution_guide</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_guide</p></li>
+<li><p>Component-specific dispersion r ~ model_config.r_distribution_guide per gene and component</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.zinb_mixture_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">zinb_mixture_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#zinb_mixture_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.zinb_mixture_model" title="Link to this definition"></a></dt>
+<dd><p>Numpyro mixture model for Zero-Inflated Negative Binomial single-cell RNA
+sequencing data.</p>
+<p>This model uses the configuration defined in model_config. It implements a
+mixture of Zero-Inflated Negative Binomial distributions where each
+component has:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>A shared success probability p across all genes</p></li>
+<li><p>Gene-specific dispersion parameters r</p></li>
+<li><p>Gene-specific dropout probabilities (gate)</p></li>
+</ul>
+</div></blockquote>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <dl class="simple">
+<dt>Configuration object for model distributions containing:</dt><dd><ul>
+<li><p>mixing_distribution_model: Distribution for mixture weights</p></li>
+<li><p>p_distribution_model: Distribution for success probability p</p></li>
+<li><p>r_distribution_model: Distribution for dispersion parameters r</p></li>
+<li><p>gate_distribution_model: Distribution for dropout probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). If None, generates
+samples from the prior.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic optimization. If None, uses full dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> – <ul>
+<li><p>Mixture weights ~ model_config.mixing_distribution_model</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_model</p></li>
+<li><p>Dropout probabilities gate ~ model_config.gate_distribution_model</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> – <dl class="simple">
+<dt>counts ~ MixtureSameFamily(</dt><dd><p>Categorical(mixing_weights),
+ZeroInflatedNegativeBinomial(r, p, gate)</p>
+</dd>
+</dl>
+<p>)</p>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.zinb_mixture_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">zinb_mixture_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#zinb_mixture_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.zinb_mixture_guide" title="Link to this definition"></a></dt>
+<dd><p>Define the variational distribution for stochastic variational inference.</p>
+<p>This guide defines the variational distributions for the ZINB mixture model
+parameters using the configuration specified in model_config.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <p>Configuration object containing the variational distribution
+specifications:</p>
+<blockquote>
+<div><ul>
+<li><p>mixing_distribution_guide: Distribution for mixture weights</p></li>
+<li><p>p_distribution_guide: Distribution for success probability p</p></li>
+<li><p>r_distribution_guide: Distribution for dispersion parameters r</p></li>
+<li><p>gate_distribution_guide: Distribution for dropout probabilities</p></li>
+</ul>
+</div></blockquote>
+</p></li>
+<li><p><strong>counts</strong> (<em>array_like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic optimization</p></li>
+<li><p><strong>Structure</strong> (<em>Guide</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Variational</em>) – <ul>
+<li><p>Mixture weights ~ model_config.mixing_distribution_guide</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_guide</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_guide</p></li>
+<li><p>Gene-specific dropout gate ~ model_config.gate_distribution_guide</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.nbvcp_mixture_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">nbvcp_mixture_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#nbvcp_mixture_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.nbvcp_mixture_model" title="Link to this definition"></a></dt>
+<dd><p>Numpyro mixture model for single-cell RNA sequencing data using Negative
+Binomial distributions with variable capture probability.</p>
+<dl class="simple">
+<dt>This model assumes a hierarchical mixture structure where:</dt><dd><ol class="arabic simple">
+<li><dl class="simple">
+<dt>Each mixture component has:</dt><dd><ul class="simple">
+<li><p>A shared success probability p across all genes</p></li>
+<li><p>Gene-specific dispersion parameters r</p></li>
+</ul>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt>Each cell has:</dt><dd><ul class="simple">
+<li><p>A cell-specific capture probability p_capture (independent of
+components)</p></li>
+</ul>
+</dd>
+</dl>
+</li>
+<li><p>The effective success probability for each gene in each cell is
+computed as p_hat = p * p_capture / (1 - p * (1 - p_capture))</p></li>
+<li><p>The mixture is handled using Numpyro’s MixtureSameFamily</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <dl class="simple">
+<dt>Configuration object for model distributions containing:</dt><dd><ul>
+<li><p>mixing_distribution_model: Distribution for mixture weights</p></li>
+<li><p>p_distribution_model: Distribution for success probability p</p></li>
+<li><p>r_distribution_model: Distribution for dispersion parameters r</p></li>
+<li><p>p_capture_distribution_model: Distribution for capture
+probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). If None, generates
+samples from the prior.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic optimization. If None, uses full dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Local</em>) – <ul>
+<li><p>Mixture weights ~ model_config.mixing_distribution_model</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Component-specific dispersion r ~ model_config.r_distribution_model
+per gene</p></li>
+</ul>
+</p></li>
+<li><p><strong>Parameters</strong> – <ul>
+<li><p>Cell-specific capture probabilities p_capture ~
+model_config.p_capture_distribution_model</p></li>
+<li><p>Effective probability p_hat = p * p_capture / (1 - p * (1 -
+p_capture))</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> (<em>counts ~ MixtureSameFamily</em><em>(</em>) – Categorical(mixing_weights), NegativeBinomial(r, p_hat)</p></li>
+<li><p><strong>)</strong></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.nbvcp_mixture_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">nbvcp_mixture_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#nbvcp_mixture_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.nbvcp_mixture_guide" title="Link to this definition"></a></dt>
+<dd><p>Variational guide for the Negative Binomial mixture model with variable
+capture probability (NBVCP). This guide function defines the form of the
+variational distribution that will be optimized to approximate the true
+posterior.</p>
+<p>This guide function specifies a mean-field variational family where each
+parameter has an independent variational distribution specified in the
+model_config:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Mixing weights ~ model_config.mixing_distribution_guide</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_guide</p></li>
+<li><p>Component-specific dispersion r ~ model_config.r_distribution_guide
+per gene and component</p></li>
+<li><p>Cell-specific capture probability p_capture ~
+model_config.p_capture_distribution_guide</p></li>
+</ul>
+</div></blockquote>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <dl class="simple">
+<dt>Configuration object containing variational distribution specifications:</dt><dd><ul>
+<li><p>mixing_distribution_guide: Distribution for mixture weights</p></li>
+<li><p>p_distribution_guide: Distribution for success probability p</p></li>
+<li><p>r_distribution_guide: Distribution for dispersion parameters r</p></li>
+<li><p>p_capture_distribution_guide: Distribution for capture
+probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference</p></li>
+<li><p><strong>Structure</strong> (<em>Guide</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Variational</em>) – <ul>
+<li><p>Mixing weights ~ model_config.mixing_distribution_guide</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_guide</p></li>
+<li><p>Component-specific dispersion r ~ model_config.r_distribution_guide
+per gene and component</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.zinbvcp_mixture_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">zinbvcp_mixture_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#zinbvcp_mixture_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.zinbvcp_mixture_model" title="Link to this definition"></a></dt>
+<dd><p>Zero-Inflated Negative Binomial Mixture Model with Variable Capture
+Probability for single-cell RNA sequencing data.</p>
+<dl class="simple">
+<dt>This model captures key characteristics of scRNA-seq data including:</dt><dd><ul class="simple">
+<li><p>Technical dropouts via zero-inflation</p></li>
+<li><p>Cell-specific capture efficiencies</p></li>
+<li><p>Overdispersion via negative binomial distribution</p></li>
+<li><p>Heterogeneous cell populations via mixture components</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <dl class="simple">
+<dt>Configuration object for model distributions containing:</dt><dd><ul>
+<li><p>mixing_distribution_model: Distribution for mixture weights</p></li>
+<li><p>p_distribution_model: Distribution for success probability p</p></li>
+<li><p>r_distribution_model: Distribution for dispersion parameters r</p></li>
+<li><p>gate_distribution_model: Distribution for dropout probabilities</p></li>
+<li><p>p_capture_distribution_model: Distribution for capture
+probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). If None, generates
+samples from the prior.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic optimization. If None, uses full dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Local</em>) – <ul>
+<li><p>Mixture weights ~ model_config.mixing_distribution_model</p></li>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Component-specific dispersion r ~ model_config.r_distribution_model
+per gene</p></li>
+<li><p>Dropout probabilities gate ~ model_config.gate_distribution_model per
+gene</p></li>
+</ul>
+</p></li>
+<li><p><strong>Parameters</strong> – <ul>
+<li><p>Cell-specific capture probabilities p_capture ~
+model_config.p_capture_distribution_model</p></li>
+<li><p>Effective probability p_hat = p * p_capture / (1 - p * (1 -
+p_capture))</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> (<em>counts ~ MixtureSameFamily</em><em>(</em>) – Categorical(mixing_weights), ZeroInflatedNegativeBinomial(r, p_hat,
+gate)</p></li>
+<li><p><strong>)</strong></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.zinbvcp_mixture_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">zinbvcp_mixture_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#zinbvcp_mixture_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.zinbvcp_mixture_guide" title="Link to this definition"></a></dt>
+<dd><p>Variational guide for the Zero-Inflated Negative Binomial mixture model with
+variable capture probability.</p>
+<p>This guide specifies a mean-field variational family for approximating the
+posterior distribution of model parameters. The variational distributions
+are:</p>
+<dl class="simple">
+<dt>Global Parameters:</dt><dd><ul class="simple">
+<li><p>Mixing weights ~ Dirichlet(alpha_mixing)</p></li>
+<li><p>Success probability p ~ Beta(alpha_p, beta_p) [shared across
+components]</p></li>
+<li><p>Component-specific dispersion r ~ Gamma(alpha_r, beta_r) [per
+component and gene]</p></li>
+<li><p>Dropout probabilities gate ~ Beta(alpha_gate, beta_gate) [per gene]</p></li>
+</ul>
+</dd>
+<dt>Local Parameters:</dt><dd><ul class="simple">
+<li><p>Cell-specific capture probabilities p_capture ~ Beta(alpha_p_capture,
+beta_p_capture) [per cell]</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>n_components</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of mixture components</p></li>
+<li><p><strong>p_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em>, </em><em>default=</em><em>(</em><em>1</em><em>, </em><em>1</em><em>)</em>) – Beta prior parameters (alpha, beta) for success probability p</p></li>
+<li><p><strong>r_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em>, </em><em>default=</em><em>(</em><em>2</em><em>, </em><em>0.1</em><em>)</em>) – Gamma prior parameters (shape, rate) for dispersion r</p></li>
+<li><p><strong>p_capture_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em>, </em><em>default=</em><em>(</em><em>1</em><em>, </em><em>1</em><em>)</em>) – Beta prior parameters for cell-specific capture probabilities</p></li>
+<li><p><strong>gate_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em>, </em><em>default=</em><em>(</em><em>1</em><em>, </em><em>1</em><em>)</em>) – Beta prior parameters for gene-specific dropout probabilities</p></li>
+<li><p><strong>mixing_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em>, </em><em>default=1.0</em>) – Dirichlet prior concentration parameter(s) for mixture weights</p></li>
+<li><p><strong>counts</strong> (<em>array_like</em><em>, </em><em>optional</em>) – Observed count matrix of shape (n_cells, n_genes)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. If None, uses full
+dataset.</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.nbdm_mixture_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">nbdm_mixture_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split_components=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#nbdm_mixture_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.nbdm_mixture_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for NBDM mixture model using independent negative
+binomials.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’mixing_weights’: probabilities for each component</p></li>
+<li><p>’p’: success probability parameter</p></li>
+<li><p>’r’: dispersion parameters for each gene and component</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full
+dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default), 1
+means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes (default)</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>split_components</strong> (<em>bool = False</em>) – If True, returns separate log probabilities for each component. If
+False, returns the log probability of the mixture.</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em>) – Array of shape (n_genes,) containing weights for each gene. If None,
+weights are not used.</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a><em>] </em><em>= None</em>) – <dl class="simple">
+<dt>How to apply weights to probabilities. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: applies as p^weight (weight * log(p) in log
+space)</p></li>
+<li><p>’additive’: applies as exp(weight)*p (weight + log(p) in log space)</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Shape depends on return_by and split_components:</dt><dd><ul class="simple">
+<li><p>return_by=’cell’, split_components=False: shape (n_cells,)</p></li>
+<li><p>return_by=’cell’, split_components=True: shape (n_cells,
+n_components)</p></li>
+<li><p>return_by=’gene’, split_components=False: shape (n_genes,)</p></li>
+<li><p>return_by=’gene’, split_components=True: shape (n_genes,
+n_components)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.zinb_mixture_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">zinb_mixture_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split_components=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#zinb_mixture_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.zinb_mixture_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for ZINB mixture model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’mixing_weights’: probabilities for each component</p></li>
+<li><p>’p’: success probability parameter</p></li>
+<li><p>’r’: dispersion parameters for each gene and component</p></li>
+<li><p>’gate’: dropout probabilities for each gene and component</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default),
+1 means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes (default)</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>split_components</strong> (<em>bool = False</em>) – If True, returns separate log probabilities for each component.
+If False, returns the log probability of the mixture.</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em>) – Array of shape (n_genes,) containing weights for each gene. If None,
+weights are not used.</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a><em>] </em><em>= None</em>) – <dl class="simple">
+<dt>How to apply weights to probabilities. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: applies as p^weight (weight * log(p) in log space)</p></li>
+<li><p>’additive’: applies as exp(weight)*p (weight + log(p) in log space)</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Shape depends on return_by and split_components:</dt><dd><ul class="simple">
+<li><p>return_by=’cell’, split_components=False: shape (n_cells,)</p></li>
+<li><p>return_by=’cell’, split_components=True: shape (n_cells, n_components)</p></li>
+<li><p>return_by=’gene’, split_components=False: shape (n_genes,)</p></li>
+<li><p>return_by=’gene’, split_components=True: shape (n_genes, n_components)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.nbvcp_mixture_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">nbvcp_mixture_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split_components=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#nbvcp_mixture_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.nbvcp_mixture_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for NBVCP mixture model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’mixing_weights’: probabilities for each component</p></li>
+<li><p>’p’: base success probability parameter</p></li>
+<li><p>’r’: dispersion parameters for each gene and component</p></li>
+<li><p>’p_capture’: cell-specific capture probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full
+dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default), 1
+means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes (default)</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>split_components</strong> (<em>bool = False</em>) – If True, returns separate log probabilities for each component. If
+False, returns the log probability of the mixture.</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em>) – Array of shape (n_genes,) containing weights for each gene. If None,
+weights are not used.</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a><em>] </em><em>= None</em>) – <dl class="simple">
+<dt>How to apply weights to probabilities. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: applies as p^weight (weight * log(p) in log
+space)</p></li>
+<li><p>’additive’: applies as exp(weight)*p (weight + log(p) in log space)</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Shape depends on return_by and split_components:</dt><dd><ul class="simple">
+<li><p>return_by=’cell’, split_components=False: shape (n_cells,)</p></li>
+<li><p>return_by=’cell’, split_components=True: shape (n_cells,
+n_components)</p></li>
+<li><p>return_by=’gene’, split_components=False: shape (n_genes,)</p></li>
+<li><p>return_by=’gene’, split_components=True: shape (n_genes,
+n_components)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models_mix.zinbvcp_mixture_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models_mix.</span></span><span class="sig-name descname"><span class="pre">zinbvcp_mixture_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split_components=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models_mix.html#zinbvcp_mixture_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models_mix.zinbvcp_mixture_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for ZINBVCP mixture model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’mixing_weights’: probabilities for each component</p></li>
+<li><p>’p’: base success probability parameter</p></li>
+<li><p>’r’: dispersion parameters for each gene and component</p></li>
+<li><p>’p_capture’: cell-specific capture probabilities</p></li>
+<li><p>’gate’: dropout probabilities for each gene and component</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full
+dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default), 1
+means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes (default)</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>split_components</strong> (<em>bool = False</em>) – If True, returns separate log probabilities for each component. If
+False, returns the log probability of the mixture.</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em>) – Array of shape (n_genes,) containing weights for each gene. If None,
+weights are not used.</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a><em>] </em><em>= None</em>) – <dl class="simple">
+<dt>How to apply weights. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: multiply log probabilities by weights</p></li>
+<li><p>’additive’: add weights to log probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Shape depends on return_by and split_components:</dt><dd><ul class="simple">
+<li><p>return_by=’cell’, split_components=False: shape (n_cells,)</p></li>
+<li><p>return_by=’cell’, split_components=True: shape (n_cells,
+n_components)</p></li>
+<li><p>return_by=’gene’, split_components=False: shape (n_genes,)</p></li>
+<li><p>return_by=’gene’, split_components=True: shape (n_genes,
+n_components)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="models.html" class="btn btn-neutral float-left" title="models" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="svi.html" class="btn btn-neutral float-right" title="svi" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

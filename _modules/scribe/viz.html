@@ -1,0 +1,676 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>scribe.viz &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../models/index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">scribe.viz</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for scribe.viz</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Plotting functions</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="c1"># Import matplotlib for plotting</span>
+<span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="nn">plt</span>
+<span class="c1"># Import seaborn for plotting</span>
+<span class="kn">import</span> <span class="nn">seaborn</span> <span class="k">as</span> <span class="nn">sns</span>
+<span class="c1"># Import numpy for array manipulation</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">scipy.stats</span> <span class="k">as</span> <span class="nn">stats</span>
+<span class="c1"># Import typing</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Union</span>
+
+<span class="c1"># ------------------------------------------------------------------------------</span>
+<span class="c1"># General plotting functions</span>
+<span class="c1"># ------------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="matplotlib_style">
+<a class="viewcode-back" href="../../api/viz.html#scribe.viz.matplotlib_style">[docs]</a>
+<span class="k">def</span> <span class="nf">matplotlib_style</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Sets plotting defaults to personal style for matplotlib.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Check if Roboto is available</span>
+    <span class="kn">import</span> <span class="nn">matplotlib.font_manager</span> <span class="k">as</span> <span class="nn">fm</span>
+    <span class="n">available_fonts</span> <span class="o">=</span> <span class="p">[</span><span class="n">f</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fm</span><span class="o">.</span><span class="n">fontManager</span><span class="o">.</span><span class="n">ttflist</span><span class="p">]</span>
+    <span class="n">font_family</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Roboto&quot;</span><span class="p">,</span> <span class="s2">&quot;sans-serif&quot;</span><span class="p">]</span> <span class="k">if</span> <span class="s2">&quot;Roboto&quot;</span> <span class="ow">in</span> <span class="n">available_fonts</span> <span class="k">else</span> <span class="p">[</span><span class="s2">&quot;sans-serif&quot;</span><span class="p">]</span>
+    
+    <span class="c1"># Define the matplotlib styles.</span>
+    <span class="n">rc</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="c1"># Axes formatting</span>
+        <span class="s2">&quot;axes.facecolor&quot;</span><span class="p">:</span> <span class="s2">&quot;#E6E6EF&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;axes.edgecolor&quot;</span><span class="p">:</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span>  <span class="c1"># Remove spines</span>
+        <span class="s2">&quot;axes.labelcolor&quot;</span><span class="p">:</span> <span class="s2">&quot;#000000&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;axes.spines.right&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="s2">&quot;axes.spines.top&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="s2">&quot;axes.spines.left&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="s2">&quot;axes.spines.bottom&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="s2">&quot;axes.axisbelow&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">&quot;axes.grid&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+
+        <span class="c1"># Font sizes</span>
+        <span class="s2">&quot;axes.titlesize&quot;</span><span class="p">:</span> <span class="mi">16</span><span class="p">,</span>
+        <span class="s2">&quot;axes.labelsize&quot;</span><span class="p">:</span> <span class="mi">16</span><span class="p">,</span>
+        <span class="s2">&quot;xtick.labelsize&quot;</span><span class="p">:</span> <span class="mi">14</span><span class="p">,</span>
+        <span class="s2">&quot;ytick.labelsize&quot;</span><span class="p">:</span> <span class="mi">14</span><span class="p">,</span>
+
+        <span class="c1"># Grid formatting</span>
+        <span class="s2">&quot;grid.linestyle&quot;</span><span class="p">:</span> <span class="s1">&#39;-&#39;</span><span class="p">,</span>
+        <span class="s2">&quot;grid.linewidth&quot;</span><span class="p">:</span> <span class="mf">1.25</span><span class="p">,</span>
+        <span class="s2">&quot;grid.color&quot;</span><span class="p">:</span> <span class="s2">&quot;#FFFFFF&quot;</span><span class="p">,</span>
+
+        <span class="c1"># Lines formatting</span>
+        <span class="s2">&quot;lines.linewidth&quot;</span><span class="p">:</span> <span class="mf">2.0</span><span class="p">,</span>
+
+        <span class="c1"># Legend formatting</span>
+        <span class="s2">&quot;legend.fontsize&quot;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span>
+        <span class="s2">&quot;legend.title_fontsize&quot;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span>
+        <span class="s2">&quot;legend.frameon&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">&quot;legend.facecolor&quot;</span><span class="p">:</span> <span class="s2">&quot;#E6E6EF&quot;</span><span class="p">,</span>
+
+        <span class="c1"># Tick formatting</span>
+        <span class="s2">&quot;xtick.bottom&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="s2">&quot;ytick.left&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+
+        <span class="c1"># Font styling - with fallbacks</span>
+        <span class="s2">&quot;font.family&quot;</span><span class="p">:</span> <span class="n">font_family</span><span class="p">,</span>
+        <span class="s2">&quot;font.style&quot;</span><span class="p">:</span> <span class="s2">&quot;normal&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;axes.titleweight&quot;</span><span class="p">:</span> <span class="s2">&quot;bold&quot;</span><span class="p">,</span>
+
+        <span class="c1"># Higher-order things</span>
+        <span class="s2">&quot;figure.facecolor&quot;</span><span class="p">:</span> <span class="s2">&quot;white&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;figure.dpi&quot;</span><span class="p">:</span> <span class="mi">300</span><span class="p">,</span>
+        <span class="s2">&quot;savefig.bbox&quot;</span><span class="p">:</span> <span class="s2">&quot;tight&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;mathtext.default&quot;</span><span class="p">:</span> <span class="s2">&quot;regular&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="c1"># Use seaborn&#39;s colorblind palette</span>
+    <span class="n">sns</span><span class="o">.</span><span class="n">set_style</span><span class="p">(</span><span class="n">rc</span><span class="p">)</span>
+    <span class="n">sns</span><span class="o">.</span><span class="n">set_palette</span><span class="p">(</span><span class="s2">&quot;colorblind&quot;</span><span class="p">)</span></div>
+
+
+<span class="c1"># ------------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="colors">
+<a class="viewcode-back" href="../../api/viz.html#scribe.viz.colors">[docs]</a>
+<span class="k">def</span> <span class="nf">colors</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns dictionary with personal color palette.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">col</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s1">&#39;dark_black&#39;</span><span class="p">:</span> <span class="s2">&quot;#000000&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;black&#39;</span><span class="p">:</span> <span class="s2">&quot;#000000&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;light_black&#39;</span><span class="p">:</span> <span class="s2">&quot;#05080F&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;pale_black&#39;</span><span class="p">:</span> <span class="s2">&quot;#1F1F1F&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;dark_blue&#39;</span><span class="p">:</span> <span class="s2">&quot;#2957A8&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;blue&#39;</span><span class="p">:</span> <span class="s2">&quot;#3876C0&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;light_blue&#39;</span><span class="p">:</span> <span class="s2">&quot;#81A9DA&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;pale_blue&#39;</span><span class="p">:</span> <span class="s2">&quot;#C0D4ED&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;dark_green&#39;</span><span class="p">:</span> <span class="s2">&quot;#2E5C0A&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;green&#39;</span><span class="p">:</span> <span class="s2">&quot;#468C12&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;light_green&#39;</span><span class="p">:</span> <span class="s2">&quot;#6EBC24&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;pale_green&#39;</span><span class="p">:</span> <span class="s2">&quot;#A9EB70&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;dark_red&#39;</span><span class="p">:</span> <span class="s2">&quot;#912E27&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;red&#39;</span><span class="p">:</span> <span class="s2">&quot;#CB4338&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;light_red&#39;</span><span class="p">:</span> <span class="s2">&quot;#D57A72&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;pale_red&#39;</span><span class="p">:</span> <span class="s2">&quot;#E8B5B0&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;dark_gold&#39;</span><span class="p">:</span> <span class="s2">&quot;#B68816&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;gold&#39;</span><span class="p">:</span> <span class="s2">&quot;#EBC21F&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;light_gold&#39;</span><span class="p">:</span> <span class="s2">&quot;#F2D769&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;pale_gold&#39;</span><span class="p">:</span> <span class="s2">&quot;#F7E6A1&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;dark_purple&#39;</span><span class="p">:</span> <span class="s2">&quot;#5E315E&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;purple&#39;</span><span class="p">:</span> <span class="s2">&quot;#934D93&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;light_purple&#39;</span><span class="p">:</span> <span class="s2">&quot;#BC7FBC&quot;</span><span class="p">,</span>
+        <span class="s1">&#39;pale_purple&#39;</span><span class="p">:</span> <span class="s2">&quot;#D5AFD5&quot;</span>
+    <span class="p">}</span>
+    
+    <span class="c1"># Convert hex strings to RGB tuples</span>
+    <span class="n">colors</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">hex_color</span> <span class="ow">in</span> <span class="n">col</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="c1"># Convert hex to RGB (0-1 scale)</span>
+        <span class="n">hex_color</span> <span class="o">=</span> <span class="n">hex_color</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s1">&#39;#&#39;</span><span class="p">)</span>
+        <span class="n">rgb</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">hex_color</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">2</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span><span class="o">/</span><span class="mi">255</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+        <span class="n">colors</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">rgb</span>
+        
+    <span class="k">return</span> <span class="n">colors</span></div>
+
+
+<span class="c1"># ------------------------------------------------------------------------------</span>
+<span class="c1"># Posterior diagnostic plots</span>
+<span class="c1"># ------------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="plot_posterior">
+<a class="viewcode-back" href="../../api/viz.html#scribe.viz.plot_posterior">[docs]</a>
+<span class="k">def</span> <span class="nf">plot_posterior</span><span class="p">(</span>
+    <span class="n">ax</span><span class="p">,</span>
+    <span class="n">distribution</span><span class="p">,</span>
+    <span class="n">ground_truth</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">plot_quantiles</span><span class="o">=</span><span class="p">(</span><span class="mf">0.001</span><span class="p">,</span> <span class="mf">0.999</span><span class="p">),</span>
+    <span class="n">n_points</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+    <span class="n">color</span><span class="o">=</span><span class="s1">&#39;blue&#39;</span><span class="p">,</span>
+    <span class="n">ground_truth_color</span><span class="o">=</span><span class="s1">&#39;red&#39;</span><span class="p">,</span>
+    <span class="n">ground_truth_linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">,</span>
+    <span class="n">ground_truth_linewidth</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span>
+    <span class="n">ground_truth_label</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span>
+    <span class="n">label</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">fill_between</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">fill_color</span><span class="o">=</span><span class="s1">&#39;blue&#39;</span><span class="p">,</span>
+    <span class="n">fill_alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Plot a posterior distribution on a given axis.</span>
+<span class="sd">    </span>
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    ax : matplotlib.axes.Axes</span>
+<span class="sd">        The axis to plot on</span>
+<span class="sd">    distribution : scipy.stats.rv_continuous</span>
+<span class="sd">        The distribution to plot</span>
+<span class="sd">    ground_truth : float, optional</span>
+<span class="sd">        Ground truth value to plot as vertical line</span>
+<span class="sd">    plot_quantiles : tuple of float, optional</span>
+<span class="sd">        Lower and upper quantiles for plot range (default: (0.001, 0.999))</span>
+<span class="sd">    n_points : int, optional</span>
+<span class="sd">        Number of points to use for plotting (default: 200)</span>
+<span class="sd">    color : str, optional</span>
+<span class="sd">        Color for the distribution plot (default: &#39;blue&#39;)</span>
+<span class="sd">    ground_truth_color : str, optional</span>
+<span class="sd">        Color for the ground truth line (default: &#39;red&#39;)</span>
+<span class="sd">    ground_truth_linestyle : str, optional</span>
+<span class="sd">        Line style for ground truth (default: &#39;--&#39;)</span>
+<span class="sd">    ground_truth_linewidth : float, optional</span>
+<span class="sd">        Line width for ground truth (default: 1.5)</span>
+<span class="sd">    ground_truth_label : str, optional</span>
+<span class="sd">        Label for the ground truth in the legend</span>
+<span class="sd">    alpha : float, optional</span>
+<span class="sd">        Transparency for the distribution plot (default: 0.6)</span>
+<span class="sd">    label : str, optional</span>
+<span class="sd">        Label for the distribution in the legend</span>
+<span class="sd">    fill_between : bool, optional</span>
+<span class="sd">        Whether to fill the distribution plot (default: True)</span>
+<span class="sd">    fill_color : str, optional</span>
+<span class="sd">        Color for the fill_between plot (default: &#39;blue&#39;)</span>
+<span class="sd">    fill_alpha : float, optional</span>
+<span class="sd">        Transparency for the fill_between plot (default: 0.2)</span>
+<span class="sd">        </span>
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+<span class="sd">        The plot is created on the provided axis</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># For scipy.stats distributions</span>
+    <span class="n">q_lower</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">distribution</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="n">plot_quantiles</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+    <span class="n">q_upper</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">distribution</span><span class="o">.</span><span class="n">ppf</span><span class="p">(</span><span class="n">plot_quantiles</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+    
+    <span class="c1"># Create x values for plotting</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="n">q_lower</span><span class="p">,</span> <span class="n">q_upper</span><span class="p">,</span> <span class="n">n_points</span><span class="p">)</span>
+    
+    <span class="c1"># Get PDF values</span>
+    <span class="n">pdf</span> <span class="o">=</span> <span class="n">distribution</span><span class="o">.</span><span class="n">pdf</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+    
+    <span class="c1"># Create the plot</span>
+    <span class="k">if</span> <span class="n">fill_between</span><span class="p">:</span>
+        <span class="c1"># Fill between the lower and upper quantiles</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">fill_between</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">pdf</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">fill_alpha</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">fill_color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="n">label</span><span class="p">)</span>
+    <span class="c1"># Plot the PDF</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">pdf</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">)</span>
+    
+    <span class="c1"># Add ground truth if provided</span>
+    <span class="k">if</span> <span class="n">ground_truth</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">axvline</span><span class="p">(</span>
+            <span class="n">ground_truth</span><span class="p">,</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">ground_truth_color</span><span class="p">,</span>
+            <span class="n">linestyle</span><span class="o">=</span><span class="n">ground_truth_linestyle</span><span class="p">,</span>
+            <span class="n">linewidth</span><span class="o">=</span><span class="n">ground_truth_linewidth</span><span class="p">,</span>
+            <span class="n">label</span><span class="o">=</span><span class="n">ground_truth_label</span> <span class="k">if</span> <span class="n">ground_truth_label</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span>
+    
+    <span class="c1"># Add legend if label was provided</span>
+    <span class="k">if</span> <span class="n">label</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">()</span>
+    
+    <span class="c1"># Set axes labels</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Density&#39;</span><span class="p">)</span></div>
+
+
+<span class="c1"># ------------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="plot_histogram_credible_regions">
+<a class="viewcode-back" href="../../api/viz.html#scribe.viz.plot_histogram_credible_regions">[docs]</a>
+<span class="k">def</span> <span class="nf">plot_histogram_credible_regions</span><span class="p">(</span>
+    <span class="n">ax</span><span class="p">,</span>
+    <span class="n">hist_results</span><span class="p">,</span>
+    <span class="n">colors</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">plot_median</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">median_color</span><span class="o">=</span><span class="s1">&#39;black&#39;</span><span class="p">,</span>
+    <span class="n">median_alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">median_linewidth</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span>
+    <span class="n">label_prefix</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+    <span class="n">max_bin</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Plot credible regions as fill_between on a given axis.</span>
+<span class="sd">    </span>
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    ax : matplotlib.axes.Axes</span>
+<span class="sd">        The axis to plot on</span>
+<span class="sd">    hist_results : dict</span>
+<span class="sd">        Results dictionary from compute_histogram_credible_regions</span>
+<span class="sd">    colors : list, optional</span>
+<span class="sd">        List of colors for each credible region. Must match length of </span>
+<span class="sd">        credible regions. If None and cmap is None, defaults to grays.</span>
+<span class="sd">    cmap : str or matplotlib.colors.Colormap, optional</span>
+<span class="sd">        Colormap to generate colors from. Ignored if colors is provided.</span>
+<span class="sd">    alpha : float or list, optional</span>
+<span class="sd">        Transparency for fill_between plots. If float, same alpha used for all</span>
+<span class="sd">        regions. If list, must match length of credible regions.</span>
+<span class="sd">    plot_median : bool, optional</span>
+<span class="sd">        Whether to plot the median line (default: True)</span>
+<span class="sd">    median_color : str, optional</span>
+<span class="sd">        Color for median line (default: &#39;black&#39;)</span>
+<span class="sd">    median_alpha : float, optional</span>
+<span class="sd">        Transparency for median line (default: 0.8)</span>
+<span class="sd">    median_linewidth : float, optional</span>
+<span class="sd">        Line width for median line (default: 1.5)</span>
+<span class="sd">    label_prefix : str, optional</span>
+<span class="sd">        Prefix for legend labels (default: &#39;&#39;)</span>
+<span class="sd">    max_bin : int, optional</span>
+<span class="sd">        Maximum bin index to plot. If provided, only bins up to this index will</span>
+<span class="sd">        be shown. Default is None (show all bins).</span>
+<span class="sd">        </span>
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    matplotlib.axes.Axes</span>
+<span class="sd">        The axis with plots added</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;bin_edges&#39;</span><span class="p">]</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">bin_edges</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># Use left edges for plotting</span>
+
+    <span class="c1"># Apply max_bin limit if specified</span>
+    <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="n">max_bin</span><span class="p">]</span>
+        <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">bin_edges</span><span class="p">[:</span><span class="n">max_bin</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># Include one more edge for proper plotting</span>
+    
+    <span class="c1"># Sort credible regions from largest to smallest for proper layering</span>
+    <span class="n">cr_values</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">n_regions</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">cr_values</span><span class="p">)</span>
+    
+    <span class="c1"># Handle colors</span>
+    <span class="k">if</span> <span class="n">colors</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cmap</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Default to grays if no colors specified</span>
+            <span class="n">colors</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s1">&#39;gray&#39;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_regions</span><span class="p">)][::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Generate colors from colormap</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cmap</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="n">cmap</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">get_cmap</span><span class="p">(</span><span class="n">cmap</span><span class="p">)</span>
+            <span class="n">colors</span> <span class="o">=</span> <span class="p">[</span><span class="n">cmap</span><span class="p">(</span><span class="n">i</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_regions</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_regions</span><span class="p">)][::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    
+    <span class="c1"># Handle alpha</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">alpha</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+        <span class="n">alphas</span> <span class="o">=</span> <span class="p">[</span><span class="n">alpha</span><span class="p">]</span> <span class="o">*</span> <span class="n">n_regions</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">alphas</span> <span class="o">=</span> <span class="n">alpha</span>
+        
+    <span class="c1"># Plot credible regions</span>
+    <span class="k">for</span> <span class="n">cr</span><span class="p">,</span> <span class="n">color</span><span class="p">,</span> <span class="n">alpha</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">cr_values</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">alphas</span><span class="p">):</span>
+        <span class="n">region</span> <span class="o">=</span> <span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">][</span><span class="n">cr</span><span class="p">]</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">fill_between</span><span class="p">(</span>
+            <span class="n">x</span><span class="p">,</span>
+            <span class="n">region</span><span class="p">[</span><span class="s1">&#39;lower&#39;</span><span class="p">][:</span><span class="n">max_bin</span><span class="p">]</span> <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">region</span><span class="p">[</span><span class="s1">&#39;lower&#39;</span><span class="p">],</span>
+            <span class="n">region</span><span class="p">[</span><span class="s1">&#39;upper&#39;</span><span class="p">][:</span><span class="n">max_bin</span><span class="p">]</span> <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">region</span><span class="p">[</span><span class="s1">&#39;upper&#39;</span><span class="p">],</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span>
+            <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span>
+            <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">label_prefix</span><span class="si">}{</span><span class="n">cr</span><span class="si">}</span><span class="s1">% CR&#39;</span>
+        <span class="p">)</span>
+    
+    <span class="c1"># Plot median</span>
+    <span class="k">if</span> <span class="n">plot_median</span><span class="p">:</span>
+        <span class="c1"># Use the median from any region (they&#39;re all the same)</span>
+        <span class="n">median</span> <span class="o">=</span> <span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">][</span><span class="n">cr_values</span><span class="p">[</span><span class="mi">0</span><span class="p">]][</span><span class="s1">&#39;median&#39;</span><span class="p">]</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+            <span class="n">x</span><span class="p">,</span>
+            <span class="n">median</span><span class="p">[:</span><span class="n">max_bin</span><span class="p">]</span> <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">median</span><span class="p">,</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">median_color</span><span class="p">,</span>
+            <span class="n">alpha</span><span class="o">=</span><span class="n">median_alpha</span><span class="p">,</span>
+            <span class="n">linewidth</span><span class="o">=</span><span class="n">median_linewidth</span><span class="p">,</span>
+            <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">label_prefix</span><span class="si">}</span><span class="s1">median&#39;</span>
+        <span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">ax</span></div>
+
+
+<span class="c1"># ------------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="plot_histogram_credible_regions_stairs">
+<a class="viewcode-back" href="../../api/viz.html#scribe.viz.plot_histogram_credible_regions_stairs">[docs]</a>
+<span class="k">def</span> <span class="nf">plot_histogram_credible_regions_stairs</span><span class="p">(</span>
+    <span class="n">ax</span><span class="p">,</span>
+    <span class="n">hist_results</span><span class="p">,</span>
+    <span class="n">colors</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">plot_median</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">median_color</span><span class="o">=</span><span class="s1">&#39;black&#39;</span><span class="p">,</span>
+    <span class="n">median_alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">median_linewidth</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span>
+    <span class="n">label_prefix</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+    <span class="n">max_bin</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Plot credible regions as fill_between on a given axis.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    ax : matplotlib.axes.Axes</span>
+<span class="sd">        The axis to plot on</span>
+<span class="sd">    hist_results : dict</span>
+<span class="sd">        Results dictionary from compute_histogram_credible_regions</span>
+<span class="sd">    colors : list, optional</span>
+<span class="sd">        List of colors for each credible region. Must match length of </span>
+<span class="sd">        credible regions. If None and cmap is None, defaults to grays.</span>
+<span class="sd">    cmap : str or matplotlib.colors.Colormap, optional</span>
+<span class="sd">        Colormap to generate colors from. Ignored if colors is provided.</span>
+<span class="sd">    alpha : float or list, optional</span>
+<span class="sd">        Transparency for fill_between plots. If float, same alpha used for all</span>
+<span class="sd">        regions. If list, must match length of credible regions.</span>
+<span class="sd">    plot_median : bool, optional</span>
+<span class="sd">        Whether to plot the median line (default: True)</span>
+<span class="sd">    median_color : str, optional</span>
+<span class="sd">        Color for median line (default: &#39;black&#39;)</span>
+<span class="sd">    median_alpha : float, optional</span>
+<span class="sd">        Transparency for median line (default: 0.8)</span>
+<span class="sd">    median_linewidth : float, optional</span>
+<span class="sd">        Line width for median line (default: 1.5)</span>
+<span class="sd">    label_prefix : str, optional</span>
+<span class="sd">        Prefix for legend labels (default: &#39;&#39;)</span>
+<span class="sd">    max_bin : int, optional</span>
+<span class="sd">        Maximum bin index to plot. If provided, only bins up to this index will</span>
+<span class="sd">        be shown. Default is None (show all bins).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    matplotlib.axes.Axes</span>
+<span class="sd">        The axis with plots added</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;bin_edges&#39;</span><span class="p">]</span>
+
+    <span class="c1"># Apply max_bin limit if specified</span>
+    <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">bin_edges</span><span class="p">[:</span><span class="n">max_bin</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Sort credible regions from largest to smallest for proper layering</span>
+    <span class="n">cr_values</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">n_regions</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">cr_values</span><span class="p">)</span>
+
+    <span class="c1"># Handle colors</span>
+    <span class="k">if</span> <span class="n">colors</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cmap</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Default to grays if no colors specified</span>
+            <span class="n">colors</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s1">&#39;gray&#39;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_regions</span><span class="p">)][::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Generate colors from colormap</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cmap</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="n">cmap</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">get_cmap</span><span class="p">(</span><span class="n">cmap</span><span class="p">)</span>
+            <span class="n">colors</span> <span class="o">=</span> <span class="p">[</span><span class="n">cmap</span><span class="p">(</span><span class="n">i</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_regions</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+                      <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_regions</span><span class="p">)][::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Handle alpha</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">alpha</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+        <span class="n">alphas</span> <span class="o">=</span> <span class="p">[</span><span class="n">alpha</span><span class="p">]</span> <span class="o">*</span> <span class="n">n_regions</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">alphas</span> <span class="o">=</span> <span class="n">alpha</span>
+
+    <span class="c1"># Plot credible regions</span>
+    <span class="k">for</span> <span class="n">cr</span><span class="p">,</span> <span class="n">color</span><span class="p">,</span> <span class="n">alpha</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">cr_values</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">alphas</span><span class="p">):</span>
+        <span class="c1"># Get region data</span>
+        <span class="n">region</span> <span class="o">=</span> <span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">][</span><span class="n">cr</span><span class="p">]</span>
+        <span class="c1"># Apply max_bin limit to the data if specified</span>
+        <span class="n">upper</span> <span class="o">=</span> <span class="n">region</span><span class="p">[</span><span class="s1">&#39;upper&#39;</span><span class="p">][:</span><span class="n">max_bin</span><span class="p">]</span> <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">region</span><span class="p">[</span><span class="s1">&#39;upper&#39;</span><span class="p">]</span>
+        <span class="n">lower</span> <span class="o">=</span> <span class="n">region</span><span class="p">[</span><span class="s1">&#39;lower&#39;</span><span class="p">][:</span><span class="n">max_bin</span><span class="p">]</span> <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">region</span><span class="p">[</span><span class="s1">&#39;lower&#39;</span><span class="p">]</span>
+
+        <span class="c1"># Plot credible region</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">stairs</span><span class="p">(</span>
+            <span class="n">upper</span><span class="p">,</span>
+            <span class="n">bin_edges</span><span class="p">,</span>
+            <span class="n">fill</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">baseline</span><span class="o">=</span><span class="n">lower</span><span class="p">,</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span>
+            <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span>
+            <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">label_prefix</span><span class="si">}{</span><span class="n">cr</span><span class="si">}</span><span class="s1">% CR&#39;</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Plot median</span>
+    <span class="k">if</span> <span class="n">plot_median</span><span class="p">:</span>
+        <span class="n">median</span> <span class="o">=</span> <span class="n">hist_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">][</span><span class="n">cr_values</span><span class="p">[</span><span class="mi">0</span><span class="p">]][</span><span class="s1">&#39;median&#39;</span><span class="p">]</span>
+        <span class="c1"># Apply max_bin limit to median if specified</span>
+        <span class="k">if</span> <span class="n">max_bin</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">median</span> <span class="o">=</span> <span class="n">median</span><span class="p">[:</span><span class="n">max_bin</span><span class="p">]</span>
+
+        <span class="c1"># Plot median</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">stairs</span><span class="p">(</span>
+            <span class="n">median</span><span class="p">,</span>
+            <span class="n">bin_edges</span><span class="p">,</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">median_color</span><span class="p">,</span>
+            <span class="n">alpha</span><span class="o">=</span><span class="n">median_alpha</span><span class="p">,</span>
+            <span class="n">linewidth</span><span class="o">=</span><span class="n">median_linewidth</span><span class="p">,</span>
+            <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">label_prefix</span><span class="si">}</span><span class="s1">median&#39;</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">ax</span></div>
+
+
+<span class="c1"># ------------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="plot_ecdf_credible_regions">
+<a class="viewcode-back" href="../../api/viz.html#scribe.viz.plot_ecdf_credible_regions">[docs]</a>
+<span class="k">def</span> <span class="nf">plot_ecdf_credible_regions</span><span class="p">(</span>
+    <span class="n">ax</span><span class="p">,</span>
+    <span class="n">ecdf_results</span><span class="p">,</span>
+    <span class="n">colors</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">plot_median</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">median_color</span><span class="o">=</span><span class="s1">&#39;black&#39;</span><span class="p">,</span>
+    <span class="n">median_alpha</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+    <span class="n">median_linewidth</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span>
+    <span class="n">label_prefix</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span>
+    <span class="n">drawstyle</span><span class="o">=</span><span class="s1">&#39;steps-post&#39;</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Plot ECDF credible regions as fill_between on a given axis.</span>
+<span class="sd">    </span>
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    ax : matplotlib.axes.Axes</span>
+<span class="sd">        The axis to plot on</span>
+<span class="sd">    ecdf_results : dict</span>
+<span class="sd">        Results dictionary from compute_ecdf_credible_regions</span>
+<span class="sd">    colors : list, optional</span>
+<span class="sd">        List of colors for each credible region. Must match length of credible</span>
+<span class="sd">        regions. If None and cmap is None, defaults to grays.</span>
+<span class="sd">    cmap : str or matplotlib.colors.Colormap, optional</span>
+<span class="sd">        Colormap to generate colors from. Ignored if colors is provided.</span>
+<span class="sd">    alpha : float or list, optional</span>
+<span class="sd">        Transparency for fill_between plots. If float, same alpha used for all</span>
+<span class="sd">        regions. If list, must match length of credible regions.</span>
+<span class="sd">    plot_median : bool, optional</span>
+<span class="sd">        Whether to plot the median line (default: True)</span>
+<span class="sd">    median_color : str, optional</span>
+<span class="sd">        Color for median line (default: &#39;black&#39;)</span>
+<span class="sd">    median_alpha : float, optional</span>
+<span class="sd">        Transparency for median line (default: 0.2)</span>
+<span class="sd">    median_linewidth : float, optional</span>
+<span class="sd">        Line width for median line (default: 1.5)</span>
+<span class="sd">    label_prefix : str, optional</span>
+<span class="sd">        Prefix for legend labels (default: &#39;&#39;)</span>
+<span class="sd">    drawstyle : str, optional</span>
+<span class="sd">        Style for drawing steps, either &#39;steps-post&#39; or &#39;steps-pre&#39; (default:</span>
+<span class="sd">        &#39;steps-post&#39;)</span>
+<span class="sd">        </span>
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    matplotlib.axes.Axes</span>
+<span class="sd">        The axis with plots added</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">ecdf_results</span><span class="p">[</span><span class="s1">&#39;x_values&#39;</span><span class="p">]</span>
+    
+    <span class="c1"># Sort credible regions from largest to smallest for proper layering</span>
+    <span class="n">cr_values</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">ecdf_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">n_regions</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">cr_values</span><span class="p">)</span>
+    
+    <span class="c1"># Handle colors</span>
+    <span class="k">if</span> <span class="n">colors</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cmap</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Default to grays if no colors specified</span>
+            <span class="n">colors</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s1">&#39;gray&#39;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_regions</span><span class="p">)][::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Generate colors from colormap</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cmap</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="n">cmap</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">get_cmap</span><span class="p">(</span><span class="n">cmap</span><span class="p">)</span>
+            <span class="n">colors</span> <span class="o">=</span> <span class="p">[</span><span class="n">cmap</span><span class="p">(</span><span class="n">i</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_regions</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_regions</span><span class="p">)][::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    
+    <span class="c1"># Handle alpha</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">alpha</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+        <span class="n">alphas</span> <span class="o">=</span> <span class="p">[</span><span class="n">alpha</span><span class="p">]</span> <span class="o">*</span> <span class="n">n_regions</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">alphas</span> <span class="o">=</span> <span class="n">alpha</span>
+        
+    <span class="c1"># Plot credible regions</span>
+    <span class="k">for</span> <span class="n">cr</span><span class="p">,</span> <span class="n">color</span><span class="p">,</span> <span class="n">alpha</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">cr_values</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">alphas</span><span class="p">):</span>
+        <span class="n">region</span> <span class="o">=</span> <span class="n">ecdf_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">][</span><span class="n">cr</span><span class="p">]</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">fill_between</span><span class="p">(</span>
+            <span class="n">x</span><span class="p">,</span>
+            <span class="n">region</span><span class="p">[</span><span class="s1">&#39;lower&#39;</span><span class="p">],</span>
+            <span class="n">region</span><span class="p">[</span><span class="s1">&#39;upper&#39;</span><span class="p">],</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span>
+            <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span>
+            <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">label_prefix</span><span class="si">}{</span><span class="n">cr</span><span class="si">}</span><span class="s1">% CR&#39;</span><span class="p">,</span>
+            <span class="n">step</span><span class="o">=</span><span class="n">drawstyle</span>
+        <span class="p">)</span>
+    
+    <span class="c1"># Plot median</span>
+    <span class="k">if</span> <span class="n">plot_median</span><span class="p">:</span>
+        <span class="c1"># Use the median from any region (they&#39;re all the same)</span>
+        <span class="n">median</span> <span class="o">=</span> <span class="n">ecdf_results</span><span class="p">[</span><span class="s1">&#39;regions&#39;</span><span class="p">][</span><span class="n">cr_values</span><span class="p">[</span><span class="mi">0</span><span class="p">]][</span><span class="s1">&#39;median&#39;</span><span class="p">]</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span>
+            <span class="n">x</span><span class="p">,</span>
+            <span class="n">median</span><span class="p">,</span>
+            <span class="n">color</span><span class="o">=</span><span class="n">median_color</span><span class="p">,</span>
+            <span class="n">alpha</span><span class="o">=</span><span class="n">median_alpha</span><span class="p">,</span>
+            <span class="n">linewidth</span><span class="o">=</span><span class="n">median_linewidth</span><span class="p">,</span>
+            <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">label_prefix</span><span class="si">}</span><span class="s1">median&#39;</span><span class="p">,</span>
+            <span class="n">drawstyle</span><span class="o">=</span><span class="n">drawstyle</span>
+        <span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">ax</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
