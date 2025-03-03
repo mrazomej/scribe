@@ -1,7 +1,19 @@
 # %% ---------------------------------------------------------------------------
 # Import base libraries
+# Import base libraries
+# Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
 import os
+# os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
+
+# # Preallocate a specific amount of memory (in bytes)
+# os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+# os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
+
+# # Disable the memory preallocation completely
+# os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+
 import pickle
+import gc
 
 # Import JAX-related libraries
 import jax
@@ -9,6 +21,7 @@ from jax import random
 import jax.numpy as jnp
 # Import Pyro-related libraries
 import numpyro.distributions as dist
+from numpyro.infer import MCMC, NUTS
 # Import numpy for array manipulation
 import numpy as np
 # Import scribe
@@ -34,6 +47,11 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Setup the PRNG key
 rng_key = random.PRNGKey(42)  # Set random seed
+
+# Define MCMC burn-in samples
+n_mcmc_burnin = 1_000
+# Define MCMC samples
+n_mcmc_samples = 100
 
 # Define number of cells
 n_cells = 3_000
@@ -113,7 +131,6 @@ if not os.path.exists(output_file):
 # Load true values and parameters from file
 with open(output_file, 'rb') as f:
     data = pickle.load(f)
-
 # %% ---------------------------------------------------------------------------
 
 # Define file name
@@ -123,26 +140,49 @@ file_name = f"{OUTPUT_DIR}/" \
     f"{n_genes}genes_" \
     f"{n_steps}steps.pkl"
 
-# Check if the file exists
-if not os.path.exists(file_name):
-    # Run scribe
-    scribe_results = scribe.svi.run_scribe(
-        counts=jnp.array(data['counts']),
-        n_steps=n_steps,
-        batch_size=min(batch_size, n_cells),
-        p_prior=p_prior,
-        r_prior=r_prior,
-        r_dist=r_distribution,
-    )
-
-    # Save the results, the true values, and the counts
-    with open(file_name, "wb") as f:
-        pickle.dump(scribe_results, f)
-# %% ---------------------------------------------------------------------------
-
 # Load results
 with open(file_name, "rb") as f:
     scribe_results = pickle.load(f)
+# %% ---------------------------------------------------------------------------
+
+# Extract model function
+model, _ = scribe_results._model_and_guide()
+# Extract model configuration
+model_config = scribe_results.model_config
+
+# Extract posterior map from SVI results
+param_map = scribe_results.get_map(use_mean=True)
 
 # %% ---------------------------------------------------------------------------
 
+# Clear caches before running
+gc.collect()
+jax.clear_caches()
+
+# Define output file name
+file_name = f"{OUTPUT_DIR}/" \
+        f"mcmc_{model_type}_r-{r_distribution}_results_" \
+        f"{n_mcmc_burnin}burnin_" \
+        f"{n_mcmc_samples}samples.pkl"
+
+if not os.path.exists(file_name):
+    # Define MCMC sampler with initial position from SVI results
+    mcmc_results = MCMC(
+        NUTS(model), 
+        num_warmup=n_mcmc_burnin, 
+        num_samples=n_mcmc_samples
+    ) 
+    # Run MCMC sampler
+    mcmc_results.run(
+        random.PRNGKey(0), 
+        n_cells=n_cells,
+        n_genes=n_genes,
+        counts=jnp.array(data["counts"]), 
+        total_counts=jnp.sum(data["counts"], axis=1),
+        model_config=model_config,
+        # init_params=param_map
+    )
+    # Save MCMC results
+    # with open(file_name, "wb") as f:
+    #     pickle.dump(mcmc_results, f)
+# %% ---------------------------------------------------------------------------
