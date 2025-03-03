@@ -1,23 +1,6 @@
 Welcome to SCRIBE's documentation!
 ==================================
 
-.. warning::
-   **Project Status and Usage Restrictions**
-
-   This project is currently in a pre-release state and is made available for
-   viewing and evaluation purposes only. 
-   
-   At this time:
-   
-   - You may view and evaluate the code and documentation
-   - You may not use, copy, modify, or distribute any part of this software
-   - You may not incorporate this code into other projects
-   
-   The software will be released under the MIT License following the publication
-   of the associated pre-print. 
-   Until then, all rights are reserved.
-
-
 SCRIBE (Single-Cell RNA-Seq Inference using Bayesian Estimation) is a `Python`
 package for analyzing single-cell RNA sequencing (scRNA-seq) data using
 variational inference based on `Numpyro

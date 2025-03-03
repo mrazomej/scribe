@@ -1,0 +1,783 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Custom Models &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="Examples" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">Examples</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Custom Models</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#overview">Overview</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#defining-the-model">Defining the Model</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#summary-of-key-requirements-for-the-model-function">Summary of key requirements for the model function</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#defining-the-guide">Defining the Guide</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#summary-of-key-points-for-the-guide">Summary of key points for the guide</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#specifying-parameter-types">Specifying Parameter Types</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#running-inference">Running Inference</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#working-with-results">Working with Results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#optional-extensions">Optional Extensions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#best-practices">Best Practices</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#common-issues">Common Issues</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#see-also">See Also</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">Examples</a></li>
+      <li class="breadcrumb-item active">Custom Models</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/examples/custom_model.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="custom-models">
+<h1>Custom Models<a class="headerlink" href="#custom-models" title="Link to this heading"></a></h1>
+<p><code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> provides a flexible framework for implementing and working with custom
+models while maintaining compatibility with the package’s infrastructure. This
+tutorial will walk you through the process of creating and using custom models,
+using a real example of modifying the <a class="reference internal" href="../models/nbdm.html"><span class="doc">Negative Binomial-Dirichlet Multinomial Model (NBDM)</span></a> model to use a
+<a class="reference external" href="https://en.wikipedia.org/wiki/Log-normal_distribution">LogNormal</a> prior.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>Creating a custom model in <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> involves several key components:</p>
+<ol class="arabic simple">
+<li><p>Defining the model function</p></li>
+<li><p>Defining the guide function</p></li>
+<li><p>Specifying parameter types (either <code class="docutils literal notranslate"><span class="pre">global</span></code>, <code class="docutils literal notranslate"><span class="pre">gene-specific</span></code>, or <code class="docutils literal notranslate"><span class="pre">cell-specific</span></code>)</p></li>
+<li><p>Running inference using <code class="docutils literal notranslate"><span class="pre">run_scribe</span></code></p></li>
+<li><p>Working with the results</p></li>
+</ol>
+<p>Let’s go through each step in detail. First, we begin with the needed imports:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">jax</span>
+<span class="kn">import</span> <span class="nn">jax.numpy</span> <span class="k">as</span> <span class="nn">jnp</span>
+<span class="kn">import</span> <span class="nn">numpyro.distributions</span> <span class="k">as</span> <span class="nn">dist</span>
+<span class="kn">import</span> <span class="nn">numpyro</span>
+<span class="kn">import</span> <span class="nn">scribe</span>
+</pre></div>
+</div>
+</section>
+<section id="defining-the-model">
+<h2>Defining the Model<a class="headerlink" href="#defining-the-model" title="Link to this heading"></a></h2>
+<p>The model function defines your probabilistic model using <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code>
+primitives. For this tutorial, we will modify the <a class="reference internal" href="../models/nbdm.html"><span class="doc">Negative Binomial-Dirichlet Multinomial Model (NBDM)</span></a> model to
+use a LogNormal prior for the dispersion parameters. The function we will define
+must have the following signature:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">n_cells</span></code>: The number of cells</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">n_genes</span></code>: The number of genes</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">param_prior</span></code>: The parameters used for the prior distribution of the parameters.</p>
+<ul>
+<li><p>Define one entry per parameter. In our case we have two parameters, <code class="docutils literal notranslate"><span class="pre">p</span></code>
+and <code class="docutils literal notranslate"><span class="pre">r</span></code>. Thus, we define two entries: <code class="docutils literal notranslate"><span class="pre">p_prior</span></code> and <code class="docutils literal notranslate"><span class="pre">r_prior</span></code>.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">counts</span></code>: The count data</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">custom_arg</span></code>: Any additional arguments needed by the model.</p>
+<ul>
+<li><p>Define one entry per argument. In our case we have one custom argument,
+<code class="docutils literal notranslate"><span class="pre">total_counts</span></code> as the model requires not only the individual gene counts
+but the total counts per cell as well.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">batch_size</span></code>: The batch size for mini-batch training</p></li>
+</ul>
+<p>Let’s now define the model function. We will walk through each part of the model
+function step by step after this code block.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">nbdm_lognormal_model</span><span class="p">(</span>
+    <span class="n">n_cells</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">n_genes</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">p_prior</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="n">r_prior</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>  <span class="c1"># Changed to mean, std for lognormal</span>
+    <span class="n">counts</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">total_counts</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="c1"># Define success probability prior (unchanged)</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;p&quot;</span><span class="p">,</span> <span class="n">dist</span><span class="o">.</span><span class="n">Beta</span><span class="p">(</span><span class="n">p_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">p_prior</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+
+    <span class="c1"># Define dispersion prior using LogNormal instead of Gamma</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+        <span class="s2">&quot;r&quot;</span><span class="p">,</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">LogNormal</span><span class="p">(</span><span class="n">r_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">r_prior</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="o">.</span><span class="n">expand</span><span class="p">([</span><span class="n">n_genes</span><span class="p">])</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Define the total dispersion parameter</span>
+    <span class="n">r_total</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">deterministic</span><span class="p">(</span><span class="s2">&quot;r_total&quot;</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">r</span><span class="p">))</span>
+
+     <span class="c1"># If we have observed data, condition on it</span>
+<span class="k">if</span> <span class="n">counts</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="c1"># If batch size is not provided, use the entire dataset</span>
+    <span class="k">if</span> <span class="n">batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Define plate for cells total counts</span>
+        <span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">):</span>
+            <span class="c1"># Likelihood for the total counts - one for each cell</span>
+            <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+                <span class="s2">&quot;total_counts&quot;</span><span class="p">,</span>
+                <span class="n">dist</span><span class="o">.</span><span class="n">NegativeBinomialProbs</span><span class="p">(</span><span class="n">r_total</span><span class="p">,</span> <span class="n">p</span><span class="p">),</span>
+                <span class="n">obs</span><span class="o">=</span><span class="n">total_counts</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Define plate for cells individual counts</span>
+        <span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">):</span>
+            <span class="c1"># Likelihood for the individual counts - one for each cell</span>
+            <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+                <span class="s2">&quot;counts&quot;</span><span class="p">,</span>
+                <span class="n">dist</span><span class="o">.</span><span class="n">DirichletMultinomial</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">total_count</span><span class="o">=</span><span class="n">total_counts</span><span class="p">),</span>
+                <span class="n">obs</span><span class="o">=</span><span class="n">counts</span>
+            <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Define plate for cells total counts</span>
+        <span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span>
+            <span class="s2">&quot;cells&quot;</span><span class="p">,</span>
+            <span class="n">n_cells</span><span class="p">,</span>
+            <span class="n">subsample_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="p">)</span> <span class="k">as</span> <span class="n">idx</span><span class="p">:</span>
+            <span class="c1"># Likelihood for the total counts - one for each cell</span>
+            <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+                <span class="s2">&quot;total_counts&quot;</span><span class="p">,</span>
+                <span class="n">dist</span><span class="o">.</span><span class="n">NegativeBinomialProbs</span><span class="p">(</span><span class="n">r_total</span><span class="p">,</span> <span class="n">p</span><span class="p">),</span>
+                <span class="n">obs</span><span class="o">=</span><span class="n">total_counts</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Define plate for cells individual counts</span>
+        <span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span>
+            <span class="s2">&quot;cells&quot;</span><span class="p">,</span>
+            <span class="n">n_cells</span><span class="p">,</span>
+            <span class="n">subsample_size</span><span class="o">=</span><span class="n">batch_size</span>
+        <span class="p">)</span> <span class="k">as</span> <span class="n">idx</span><span class="p">:</span>
+            <span class="c1"># Likelihood for the individual counts - one for each cell</span>
+            <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+                <span class="s2">&quot;counts&quot;</span><span class="p">,</span>
+                <span class="n">dist</span><span class="o">.</span><span class="n">DirichletMultinomial</span><span class="p">(</span>
+                    <span class="n">r</span><span class="p">,</span> <span class="n">total_count</span><span class="o">=</span><span class="n">total_counts</span><span class="p">[</span><span class="n">idx</span><span class="p">]),</span>
+                <span class="n">obs</span><span class="o">=</span><span class="n">counts</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+            <span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="c1"># Predictive model (no obs)</span>
+    <span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">):</span>
+        <span class="c1"># Make a NegativeBinomial distribution that returns a vector of</span>
+        <span class="c1"># length n_genes</span>
+        <span class="n">dist_nb</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">NegativeBinomialProbs</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span><span class="o">.</span><span class="n">to_event</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;counts&quot;</span><span class="p">,</span> <span class="n">dist_nb</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Let’s dissect the function step by step. On the first part, we define the prior
+for the success probability <code class="docutils literal notranslate"><span class="pre">p</span></code> as a Beta distribution and the dispersion
+parameter <code class="docutils literal notranslate"><span class="pre">r</span></code> as a LogNormal distribution, feeding the parameter arguments we
+set.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define success probability prior (unchanged)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;p&quot;</span><span class="p">,</span> <span class="n">dist</span><span class="o">.</span><span class="n">Beta</span><span class="p">(</span><span class="n">p_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">p_prior</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+
+<span class="c1"># Define dispersion prior using LogNormal instead of Gamma</span>
+<span class="n">r</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+    <span class="s2">&quot;r&quot;</span><span class="p">,</span>
+    <span class="n">dist</span><span class="o">.</span><span class="n">LogNormal</span><span class="p">(</span><span class="n">r_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">r_prior</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="o">.</span><span class="n">expand</span><span class="p">([</span><span class="n">n_genes</span><span class="p">])</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Since <code class="docutils literal notranslate"><span class="pre">r</span></code> is a <code class="docutils literal notranslate"><span class="pre">gene-specific</span></code> parameter (more on that later), we tell
+<code class="docutils literal notranslate"><span class="pre">numpyro</span></code> to expand it to match the number of genes via the <code class="docutils literal notranslate"><span class="pre">expand</span></code> method.
+This means that we assume we have <cite>n_genes</cite> dispersion parameters, all of which
+have the same prior distribution.</p>
+<p>Next, we define the total dispersion parameter <code class="docutils literal notranslate"><span class="pre">r_total</span></code> as the sum of the
+individual dispersion parameters <code class="docutils literal notranslate"><span class="pre">r</span></code>; telling <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> that this is a
+deterministic variable. This means that once we know the individual dispersion
+parameters, we can compute the total dispersion parameter with no uncertainty
+associated with this computation.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define the total dispersion parameter</span>
+<span class="n">r_total</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">deterministic</span><span class="p">(</span><span class="s2">&quot;r_total&quot;</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">r</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>After defining the priors, we define the likelihood for our model.
+Preferentially, we specify <strong>three cases</strong> for how to evaluate the likelihood:</p>
+<ol class="arabic simple">
+<li><p>If we have observed data but not a batch size, we condition on the entire
+dataset.</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p>This allows us to use the entire dataset on each training step. However, for
+large datasets, we might run out of memory and crash.</p></li>
+</ul>
+</div></blockquote>
+<ol class="arabic simple" start="2">
+<li><p>If we have a batch size, we use mini-batch training.</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p>One of the advantages of using <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> as the backend for <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> is
+that we can use mini-batch training. This allows us to use a subset of the
+dataset on each training step, which is more memory efficient.</p></li>
+</ul>
+</div></blockquote>
+<ol class="arabic simple" start="3">
+<li><p>If we don’t have any of the above, we return the predictive distribution.</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p>This allows us to use the fitted model for posterior predictive sampling.</p></li>
+</ul>
+</div></blockquote>
+<p>With these three cases, <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> can handle both training and posterior
+predictive sampling, allowing our custom model to be used as any other model
+in the package. Let’s go through each case in detail.</p>
+<ol class="arabic simple">
+<li><p>Observed data but no batch size</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define plate for cells total counts</span>
+<span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">):</span>
+    <span class="c1"># Likelihood for the total counts - one for each cell</span>
+    <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+        <span class="s2">&quot;total_counts&quot;</span><span class="p">,</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">NegativeBinomialProbs</span><span class="p">(</span><span class="n">r_total</span><span class="p">,</span> <span class="n">p</span><span class="p">),</span>
+        <span class="n">obs</span><span class="o">=</span><span class="n">total_counts</span>
+    <span class="p">)</span>
+
+<span class="c1"># Define plate for cells individual counts</span>
+<span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">):</span>
+    <span class="c1"># Likelihood for the individual counts - one for each cell</span>
+    <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+        <span class="s2">&quot;counts&quot;</span><span class="p">,</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">DirichletMultinomial</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">total_count</span><span class="o">=</span><span class="n">total_counts</span><span class="p">),</span>
+        <span class="n">obs</span><span class="o">=</span><span class="n">counts</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<p>The key concept to understand here is the use of <code class="docutils literal notranslate"><span class="pre">numpyro.plate</span></code>. This is how
+<code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> handles having i.i.d samples. In this case, we have <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>
+observations of both the total counts and the individual counts for each cell.
+Thus, when we call <code class="docutils literal notranslate"><span class="pre">numpyro.plate(&quot;cells&quot;,</span> <span class="pre">n_cells)</span></code>, we first tell
+<code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> the name of the dimension, in this case <code class="docutils literal notranslate"><span class="pre">cells</span></code>, and then the size
+of the dimension, in this case <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>. This is equivalent to saying that
+the likelihood takes the following form:</p>
+<div class="math notranslate nohighlight">
+\[\pi(U_1, \ldots, U_{n_{cells}} \mid r_i, p) =
+\prod_{i=1}^{n_{cells}} \pi(U_i \mid r_i, p)
+\tag{1}\]</div>
+<p>where <span class="math notranslate nohighlight">\(U_i\)</span> is the total counts for cell <span class="math notranslate nohighlight">\(i\)</span> and <span class="math notranslate nohighlight">\(r_i\)</span> is
+the dispersion parameter for cell <span class="math notranslate nohighlight">\(i\)</span>.</p>
+<p>For this particular model, we have two plates: one for the total counts and one
+for the individual counts. Their interpretation is the same: we have <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>
+independent observations of the total counts and the individual counts for each
+cell.</p>
+<p>Let’s now move on to the second case, where we have a batch size.</p>
+<ol class="arabic simple" start="2">
+<li><p>Observed data with batch size</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define plate for cells total counts</span>
+<span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">,</span> <span class="n">subsample_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">)</span> <span class="k">as</span> <span class="n">idx</span><span class="p">:</span>
+    <span class="c1"># Likelihood for the total counts - one for each cell</span>
+    <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+        <span class="s2">&quot;total_counts&quot;</span><span class="p">,</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">NegativeBinomialProbs</span><span class="p">(</span><span class="n">r_total</span><span class="p">,</span> <span class="n">p</span><span class="p">),</span>
+        <span class="n">obs</span><span class="o">=</span><span class="n">total_counts</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+    <span class="p">)</span>
+
+<span class="c1"># Define plate for cells individual counts</span>
+<span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">,</span> <span class="n">subsample_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">)</span> <span class="k">as</span> <span class="n">idx</span><span class="p">:</span>
+    <span class="c1"># Likelihood for the individual counts - one for each cell</span>
+    <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span>
+        <span class="s2">&quot;counts&quot;</span><span class="p">,</span>
+        <span class="n">dist</span><span class="o">.</span><span class="n">DirichletMultinomial</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">total_count</span><span class="o">=</span><span class="n">total_counts</span><span class="p">[</span><span class="n">idx</span><span class="p">]),</span>
+        <span class="n">obs</span><span class="o">=</span><span class="n">counts</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<p>The only difference in this case with the previous one is that we now have a
+batch size. This means that we are using a subset of the data on each training
+step to be more memory efficient. <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> handles this by using the <code class="docutils literal notranslate"><span class="pre">idx</span></code>
+variable to index into the <code class="docutils literal notranslate"><span class="pre">total_counts</span></code> and <code class="docutils literal notranslate"><span class="pre">counts</span></code> arrays, returning a
+random subset of the data on each training step.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This is why it is important for our counts to be in the shape <code class="docutils literal notranslate"><span class="pre">(n_cells,</span>
+<span class="pre">n_genes)</span></code> for the indexing to work.</p>
+</div>
+<p>Let’s now move on to the third case, where we don’t have any observed data.</p>
+<ol class="arabic simple" start="3">
+<li><p>Predictive model</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Predictive model (no obs)</span>
+<span class="k">with</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">plate</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">):</span>
+    <span class="c1"># Make a NegativeBinomial distribution that returns a vector of</span>
+    <span class="c1"># length n_genes</span>
+    <span class="n">dist_nb</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">NegativeBinomialProbs</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span><span class="o">.</span><span class="n">to_event</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;counts&quot;</span><span class="p">,</span> <span class="n">dist_nb</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>For the last case—used for posterior predictive sampling—we use the same
+<code class="docutils literal notranslate"><span class="pre">numpyro.plate</span></code> structure. However, for this case, our objective is to
+generate a synthetic dataset given the definition of our model. In our case, the
+model likelihood can be expressed either as sampling the total number of UMIs
+per cell with a Negative Binomial and then distributing to each gene via a
+Dirichlet-Multinomial distribution, or as sampling the individual counts for
+each gene and cell with a Negative Binomial distribution (see the
+<a class="reference internal" href="../models/nbdm.html"><span class="doc">Negative Binomial-Dirichlet Multinomial Model (NBDM)</span></a> model for more details). So, on the first step, we define
+the distribution we want to sample from. In this case, we have a
+<code class="docutils literal notranslate"><span class="pre">NegativeBinomialProbs</span></code> distribution. <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> automatically vectorizes the
+sampling to be of the corresponding size. In our case <code class="docutils literal notranslate"><span class="pre">r</span></code> is a vector of
+length <code class="docutils literal notranslate"><span class="pre">n_genes</span></code> and <code class="docutils literal notranslate"><span class="pre">p</span></code> is a scalar, so <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> will sample a vector of
+length <code class="docutils literal notranslate"><span class="pre">n_genes</span></code> from a <code class="docutils literal notranslate"><span class="pre">NegativeBinomialProbs</span></code> distribution. We then use
+the <code class="docutils literal notranslate"><span class="pre">to_event(1)</span></code> method to tell <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> that a sample from the
+<code class="docutils literal notranslate"><span class="pre">n_genes</span></code> independent Negative Binomial distributions represents a single
+cell’s worth of counts. In other words, we can think of the <code class="docutils literal notranslate"><span class="pre">.to_event(1)</span></code>
+method as a way to tell <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> that we want to consider our <code class="docutils literal notranslate"><span class="pre">n_genes</span></code>
+negative binomial distributions as a “<em>multivariate</em> distribution” that
+represents a single cell’s worth of counts.</p>
+<section id="summary-of-key-requirements-for-the-model-function">
+<h3>Summary of key requirements for the model function<a class="headerlink" href="#summary-of-key-requirements-for-the-model-function" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p>Must accept <code class="docutils literal notranslate"><span class="pre">n_cells</span></code> and <code class="docutils literal notranslate"><span class="pre">n_genes</span></code> as first arguments</p></li>
+<li><p>Should handle both training (<code class="docutils literal notranslate"><span class="pre">counts</span> <span class="pre">is</span> <span class="pre">not</span> <span class="pre">None</span></code>) and predictive (<code class="docutils literal notranslate"><span class="pre">counts</span> <span class="pre">is</span> <span class="pre">None</span></code>) cases</p></li>
+<li><p>Must use <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> primitives for all random variables</p></li>
+<li><p>Should support mini-batch training through <code class="docutils literal notranslate"><span class="pre">batch_size</span></code> parameter</p></li>
+</ul>
+</section>
+</section>
+<section id="defining-the-guide">
+<h2>Defining the Guide<a class="headerlink" href="#defining-the-guide" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> specializes in the use of variational inference to approximate the
+posterior distribution of our model. Briefly, variational inference is a method
+for approximating the posterior distribution of a model by minimizing the
+difference between the true posterior and an approximating distribution.
+However, computing the “true” difference between the true posterior and our
+approximation would require knowing the true posterior, which is what we are
+trying to avoid in the first place. Instead, one can show that by minimizing a
+functional known as the variational free energy, also known as the negative of
+the <a class="reference external" href="https://en.wikipedia.org/wiki/Evidence_lower_bound">evidence lower bound (ELBO)</a>, we can find an
+approximation to the true posterior.</p>
+<p>The guide function defines our variational distribution, which will be used to
+approximate the posterior distribution of our model. In our case, we will use
+what is known as a <strong>mean-field</strong> approximation. This simply means that the
+posterior for each of the parameters in our model defined above will be
+independent of any other parameters. In other words, we will make the
+simplification that each dispersion parameter is independent of the others and
+of the success probability. Most likely, this is not true, as genes might have
+correlations. However, a simple estimate with humans that have ~20k genes tells
+us that if we wanted to fit parameters for all correlations, we would need
+~20k x 20k = 400M parameters, making it not only computationally very intensive,
+but the number of data we would require to uniquely determine all of these
+parameters would be enormous. So, we will live with the limitations of the
+mean-field approximation.</p>
+<p>Thus, we will define a variational distribution for each of the parameters in
+our model. For the success probability, we will use a Beta distribution (a
+natural choice given that <code class="docutils literal notranslate"><span class="pre">p</span></code> is constrained to the unit interval), and for
+the dispersion parameters, we will use a LogNormal distribution (a natural
+choice given that <code class="docutils literal notranslate"><span class="pre">r</span></code> is constrained to be non-negative and our prior on <code class="docutils literal notranslate"><span class="pre">r</span></code>
+is also LogNormal).</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>We are free to choose any distribution for the variational distribution. In
+this case, the distributions we chose as priors are natural choices for the
+model, but we could have chosen any other distribution.</p>
+</div>
+<p>Very importantly, the guide function must have the <strong>same signature</strong> as the
+model function.  Let’s now define the guide function and we will walk through it
+step by step after this code block.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">nbdm_lognormal_guide</span><span class="p">(</span>
+    <span class="n">n_cells</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">n_genes</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">p_prior</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="n">r_prior</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+    <span class="n">counts</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">total_counts</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="c1"># Parameters for p (using Beta)</span>
+    <span class="n">alpha_p</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">param</span><span class="p">(</span>
+        <span class="s2">&quot;alpha_p&quot;</span><span class="p">,</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">p_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>
+        <span class="n">constraint</span><span class="o">=</span><span class="n">numpyro</span><span class="o">.</span><span class="n">distributions</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">positive</span>
+    <span class="p">)</span>
+    <span class="n">beta_p</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">param</span><span class="p">(</span>
+        <span class="s2">&quot;beta_p&quot;</span><span class="p">,</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">p_prior</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+        <span class="n">constraint</span><span class="o">=</span><span class="n">numpyro</span><span class="o">.</span><span class="n">distributions</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">positive</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Parameters for r (using LogNormal)</span>
+    <span class="n">mu_r</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">param</span><span class="p">(</span>
+        <span class="s2">&quot;mu_r&quot;</span><span class="p">,</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n_genes</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">constraint</span><span class="o">=</span><span class="n">numpyro</span><span class="o">.</span><span class="n">distributions</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">real</span>
+    <span class="p">)</span>
+    <span class="n">sigma_r</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">param</span><span class="p">(</span>
+        <span class="s2">&quot;sigma_r&quot;</span><span class="p">,</span>
+        <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n_genes</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_prior</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="n">constraint</span><span class="o">=</span><span class="n">numpyro</span><span class="o">.</span><span class="n">distributions</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">positive</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Sample from variational distributions</span>
+    <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;p&quot;</span><span class="p">,</span> <span class="n">dist</span><span class="o">.</span><span class="n">Beta</span><span class="p">(</span><span class="n">alpha_p</span><span class="p">,</span> <span class="n">beta_p</span><span class="p">))</span>
+    <span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">dist</span><span class="o">.</span><span class="n">LogNormal</span><span class="p">(</span><span class="n">mu_r</span><span class="p">,</span> <span class="n">sigma_r</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>Let’s dissect the guide function step by step. The first thing we do is define
+the parameters for the variational distributions. We do this using the
+<code class="docutils literal notranslate"><span class="pre">numpyro.param</span></code> function. This function allows us to register parameters in
+our model. For example, the Beta distribution is defined by two parameters,
+<code class="docutils literal notranslate"><span class="pre">alpha</span></code> and <code class="docutils literal notranslate"><span class="pre">beta</span></code>. For the success probability we register these two
+parameters as <code class="docutils literal notranslate"><span class="pre">alpha_p</span></code> and <code class="docutils literal notranslate"><span class="pre">beta_p</span></code>. However, we must indicate <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code>
+the constraints on these parameters. For the Beta distribution, we know that
+<code class="docutils literal notranslate"><span class="pre">alpha</span></code> and <code class="docutils literal notranslate"><span class="pre">beta</span></code> must be <strong>strictly positive</strong>, so we use the
+<code class="docutils literal notranslate"><span class="pre">constraint</span></code> argument to tell <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> that our parameters are constrained
+to be positive.</p>
+<p>We can register these parameters in our model by doing the following:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">alpha_p</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">param</span><span class="p">(</span>
+    <span class="s2">&quot;alpha_p&quot;</span><span class="p">,</span>
+    <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">p_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>
+    <span class="n">constraint</span><span class="o">=</span><span class="n">numpyro</span><span class="o">.</span><span class="n">distributions</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">positive</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>For the dispersion parameters, we do the equivalent parameter registration, with
+the difference that the <code class="docutils literal notranslate"><span class="pre">mu</span></code> parameter is unconstrained in the real line, and
+the <code class="docutils literal notranslate"><span class="pre">sigma</span></code> parameter is constrained to be positive. We also use
+<code class="docutils literal notranslate"><span class="pre">jnp.ones(n_genes)</span></code> to tell <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> that we want to register one parameter
+per gene.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># mu parameter for r</span>
+<span class="n">mu_r</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">param</span><span class="p">(</span>
+    <span class="s2">&quot;mu_r&quot;</span><span class="p">,</span>
+    <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n_genes</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_prior</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+    <span class="n">constraint</span><span class="o">=</span><span class="n">numpyro</span><span class="o">.</span><span class="n">distributions</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">real</span><span class="p">)</span>
+
+<span class="c1"># sigma parameter for r</span>
+<span class="n">sigma_r</span> <span class="o">=</span> <span class="n">numpyro</span><span class="o">.</span><span class="n">param</span><span class="p">(</span>
+    <span class="s2">&quot;sigma_r&quot;</span><span class="p">,</span>
+    <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n_genes</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_prior</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+    <span class="n">constraint</span><span class="o">=</span><span class="n">numpyro</span><span class="o">.</span><span class="n">distributions</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">positive</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Finally, we sample from the variational distributions using the same names as
+the parameters in our model.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Sample from variational distributions</span>
+<span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;p&quot;</span><span class="p">,</span> <span class="n">dist</span><span class="o">.</span><span class="n">Beta</span><span class="p">(</span><span class="n">alpha_p</span><span class="p">,</span> <span class="n">beta_p</span><span class="p">))</span>
+<span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">dist</span><span class="o">.</span><span class="n">LogNormal</span><span class="p">(</span><span class="n">mu_r</span><span class="p">,</span> <span class="n">sigma_r</span><span class="p">))</span>
+</pre></div>
+</div>
+<section id="summary-of-key-points-for-the-guide">
+<h3>Summary of key points for the guide<a class="headerlink" href="#summary-of-key-points-for-the-guide" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p>Must match model’s signature exactly</p></li>
+<li><p>Parameters should be registered using <code class="docutils literal notranslate"><span class="pre">numpyro.param</span></code></p></li>
+<li><p>Use appropriate constraints for parameters</p></li>
+<li><p>Sample from variational distributions using same names as model</p></li>
+</ul>
+</section>
+</section>
+<section id="specifying-parameter-types">
+<h2>Specifying Parameter Types<a class="headerlink" href="#specifying-parameter-types" title="Link to this heading"></a></h2>
+<p>To be able to index the results object correctly, <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> needs to know how
+to handle different parameters in your model. This is done through the
+<code class="docutils literal notranslate"><span class="pre">param_spec</span></code> dictionary:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">param_spec</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;alpha_p&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;global&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;beta_p&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;global&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;mu_r&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;gene-specific&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;sigma_r&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;gene-specific&quot;</span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Each parameter must be categorized as one of:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;global&quot;</span></code>: Single value shared across all cells/genes</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;gene-specific&quot;</span></code>: One value per gene</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;cell-specific&quot;</span></code>: One value per cell</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For mixture models, add <code class="docutils literal notranslate"><span class="pre">&quot;component_specific&quot;:</span> <span class="pre">True</span></code> to parameters that
+vary by component.</p>
+</div>
+<p>This way, <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> knows how to index the results object correctly, allowing
+use to access subset of genes for general diagnostics such as plotting the
+posterior predictive check samples.</p>
+</section>
+<section id="running-inference">
+<h2>Running Inference<a class="headerlink" href="#running-inference" title="Link to this heading"></a></h2>
+<p>Once we define the <code class="docutils literal notranslate"><span class="pre">model</span></code>, <code class="docutils literal notranslate"><span class="pre">guide</span></code> and <code class="docutils literal notranslate"><span class="pre">param_spec</span></code>, we can use our model
+within the <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> framework. We simply pass the <code class="docutils literal notranslate"><span class="pre">model</span></code>, <code class="docutils literal notranslate"><span class="pre">guide</span></code>,
+<code class="docutils literal notranslate"><span class="pre">param_spec</span></code>, and any other arguments to <code class="docutils literal notranslate"><span class="pre">run_scribe</span></code>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+    <span class="n">custom_model</span><span class="o">=</span><span class="n">nbdm_lognormal_model</span><span class="p">,</span>
+    <span class="n">custom_guide</span><span class="o">=</span><span class="n">nbdm_lognormal_guide</span><span class="p">,</span>
+    <span class="n">custom_args</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;total_counts&quot;</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="p">},</span>
+    <span class="n">param_spec</span><span class="o">=</span><span class="n">param_spec</span><span class="p">,</span>
+    <span class="n">n_steps</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="n">prior_params</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;p_prior&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="s2">&quot;r_prior&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="p">}</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Key arguments:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">custom_model</span></code>: Your model function</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">custom_guide</span></code>: Your guide function</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">custom_args</span></code>: Additional arguments needed by your model/guide</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">param_spec</span></code>: Parameter type specification</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">prior_params</span></code>: Prior parameters for your model</p></li>
+</ul>
+</section>
+<section id="working-with-results">
+<h2>Working with Results<a class="headerlink" href="#working-with-results" title="Link to this heading"></a></h2>
+<p>Results from custom models are returned as <code class="docutils literal notranslate"><span class="pre">CustomResults</span></code> objects, which
+provide the same interface as built-in models:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Get learned parameters</span>
+<span class="n">params</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">params</span>
+
+<span class="c1"># Get distributions (requires implementing get_distributions_fn)</span>
+<span class="n">distributions</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_distributions</span><span class="p">()</span>
+
+<span class="c1"># Generate posterior samples</span>
+<span class="n">samples</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_posterior_samples</span><span class="p">(</span><span class="n">n_samples</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+
+<span class="c1"># Get predictive samples</span>
+<span class="n">predictions</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">get_predictive_samples</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="optional-extensions">
+<h2>Optional Extensions<a class="headerlink" href="#optional-extensions" title="Link to this heading"></a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">CustomResults</span></code> class supports several optional extensions:</p>
+<ol class="arabic simple">
+<li><p>Custom distribution access. Once we have our variational parameters, stored
+in <code class="docutils literal notranslate"><span class="pre">params</span></code>, we can use them to define our variational posterior
+distributions. To do so, we define a function that takes <code class="docutils literal notranslate"><span class="pre">params</span></code> and
+returns a dictionary of distributions. In our case, we want to be able to
+access the distributions in both <code class="docutils literal notranslate"><span class="pre">scipy</span></code> and <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> formats, so we
+have two branches in our function.</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">get_distributions_fn</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;scipy&quot;</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;scipy&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;p&#39;</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">beta</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;alpha_p&#39;</span><span class="p">],</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;beta_p&#39;</span><span class="p">]),</span>
+            <span class="s1">&#39;r&#39;</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">lognorm</span><span class="p">(</span>
+                <span class="n">s</span><span class="o">=</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;sigma_r&#39;</span><span class="p">],</span>
+                <span class="n">scale</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;mu_r&#39;</span><span class="p">])</span>
+            <span class="p">)</span>
+        <span class="p">}</span>
+    <span class="k">elif</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">&quot;numpyro&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;p&#39;</span><span class="p">:</span> <span class="n">dist</span><span class="o">.</span><span class="n">Beta</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;alpha_p&#39;</span><span class="p">],</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;beta_p&#39;</span><span class="p">]),</span>
+            <span class="s1">&#39;r&#39;</span><span class="p">:</span> <span class="n">dist</span><span class="o">.</span><span class="n">LogNormal</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s1">&#39;mu_r&#39;</span><span class="p">],</span> <span class="n">params</span><span class="p">[</span><span class="s1">&#39;sigma_r&#39;</span><span class="p">])</span>
+        <span class="p">}</span>
+
+<span class="c1"># Pass to run_scribe</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">get_distributions_fn</span><span class="o">=</span><span class="n">get_distributions_fn</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Sometimes the parameterization between <code class="docutils literal notranslate"><span class="pre">scipy</span></code> and <code class="docutils literal notranslate"><span class="pre">NumPyro</span></code> is
+different. Make sure to check the documentation for the distribution you are
+using to make sure you are using the correct parameterization.</p>
+</div>
+<ol class="arabic simple" start="2">
+<li><p>Custom model arguments. Sometimes we need to pass additional arguments to
+our model. We can do this by defining a function that takes <code class="docutils literal notranslate"><span class="pre">results</span></code> and
+returns a dictionary of arguments.</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">get_model_args_fn</span><span class="p">(</span><span class="n">results</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s1">&#39;n_cells&#39;</span><span class="p">:</span> <span class="n">results</span><span class="o">.</span><span class="n">n_cells</span><span class="p">,</span>
+        <span class="s1">&#39;n_genes&#39;</span><span class="p">:</span> <span class="n">results</span><span class="o">.</span><span class="n">n_genes</span><span class="p">,</span>
+        <span class="s1">&#39;my_custom_arg&#39;</span><span class="p">:</span> <span class="n">results</span><span class="o">.</span><span class="n">custom_value</span>
+    <span class="p">}</span>
+
+<span class="c1"># Pass to run_scribe</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">get_model_args_fn</span><span class="o">=</span><span class="n">get_model_args_fn</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<ol class="arabic simple" start="3">
+<li><p>Custom log likelihood function. Sometimes we need to compute the log
+likelihood of our model manually. We can do this by defining a function that
+takes <code class="docutils literal notranslate"><span class="pre">counts</span></code> and <code class="docutils literal notranslate"><span class="pre">params</span></code> and returns the log likelihood.</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">custom_log_likelihood_fn</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">params</span><span class="p">):</span>
+    <span class="c1"># Compute log likelihood</span>
+    <span class="k">return</span> <span class="n">log_prob</span>
+
+<span class="c1"># Pass to run_scribe</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">custom_log_likelihood_fn</span><span class="o">=</span><span class="n">custom_log_likelihood_fn</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="best-practices">
+<h2>Best Practices<a class="headerlink" href="#best-practices" title="Link to this heading"></a></h2>
+<ol class="arabic simple">
+<li><p><strong>Model Design</strong>:
+* Start from existing models when possible
+* Keep track of dimensionality (cells vs genes)
+* Use appropriate constraints for parameters
+* Support both training and prediction modes</p></li>
+<li><p><strong>Guide Design</strong>:
+* Match model parameters exactly
+* Initialize variational parameters sensibly
+* Use mean-field approximation when possible
+* Consider parameter constraints carefully</p></li>
+<li><p><strong>Parameter Specification</strong>:
+* Be explicit about parameter types
+* Consider dimensionality requirements
+* Document parameter relationships
+* Test with small datasets first</p></li>
+<li><p><strong>Testing</strong>:
+* Verify model runs with small datasets
+* Check parameter ranges make sense
+* Test both training and prediction
+* Validate results against known cases</p></li>
+</ol>
+</section>
+<section id="common-issues">
+<h2>Common Issues<a class="headerlink" href="#common-issues" title="Link to this heading"></a></h2>
+<ol class="arabic simple">
+<li><p><strong>Dimension Mismatch</strong>:
+* Check parameter shapes match expectations
+* Verify broadcast operations work correctly
+* Ensure mini-batch handling is correct</p></li>
+<li><p><strong>Memory Issues</strong>:
+* Use appropriate batch sizes
+* Avoid unnecessary parameter expansion
+* Monitor device memory usage</p></li>
+<li><p><strong>Numerical Stability</strong>:
+* Use appropriate parameter constraints
+* Consider log-space computations
+* Initialize parameters carefully</p></li>
+<li><p><strong>Convergence Problems</strong>:
+* Check learning rate and optimization settings
+* Monitor loss during training
+* Verify parameter updates occur</p></li>
+</ol>
+</section>
+<section id="see-also">
+<h2>See Also<a class="headerlink" href="#see-also" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="../models/nbdm.html"><span class="doc">Negative Binomial-Dirichlet Multinomial Model (NBDM)</span></a> - Details on the base NBDM model</p></li>
+<li><p><a class="reference internal" href="../results.html"><span class="doc">Results Class</span></a> - Working with result objects</p></li>
+<li><p>NumPyro’s <a class="reference external" href="https://num.pyro.ai/en/stable/">documentation</a> for distribution
+details</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="Examples" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

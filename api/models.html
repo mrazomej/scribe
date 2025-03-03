@@ -1,0 +1,711 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>models &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="models_mix" href="models_mix.html" />
+    <link rel="prev" title="API Reference" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">models</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.nbdm_model"><code class="docutils literal notranslate"><span class="pre">nbdm_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.nbdm_guide"><code class="docutils literal notranslate"><span class="pre">nbdm_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.zinb_model"><code class="docutils literal notranslate"><span class="pre">zinb_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.zinb_guide"><code class="docutils literal notranslate"><span class="pre">zinb_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.nbvcp_model"><code class="docutils literal notranslate"><span class="pre">nbvcp_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.nbvcp_guide"><code class="docutils literal notranslate"><span class="pre">nbvcp_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.zinbvcp_model"><code class="docutils literal notranslate"><span class="pre">zinbvcp_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.zinbvcp_guide"><code class="docutils literal notranslate"><span class="pre">zinbvcp_guide()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.nbdm_log_likelihood"><code class="docutils literal notranslate"><span class="pre">nbdm_log_likelihood()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.zinb_log_likelihood"><code class="docutils literal notranslate"><span class="pre">zinb_log_likelihood()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.nbvcp_log_likelihood"><code class="docutils literal notranslate"><span class="pre">nbvcp_log_likelihood()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.models.zinbvcp_log_likelihood"><code class="docutils literal notranslate"><span class="pre">zinbvcp_log_likelihood()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html">models_mix</a></li>
+<li class="toctree-l2"><a class="reference internal" href="svi.html">svi</a></li>
+<li class="toctree-l2"><a class="reference internal" href="results.html">results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sampling.html">sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="stats.html">stats</a></li>
+<li class="toctree-l2"><a class="reference internal" href="utils.html">utils</a></li>
+<li class="toctree-l2"><a class="reference internal" href="viz.html">viz</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">models</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/models.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-scribe.models">
+<span id="models"></span><h1>models<a class="headerlink" href="#module-scribe.models" title="Link to this heading"></a></h1>
+<p>Models for single-cell RNA sequencing data.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.nbdm_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">nbdm_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">total_counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#nbdm_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.nbdm_model" title="Link to this definition"></a></dt>
+<dd><p>Numpyro model for Negative Binomial-Dirichlet Multinomial single-cell RNA
+sequencing data.</p>
+<dl class="simple">
+<dt>This model assumes that for each cell:</dt><dd><ol class="arabic simple">
+<li><p>The total UMI count follows a Negative Binomial distribution with
+parameters r_total and p</p></li>
+<li><p>Given the total count, the individual gene counts follow a
+Dirichlet-Multinomial distribution with concentration parameters r</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – Configuration object containing prior distributions for model
+parameters: - p_distribution_model: Prior for success probability p -
+r_distribution_model: Prior for dispersion parameters r</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). If None, generates
+samples from the prior.</p></li>
+<li><p><strong>total_counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Total UMI counts per cell of shape (n_cells,). Required if counts is
+provided.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. If None, uses full
+dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Global</em>) – <ul>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_model</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> – <ul>
+<li><p>total_counts ~ NegativeBinomialProbs(r_total, p)</p></li>
+<li><p>counts ~ DirichletMultinomial(r, total_count=total_counts)</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.nbdm_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">nbdm_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">total_counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#nbdm_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.nbdm_guide" title="Link to this definition"></a></dt>
+<dd><p>Define the variational distribution for stochastic variational inference.</p>
+<p>This guide defines the variational distributions for the NBDM model
+parameters using the configuration specified in model_config.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <p>Configuration object containing the variational distribution
+specifications:</p>
+<blockquote>
+<div><ul>
+<li><p>p_distribution_guide: Distribution for success probability p</p></li>
+<li><p>r_distribution_guide: Distribution for dispersion parameters r</p></li>
+</ul>
+</div></blockquote>
+</p></li>
+<li><p><strong>counts</strong> (<em>array_like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes)</p></li>
+<li><p><strong>total_counts</strong> (<em>array_like</em><em>, </em><em>optional</em>) – Total counts per cell of shape (n_cells,)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic optimization</p></li>
+<li><p><strong>Structure</strong> (<em>Guide</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Variational</em>) – <ul>
+<li><p>Success probability p ~ model_config.p_distribution_guide</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_guide</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.zinb_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">zinb_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#zinb_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.zinb_model" title="Link to this definition"></a></dt>
+<dd><p>Numpyro model for Zero-Inflated Negative Binomial single-cell RNA sequencing
+data.</p>
+<p>This model uses the configuration defined in model_config. It implements a
+Zero-Inflated Negative Binomial distribution with shared success probability
+p across all genes, but gene-specific dispersion and dropout parameters.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <dl class="simple">
+<dt>Configuration object for model distributions containing:</dt><dd><ul>
+<li><p>p_distribution_model: Distribution for success probability p</p></li>
+<li><p>r_distribution_model: Distribution for dispersion parameters r</p></li>
+<li><p>gate_distribution_model: Distribution for dropout probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). If None, generates
+samples from the prior.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. If None, uses full
+dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Global</em>) – <ul>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_model</p></li>
+<li><p>Gene-specific dropout probabilities gate ~
+model_config.gate_distribution_model</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> – <ul>
+<li><p>counts ~ ZeroInflatedNegativeBinomial(r, p, gate)</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.zinb_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">zinb_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#zinb_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.zinb_guide" title="Link to this definition"></a></dt>
+<dd><p>Define the variational distribution for stochastic variational inference of
+the Zero-Inflated Negative Binomial model.</p>
+<p>This guide function specifies the form of the variational distribution that
+will be optimized to approximate the true posterior. It defines a mean-field
+variational family where each parameter has its own independent distribution
+specified by the model_config object.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – Configuration object containing guide distributions for model parameters:
+- p_distribution_guide: Guide distribution for success probability p
+- r_distribution_guide: Guide distribution for dispersion parameters r
+- gate_distribution_guide: Guide distribution for dropout probabilities</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). Not directly used in
+the guide but included for API consistency with the model</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. Not used in this
+guide since all parameters are global.</p></li>
+<li><p><strong>Structure</strong> (<em>Guide</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Variational</em>) – <ul>
+<li><p>Success probability p ~ model_config.p_distribution_guide</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_guide</p></li>
+<li><p>Gene-specific dropout probabilities gate ~
+model_config.gate_distribution_guide</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.nbvcp_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">nbvcp_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#nbvcp_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.nbvcp_model" title="Link to this definition"></a></dt>
+<dd><p>Numpyro model for Negative Binomial with variable mRNA capture probability.</p>
+<p>This model assumes that each gene’s mRNA count follows a Negative Binomial
+distribution, but with a cell-specific mRNA capture probability that
+modifies the success probability parameter. The model structure is:</p>
+<blockquote>
+<div><ol class="arabic simple">
+<li><p>Each gene has a base success probability p and dispersion r</p></li>
+<li><p>Each cell has a capture probability p_capture</p></li>
+<li><p>The effective success probability for each gene in each cell is
+computed as p_hat = p * p_capture / (1 - p * (1 - p_capture)). This comes
+from the composition of a negative binomial distribution with a
+binomial distribution.</p></li>
+<li><p>Counts are drawn from NB(r, p_hat)</p></li>
+</ol>
+</div></blockquote>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – Configuration object containing prior distributions for model parameters:
+- p_distribution_model: Prior for success probability p
+- r_distribution_model: Prior for dispersion parameters r
+- p_capture_distribution_model: Prior for capture probabilities p_capture</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). If None, generates
+samples from the prior.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. If None, uses full
+dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Local</em>) – <ul>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_model</p></li>
+</ul>
+</p></li>
+<li><p><strong>Parameters</strong> – <ul>
+<li><p>Cell-specific capture probabilities p_capture ~ model_config.p_capture_distribution_model</p></li>
+<li><p>Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> – <ul>
+<li><p>counts ~ NegativeBinomial(r, p_hat)</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.nbvcp_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">nbvcp_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#nbvcp_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.nbvcp_guide" title="Link to this definition"></a></dt>
+<dd><p>Variational guide (approximate posterior) for the Negative Binomial model
+with variable capture probability.</p>
+<p>This guide specifies a factorized variational distribution that approximates
+the true posterior. The variational parameters are initialized using the
+distributions specified in model_config.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <p>Configuration object containing the variational distribution
+specifications:</p>
+<blockquote>
+<div><ul>
+<li><p>p_distribution_guide: Distribution for success probability p</p></li>
+<li><p>r_distribution_guide: Distribution for dispersion parameters r</p></li>
+<li><p>p_capture_distribution_guide: Distribution for capture
+probabilities</p></li>
+</ul>
+</div></blockquote>
+</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). Not directly used in
+the guide but included for API consistency with the model</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. If provided, only
+updates a random subset of cells in each iteration</p></li>
+<li><p><strong>Structure</strong> (<em>Guide</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Variational</em>) – <ul>
+<li><p>Success probability p ~ model_config.p_distribution_guide</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_guide</p></li>
+<li><p>Cell-specific capture probability p_capture ~
+model_config.p_capture_distribution_guide</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.zinbvcp_model">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">zinbvcp_model</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#zinbvcp_model"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.zinbvcp_model" title="Link to this definition"></a></dt>
+<dd><p>Numpyro model for Zero-Inflated Negative Binomial with variable mRNA capture
+probability.</p>
+<p>This model combines the zero-inflation mechanism with variable capture
+probability. The model structure is:</p>
+<blockquote>
+<div><ol class="arabic simple">
+<li><p>Each gene has a base success probability p and dispersion r</p></li>
+<li><p>Each cell has a capture probability p_capture</p></li>
+<li><p>Each gene has a dropout probability (gate)</p></li>
+<li><p>The effective success probability for each gene in each cell is
+computed as p_hat = p * p_capture / (1 - p * (1 - p_capture)). This
+comes from the composition of a negative binomial distribution with a
+binomial distribution.</p></li>
+<li><p>Counts are drawn from ZINB(r, p_hat, gate)</p></li>
+</ol>
+</div></blockquote>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – <p>Configuration object containing prior distributions for model
+parameters:</p>
+<blockquote>
+<div><ul>
+<li><p>p_distribution_model: Prior for success probability p</p></li>
+<li><p>r_distribution_model: Prior for dispersion parameters r</p></li>
+<li><p>gate_distribution_model: Prior for dropout probabilities</p></li>
+<li><p>p_capture_distribution_model: Prior for capture probabilities</p></li>
+</ul>
+</div></blockquote>
+</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). If None, generates
+samples from the prior.</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. If None, uses full
+dataset.</p></li>
+<li><p><strong>Structure</strong> (<em>Model</em>)</p></li>
+<li><p><strong>--------------</strong></p></li>
+<li><p><strong>Parameters</strong> (<em>Local</em>) – <ul>
+<li><p>Success probability p ~ model_config.p_distribution_model</p></li>
+<li><p>Gene-specific dispersion r ~ model_config.r_distribution_model</p></li>
+<li><p>Gene-specific dropout probabilities gate ~
+model_config.gate_distribution_model</p></li>
+</ul>
+</p></li>
+<li><p><strong>Parameters</strong> – <ul>
+<li><p>Cell-specific capture probabilities p_capture ~
+model_config.p_capture_distribution_model</p></li>
+<li><p>Effective probability p_hat = p * p_capture / (1 - p * (1 -
+p_capture))</p></li>
+</ul>
+</p></li>
+<li><p><strong>Likelihood</strong> – <ul>
+<li><p>counts ~ ZeroInflatedNegativeBinomial(r, p_hat, gate)</p></li>
+</ul>
+</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.zinbvcp_guide">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">zinbvcp_guide</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">counts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#zinbvcp_guide"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.zinbvcp_guide" title="Link to this definition"></a></dt>
+<dd><p>Variational guide (approximate posterior) for the Zero-Inflated Negative
+Binomial model with variable capture probability.</p>
+<p>This guide specifies a factorized variational distribution that approximates
+the true posterior:</p>
+<blockquote>
+<div><ol class="arabic simple">
+<li><p>A Beta distribution for the global success probability p</p></li>
+<li><p>Independent Gamma distributions for each gene’s dispersion parameter
+r</p></li>
+<li><p>Independent Beta distributions for each gene’s dropout probability
+(gate)</p></li>
+<li><p>Independent Beta distributions for each cell’s capture probability
+p_capture</p></li>
+</ol>
+</div></blockquote>
+<dl class="simple">
+<dt>The variational parameters are:</dt><dd><ul class="simple">
+<li><p>alpha_p, beta_p: Parameters for p’s Beta distribution</p></li>
+<li><p>alpha_r, beta_r: Parameters for each gene’s Gamma distribution (shape:
+n_genes)</p></li>
+<li><p>alpha_gate, beta_gate: Parameters for each gene’s Beta distribution
+(shape: n_genes)</p></li>
+<li><p>alpha_p_capture, beta_p_capture: Parameters for each cell’s Beta
+distribution (shape: n_cells)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of cells in the dataset</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a>) – Number of genes in the dataset</p></li>
+<li><p><strong>p_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em> of </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em>, </em><em>default=</em><em>(</em><em>1</em><em>, </em><em>1</em><em>)</em>) – Parameters (alpha, beta) for initializing the Beta variational
+distribution of the global success probability p</p></li>
+<li><p><strong>r_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em> of </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em>, </em><em>default=</em><em>(</em><em>2</em><em>, </em><em>0.1</em><em>)</em>) – Parameters (shape, rate) for initializing the Gamma variational
+distributions of gene-specific dispersion parameters</p></li>
+<li><p><strong>p_capture_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em> of </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em>, </em><em>default=</em><em>(</em><em>1</em><em>, </em><em>1</em><em>)</em>) – Parameters (alpha, beta) for initializing the Beta variational
+distributions of cell-specific capture probabilities</p></li>
+<li><p><strong>gate_prior</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.13)"><em>tuple</em></a><em> of </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em>, </em><em>default=</em><em>(</em><em>1</em><em>, </em><em>1</em><em>)</em>) – Parameters (alpha, beta) for initializing the Beta variational
+distributions of gene-specific dropout probabilities</p></li>
+<li><p><strong>counts</strong> (<em>array-like</em><em>, </em><em>optional</em>) – Observed counts matrix of shape (n_cells, n_genes). Not directly used in
+the guide but included for API consistency with the model</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Mini-batch size for stochastic variational inference. If provided, only
+updates a random subset of cells in each iteration</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.nbdm_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">nbdm_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#nbdm_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.nbdm_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for NBDM model using plates.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’p’: success probability parameter (scalar)</p></li>
+<li><p>’r’: dispersion parameters for each gene (vector of length n_genes)</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default),
+1 means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities using the NBDM model (default)</p></li>
+<li><p>’gene’: returns log probabilities using independent NB per gene</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Array of log likelihood values. Shape depends on return_by:</dt><dd><ul class="simple">
+<li><p>’cell’: shape (n_cells,)</p></li>
+<li><p>’gene’: shape (n_genes,)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.zinb_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">zinb_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#zinb_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.zinb_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for Zero-Inflated Negative Binomial model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’p’: success probability parameter</p></li>
+<li><p>’r’: dispersion parameters for each gene</p></li>
+<li><p>’gate’: dropout probability parameter</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full
+dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default),
+1 means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes (default)</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Array of log likelihood values. Shape depends on return_by:</dt><dd><ul class="simple">
+<li><p>’cell’: shape (n_cells,)</p></li>
+<li><p>’gene’: shape (n_genes,)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.nbvcp_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">nbvcp_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#nbvcp_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.nbvcp_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for Negative Binomial with Variable Capture
+Probability.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’p’: base success probability parameter</p></li>
+<li><p>’r’: dispersion parameters for each gene</p></li>
+<li><p>’p_capture’: cell-specific capture probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full
+dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default), 1
+means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes (default)</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Array of log likelihood values. Shape depends on return_by:</dt><dd><ul class="simple">
+<li><p>’cell’: shape (n_cells,)</p></li>
+<li><p>’gene’: shape (n_genes,)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.models.zinbvcp_log_likelihood">
+<span class="sig-prename descclassname"><span class="pre">scribe.models.</span></span><span class="sig-name descname"><span class="pre">zinbvcp_log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/models.html#zinbvcp_log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.models.zinbvcp_log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood for Zero-Inflated Negative Binomial with Variable
+Capture Probability.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Array of shape (n_cells, n_genes) containing observed counts</p></li>
+<li><p><strong>params</strong> (<em>Dict</em>) – <dl class="simple">
+<dt>Dictionary containing model parameters:</dt><dd><ul>
+<li><p>’p’: base success probability parameter</p></li>
+<li><p>’r’: dispersion parameters for each gene</p></li>
+<li><p>’p_capture’: cell-specific capture probabilities</p></li>
+<li><p>’gate’: dropout probability parameter</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>]</em>) – Size of mini-batches for stochastic computation. If None, uses full
+dataset.</p></li>
+<li><p><strong>cells_axis</strong> (<em>int = 0</em>) – Axis along which cells are arranged. 0 means cells are rows (default),
+1 means cells are columns</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.13)"><em>str</em></a>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes (default)</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Array of log likelihood values. Shape depends on return_by:</dt><dd><ul class="simple">
+<li><p>’cell’: shape (n_cells,)</p></li>
+<li><p>’gene’: shape (n_genes,)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="API Reference" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="models_mix.html" class="btn btn-neutral float-right" title="models_mix" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

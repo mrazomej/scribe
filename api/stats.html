@@ -1,0 +1,830 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>stats &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="utils" href="utils.html" />
+    <link rel="prev" title="sampling" href="sampling.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="models.html">models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html">models_mix</a></li>
+<li class="toctree-l2"><a class="reference internal" href="svi.html">svi</a></li>
+<li class="toctree-l2"><a class="reference internal" href="results.html">results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sampling.html">sampling</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">stats</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.compute_histogram_percentiles"><code class="docutils literal notranslate"><span class="pre">compute_histogram_percentiles()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.compute_histogram_credible_regions"><code class="docutils literal notranslate"><span class="pre">compute_histogram_credible_regions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.sample_dirichlet_from_parameters"><code class="docutils literal notranslate"><span class="pre">sample_dirichlet_from_parameters()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.fit_dirichlet_mle"><code class="docutils literal notranslate"><span class="pre">fit_dirichlet_mle()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.digamma_inv"><code class="docutils literal notranslate"><span class="pre">digamma_inv()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.fit_dirichlet_minka"><code class="docutils literal notranslate"><span class="pre">fit_dirichlet_minka()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.kl_gamma"><code class="docutils literal notranslate"><span class="pre">kl_gamma()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.kl_beta"><code class="docutils literal notranslate"><span class="pre">kl_beta()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.kl_lognormal"><code class="docutils literal notranslate"><span class="pre">kl_lognormal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.jensen_shannon_beta"><code class="docutils literal notranslate"><span class="pre">jensen_shannon_beta()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.jensen_shannon_gamma"><code class="docutils literal notranslate"><span class="pre">jensen_shannon_gamma()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.jensen_shannon_lognormal"><code class="docutils literal notranslate"><span class="pre">jensen_shannon_lognormal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.sq_hellinger_beta"><code class="docutils literal notranslate"><span class="pre">sq_hellinger_beta()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.hellinger_beta"><code class="docutils literal notranslate"><span class="pre">hellinger_beta()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.sq_hellinger_gamma"><code class="docutils literal notranslate"><span class="pre">sq_hellinger_gamma()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.hellinger_gamma"><code class="docutils literal notranslate"><span class="pre">hellinger_gamma()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.sq_hellinger_lognormal"><code class="docutils literal notranslate"><span class="pre">sq_hellinger_lognormal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.hellinger_lognormal"><code class="docutils literal notranslate"><span class="pre">hellinger_lognormal()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.beta_mode"><code class="docutils literal notranslate"><span class="pre">beta_mode()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.gamma_mode"><code class="docutils literal notranslate"><span class="pre">gamma_mode()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.dirichlet_mode"><code class="docutils literal notranslate"><span class="pre">dirichlet_mode()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.lognorm_mode"><code class="docutils literal notranslate"><span class="pre">lognorm_mode()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.get_distribution_mode"><code class="docutils literal notranslate"><span class="pre">get_distribution_mode()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="utils.html">utils</a></li>
+<li class="toctree-l2"><a class="reference internal" href="viz.html">viz</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">stats</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/stats.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-scribe.stats">
+<span id="stats"></span><h1>stats<a class="headerlink" href="#module-scribe.stats" title="Link to this heading"></a></h1>
+<p>Statistics functions</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.compute_histogram_percentiles">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">compute_histogram_percentiles</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">percentiles</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[5,</span> <span class="pre">25,</span> <span class="pre">50,</span> <span class="pre">75,</span> <span class="pre">95]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">normalize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#compute_histogram_percentiles"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.compute_histogram_percentiles" title="Link to this definition"></a></dt>
+<dd><p>Compute percentiles of histogram frequencies across multiple samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_points) by default, or (n_points, n_samples)
+if sample_axis=1</p></li>
+<li><p><strong>percentiles</strong> (<em>list-like</em><em>, </em><em>optional</em>) – List of percentiles to compute (default: [5, 25, 50, 75, 95])</p></li>
+<li><p><strong>normalize</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.13)"><em>bool</em></a><em>, </em><em>optional</em>) – Whether to normalize histograms (default: True)</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>bin_edges</strong> (<em>array</em>) – Array of bin edges (integers from min to max value + 1)</p></li>
+<li><p><strong>hist_percentiles</strong> (<em>array</em>) – Array of shape (len(percentiles), len(bin_edges)-1) containing
+the percentiles of histogram frequencies for each bin</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.compute_histogram_credible_regions">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">compute_histogram_credible_regions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">credible_regions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[95,</span> <span class="pre">68,</span> <span class="pre">50]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">normalize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_bin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#compute_histogram_credible_regions"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.compute_histogram_credible_regions" title="Link to this definition"></a></dt>
+<dd><p>Compute credible regions of histogram frequencies across multiple samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_points) by default, or (n_points,
+n_samples) if sample_axis=1</p></li>
+<li><p><strong>credible_regions</strong> (<em>list-like</em><em>, </em><em>optional</em>) – List of credible region percentages to compute (default: [95, 68, 50])
+For example, 95 will compute the 2.5 and 97.5 percentiles</p></li>
+<li><p><strong>normalize</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.13)"><em>bool</em></a><em>, </em><em>optional</em>) – Whether to normalize histograms (default: True)</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Number of samples to process in each batch (default: 100)</p></li>
+<li><p><strong>max_bin</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Maximum number of bins to process (default: None)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><p>Dictionary containing: - ‘bin_edges’: array of bin edges - ‘regions’:
+nested dictionary where each key is the credible region percentage</p>
+<blockquote>
+<div><dl class="simple">
+<dt>and values are dictionaries containing:</dt><dd><ul class="simple">
+<li><p>’lower’: lower bound of the credible region</p></li>
+<li><p>’upper’: upper bound of the credible region</p></li>
+<li><p>’median’: median (50th percentile)</p></li>
+</ul>
+</dd>
+</dl>
+</div></blockquote>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.13)">dict</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.sample_dirichlet_from_parameters">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">sample_dirichlet_from_parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parameter_samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_samples_dirichlet</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rng_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Array([0,</span> <span class="pre">42],</span> <span class="pre">dtype=uint32)</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#sample_dirichlet_from_parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.sample_dirichlet_from_parameters" title="Link to this definition"></a></dt>
+<dd><p>Samples from a Dirichlet distribution given an array of parameter samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>parameter_samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_variables) containing parameter samples
+to use as concentration parameters for Dirichlet distributions</p></li>
+<li><p><strong>n_samples_dirichlet</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Number of samples to draw from each Dirichlet distribution (default: 1)</p></li>
+<li><p><strong>rng_key</strong> (<em>random.PRNGKey</em>) – JAX random number generator key. Defaults to random.PRNGKey(42)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>If n_samples_dirichlet=1:</dt><dd><p>Array of shape (n_samples, n_variables)</p>
+</dd>
+<dt>If n_samples_dirichlet&gt;1:</dt><dd><p>Array of shape (n_samples, n_variables, n_samples_dirichlet)</p>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.fit_dirichlet_mle">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">fit_dirichlet_mle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tol</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-07</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#fit_dirichlet_mle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.fit_dirichlet_mle" title="Link to this definition"></a></dt>
+<dd><p>Fit a Dirichlet distribution to samples using Maximum Likelihood Estimation.</p>
+<p>This implementation uses Newton’s method to find the concentration
+parameters that maximize the likelihood of the observed samples. The
+algorithm iteratively updates the concentration parameters using gradient
+and Hessian information until convergence.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_variables) by default, or (n_variables,
+n_samples) if sample_axis=1, containing Dirichlet samples. Each
+row/column should sum to 1.</p></li>
+<li><p><strong>max_iter</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Maximum number of iterations for optimization (default: 1000)</p></li>
+<li><p><strong>tol</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em>, </em><em>optional</em>) – Tolerance for convergence in parameter updates (default: 1e-7)</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Array of concentration parameters for the fitted Dirichlet distribution.
+Shape is (n_variables,).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.digamma_inv">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">digamma_inv</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">y</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_iters</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#digamma_inv"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.digamma_inv" title="Link to this definition"></a></dt>
+<dd><p>Approximate the inverse of the digamma function using Newton iterations.</p>
+<p>The digamma function ψ(x) is the derivative of the log of the gamma function.
+This function computes its inverse ψ⁻¹(y) using Newton’s method:</p>
+<blockquote>
+<div><p>x_{n+1} = x_n - (ψ(x_n) - y) / ψ’(x_n)</p>
+</div></blockquote>
+<p>where ψ’ is the trigamma function (polygamma of order 1).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>y</strong> (<em>array-like</em>) – The input value(s) (can be scalar or vector) representing ψ(x) values
+for which we want to find x.</p></li>
+<li><p><strong>num_iters</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Number of Newton iterations (default: 5). More iterations increase
+accuracy but take longer to compute.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>x</strong> – The approximate inverse digamma of y, such that ψ(x) ≈ y.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.fit_dirichlet_minka">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">fit_dirichlet_minka</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tol</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-07</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#fit_dirichlet_minka"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.fit_dirichlet_minka" title="Link to this definition"></a></dt>
+<dd><p>Fit a Dirichlet distribution to data using Minka’s fixed-point iteration.</p>
+<dl class="simple">
+<dt>This function uses the relation:</dt><dd><p>ψ(α_j) - ψ(α₀) = ⟨ln x_j⟩    (with α₀ = ∑ₖ αₖ)</p>
+</dd>
+<dt>so that the fixed point update is:</dt><dd><p>α_j ← ψ⁻¹( ψ(α₀) + ⟨ln x_j⟩ )</p>
+</dd>
+</dl>
+<p>This method is generally more stable and faster than moment matching or
+maximum likelihood estimation via gradient descent.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Data array with shape (n_samples, n_variables) by default (or transposed
+if sample_axis=1). Each row should sum to 1 (i.e., be a probability
+vector).</p></li>
+<li><p><strong>max_iter</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Maximum number of iterations for the fixed-point algorithm.</p></li>
+<li><p><strong>tol</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em>, </em><em>optional</em>) – Tolerance for convergence - algorithm stops when max change in α is
+below this.</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.13)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0). Use 1 if data is (n_variables,
+n_samples).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Estimated concentration parameters (α) of shape (n_variables,).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.kl_gamma">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">kl_gamma</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#kl_gamma"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.kl_gamma" title="Link to this definition"></a></dt>
+<dd><p>Compute Kullback-Leibler (KL) divergence between two Gamma distributions.</p>
+<p>Calculates KL(P||Q) where:
+P ~ Gamma(α₁, β₁)
+Q ~ Gamma(α₂, β₂)</p>
+<p>The KL divergence is given by:</p>
+<p>KL(P||Q) = (α₁ - α₂)ψ(α₁) - ln[Γ(α₁)] + ln[Γ(α₂)] + α₂ln(β₁/β₂) + α₁(β₂/β₁ - 1)</p>
+<p>where:
+- ψ(x) is the digamma function
+- Γ(x) is the gamma function</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₁ of the first Gamma distribution P</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Rate parameter β₁ of the first Gamma distribution P</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₂ of the second Gamma distribution Q</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Rate parameter β₂ of the second Gamma distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>KL divergence between the two Gamma distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.kl_beta">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">kl_beta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#kl_beta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.kl_beta" title="Link to this definition"></a></dt>
+<dd><p>Compute Kullback-Leibler (KL) divergence between two Beta distributions.</p>
+<p>Calculates KL(P||Q) where:
+P ~ Beta(α₁, β₁)
+Q ~ Beta(α₂, β₂)</p>
+<p>The KL divergence is given by:</p>
+<dl class="simple">
+<dt>KL(P||Q) = ln[B(α₂,β₂)] - ln[B(α₁,β₁)] + (α₁-α₂)ψ(α₁) + (β₁-β₂)ψ(β₁)</dt><dd><ul class="simple">
+<li><p>(α₂-α₁+β₂-β₁)ψ(α₁+β₁)</p></li>
+</ul>
+</dd>
+</dl>
+<p>where:
+- ψ(x) is the digamma function
+- B(x,y) is the beta function</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₁ of the first Beta distribution P</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter β₁ of the first Beta distribution P</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₂ of the second Beta distribution Q</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter β₂ of the second Beta distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>KL divergence between the two Beta distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.kl_lognormal">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">kl_lognormal</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mu1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mu2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#kl_lognormal"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.kl_lognormal" title="Link to this definition"></a></dt>
+<dd><p>Compute Kullback-Leibler (KL) divergence between two log-normal
+distributions.</p>
+<p>Calculates KL(P||Q) where: P ~ LogNormal(μ₁, σ₁) Q ~ LogNormal(μ₂, σ₂)</p>
+<p>The KL divergence is given by:</p>
+<p>KL(P||Q) = ln(σ₂/σ₁) + (σ₁² + (μ₁-μ₂)²)/(2σ₂²) - 1/2</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mu1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Location parameter μ₁ of the first log-normal distribution P</p></li>
+<li><p><strong>sigma1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Scale parameter σ₁ of the first log-normal distribution P</p></li>
+<li><p><strong>mu2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Location parameter μ₂ of the second log-normal distribution Q</p></li>
+<li><p><strong>sigma2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Scale parameter σ₂ of the second log-normal distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>KL divergence between the two log-normal distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.jensen_shannon_beta">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">jensen_shannon_beta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#jensen_shannon_beta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.jensen_shannon_beta" title="Link to this definition"></a></dt>
+<dd><p>Compute the Jensen-Shannon divergence between two Beta distributions.</p>
+<p>The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+Kullback-Leibler divergence, defined as:</p>
+<blockquote>
+<div><p>JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)</p>
+</div></blockquote>
+<p>where M = 1/2 × (P + Q) is the average of the two distributions.</p>
+<p>For Beta distributions, we compute this by:
+1. Finding the parameters of the mixture distribution M
+2. Computing KL(P||M) and KL(Q||M)
+3. Taking the average of these KL divergences</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Alpha parameter (shape) of the first Beta distribution</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Beta parameter (shape) of the first Beta distribution</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Alpha parameter (shape) of the second Beta distribution</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Beta parameter (shape) of the second Beta distribution</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Jensen-Shannon divergence between the two Beta distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.jensen_shannon_gamma">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">jensen_shannon_gamma</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#jensen_shannon_gamma"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.jensen_shannon_gamma" title="Link to this definition"></a></dt>
+<dd><p>Compute the Jensen-Shannon divergence between two Gamma distributions.</p>
+<p>The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+Kullback-Leibler divergence, defined as:</p>
+<blockquote>
+<div><p>JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)</p>
+</div></blockquote>
+<p>where M = 1/2 × (P + Q) is the average of the two distributions.</p>
+<dl class="simple">
+<dt>For Gamma distributions, we compute this by:</dt><dd><ol class="arabic simple">
+<li><p>Finding the parameters of the mixture distribution M</p></li>
+<li><p>Computing KL(P||M) and KL(Q||M)</p></li>
+<li><p>Taking the average of these KL divergences</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Shape parameter of the first Gamma distribution</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Rate parameter of the first Gamma distribution</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Shape parameter of the second Gamma distribution</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Rate parameter of the second Gamma distribution</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Jensen-Shannon divergence between the two Gamma distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.jensen_shannon_lognormal">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">jensen_shannon_lognormal</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mu1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mu2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#jensen_shannon_lognormal"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.jensen_shannon_lognormal" title="Link to this definition"></a></dt>
+<dd><p>Compute the Jensen-Shannon divergence between two LogNormal distributions.</p>
+<p>The Jensen-Shannon divergence is a symmetrized and smoothed version of the
+Kullback-Leibler divergence, defined as:</p>
+<blockquote>
+<div><p>JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)</p>
+</div></blockquote>
+<p>where M = 1/2 × (P + Q) is the average of the two distributions.</p>
+<dl class="simple">
+<dt>For LogNormal distributions, we compute this by:</dt><dd><ol class="arabic simple">
+<li><p>Finding the parameters of the mixture distribution M</p></li>
+<li><p>Computing KL(P||M) and KL(Q||M)</p></li>
+<li><p>Taking the average of these KL divergences</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mu1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Location parameter of the first LogNormal distribution</p></li>
+<li><p><strong>sigma1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Scale parameter of the first LogNormal distribution</p></li>
+<li><p><strong>mu2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Location parameter of the second LogNormal distribution</p></li>
+<li><p><strong>sigma2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array</em>) – Scale parameter of the second LogNormal distribution</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Jensen-Shannon divergence between the two LogNormal distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.sq_hellinger_beta">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">sq_hellinger_beta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#sq_hellinger_beta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.sq_hellinger_beta" title="Link to this definition"></a></dt>
+<dd><p>Compute the squared Hellinger distance between two Beta distributions.</p>
+<p>The squared Hellinger distance between two Beta distributions P and Q is
+given by:</p>
+<p>H²(P,Q) = 1 - ∫ sqrt(P(x)Q(x)) dx</p>
+<p>where P(x) and Q(x) are the probability density functions of P and Q,
+respectively.</p>
+<p>For Beta distributions P ~ Beta(α₁,β₁) and Q ~ Beta(α₂,β₂), this has the
+closed form:</p>
+<p>H²(P,Q) = 1 - B((α₁+α₂)/2, (β₁+β₂)/2) / sqrt(B(α₁,β₁) * B(α₂,β₂))</p>
+<p>where B(x,y) is the beta function.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₁ of the first Beta distribution P</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter β₁ of the first Beta distribution P</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₂ of the second Beta distribution Q</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter β₂ of the second Beta distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Squared Hellinger distance between the two Beta distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.hellinger_beta">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">hellinger_beta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#hellinger_beta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.hellinger_beta" title="Link to this definition"></a></dt>
+<dd><p>Compute the Hellinger distance between two Beta distributions.</p>
+<p>The Hellinger distance between two Beta distributions P and Q is given by:</p>
+<p>H(P,Q) = sqrt(H²(P,Q))</p>
+<p>where H²(P,Q) is the squared Hellinger distance.</p>
+<p>For Beta distributions P ~ Beta(α₁,β₁) and Q ~ Beta(α₂,β₂), this has the
+closed form:</p>
+<p>H(P,Q) = sqrt(1 - B((α₁+α₂)/2, (β₁+β₂)/2) / sqrt(B(α₁,β₁) * B(α₂,β₂)))</p>
+<p>where B(x,y) is the beta function.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₁ of the first Beta distribution P</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter β₁ of the first Beta distribution P</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₂ of the second Beta distribution Q</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter β₂ of the second Beta distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Hellinger distance between the two Beta distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.sq_hellinger_gamma">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">sq_hellinger_gamma</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#sq_hellinger_gamma"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.sq_hellinger_gamma" title="Link to this definition"></a></dt>
+<dd><p>Compute the squared Hellinger distance between two Gamma distributions.</p>
+<p>The squared Hellinger distance between two Gamma distributions P and Q is
+given by:</p>
+<p>H²(P,Q) = 1 - ∫ sqrt(P(x)Q(x)) dx</p>
+<p>where P(x) and Q(x) are the probability density functions of P and Q,
+respectively.</p>
+<p>For Gamma distributions P ~ Gamma(α₁,β₁) and Q ~ Gamma(α₂,β₂), this has the
+closed form:</p>
+<dl class="simple">
+<dt>H²(P,Q) = 1 - Γ((α₁+α₂)/2) * ((β₁+β₂)/2)^(-(α₁+α₂)/2) *</dt><dd><p>sqrt((β₁^α₁ * β₂^α₂)/(Γ(α₁) * Γ(α₂)))</p>
+</dd>
+</dl>
+<p>where Γ(x) is the gamma function.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₁ of the first Gamma distribution P</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Rate parameter β₁ of the first Gamma distribution P</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₂ of the second Gamma distribution Q</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Rate parameter β₂ of the second Gamma distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Squared Hellinger distance between the two Gamma distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.hellinger_gamma">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">hellinger_gamma</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#hellinger_gamma"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.hellinger_gamma" title="Link to this definition"></a></dt>
+<dd><p>Compute the Hellinger distance between two Gamma distributions.</p>
+<p>The Hellinger distance between two Gamma distributions P and Q is given by:</p>
+<p>H(P,Q) = sqrt(H²(P,Q))</p>
+<p>where H²(P,Q) is the squared Hellinger distance.</p>
+<p>For Gamma distributions P ~ Gamma(α₁,β₁) and Q ~ Gamma(α₂,β₂), this has the
+closed form:</p>
+<dl class="simple">
+<dt>H(P,Q) = sqrt(1 - Γ((α₁+α₂)/2) * ((β₁+β₂)/2)^(-(α₁+α₂)/2) *</dt><dd><p>sqrt((β₁^α₁ * β₂^α₂)/(Γ(α₁) * Γ(α₂))))</p>
+</dd>
+</dl>
+<p>where Γ(x) is the gamma function.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₁ of the first Gamma distribution P</p></li>
+<li><p><strong>beta1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Rate parameter β₁ of the first Gamma distribution P</p></li>
+<li><p><strong>alpha2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α₂ of the second Gamma distribution Q</p></li>
+<li><p><strong>beta2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Rate parameter β₂ of the second Gamma distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Hellinger distance between the two Gamma distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.sq_hellinger_lognormal">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">sq_hellinger_lognormal</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mu1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mu2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#sq_hellinger_lognormal"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.sq_hellinger_lognormal" title="Link to this definition"></a></dt>
+<dd><p>Compute the squared Hellinger distance between two log-normal distributions.</p>
+<p>The squared Hellinger distance between two log-normal distributions P and Q is
+given by:</p>
+<dl class="simple">
+<dt>H²(P,Q) = 1 - sqrt( σ1 * σ2 / (σ1² + σ2²) )</dt><dd><ul class="simple">
+<li><p>exp( - (μ1-μ2)² / [4*(σ1² + σ2²)] )</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mu1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Location parameter μ₁ of the first log-normal distribution P</p></li>
+<li><p><strong>sigma1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Scale parameter σ₁ of the first log-normal distribution P</p></li>
+<li><p><strong>mu2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Location parameter μ₂ of the second log-normal distribution Q</p></li>
+<li><p><strong>sigma2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Scale parameter σ₂ of the second log-normal distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Squared Hellinger distance between the two log-normal distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.hellinger_lognormal">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">hellinger_lognormal</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mu1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mu2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#hellinger_lognormal"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.hellinger_lognormal" title="Link to this definition"></a></dt>
+<dd><p>Compute the Hellinger distance between two log-normal distributions.</p>
+<p>The Hellinger distance is the square root of the squared Hellinger distance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mu1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Location parameter μ₁ of the first log-normal distribution P</p></li>
+<li><p><strong>sigma1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Scale parameter σ₁ of the first log-normal distribution P</p></li>
+<li><p><strong>mu2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Location parameter μ₂ of the second log-normal distribution Q</p></li>
+<li><p><strong>sigma2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Scale parameter σ₂ of the second log-normal distribution Q</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Hellinger distance between the two log-normal distributions</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.beta_mode">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">beta_mode</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#beta_mode"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.beta_mode" title="Link to this definition"></a></dt>
+<dd><p>Calculate the mode for a Beta distribution.</p>
+<dl class="simple">
+<dt>For Beta(α,β) distribution, the mode is:</dt><dd><p>(α-1)/(α+β-2) when α,β &gt; 1
+undefined when α,β ≤ 1</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α of the Beta distribution</p></li>
+<li><p><strong>beta</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter β of the Beta distribution</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Mode of the Beta distribution. Returns NaN for cases where
+mode is undefined (α,β ≤ 1)</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.gamma_mode">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">gamma_mode</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#gamma_mode"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.gamma_mode" title="Link to this definition"></a></dt>
+<dd><p>Calculate the mode for a Gamma distribution.</p>
+<dl class="simple">
+<dt>For Gamma(α,β) distribution, the mode is:</dt><dd><p>(α-1)/β when α &gt; 1
+0 when α ≤ 1</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Shape parameter α of the Gamma distribution</p></li>
+<li><p><strong>beta</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Rate parameter β of the Gamma distribution</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Mode of the Gamma distribution</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.dirichlet_mode">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">dirichlet_mode</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#dirichlet_mode"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.dirichlet_mode" title="Link to this definition"></a></dt>
+<dd><p>Calculate the mode for a Dirichlet distribution.</p>
+<p>For Dirichlet(α) distribution with concentration parameters α, the mode for
+each component is:</p>
+<blockquote>
+<div><p>(αᵢ-1)/(∑ⱼαⱼ-K) when αᵢ &gt; 1 for all i
+0 when αᵢ ≤ 1 for any i</p>
+</div></blockquote>
+<p>where K is the number of components.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>alpha</strong> (<em>array-like</em>) – Concentration parameters α of the Dirichlet distribution</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Mode of the Dirichlet distribution</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.lognorm_mode">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">lognorm_mode</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mu</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#lognorm_mode"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.lognorm_mode" title="Link to this definition"></a></dt>
+<dd><p>Calculate the mode for a log-normal distribution.</p>
+<dl class="simple">
+<dt>For LogNormal(μ,σ) distribution, the mode is:</dt><dd><p>exp(μ - σ²)</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mu</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Mean of the log-normal distribution</p></li>
+<li><p><strong>sigma</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)"><em>float</em></a><em> or </em><em>array-like</em>) – Standard deviation of the log-normal distribution</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Mode of the log-normal distribution</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.13)">float</a> or array-like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.get_distribution_mode">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">get_distribution_mode</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dist_obj</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats.html#get_distribution_mode"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.get_distribution_mode" title="Link to this definition"></a></dt>
+<dd><p>Get the mode of a distribution object.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>dist_obj</strong> (<em>numpyro.distributions.Distribution</em>) – Distribution object</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Mode of the distribution</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="sampling.html" class="btn btn-neutral float-left" title="sampling" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="utils.html" class="btn btn-neutral float-right" title="utils" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

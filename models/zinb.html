@@ -1,0 +1,325 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zero-Inflated Negative Binomial Model (ZINB) &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="index.html">Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Zero-Inflated Negative Binomial Model (ZINB)</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/models/zinb.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="zero-inflated-negative-binomial-model-zinb">
+<h1>Zero-Inflated Negative Binomial Model (ZINB)<a class="headerlink" href="#zero-inflated-negative-binomial-model-zinb" title="Link to this heading"></a></h1>
+<p>The Zero-Inflated Negative Binomial (ZINB) model extends the standard
+<a class="reference internal" href="nbdm.html"><span class="doc">Negative Binomial-Dirichlet Multinomial (NBDM)</span></a> model to handle
+excess zeros in single-cell RNA sequencing data. This model is particularly
+useful when the data exhibits more zeros than would be expected from a standard
+negative binomial distribution alone.</p>
+<p>Like the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>, the ZINB model captures overdispersion in
+molecular counts. However, it differs in two key aspects:</p>
+<ol class="arabic simple">
+<li><p>It explicitly models technical dropouts via a <a class="reference external" href="https://en.wikipedia.org/wiki/Zero-inflated_model">zero-inflation component</a>.</p></li>
+<li><p>It does not use the Dirichlet-multinomial in the likelihood, instead each
+gene is fit independently to a zero-inflated negative binomial distribution.</p></li>
+</ol>
+<p>For details on overdispersion and the basic negative binomial component, please
+refer to the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>.</p>
+<section id="model-comparison-with-nbdm">
+<h2>Model Comparison with <a class="reference internal" href="nbdm.html"><span class="doc">NBDM</span></a><a class="headerlink" href="#model-comparison-with-nbdm" title="Link to this heading"></a></h2>
+<p>In the <a class="reference internal" href="nbdm.html"><span class="doc">Negative Binomial-Dirichlet Multinomial (NBDM) model</span></a>, we
+focus on two key aspects:</p>
+<ol class="arabic simple">
+<li><p>How many total transcripts a cell has (drawn from a Negative Binomial)</p></li>
+<li><p>How those transcripts are split among genes (captured by a
+Dirichlet-Multinomial)</p></li>
+</ol>
+<p>When normalizing single-cell data by focusing on fractions of the transcriptome,
+the Dirichlet-multinomial machinery allows us to think of <span class="math notranslate nohighlight">\(\rho_g\)</span> as the
+fraction of transcripts going to each gene <span class="math notranslate nohighlight">\(g\)</span>.</p>
+<p>The Zero-Inflated Negative Binomial (ZINB) model adds an extra “dropout” or
+“technical zero” component to account for unobserved transcripts. If these extra
+zeros are purely technical—i.e., they do not change the true underlying fraction
+of transcripts that each gene contributes but are instead due to technical
+limitations when mapping mRNA molecules to UMI counts—then it’s valid to ignore
+the zero-inflation part, allowing us to use the same <span class="math notranslate nohighlight">\(\rho_g\)</span> parameters
+for fraction-based normalization. The model has two key components:</p>
+<ol class="arabic simple">
+<li><p><strong>Dropout Layer (Technical Zeros)</strong>: Some fraction of transcripts is “lost”
+and recorded as zero for purely technical reasons.</p></li>
+<li><p><strong>Underlying Gene Counts</strong>: Conditioned on not being dropped out, the gene’s
+counts still follow a Negative Binomial with parameters <span class="math notranslate nohighlight">\(r_g\)</span> and
+<span class="math notranslate nohighlight">\(p\)</span>.</p></li>
+</ol>
+<p>If you strip away the dropout events, the core distribution for each gene’s true
+expression is the same <a class="reference external" href="https://en.wikipedia.org/wiki/Negative_binomial_distribution">Negative Binomial</a> as before.
+Consequently, you can still think of <span class="math notranslate nohighlight">\(\underline{r} = \{r_g\}_{g=1}^G\)</span> as
+capturing the gene-specific overdispersion for the “real” expression levels,
+just like in the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>.</p>
+<p>From a normalization perspective, the key question becomes: “<em>Among all the
+transcripts that would have been observed if there were no technical dropouts,
+what fraction goes to each gene?</em>” If dropout is treated as a purely technical
+artifact that does not alter the underlying composition, then that fraction is
+governed by the same <span class="math notranslate nohighlight">\(\underline{r}\)</span> parameters. In other words, the
+dropout layer is separate—it explains missing observations rather than
+redefining the overall fraction each gene represents in the cell.</p>
+<p>Therefore, if all zero-inflation is assumed to be technical, the dropout
+component can be effectively ignored for fraction-based normalization. The
+<span class="math notranslate nohighlight">\(\{r_g\}\)</span> parameters remain the key to describing each gene’s share of the
+total expression, just as in the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>.</p>
+</section>
+<section id="model-structure">
+<h2>Model Structure<a class="headerlink" href="#model-structure" title="Link to this heading"></a></h2>
+<p>The ZINB model follows a hierarchical structure where:</p>
+<ol class="arabic simple">
+<li><p>Each gene has an associated dropout probability (<cite>gate</cite>)</p></li>
+<li><p>For genes that aren’t dropped out, counts follow a negative binomial
+distribution</p></li>
+<li><p>The model handles each gene independently, with shared success probability
+across genes</p></li>
+</ol>
+<p>Formally, for a dataset with <span class="math notranslate nohighlight">\(N\)</span> cells and <span class="math notranslate nohighlight">\(G\)</span> genes, let
+<span class="math notranslate nohighlight">\(u_{g}^{(c)}\)</span> be the UMI count for gene <span class="math notranslate nohighlight">\(g\)</span> in cell <span class="math notranslate nohighlight">\(c\)</span>. The
+generative process is:</p>
+<ol class="arabic simple">
+<li><p>Draw global success probability: <span class="math notranslate nohighlight">\(p \sim \text{Beta}(\alpha_p,
+\beta_p)\)</span></p></li>
+<li><p>For each gene <span class="math notranslate nohighlight">\(g = 1,\ldots,G\)</span>:</p>
+<ul class="simple">
+<li><p>Draw dispersion parameter: <span class="math notranslate nohighlight">\(r_g \sim \text{Gamma}(\alpha_r, \beta_r)\)</span></p></li>
+<li><p>Draw dropout probability: <span class="math notranslate nohighlight">\(\pi_g \sim \text{Beta}(\alpha_{\pi},
+\beta_{\pi})\)</span></p></li>
+</ul>
+</li>
+<li><p>For each cell <span class="math notranslate nohighlight">\(c = 1,\ldots,N\)</span> and gene <span class="math notranslate nohighlight">\(g = 1,\ldots,G\)</span>:</p>
+<ul class="simple">
+<li><p>Draw dropout indicator: <span class="math notranslate nohighlight">\(z_g^{(c)} \sim \text{Bernoulli}(\pi_g)\)</span></p></li>
+<li><p>If <span class="math notranslate nohighlight">\(z_g^{(c)} = 1\)</span>: set <span class="math notranslate nohighlight">\(u_g^{(c)} = 0\)</span></p></li>
+<li><p>If <span class="math notranslate nohighlight">\(z_g^{(c)} = 0\)</span>: draw <span class="math notranslate nohighlight">\(u_g^{(c)} \sim
+\text{NegativeBinomial}(r_g, p)\)</span></p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="model-derivation">
+<h2>Model Derivation<a class="headerlink" href="#model-derivation" title="Link to this heading"></a></h2>
+<p>The ZINB model combines a Bernoulli distribution for dropout events with a
+negative binomial for the actual counts. For each gene <span class="math notranslate nohighlight">\(g\)</span> and cell
+<span class="math notranslate nohighlight">\(c\)</span>, the probability of observing a count <span class="math notranslate nohighlight">\(u_g^{(c)}\)</span> is:</p>
+<div class="math notranslate nohighlight">
+\[\pi(u_g^{(c)} \mid \pi_g, r_g, p) =
+\pi_g \delta_{0}(u_g^{(c)}) + (1-\pi_g)
+\text{NegativeBinomial}(u_g^{(c)}; r_g, p),
+\tag{1}\]</div>
+<p>where:</p>
+<ul class="simple">
+<li><p><span class="math notranslate nohighlight">\(\pi_g\)</span> is the dropout probability for gene <span class="math notranslate nohighlight">\(g\)</span></p></li>
+<li><p><span class="math notranslate nohighlight">\(\delta_{0}(x)\)</span> is the Dirac delta function at zero</p></li>
+<li><p><span class="math notranslate nohighlight">\(r_g\)</span> is the gene-specific dispersion parameter</p></li>
+<li><p><span class="math notranslate nohighlight">\(p\)</span> is the shared success probability</p></li>
+</ul>
+<p>Unlike the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>, each gene is fit to an independent
+zero-inflated negative binomial. The joint probability across all genes and
+cells is simply:</p>
+<div class="math notranslate nohighlight">
+\[\pi(\underline{\underline{U}} \mid \underline{\pi}, \underline{r}, p) =
+\prod_{c=1}^N \prod_{g=1}^G \pi_g \delta_{0}(u_g^{(c)}) + (1-\pi_g)
+\text{NegativeBinomial}(u_g^{(c)}; r_g, p)
+\tag{2}\]</div>
+<p>where:</p>
+<ul class="simple">
+<li><p><span class="math notranslate nohighlight">\(\underline{\underline{U}}\)</span> is the complete count matrix</p></li>
+<li><p><span class="math notranslate nohighlight">\(\underline{\pi}\)</span> is the vector of dropout probabilities</p></li>
+<li><p><span class="math notranslate nohighlight">\(\underline{r}\)</span> is the vector of dispersion parameters</p></li>
+</ul>
+</section>
+<section id="prior-distributions">
+<h2>Prior Distributions<a class="headerlink" href="#prior-distributions" title="Link to this heading"></a></h2>
+<p>The model uses the following prior distributions:</p>
+<p>For the success probability <span class="math notranslate nohighlight">\(p\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[p \sim \text{Beta}(\alpha_p, \beta_p)
+\tag{3}\]</div>
+<p>For each gene’s dispersion parameter <span class="math notranslate nohighlight">\(r_g\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[r_g \sim \text{Gamma}(\alpha_r, \beta_r)
+\tag{4}\]</div>
+<p>For each gene’s dropout probability <span class="math notranslate nohighlight">\(\pi_g\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[\pi_g \sim \text{Beta}(\alpha_{\pi}, \beta_{\pi})
+\tag{5}\]</div>
+</section>
+<section id="variational-posterior-distribution">
+<h2>Variational Posterior Distribution<a class="headerlink" href="#variational-posterior-distribution" title="Link to this heading"></a></h2>
+<p>The model uses stochastic variational inference with a mean-field variational
+family. The variational distributions are:</p>
+<p>For the success probability <span class="math notranslate nohighlight">\(p\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(p) = \text{Beta}(\hat{\alpha}_p, \hat{\beta}_p)
+\tag{6}\]</div>
+<p>For each gene’s dispersion parameter <span class="math notranslate nohighlight">\(r_g\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(r_g) = \text{Gamma}(\hat{\alpha}_{r,g}, \hat{\beta}_{r,g})
+\tag{7}\]</div>
+<p>For each gene’s dropout probability <span class="math notranslate nohighlight">\(\pi_g\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(\pi_g) = \text{Beta}(\hat{\alpha}_{\pi,g}, \hat{\beta}_{\pi,g})
+\tag{8}\]</div>
+<p>where hatted parameters are learnable variational parameters.</p>
+</section>
+<section id="learning-algorithm">
+<h2>Learning Algorithm<a class="headerlink" href="#learning-algorithm" title="Link to this heading"></a></h2>
+<p>The training process follows the same steps as the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>:</p>
+<ol class="arabic simple">
+<li><p>Initialize variational parameters</p></li>
+<li><p>For each iteration:
+* Sample mini-batch of cells
+* Compute ELBO gradients
+* Update parameters (using Adam optimizer as default)</p></li>
+<li><p>Continue until maximum number of iterations is reached</p></li>
+</ol>
+<p>The key difference is that we now also track and update parameters for the
+dropout probabilities.</p>
+</section>
+<section id="implementation-details">
+<h2>Implementation Details<a class="headerlink" href="#implementation-details" title="Link to this heading"></a></h2>
+<p>Like the <a class="reference internal" href="nbdm.html"><span class="doc">NBDM model</span></a>, the ZINB model is implemented using
+<a class="reference external" href="https://num.pyro.ai/">NumPyro</a>. The key additions are:</p>
+<ul class="simple">
+<li><p>Zero-inflated distributions using NumPyro’s <a class="reference external" href="https://num.pyro.ai/en/stable/distributions.html#zeroinflateddistribution">ZeroInflatedDistribution</a></p></li>
+<li><p>Additional variational parameters for dropout probabilities</p></li>
+<li><p>Independent fitting of genes (no Dirichlet-Multinomial component)</p></li>
+</ul>
+</section>
+<section id="model-assumptions">
+<h2>Model Assumptions<a class="headerlink" href="#model-assumptions" title="Link to this heading"></a></h2>
+<p>The ZINB model makes several key assumptions:</p>
+<ul class="simple">
+<li><p>Zeros can arise from two processes:
+- Technical dropouts (modeled by zero-inflation)
+- Biological absence of expression (modeled by negative binomial)</p></li>
+<li><p>Genes are independent</p></li>
+<li><p>A single global success probability applies to all cells</p></li>
+<li><p>Each gene has its own dropout probability and dispersion parameter</p></li>
+</ul>
+</section>
+<section id="usage-considerations">
+<h2>Usage Considerations<a class="headerlink" href="#usage-considerations" title="Link to this heading"></a></h2>
+<p>The ZINB model is particularly suitable when:</p>
+<ul class="simple">
+<li><p>The data exhibits excessive zeros beyond what a negative binomial predicts</p></li>
+<li><p>You need to distinguish technical dropouts from biological zeros</p></li>
+<li><p>Genes can be reasonably modeled independently</p></li>
+</ul>
+<p>It may be less suitable when:</p>
+<ul class="simple">
+<li><p>Library size variation is a major concern (consider <a class="reference internal" href="nbvcp.html"><span class="doc">NBVCP model</span></a>)</p></li>
+<li><p>Cell-specific capture efficiencies vary significantly (consider
+<a class="reference internal" href="zinbvcp.html"><span class="doc">ZINBVCP model</span></a>)</p></li>
+<li><p>The data contains multiple distinct cell populations (consider mixture models)</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
