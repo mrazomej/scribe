@@ -44,6 +44,10 @@ COPY . .
 ARG USER_ID
 ARG GROUP_ID
 
+# Set the locale for UTF-8 used for Sphinx docs
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
 # Ensure all files are owned by the user
 RUN chown -R ${USER_ID}:${GROUP_ID} /app
 
