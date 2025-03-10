@@ -21,6 +21,9 @@ print("Setting up the simulation...")
 # Define model type
 model_type = "nbdm"
 
+# r-distribution
+r_distribution = "gamma"
+
 # Define output directory
 OUTPUT_DIR = f"{scribe.utils.git_root()}/output/sim/{model_type}"
 
@@ -47,13 +50,10 @@ batch_size = 4096
 # Define number of steps for scribe
 n_steps = 20_000
 
-# Define r_distribution
-r_distribution = "gamma"
-
 # Define parameters for prior
 r_alpha = 2
 r_beta = 1
-r_prior = (r_alpha, r_beta)
+r_prior = (r_alpha, r_beta) if r_distribution == "gamma" else (1, 1)
 
 # Define prior for p parameter
 p_prior = (1, 1)
