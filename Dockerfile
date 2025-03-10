@@ -1,5 +1,5 @@
 # Use the NVIDIA JAX image as the base
-FROM nvcr.io/nvidia/jax:24.10-py3
+FROM nvcr.io/nvidia/jax:25.01-py3
 
 # Install zsh and other required packages
 RUN apt-get update && apt-get install -y \
@@ -28,14 +28,21 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 # Add uv to PATH
 ENV PATH=/root/.local/bin:$PATH
 
+# Create a virtual environment instead of using system Python
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv venv /app/venv
+
+# Add the virtual environment to PATH
+ENV PATH=/app/venv/bin:$PATH
+
 # Copy dependency files first
 COPY pyproject.toml ./
 COPY uv.lock* ./
 
-# Install dependencies into the system Python environment
+# Install dependencies into the virtual environment
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system numpyro && \
-    uv pip install --system -e ".[dev]"
+    uv pip install numpyro && \
+    uv pip install -e ".[dev]"
 
 # Copy the rest of your project
 COPY . .
@@ -49,13 +56,9 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # Ensure all files are owned by the user
-RUN chown -R ${USER_ID}:${GROUP_ID} /app
+RUN chown -R ${USER_ID}:${GROUP_ID} /app /app/venv
 
 USER ${USER_ID}:${GROUP_ID}
-
-# Set the default command
-SHELL ["/bin/zsh", "-c"]
-ENTRYPOINT ["zsh"]
 
 # Set the default command
 SHELL ["/bin/zsh", "-c"]
