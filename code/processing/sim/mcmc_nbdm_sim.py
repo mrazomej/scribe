@@ -3,14 +3,14 @@
 # Import base libraries
 # Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
 import os
-# os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
 
-# # Preallocate a specific amount of memory (in bytes)
-# os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-# os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
+# Preallocate a specific amount of memory (in bytes)
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
 
-# # Disable the memory preallocation completely
-# os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+# Disable the memory preallocation completely
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 
 import pickle
 import gc
@@ -21,7 +21,7 @@ from jax import random
 import jax.numpy as jnp
 # Import Pyro-related libraries
 import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS
+from numpyro.infer import MCMC, NUTS, HMC
 # Import numpy for array manipulation
 import numpy as np
 # Import scribe
@@ -49,7 +49,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define MCMC burn-in samples
-n_mcmc_burnin = 1_000
+n_mcmc_burnin = 100
 # Define MCMC samples
 n_mcmc_samples = 100
 
@@ -66,12 +66,12 @@ batch_size = 4096
 n_steps = 20_000
 
 # Define r_distribution
-r_distribution = "gamma"
+r_distribution = "lognormal"
 
 # Define parameters for prior
 r_alpha = 2
 r_beta = 1
-r_prior = (r_alpha, r_beta)
+r_prior = (r_alpha, r_beta) if r_distribution == "gamma" else (1, 1)
 
 # Define prior for p parameter
 p_prior = (1, 1)
@@ -168,9 +168,10 @@ file_name = f"{OUTPUT_DIR}/" \
 if not os.path.exists(file_name):
     # Define MCMC sampler with initial position from SVI results
     mcmc_results = MCMC(
-        NUTS(model), 
+        NUTS(model, forward_mode_differentiation=False), 
         num_warmup=n_mcmc_burnin, 
-        num_samples=n_mcmc_samples
+        num_samples=n_mcmc_samples,
+        chain_method="vectorized",
     ) 
     # Run MCMC sampler
     mcmc_results.run(
@@ -180,7 +181,7 @@ if not os.path.exists(file_name):
         counts=jnp.array(data["counts"]), 
         total_counts=jnp.sum(data["counts"], axis=1),
         model_config=model_config,
-        # init_params=param_map
+        init_params=param_map
     )
     # Save MCMC results
     # with open(file_name, "wb") as f:
