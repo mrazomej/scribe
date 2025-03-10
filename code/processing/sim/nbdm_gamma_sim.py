@@ -19,7 +19,10 @@ import scribe
 print("Setting up the simulation...")
 
 # Define model type
-model_type = "zinb"
+model_type = "nbdm"
+
+# r-distribution
+r_distribution = "gamma"
 
 # Define output directory
 OUTPUT_DIR = f"{scribe.utils.git_root()}/output/sim/{model_type}"
@@ -36,10 +39,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define number of cells
-n_cells = 10_000
+n_cells = 3_000
 
 # Define number of genes
-n_genes = 20_000
+n_genes = 1_000
 
 # Define batch size for memory-efficient sampling
 batch_size = 4096
@@ -47,22 +50,16 @@ batch_size = 4096
 # Define number of steps for scribe
 n_steps = 20_000
 
-# Define r distribution
-r_distribution = "lognormal"
-
 # Define parameters for prior
 r_alpha = 2
 r_beta = 1
-r_prior = (r_alpha, r_beta)
+r_prior = (r_alpha, r_beta) if r_distribution == "gamma" else (1, 1)
 
 # Define prior for p parameter
 p_prior = (1, 1)
 
-# Define gate prior
-gate_prior = (0.1, 1)
-
 # Split keys for different random operations
-key1, key2, key3, key4, key5 = random.split(rng_key, 5)
+key1, key2, key3, key4 = random.split(rng_key, 4)
 
 # Sample true r parameters using JAX's random
 r_true = random.gamma(
@@ -71,8 +68,6 @@ r_true = random.gamma(
 # Sample true p parameter using JAX's random
 p_true = random.beta(key2, p_prior[0], p_prior[1])
 
-# Sample true gate parameter using JAX's random
-gate_true = random.beta(key3, gate_prior[0], gate_prior[1], shape=(n_genes,))
 
 # %% ---------------------------------------------------------------------------
 
@@ -96,16 +91,10 @@ if not os.path.exists(output_file):
         # Create new key for this batch
         key5 = random.fold_in(rng_key, i)
 
-        # Define base distribution  
-        base_dist = dist.NegativeBinomialProbs(
+        # Sample only for cells belonging to this component
+        batch_samples = dist.NegativeBinomialProbs(
             r_true,
             p_true
-        )
-
-        # Sample only for cells belonging to this component
-        batch_samples = dist.ZeroInflatedDistribution(
-            base_dist,
-            gate=gate_true
         ).sample(key5, sample_shape=(current_batch_size,))
             
         # Store batch samples
@@ -116,8 +105,7 @@ if not os.path.exists(output_file):
         pickle.dump({
             'counts': np.array(counts_true),
             'r': np.array(r_true),
-            'p': np.array(p_true),
-            'gate': np.array(gate_true)
+            'p': np.array(p_true)
         }, f)
 
 # %% ---------------------------------------------------------------------------
@@ -140,11 +128,10 @@ if not os.path.exists(file_name):
     # Run scribe
     scribe_results = scribe.svi.run_scribe(
         counts=jnp.array(data['counts']),
-        zero_inflated=True,
         n_steps=n_steps,
-        batch_size=batch_size,
+        batch_size=min(batch_size, n_cells),
         p_prior=p_prior,
-        r_prior=(1, 1),
+        r_prior=r_prior,
         r_dist=r_distribution,
     )
 
@@ -158,3 +145,4 @@ with open(file_name, "rb") as f:
     scribe_results = pickle.load(f)
 
 # %% ---------------------------------------------------------------------------
+
