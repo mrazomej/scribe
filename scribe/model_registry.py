@@ -101,6 +101,79 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         raise ValueError(f"Unknown model type: {model_type}")
 
 # ------------------------------------------------------------------------------
+# Unconstrained model registry
+# ------------------------------------------------------------------------------
+
+def get_unconstrained_model(model_type: str) -> Callable:
+    """
+    Get the unconstrained version of the specified model type.
+
+    Parameters
+    ----------
+    model_type : str
+        Type of model to use. Must be one of:
+            - "nbdm": Negative Binomial model
+            - "zinb": Zero-Inflated Negative Binomial model
+            - "nbvcp": Negative Binomial with variable capture probability
+            - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
+              probability
+            - Mixture variants with "_mix" suffix (e.g. "nbdm_mix")
+
+    Returns
+    -------
+    Callable
+        The unconstrained version of the specified model function.
+
+    Raises
+    ------
+    ValueError
+        If an unsupported model type is specified.
+    """
+    # Handle Negative Binomial-Dirichlet Multinomial model
+    if model_type == "nbdm":
+        from .models_unconstrained import nbdm_model_unconstrained
+        return nbdm_model_unconstrained
+    
+    # Handle Zero-Inflated Negative Binomial model
+    elif model_type == "zinb":
+        from .models_unconstrained import zinb_model_unconstrained
+        return zinb_model_unconstrained
+    
+    # Handle Negative Binomial with variable capture probability model
+    elif model_type == "nbvcp":
+        from .models_unconstrained import nbvcp_model_unconstrained
+        return nbvcp_model_unconstrained
+    
+    # Handle Zero-Inflated Negative Binomial with variable capture probability
+    elif model_type == "zinbvcp":
+        from .models_unconstrained import zinbvcp_model_unconstrained
+        return zinbvcp_model_unconstrained
+    
+    # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
+    elif model_type == "nbdm_mix":
+        from .models_unconstrained import nbdm_mixture_model_unconstrained
+        return nbdm_mixture_model_unconstrained
+    
+    # Handle Zero-Inflated Negative Binomial Mixture Model
+    elif model_type == "zinb_mix":
+        from .models_unconstrained import zinb_mixture_model_unconstrained
+        return zinb_mixture_model_unconstrained
+    
+    # Handle Negative Binomial-Variable Capture Probability Mixture Model
+    elif model_type == "nbvcp_mix":
+        from .models_unconstrained import nbvcp_mixture_model_unconstrained
+        return nbvcp_mixture_model_unconstrained
+    
+    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability Mixture Model
+    elif model_type == "zinbvcp_mix":
+        from .models_unconstrained import zinbvcp_mixture_model_unconstrained
+        return zinbvcp_mixture_model_unconstrained
+    
+    # Raise error for unsupported model types
+    else:
+        raise ValueError(f"Unknown model type for unconstrained parameterization: {model_type}")
+
+# ------------------------------------------------------------------------------
 # Model log likelihood functions
 # ------------------------------------------------------------------------------
 
