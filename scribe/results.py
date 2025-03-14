@@ -29,7 +29,7 @@ from .stats import (
     jensen_shannon_gamma,
     jensen_shannon_lognormal
 )
-from .model_config import ModelConfig
+from .model_config import ConstrainedModelConfig
 from .utils import numpyro_to_scipy
 
 from .cell_assignment import (
@@ -62,7 +62,7 @@ class ScribeResults:
         Number of genes in the dataset
     model_type : str
         Type of model used for inference
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object specifying model architecture and priors
     prior_params : Dict[str, Any]
         Dictionary of prior parameter values used during inference
@@ -89,7 +89,7 @@ class ScribeResults:
     n_cells: int
     n_genes: int
     model_type: str
-    model_config: ModelConfig
+    model_config: ConstrainedModelConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
@@ -169,7 +169,7 @@ class ScribeResults:
         adata: "AnnData",
         params: Dict,
         loss_history: jnp.ndarray,
-        model_config: ModelConfig,
+        model_config: ConstrainedModelConfig,
         **kwargs
     ):
         """Create ScribeResults from AnnData object."""
@@ -1418,7 +1418,7 @@ class ScribeResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
+        # Get r distribution from ConstrainedModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding Hellinger distance function
         if r_distribution == dist.LogNormal:
@@ -1501,7 +1501,7 @@ class ScribeResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
+        # Get r distribution from ConstrainedModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding KL divergence function
         if r_distribution == dist.LogNormal:
@@ -1591,7 +1591,7 @@ class ScribeResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
+        # Get r distribution from ConstrainedModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         
         # Define corresponding JS divergence function based on distribution type

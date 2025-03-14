@@ -25,6 +25,7 @@ from anndata import AnnData
 
 # Imports for model-specific functions
 from .model_registry import get_model_and_guide
+from .model_config import ConstrainedModelConfig
 
 # ------------------------------------------------------------------------------
 # Stochastic Variational Inference with Numpyro
@@ -81,7 +82,7 @@ def run_inference(
     rng_key: random.PRNGKey,
     counts: jnp.ndarray,
     model_type: str = "nbdm",
-    model_config: Optional[ModelConfig] = None,
+    model_config: Optional[ConstrainedModelConfig] = None,
     n_steps: int = 100_000,
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
@@ -147,10 +148,6 @@ def run_inference(
         'batch_size': batch_size,
         'model_config': model_config,
     }
-
-    # Add model-specific parameters
-    if model_type == "nbdm":
-        model_args['total_counts'] = counts.sum(axis=1)
 
     # Check if mixture model
     if model_type is not None and "mix" in model_type:
@@ -403,7 +400,7 @@ def run_scribe(
         mixing_dist_guide = mixing_dist_model
 
     # Create model_config with all the configurations
-    model_config = ModelConfig(
+    model_config = ConstrainedModelConfig(
         base_model=model_type,
         r_distribution_model=r_dist_model,
         r_distribution_guide=r_dist_guide,
