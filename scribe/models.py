@@ -975,7 +975,6 @@ def nbdm_log_likelihood(
     # Extract parameters from dictionary - handle both old and new formats
     p = jnp.squeeze(params['p']).astype(dtype)
     r = jnp.squeeze(params['r']).astype(dtype)
-    r_total = jnp.sum(r)
     
     # Extract dimensions
     if cells_axis == 0:
@@ -987,19 +986,12 @@ def nbdm_log_likelihood(
         counts = jnp.array(counts, dtype=dtype)
 
     if return_by == 'cell':
-        # Compute total counts for each cell
-        total_counts = jnp.sum(counts, axis=1)
-        
         # If no batch size provided, process all cells at once
         if batch_size is None:
-            # Compute log probability for total counts
-            log_prob_total = dist.NegativeBinomialProbs(
-                r_total, p).log_prob(total_counts)
-            # Compute log probability for each gene
-            log_prob_genes = dist.DirichletMultinomial(
-                r, total_count=total_counts).log_prob(counts)
-            # Return sum of log probabilities
-            return log_prob_total + log_prob_genes
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+            # Return per-cell log probabilities
+            return base_dist.log_prob(counts)
         
         # Initialize array to store per-cell log probabilities
         cell_log_probs = jnp.zeros(n_cells)
@@ -1012,18 +1004,12 @@ def nbdm_log_likelihood(
             
             # Get batch data
             batch_counts = counts[start_idx:end_idx]
-            batch_total_counts = total_counts[start_idx:end_idx]
             
-            # Compute log probability for total counts
-            batch_log_prob_total = dist.NegativeBinomialProbs(
-                r_total, p).log_prob(batch_total_counts)
-            # Compute log probability for each gene
-            batch_log_prob_genes = dist.DirichletMultinomial(
-                r, total_count=batch_total_counts).log_prob(batch_counts)
-            
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             # Store batch log probabilities
             cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
-                batch_log_prob_total + batch_log_prob_genes
+                base_dist.log_prob(batch_counts)
             )
         
         return cell_log_probs
