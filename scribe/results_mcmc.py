@@ -7,15 +7,11 @@ from dataclasses import dataclass, field
 import warnings
 
 import jax.numpy as jnp
-import jax.scipy as jsp
-import pandas as pd
-import numpyro.distributions as dist
 from jax import random, jit, vmap
+import pandas as pd
 from numpyro.infer import MCMC
 
-import numpy as np
-import scipy.stats as stats
-
+from .sampling import generate_predictive_samples
 from .model_config import UnconstrainedModelConfig
 
 # ------------------------------------------------------------------------------
@@ -130,7 +126,7 @@ class ScribeMCMCResults(MCMC):
         self.predictive_samples = predictive_samples
         self.n_components = (n_components if n_components is not None else
                              model_config.n_components)
-        
+
         # Validate configuration
         self._validate_model_config()
     
@@ -303,12 +299,11 @@ class ScribeMCMCResults(MCMC):
         dict
             Dictionary mapping quantiles to values
         """
-        samples = self.get_samples()[param]
-        return {q: jnp.quantile(samples, q) for q in quantiles}
+        return _get_posterior_quantiles(self.get_samples(), param, quantiles)
     
     # --------------------------------------------------------------------------
 
-    def get_map_estimate(self):
+    def get_map(self):
         """
         Get the maximum a posteriori (MAP) estimate from MCMC samples.
         
@@ -325,21 +320,134 @@ class ScribeMCMCResults(MCMC):
         # Get extra fields to compute joint log density
         try:
             potential_energy = self.get_extra_fields()['potential_energy']
-            # Get index of minimum potential energy (maximum log density)
-            map_idx = int(jnp.argmin(potential_energy))
-            # Extract parameters at this index
-            map_estimate = {param: values[map_idx] for param, values in samples.items()}
-            return map_estimate
+            return _get_map_estimate(samples, potential_energy)
         except:
-            # Fallback: Return posterior mean as a robust estimator
-            # for multimodal distributions or sparse sampling
-            map_estimate = {}
+            # Fallback: Use general function without potential energy
+            return _get_map_estimate(samples)
+    
+    # --------------------------------------------------------------------------
+    # Get model function
+    # --------------------------------------------------------------------------
+
+    def _model(self) -> Callable:
+        """Get the model function for this model type."""
+        return _get_model_fn(self.model_type)
+
+    
+    # --------------------------------------------------------------------------
+    # Get log likelihood function
+    # --------------------------------------------------------------------------
+
+    def _log_likelihood_fn(self) -> Callable:
+        """Get the log likelihood function for this model type."""
+        return _get_log_likelihood_fn(self.model_type)
+
+    # --------------------------------------------------------------------------
+    # Posterior sampling methods
+    # --------------------------------------------------------------------------
+
+    def get_ppc_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        batch_size: Optional[int] = None,
+        store_samples: bool = True,
+    ) -> jnp.ndarray:
+        """Generate predictive samples using posterior parameter samples."""
+        # Generate predictive samples
+        predictive_samples = _generate_ppc_samples(
+            self.get_samples(),
+            self.model_type,
+            self.n_cells,
+            self.n_genes,
+            self.model_config,
+            rng_key=rng_key,
+            batch_size=batch_size
+        )
+        
+        # Store samples if requested
+        if store_samples:
+            self.predictive_samples = predictive_samples
             
-            for param, values in samples.items():
-                # Using mean as a more robust estimator than mode
-                map_estimate[param] = jnp.mean(values, axis=0)
+        return predictive_samples
+
+    # --------------------------------------------------------------------------
+    # Compute log likelihood methods 
+    # --------------------------------------------------------------------------
+
+    def log_likelihood(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        return_by: str = 'cell',
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """
+        Compute log likelihood of data under posterior samples.
+        
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data to evaluate likelihood on
+        batch_size : Optional[int], default=None
+            Size of mini-batches used for likelihood computation
+        return_by : str, default='cell'
+            Specifies how to return the log probabilities. Must be one of:
+                - 'cell': returns log probabilities summed over genes
+                - 'gene': returns log probabilities summed over cells
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        ignore_nans : bool, default=False
+            If True, removes any samples that contain NaNs.
+        split_components : bool, default=False
+            If True, returns log likelihoods for each mixture component
+            separately. Only applicable for mixture models.
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight the log likelihoods (for mixture models).
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
             
-            return map_estimate
+        Returns
+        -------
+        jnp.ndarray
+            Array of log likelihoods. Shape depends on model type, return_by and
+            split_components parameters. For standard models:
+                - 'cell': shape (n_samples, n_cells)
+                - 'gene': shape (n_samples, n_genes)
+            For mixture models with split_components=False:
+                - 'cell': shape (n_samples, n_cells)
+                - 'gene': shape (n_samples, n_genes)
+            For mixture models with split_components=True:
+                - 'cell': shape (n_samples, n_cells, n_components)
+                - 'gene': shape (n_samples, n_genes, n_components)
+                
+        Raises
+        ------
+        ValueError
+            If posterior samples have not been generated yet
+        """
+        return _compute_log_likelihood(
+            self.get_samples(),
+            counts,
+            self.model_type,
+            n_components=self.n_components,
+            batch_size=batch_size,
+            return_by=return_by,
+            cells_axis=cells_axis,
+            ignore_nans=ignore_nans,
+            split_components=split_components,
+            weights=weights,
+            weight_type=weight_type,
+            dtype=dtype
+        )
     
     # --------------------------------------------------------------------------
     # Indexing by genes
@@ -356,7 +464,10 @@ class ScribeMCMCResults(MCMC):
         
         # Handle gene-specific parameters
         for param_name, values in samples.items():
-            if param_name in ['r', 'r_unconstrained', 'gate', 'gate_unconstrained']:
+            if param_name in [
+                'r', 'r_unconstrained', 'r_unconstrained__decentered', 
+                'gate', 'gate_unconstrained', 'gate_unconstrained__decentered'
+            ]:
                 if self.n_components is not None:
                     # Shape: (n_samples, n_components, n_genes)
                     new_posterior_samples[param_name] = values[..., index]
@@ -427,14 +538,16 @@ class ScribeMCMCResults(MCMC):
             n_genes: int
             model_type: str
             model_config: UnconstrainedModelConfig
-            prior_params: Dict
             obs: Optional[pd.DataFrame] = None
             var: Optional[pd.DataFrame] = None
             uns: Optional[Dict] = None
             n_obs: Optional[int] = None
             n_vars: Optional[int] = None
             n_components: Optional[int] = None
-            
+            predictive_samples: Optional[jnp.ndarray] = None
+
+            # ------------------------------------------------------------------
+
             def __getitem__(self, index):
                 """Support further indexing of subset."""
                 # Convert subset indexing to original indexing
@@ -444,7 +557,81 @@ class ScribeMCMCResults(MCMC):
                     return self.var.index[index]
                 else:
                     return self.var.index[index]
-        
+            
+            # ------------------------------------------------------------------
+
+            def get_posterior_samples(self):
+                """Get posterior samples."""
+                return self.samples
+            
+            # ------------------------------------------------------------------
+
+            def get_posterior_quantiles(self, param, quantiles=(0.025, 0.5, 0.975)):
+                """Get quantiles for a specific parameter from samples."""
+                return _get_posterior_quantiles(self.samples, param, quantiles)
+            
+            # ------------------------------------------------------------------
+
+            def get_map(self):
+                """Get MAP estimates for parameters."""
+                return _get_map_estimate(self.samples)
+            
+            # ------------------------------------------------------------------
+
+            def log_likelihood(
+                self,
+                counts: jnp.ndarray,
+                batch_size: Optional[int] = None,
+                return_by: str = 'cell',
+                cells_axis: int = 0,
+                ignore_nans: bool = False,
+                split_components: bool = False,
+                weights: Optional[jnp.ndarray] = None,
+                weight_type: Optional[str] = None,
+                dtype: jnp.dtype = jnp.float32,
+            ) -> jnp.ndarray:
+                """Compute log likelihood of data under posterior samples."""
+                return _compute_log_likelihood(
+                    self.samples,
+                    counts,
+                    self.model_type,
+                    n_components=self.n_components,
+                    batch_size=batch_size,
+                    return_by=return_by,
+                    cells_axis=cells_axis,
+                    ignore_nans=ignore_nans,
+                    split_components=split_components,
+                    weights=weights,
+                    weight_type=weight_type,
+                    dtype=dtype
+                )
+            
+            # ------------------------------------------------------------------
+
+            def get_ppc_samples(
+                self,
+                rng_key: random.PRNGKey = random.PRNGKey(42),
+                batch_size: Optional[int] = None,
+                store_samples: bool = True,
+            ) -> jnp.ndarray:
+                """Generate predictive samples using posterior parameter samples."""
+                predictive_samples = _generate_ppc_samples(
+                    self.samples,
+                    self.model_type,
+                    self.n_cells,
+                    self.n_genes,
+                    self.model_config,
+                    rng_key=rng_key,
+                    batch_size=batch_size
+                )
+                
+                if store_samples:
+                    self.predictive_samples = predictive_samples
+                    
+                return predictive_samples
+            
+        # ----------------------------------------------------------------------
+
         # Create and return the subset
         return ScribeMCMCSubset(
             samples=new_samples,
@@ -452,7 +639,6 @@ class ScribeMCMCResults(MCMC):
             n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
             model_type=self.model_type,
             model_config=self.model_config,
-            prior_params=self.prior_params,
             obs=self.obs,
             var=new_var,
             uns=self.uns,
@@ -460,3 +646,153 @@ class ScribeMCMCResults(MCMC):
             n_vars=new_var.shape[0] if new_var is not None else None,
             n_components=self.n_components
         )
+
+# ------------------------------------------------------------------------------
+# Shared helper functions for both ScribeMCMCResults and ScribeMCMCSubset
+# ------------------------------------------------------------------------------
+
+def _get_model_fn(model_type: str) -> Callable:
+    """Get the model function for this model type."""
+    from .model_registry import get_unconstrained_model
+    return get_unconstrained_model(model_type)
+
+# ------------------------------------------------------------------------------
+
+def _get_log_likelihood_fn(model_type: str) -> Callable:
+    """Get the log likelihood function for this model type."""
+    from .model_registry import get_log_likelihood_fn
+    return get_log_likelihood_fn(model_type)
+
+# ------------------------------------------------------------------------------
+
+def _compute_log_likelihood(
+    samples: Dict,
+    counts: jnp.ndarray,
+    model_type: str,
+    n_components: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    return_by: str = 'cell',
+    cells_axis: int = 0,
+    ignore_nans: bool = False,
+    split_components: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
+    dtype: jnp.dtype = jnp.float32,
+) -> jnp.ndarray:
+    """Compute log likelihood of data under posterior samples."""
+    # Get number of samples from first parameter
+    n_samples = samples[next(iter(samples))].shape[0]
+    
+    # Get likelihood function
+    likelihood_fn = _get_log_likelihood_fn(model_type)
+    
+    # Determine if this is a mixture model
+    is_mixture = n_components is not None and n_components > 1
+    
+    # Define function to compute likelihood for a single sample
+    @jit
+    def compute_sample_lik(i):
+        # Extract parameters for this sample
+        params_i = {k: v[i] for k, v in samples.items()}
+        # For mixture models we need to pass split_components and weights
+        if is_mixture:
+            return likelihood_fn(
+                counts, 
+                params_i, 
+                batch_size=batch_size,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                split_components=split_components,
+                weights=weights,
+                weight_type=weight_type,
+                dtype=dtype
+            )
+        else:
+            return likelihood_fn(
+                counts, 
+                params_i, 
+                batch_size=batch_size,
+                cells_axis=cells_axis,
+                return_by=return_by,
+                dtype=dtype
+            )
+    
+    # Use vmap for parallel computation (more memory intensive)
+    log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+    
+    # Handle NaNs if requested
+    if ignore_nans:
+        # Check for NaNs appropriately based on dimensions
+        if is_mixture and split_components:
+            # Handle case with component dimension
+            valid_samples = ~jnp.any(
+                jnp.any(jnp.isnan(log_liks), axis=-1), 
+                axis=-1
+            )
+        else:
+            # Standard case
+            valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=-1)
+            
+        # Filter out samples with NaNs
+        if jnp.any(~valid_samples):
+            print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
+            return log_liks[valid_samples]
+    
+    return log_liks
+
+# ------------------------------------------------------------------------------
+
+def _get_posterior_quantiles(samples: Dict, param: str, quantiles=(0.025, 0.5, 0.975)):
+    """Get quantiles for a specific parameter from MCMC samples."""
+    param_samples = samples[param]
+    return {q: jnp.quantile(param_samples, q) for q in quantiles}
+
+# ------------------------------------------------------------------------------
+
+def _get_map_estimate(samples: Dict, potential_energy: Optional[jnp.ndarray] = None):
+    """Get the maximum a posteriori (MAP) estimate from samples."""
+    if potential_energy is not None:
+        # Get index of minimum potential energy (maximum log density)
+        map_idx = int(jnp.argmin(potential_energy))
+        # Extract parameters at this index
+        map_estimate = {param: values[map_idx] for param, values in samples.items()}
+        return map_estimate
+    else:
+        # Fallback: Return posterior mean as a robust estimator
+        map_estimate = {}
+        for param, values in samples.items():
+            # Using mean as a more robust estimator than mode
+            map_estimate[param] = jnp.mean(values, axis=0)
+        return map_estimate
+
+# ------------------------------------------------------------------------------
+
+def _generate_ppc_samples(
+    samples: Dict,
+    model_type: str,
+    n_cells: int,
+    n_genes: int,
+    model_config: UnconstrainedModelConfig,
+    rng_key: random.PRNGKey = random.PRNGKey(42),
+    batch_size: Optional[int] = None,
+) -> jnp.ndarray:
+    """Generate predictive samples using posterior parameter samples."""
+    # Get the model function
+    model = _get_model_fn(model_type)
+    
+    # Prepare base model arguments
+    model_args = {
+        'n_cells': n_cells,
+        'n_genes': n_genes,
+        'model_config': model_config,
+    }
+    
+    # Generate predictive samples
+    from .sampling import generate_predictive_samples
+    return generate_predictive_samples(
+        model,
+        samples,
+        model_args,
+        rng_key=rng_key,
+        batch_size=batch_size
+    )

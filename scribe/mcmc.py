@@ -158,7 +158,6 @@ def run_mcmc_sampling(
     counts: jnp.ndarray,
     model_type: str,
     model_config: UnconstrainedModelConfig,
-    total_counts: Optional[jnp.ndarray] = None,
     cells_axis: int = 0,
     **kwargs
 ) -> Dict:
@@ -177,8 +176,6 @@ def run_mcmc_sampling(
         The type of model being used
     model_config : UnconstrainedModelConfig
         Configuration object for the model
-    total_counts : Optional[jnp.ndarray], default=None
-        Total count per cell. Required for NBDM model.
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows.
     **kwargs
@@ -262,47 +259,28 @@ def run_scribe(
         Count matrix or AnnData object containing counts. If AnnData, counts
         should be in .X or specified layer. Shape should be (cells, genes) if
         cells_axis=0, or (genes, cells) if cells_axis=1.
-        
-    Model Configuration:
-    -------------------
     zero_inflated : bool, default=False
-        Whether to use zero-inflated negative binomial (ZINB) model to account
-        for dropout events
+        Whether to use zero-inflated negative binomial (ZINB) model
     variable_capture : bool, default=False 
         Whether to model cell-specific mRNA capture efficiencies
     mixture_model : bool, default=False
-        Whether to use mixture model components for heterogeneous populations
+        Whether to use mixture model components
     n_components : Optional[int], default=None
         Number of mixture components. Required if mixture_model=True.
-        
-    Distribution Choices:
-    -------------------
-    r_dist : str, default="gamma"
-        Distribution family for dispersion parameter. Options:
-            - "gamma": Gamma distribution (default)
-            - "lognormal": Log-normal distribution
-        
-    Prior Parameters:
-    ----------------
     r_prior : Optional[tuple], default=None
-        Prior parameters for dispersion (r) distribution:
-            - For gamma: (shape, rate), defaults to (2, 0.1)
-            - For lognormal: (mu, sigma), defaults to (1, 1)
+        Prior parameters (loc, scale) for dispersion (r) parameter. Defaults to
+        (0, 1).
     p_prior : Optional[tuple], default=None
-        Prior parameters (alpha, beta) for success probability Beta
-        distribution. Defaults to (1, 1).
+        Prior parameters (loc, scale) for success probability. Defaults to (0,
+        1).
     gate_prior : Optional[tuple], default=None
-        Prior parameters (alpha, beta) for dropout gate Beta distribution. Only
-        used if zero_inflated=True. Defaults to (1, 1).
+        Prior parameters (loc, scale) for dropout gate. Only used if
+        zero_inflated=True. Defaults to (0, 1).
     p_capture_prior : Optional[tuple], default=None
-        Prior parameters (alpha, beta) for capture efficiency Beta distribution.
-        Only used if variable_capture=True. Defaults to (1, 1).
+        Prior parameters (loc, scale) for capture efficiency. Only used if
+        variable_capture=True. Defaults to (0, 1).
     mixing_prior : Optional[tuple], default=None
-        Prior concentration parameter(s) for mixture weights Dirichlet
-        distribution. Required if mixture_model=True.
-        
-    MCMC Parameters:
-    --------------
+        Prior parameters for mixture weights. Required if mixture_model=True.
     num_warmup : int, default=1000
         Number of warmup/burn-in steps
     num_samples : int, default=1000
@@ -312,56 +290,28 @@ def run_scribe(
     chain_method : str, default="parallel"
         How to run chains: "parallel", "sequential", or "vectorized"
     init_strategy : Optional[Dict], default=None
-        Strategy for initializing the chain. If None, uses default init
-        strategy.
+        Strategy for initializing the chain
     kernel : Type[numpyro.infer.mcmc.MCMCKernel], default=NUTS
-        MCMC kernel to use. Options include:
-            - NUTS: No-U-Turn Sampler (default)
-            - HMC: Hamiltonian Monte Carlo
-            - Other custom kernels that inherit from MCMCKernel
+        MCMC kernel to use (e.g. NUTS, HMC)
     kernel_kwargs : Optional[Dict], default=None
-        Additional keyword arguments to pass to the kernel constructor. For
-        NUTS, common options include:
-            - target_accept_prob: float, default=0.8
-            - step_size: float, default=None
-            - adapt_step_size: bool, default=True
-            - adapt_mass_matrix: bool, default=True
-        For HMC, common options include:
-            - step_size: float, default=None
-            - num_steps: int, default=None
-            - adapt_step_size: bool, default=True
-            - adapt_mass_matrix: bool, default=True
+        Additional arguments to pass to MCMC kernel
     reparam_config : Optional[Union[Dict[str, Any], Any]],
     default=LocScaleReparam()
-        Configuration for parameter reparameterization. Options:
-            - None: No reparameterization
-            - Any reparameterization instance: Apply to all parameters
-            - Dict[str, Any]: Dictionary mapping parameter names to specific
-              reparameterization strategies. If only one reparameterization is
-              provided, it will be applied to all parameters.
-        
-    Data Handling:
-    -------------
+        Configuration for parameter reparameterization
     cells_axis : int, default=0
         Axis for cells in count matrix (0=rows, 1=columns)
     layer : Optional[str], default=None
-        Layer in AnnData to use for counts. If None, uses .X.
-        
-    Additional Options:
-    -----------------
+        Layer in AnnData to use for counts. If None, uses .X
     seed : int, default=42
         Random seed for reproducibility
     progress_bar : bool, default=True
         Whether to show progress bar during sampling
-        
+
     Returns
     -------
     ScribeMCMCResults
-        Results object containing:
-            - Posterior samples
-            - Model configuration
-            - Prior parameters
-            - Dataset metadata
+        Results object containing posterior samples, model configuration, prior
+        parameters and dataset metadata
     """
     # Determine model type based on boolean flags
     base_model = "nbdm"
@@ -433,16 +383,16 @@ def run_scribe(
     model_config = UnconstrainedModelConfig(
         base_model=model_type,
         # Unconstrained parameterization
-        p_unconstrained_loc=0.0,
-        p_unconstrained_scale=1.0,
-        r_unconstrained_loc=0.0,
-        r_unconstrained_scale=1.0,
-        gate_unconstrained_loc=0.0 if "zinb" in model_type else None,
-        gate_unconstrained_scale=1.0 if "zinb" in model_type else None,
-        p_capture_unconstrained_loc=0.0 if "vcp" in model_type else None,
-        p_capture_unconstrained_scale=1.0 if "vcp" in model_type else None,
-        mixing_unconstrained_loc=0.0 if "mix" in model_type else None,
-        mixing_unconstrained_scale=1.0 if "mix" in model_type else None,
+        p_unconstrained_loc=p_prior[0],
+        p_unconstrained_scale=p_prior[1],
+        r_unconstrained_loc=r_prior[0],
+        r_unconstrained_scale=r_prior[1],
+        gate_unconstrained_loc=gate_prior[0] if "zinb" in model_type else None,
+        gate_unconstrained_scale=gate_prior[1] if "zinb" in model_type else None,
+        p_capture_unconstrained_loc=p_capture_prior[0] if "vcp" in model_type else None,
+        p_capture_unconstrained_scale=p_capture_prior[1] if "vcp" in model_type else None,
+        mixing_unconstrained_loc=mixing_prior if "mix" in model_type else None,
+        mixing_unconstrained_scale=mixing_prior if "mix" in model_type else None,
     )
     
     # Create MCMC instance
