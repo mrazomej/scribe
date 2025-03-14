@@ -14,7 +14,7 @@ import numpyro.distributions as dist
 from numpyro.infer import SVI, TraceMeanField_ELBO
 
 # Imports for results
-from .results import *
+from .results_svi import ScribeSVIResults
 
 # Imports for data handling
 from typing import Dict, Optional, Union
@@ -200,7 +200,7 @@ def run_scribe(
     stable_update: bool = True,
     r_guide: Optional[str] = None,
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
-) -> ScribeResults:
+) -> ScribeSVIResults:
     """
     Run SCRIBE inference pipeline to fit a probabilistic model to single-cell
     RNA sequencing data.
@@ -284,7 +284,7 @@ def run_scribe(
         
     Returns
     -------
-    ScribeResults
+    ScribeSVIResults
         Results object containing:
             - Fitted model parameters
             - Loss history
@@ -440,10 +440,6 @@ def run_scribe(
         'model_config': model_config
     }
     
-    # Add total_counts for NBDM model
-    if model_type == "nbdm":
-        model_args['total_counts'] = count_data.sum(axis=1)
-    
     # Run inference
     svi_results = svi.run(
         rng_key,
@@ -454,7 +450,7 @@ def run_scribe(
     
     # Create results object
     if adata is not None:
-        results = ScribeResults.from_anndata(
+        results = ScribeSVIResults.from_anndata(
             adata=adata,
             params=svi_results.params,
             loss_history=svi_results.losses,
@@ -470,7 +466,7 @@ def run_scribe(
             }
         )
     else:
-        results = ScribeResults(
+        results = ScribeSVIResults(
             params=svi_results.params,
             loss_history=svi_results.losses,
             n_cells=n_cells,
