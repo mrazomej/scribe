@@ -41,9 +41,9 @@ from .cell_assignment import (
 # ------------------------------------------------------------------------------
 
 @dataclass
-class ScribeResults:
+class ScribeSVIResults:
     """
-    Base class for SCRIBE inference results.
+    Base class for SCRIBE variational inference results.
     
     This class stores the results from SCRIBE's variational inference procedure,
     including model parameters, loss history, dataset dimensions, and model
@@ -160,7 +160,7 @@ class ScribeResults:
                 )
 
     # --------------------------------------------------------------------------
-    # Create ScribeResults from AnnData object
+    # Create ScribeSVIResults from AnnData object
     # --------------------------------------------------------------------------
 
     @classmethod
@@ -172,7 +172,7 @@ class ScribeResults:
         model_config: ConstrainedModelConfig,
         **kwargs
     ):
-        """Create ScribeResults from AnnData object."""
+        """Create ScribeSVIResults from AnnData object."""
         return cls(
             params=params,
             loss_history=loss_history,
@@ -452,7 +452,7 @@ class ScribeResults:
 
     def __getitem__(self, index):
         """
-        Enable indexing of ScribeResults object.
+        Enable indexing of ScribeSVIResults object.
         """
         # Handle integer indexing
         if isinstance(index, int):
@@ -517,7 +517,7 @@ class ScribeResults:
         new_var: Optional[pd.DataFrame],
         new_posterior_samples: Optional[Dict],
         new_predictive_samples: Optional[jnp.ndarray]
-    ) -> 'ScribeResults':
+    ) -> 'ScribeSVIResults':
         """Create a new instance with a subset of genes."""
         return type(self)(
             params=new_params,
@@ -545,7 +545,7 @@ class ScribeResults:
         """
         Create a view of the results selecting a specific mixture component.
         
-        This method returns a new ScribeResults object that contains parameter
+        This method returns a new ScribeSVIResults object that contains parameter
         values for the specified component, allowing for further gene-based
         indexing. Only applicable to mixture models.
         
@@ -556,8 +556,8 @@ class ScribeResults:
         
         Returns
         -------
-        ScribeResults
-            A new ScribeResults object with parameters for the selected component
+        ScribeSVIResults
+            A new ScribeSVIResults object with parameters for the selected component
             
         Raises
         ------
@@ -668,7 +668,7 @@ class ScribeResults:
         new_params: Dict,
         new_posterior_samples: Optional[Dict],
         new_predictive_samples: Optional[jnp.ndarray]
-    ) -> 'ScribeResults':
+    ) -> 'ScribeSVIResults':
         """Create a new instance for a specific component."""
         # Create a non-mixture model type
         base_model = self.model_type.replace('_mix', '')
@@ -740,10 +740,6 @@ class ScribeResults:
             'model_config': self.model_config
         }
         
-        # Add specialized arguments based on model type
-        if self.model_type == "nbdm":
-            model_args['total_counts'] = None  # Will be filled during sampling
-            
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
             guide,
@@ -778,10 +774,6 @@ class ScribeResults:
             'model_config': self.model_config,
         }
         
-        # Add specialized arguments based on model type
-        if self.model_type == "nbdm":
-            model_args['total_counts'] = None  # Will be filled during sampling
-            
         # Check if posterior samples exist
         if self.posterior_samples is None:
             raise ValueError(
