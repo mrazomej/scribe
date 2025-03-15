@@ -44,6 +44,10 @@ ARG GROUP_ID
 # Ensure the app directory is owned by the user
 RUN chown -R ${USER_ID}:${GROUP_ID} /app
 
+# Set Git configuration
+RUN git config --global user.name "mrazomej" && \
+    git config --global user.email "manuel.razo.m@gmail.com"
+
 USER ${USER_ID}:${GROUP_ID}
 
 # Set the default command

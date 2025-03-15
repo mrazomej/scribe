@@ -3,6 +3,13 @@
 # Import base libraries
 # Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
 import os
+
+# Force JAX to use CPU only
+os.environ['JAX_PLATFORMS'] = 'cpu'
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+os.environ['JAX_PLATFORM_NAME'] = 'cpu'
+
+# Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
 
 # Preallocate a specific amount of memory (in bytes)
@@ -26,12 +33,17 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.handlers import reparam
 from numpyro.infer.reparam import LocScaleReparam
 from numpyro.infer import init_to_value
+# Enable 64-bit precision
+import numpyro
+
 # Import numpy for array manipulation
 import numpy as np
 # Import scribe
 import scribe
 
 from scribe.models_scaled import nbdm_model_reparam
+
+numpyro.enable_x64()
 
 # %% ---------------------------------------------------------------------------
 
@@ -65,7 +77,7 @@ n_mcmc_samples = 1_000
 n_cells = 3_000
 
 # Define number of genes
-n_genes = 20_000
+n_genes = 5_000
 
 # Define batch size for memory-efficient sampling
 batch_size = 4096
@@ -158,14 +170,14 @@ if not os.path.exists(file_name):
     # Define MCMC sampler with initial position from SVI results
     nuts_kernel = NUTS(
         reparam_model,
-        target_accept_prob=0.5,
+        target_accept_prob=0.7,
         step_size=1.0,
         adapt_step_size=True,
         adapt_mass_matrix=True,
         regularize_mass_matrix=False,
-        find_heuristic_step_size=True,
+        # find_heuristic_step_size=True,
         max_tree_depth=(10, 10),
-        init_strategy=init_to_value(values=init_params),
+        # init_strategy=init_to_value(values=init_params),
     )
     # Define MCMC sampler
     mcmc_results = MCMC(
@@ -179,7 +191,7 @@ if not os.path.exists(file_name):
         random.PRNGKey(0), 
         n_cells=n_cells,
         n_genes=n_genes,
-        counts=jnp.array(data['counts']),
+        counts=jnp.array(data['counts'], dtype=jnp.float64),
     )
     # Save MCMC results
     with open(file_name, "wb") as f:

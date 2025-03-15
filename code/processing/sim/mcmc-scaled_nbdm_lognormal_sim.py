@@ -23,15 +23,12 @@ import jax.scipy as jsp
 # Import Pyro-related libraries
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
-from numpyro.handlers import reparam
-from numpyro.infer.reparam import LocScaleReparam
-from numpyro.infer import init_to_value
 # Import numpy for array manipulation
 import numpy as np
 # Import scribe
 import scribe
 
-from scribe.models_scaled import nbdm_model_reparam
+from scribe.models_scaled import loc_scale_factors, nbdm_model_scaled
 
 # %% ---------------------------------------------------------------------------
 
@@ -65,7 +62,7 @@ n_mcmc_samples = 1_000
 n_cells = 3_000
 
 # Define number of genes
-n_genes = 20_000
+n_genes = 1_000
 
 # Define batch size for memory-efficient sampling
 batch_size = 4096
@@ -116,14 +113,18 @@ with open(file_name, "rb") as f:
     scribe_results = pickle.load(f)
 # %% ---------------------------------------------------------------------------
 
-# Define reparameterization config
-reparam_config = {
-    "logit_p": LocScaleReparam(),
-    "log_r": LocScaleReparam(),
-}
+# Extract model function
+model, _ = scribe_results._model_and_guide()
 
-# Define reparameterized model
-reparam_model = reparam(nbdm_model_reparam, config=reparam_config)
+# %% ---------------------------------------------------------------------------
+
+# Generate samples from variational posterior
+samples = scribe_results.get_posterior_samples(n_samples=500)
+
+# %% ---------------------------------------------------------------------------
+
+# Compute location and scale factors
+loc_factors, scale_factors = loc_scale_factors(samples)
 
 # %% ---------------------------------------------------------------------------
 
@@ -131,8 +132,8 @@ reparam_model = reparam(nbdm_model_reparam, config=reparam_config)
 param_map = scribe_results.get_map(use_mean=True)
     
 # Convert to transformed space and divide by scale
-logit_p_init = jsp.special.logit(param_map['p'])
-log_r_init = jnp.log(param_map['r'])
+logit_p_init = jsp.special.logit(param_map['p']) / scale_factors['logit_p']
+log_r_init = jnp.log(param_map['r']) / scale_factors['log_r']
 
 # Create initial values dict
 init_params = {
@@ -148,7 +149,7 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc-LocScaleReparam_{model_type}_r-{r_distribution}_results_" \
+        f"mcmc-scaled_{model_type}_r-{r_distribution}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
@@ -157,15 +158,11 @@ file_name = f"{OUTPUT_DIR}/" \
 if not os.path.exists(file_name):
     # Define MCMC sampler with initial position from SVI results
     nuts_kernel = NUTS(
-        reparam_model,
-        target_accept_prob=0.5,
-        step_size=1.0,
+        nbdm_model_scaled,
         adapt_step_size=True,
         adapt_mass_matrix=True,
-        regularize_mass_matrix=False,
-        find_heuristic_step_size=True,
-        max_tree_depth=(10, 10),
-        init_strategy=init_to_value(values=init_params),
+        regularize_mass_matrix=True,
+        max_tree_depth=(15, 10),
     )
     # Define MCMC sampler
     mcmc_results = MCMC(
@@ -180,6 +177,8 @@ if not os.path.exists(file_name):
         n_cells=n_cells,
         n_genes=n_genes,
         counts=jnp.array(data['counts']),
+        loc_factors=loc_factors,
+        scale_factors=scale_factors,
     )
     # Save MCMC results
     with open(file_name, "wb") as f:

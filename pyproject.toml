@@ -32,6 +32,7 @@ dependencies = [
     "statsmodels>=0.14.4",
     "numpyro==0.17.0",
     "blackjax==1.2.5",
+    "multipledispatch>=1.0.0",
 ]
 
 # Development dependencies
