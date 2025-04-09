@@ -111,18 +111,22 @@ def create_mcmc_instance(
         # If reparam_config is a single reparameterization instance, apply it to
         # all parameters
         if not isinstance(reparam_config, dict):
+            # Store the original reparameterizer instance
+            original_reparam_instance = reparam_config
+            
+            # Initialize the reparam_config dictionary
             reparam_config = {
-                "p_unconstrained": reparam_config,
-                "r_unconstrained": reparam_config,
+                "p_unconstrained": original_reparam_instance,
+                "r_unconstrained": original_reparam_instance,
             }
             
-            # Add more reparameterizations based on model type
+            # Add more reparameterizations based on model type, using the stored instance
             if "zinb" in model_type:
-                reparam_config["gate_unconstrained"] = reparam_config
+                reparam_config["gate_unconstrained"] = original_reparam_instance
             if "vcp" in model_type:
-                reparam_config["p_capture_unconstrained"] = reparam_config
+                reparam_config["p_capture_unconstrained"] = original_reparam_instance
             if "_mix" in model_type:
-                reparam_config["mixing_unconstrained"] = reparam_config
+                reparam_config["mixing_unconstrained"] = original_reparam_instance
         
         # Apply reparameterization
         model_fn = reparam(model_fn, config=reparam_config)
