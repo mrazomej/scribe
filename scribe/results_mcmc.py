@@ -124,6 +124,7 @@ class ScribeMCMCResults(MCMC):
         
         # Optional attributes
         self.predictive_samples = predictive_samples
+        self.prior_predictive_samples = None
         self.n_components = (n_components if n_components is not None else
                              model_config.n_components)
 
@@ -352,7 +353,29 @@ class ScribeMCMCResults(MCMC):
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
-        """Generate predictive samples using posterior parameter samples."""
+        """
+        Generate posterior predictive check (PPC) samples using posterior
+        parameter samples.
+        
+        This method uses the posterior parameter samples to generate new data
+        from the model. These samples can be used to assess model fit and
+        perform posterior predictive checks.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, optional
+            JAX random number generator key (default: PRNGKey(42))
+        batch_size : int, optional
+            Batch size for generating samples. If None, uses full dataset.
+        store_samples : bool, optional
+            Whether to store the generated samples in self.predictive_samples
+            (default: True)
+
+        Returns
+        -------
+        jnp.ndarray
+            Array of posterior predictive samples
+        """
         # Generate predictive samples
         predictive_samples = _generate_ppc_samples(
             self.get_samples(),
@@ -369,6 +392,59 @@ class ScribeMCMCResults(MCMC):
             self.predictive_samples = predictive_samples
             
         return predictive_samples
+
+    # --------------------------------------------------------------------------
+    # Prior predictive sampling methods
+    # --------------------------------------------------------------------------
+
+    def get_prior_predictive_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
+        batch_size: Optional[int] = None,
+        store_samples: bool = True,
+    ) -> jnp.ndarray:
+        """
+        Generate prior predictive samples using the model.
+        
+        This method generates samples from the prior predictive distribution by
+        first sampling parameters from the prior distributions and then
+        generating data from the model using these parameters. These samples can
+        be used to assess model behavior before seeing any data.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, optional
+            JAX random number generator key (default: PRNGKey(42))
+        n_samples : int, optional
+            Number of prior predictive samples to generate (default: 100)
+        batch_size : int, optional
+            Batch size for generating samples. If None, uses full dataset.
+        store_samples : bool, optional
+            Whether to store the generated samples in
+            self.prior_predictive_samples (default: True)
+
+        Returns
+        -------
+        jnp.ndarray
+            Array of prior predictive samples
+        """
+        # Generate prior predictive samples
+        prior_predictive_samples = _generate_prior_predictive_samples(
+            self.model_type,
+            self.n_cells,
+            self.n_genes,
+            self.model_config,
+            rng_key=rng_key,
+            n_samples=n_samples,
+            batch_size=batch_size
+        )
+        
+        # Store samples if requested
+        if store_samples:
+            self.prior_predictive_samples = prior_predictive_samples
+            
+        return prior_predictive_samples
 
     # --------------------------------------------------------------------------
     # Compute log likelihood methods 
@@ -629,6 +705,33 @@ class ScribeMCMCResults(MCMC):
                     self.predictive_samples = predictive_samples
                     
                 return predictive_samples
+
+            # ------------------------------------------------------------------
+
+            def get_prior_predictive_samples(
+                self,
+                rng_key: random.PRNGKey = random.PRNGKey(42),
+                n_samples: int = 100,
+                batch_size: Optional[int] = None,
+                store_samples: bool = True,
+            ) -> jnp.ndarray:
+                """Generate prior predictive samples using the model."""
+                # Generate prior predictive samples
+                prior_predictive_samples = _generate_prior_predictive_samples(
+                    self.model_type,
+                    self.n_cells,
+                    self.n_genes,
+                    self.model_config,
+                    rng_key=rng_key,
+                    n_samples=n_samples,
+                    batch_size=batch_size
+                )
+                
+                # Store samples if requested
+                if store_samples:
+                    self.prior_predictive_samples = prior_predictive_samples
+                    
+                return prior_predictive_samples
             
         # ----------------------------------------------------------------------
 
@@ -794,5 +897,37 @@ def _generate_ppc_samples(
         samples,
         model_args,
         rng_key=rng_key,
-        batch_size=batch_size
+        batch_size=batch_size,
+    )
+
+# ------------------------------------------------------------------------------
+
+def _generate_prior_predictive_samples(
+    model_type: str,
+    n_cells: int,
+    n_genes: int,
+    model_config: UnconstrainedModelConfig,
+    rng_key: random.PRNGKey = random.PRNGKey(42),
+    n_samples: int = 100,
+    batch_size: Optional[int] = None,
+) -> jnp.ndarray:
+    """Generate prior predictive samples using the model."""
+    # Get the model function
+    model = _get_model_fn(model_type)
+    
+    # Prepare base model arguments
+    model_args = {
+        'n_cells': n_cells,
+        'n_genes': n_genes,
+        'model_config': model_config,
+    }
+    
+    # Generate prior predictive samples
+    from .sampling import generate_prior_predictive_samples
+    return generate_prior_predictive_samples(
+        model,
+        model_args,
+        rng_key=rng_key,
+        n_samples=n_samples,
+        batch_size=batch_size,
     )
