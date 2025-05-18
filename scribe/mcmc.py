@@ -126,7 +126,7 @@ def create_mcmc_instance(
             if "vcp" in model_type:
                 reparam_config["p_capture_unconstrained"] = original_reparam_instance
             if "_mix" in model_type:
-                reparam_config["mixing_unconstrained"] = original_reparam_instance
+                reparam_config["mixing_logits_unconstrained"] = original_reparam_instance
         
         # Apply reparameterization
         model_fn = reparam(model_fn, config=reparam_config)
@@ -284,7 +284,8 @@ def run_scribe(
         Prior parameters (loc, scale) for capture efficiency. Only used if
         variable_capture=True. Defaults to (0, 1).
     mixing_prior : Optional[tuple], default=None
-        Prior parameters for mixture weights. Required if mixture_model=True.
+        Prior parameters (loc, scale) for unconstrained mixture weight logits.
+        Required if mixture_model=True. If None, defaults to (0.0, 1.0).
     num_warmup : int, default=1000
         Number of warmup/burn-in steps
     num_samples : int, default=1000
@@ -342,11 +343,6 @@ def run_scribe(
                 "n_components must be specified and greater than 1 "
                 "when mixture_model=True"
             )
-        # Validate mixing_prior for mixture models
-        if mixing_prior is None:
-            raise ValueError(
-                "mixing_prior must be specified when mixture_model=True"
-            )
         # Add mixture suffix if needed
         model_type = f"{base_model}_mix"
     
@@ -378,26 +374,44 @@ def run_scribe(
     if "vcp" in model_type and p_capture_prior is None:
         p_capture_prior = (0, 1)
     if "mix" in model_type and mixing_prior is None:
-        mixing_prior = jnp.ones(n_components)
+        mixing_prior = (0, 1)
 
     # Create random key
     rng_key = random.PRNGKey(seed)
     
+    # Determine loc/scale for mixing logits
+    mixing_logits_loc = None
+    mixing_logits_scale = None
+    if "mix" in model_type:
+        if mixing_prior is None:
+            # Let UnconstrainedModelConfig.validate() set defaults (0.0, 1.0)
+            pass
+        elif isinstance(mixing_prior, tuple) and len(mixing_prior) == 2:
+            mixing_logits_loc = mixing_prior[0]
+            mixing_logits_scale = mixing_prior[1]
+        else:
+            # If mixing_prior is not None and not a 2-tuple, it's an error.
+            raise ValueError(
+                "mixing_prior for unconstrained mixture models must be a tuple (loc, scale) or None."
+            )
+
     # Create model config based on model type and specified distributions
     model_config = UnconstrainedModelConfig(
         base_model=model_type,
+        n_components=n_components, # Pass n_components
         # Unconstrained parameterization
         p_unconstrained_loc=p_prior[0],
         p_unconstrained_scale=p_prior[1],
         r_unconstrained_loc=r_prior[0],
         r_unconstrained_scale=r_prior[1],
-        gate_unconstrained_loc=gate_prior[0] if "zinb" in model_type else None,
-        gate_unconstrained_scale=gate_prior[1] if "zinb" in model_type else None,
-        p_capture_unconstrained_loc=p_capture_prior[0] if "vcp" in model_type else None,
-        p_capture_unconstrained_scale=p_capture_prior[1] if "vcp" in model_type else None,
-        mixing_unconstrained_loc=mixing_prior if "mix" in model_type else None,
-        mixing_unconstrained_scale=mixing_prior if "mix" in model_type else None,
+        gate_unconstrained_loc=gate_prior[0] if "zinb" in model_type and gate_prior else None,
+        gate_unconstrained_scale=gate_prior[1] if "zinb" in model_type and gate_prior else None,
+        p_capture_unconstrained_loc=p_capture_prior[0] if "vcp" in model_type and p_capture_prior else None,
+        p_capture_unconstrained_scale=p_capture_prior[1] if "vcp" in model_type and p_capture_prior else None,
+        mixing_logits_unconstrained_loc=mixing_logits_loc,
+        mixing_logits_unconstrained_scale=mixing_logits_scale,
     )
+    model_config.validate() # This will set defaults for mixing logits if they were None
     
     # Create MCMC instance
     mcmc = create_mcmc_instance(

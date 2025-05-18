@@ -151,22 +151,22 @@ def get_unconstrained_model(model_type: str) -> Callable:
     
     # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
     elif model_type == "nbdm_mix":
-        from .models_unconstrained import nbdm_mixture_model_unconstrained
+        from .models_unconstrained_mix import nbdm_mixture_model_unconstrained
         return nbdm_mixture_model_unconstrained
     
     # Handle Zero-Inflated Negative Binomial Mixture Model
     elif model_type == "zinb_mix":
-        from .models_unconstrained import zinb_mixture_model_unconstrained
+        from .models_unconstrained_mix import zinb_mixture_model_unconstrained
         return zinb_mixture_model_unconstrained
     
     # Handle Negative Binomial-Variable Capture Probability Mixture Model
     elif model_type == "nbvcp_mix":
-        from .models_unconstrained import nbvcp_mixture_model_unconstrained
+        from .models_unconstrained_mix import nbvcp_mixture_model_unconstrained
         return nbvcp_mixture_model_unconstrained
     
     # Handle Zero-Inflated Negative Binomial-Variable Capture Probability Mixture Model
     elif model_type == "zinbvcp_mix":
-        from .models_unconstrained import zinbvcp_mixture_model_unconstrained
+        from .models_unconstrained_mix import zinbvcp_mixture_model_unconstrained
         return zinbvcp_mixture_model_unconstrained
     
     # Raise error for unsupported model types
