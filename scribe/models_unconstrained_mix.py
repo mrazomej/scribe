@@ -162,7 +162,7 @@ def zinb_mixture_model_unconstrained(
         + gate_unconstrained_comp ~ Normal(...) [shape=(n_components, n_genes)]
     
     Deterministic Transformations: (Same as NBDM-Mix)
-        + gate_comp = sigmoid(gate_unconstrained_comp)
+        + gate = sigmoid(gate_unconstrained_comp)
 
     Likelihood:
         counts ~ MixtureSameFamily(
@@ -213,7 +213,7 @@ def zinb_mixture_model_unconstrained(
 
     numpyro.deterministic("p", jsp.special.expit(p_unconstrained_comp))
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained_comp))
-    numpyro.deterministic("gate_comp", jsp.special.expit(gate_unconstrained_comp))
+    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained_comp))
 
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
@@ -350,19 +350,14 @@ def nbvcp_mixture_model_unconstrained(
             (1 - p[None, :] * (1 - p_capture_batch[:, None]))
         ) # Shape (B, K)
 
-        # Component distribution parameters for MixtureSameFamily need to be (K, ...)
-        # r is (K, G)
-        # p_hat_for_mix should be (K, B) to align with r for broadcasting
-        p_hat_for_mix = p_hat_batch.T # Shape (K, B)
-        
-        # NegativeBinomialProbs: total_count=(K,G), probs=(K,B,1)
-        # Results in batch_shape (K,B,G), event_shape ()
-        # .to_event(1) -> batch_shape (K,B), event_shape (G,)
-        # This means for K components, B cells, each component dist is over G genes.
+        # Revised component_dist_batch for correct MixtureSameFamily shape requirements
+        # mixing_dist is global, event_shape (K,). component_dist batch_shape[-1] must be K.
+        # p_hat_batch is (B,K). r is (K,G).
+        # Target component_dist batch_shape: (B,K), event_shape: (G,)
         component_dist_batch = dist.NegativeBinomialProbs(
-            total_count=r[:, None, :], # (K,1,G) to broadcast with (K,B,1) for probs
-            probs=p_hat_for_mix[:, :, None]  # (K,B,1)
-        ).to_event(1)
+            total_count=r[None, :, :],  # Shape (1,K,G) -> broadcasts to (B,K,G)
+            probs=p_hat_batch[:, :, None] # Shape (B,K,1) -> broadcasts to (B,K,G)
+        ).to_event(1) # batch_shape=(B,K), event_shape=(G,)
 
         mixture_model_batch = dist.MixtureSameFamily(mixing_dist, component_dist_batch)
         # mixture_model_batch has batch_shape (B,), event_shape (G,)
@@ -399,7 +394,7 @@ def zinbvcp_mixture_model_unconstrained(
     
     Deterministic Transformations:
         Global: p, r
-            + gate_comp = sigmoid(gate_unconstrained_comp)
+            + gate = sigmoid(gate_unconstrained_comp)
         Local: p_capture, p_hat (Same as NBVCP-Mix)
 
     Likelihood (Mixture defined inside cell plate):
@@ -451,8 +446,8 @@ def zinbvcp_mixture_model_unconstrained(
 
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained_comp)) # Shape (K,)
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained_comp)) # Shape (K, G)
-    # gate_comp is not strictly needed if using gate_logits, but good for interpretation
-    numpyro.deterministic("gate_comp", jsp.special.expit(gate_unconstrained_comp))
+    # gate is not strictly needed if using gate_logits, but good for interpretation
+    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained_comp))
 
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained) # Global
 
@@ -480,26 +475,28 @@ def zinbvcp_mixture_model_unconstrained(
             (1 - p[None, :] * (1 - p_capture_batch[:, None]))
         ) # Shape (B, K)
 
-        p_hat_for_mix = p_hat_batch.T # Shape (K, B)
+        # Revised component_dist_batch for correct MixtureSameFamily shape requirements
+        # p_hat_batch is (B,K). r is (K,G). gate_unconstrained_comp is (K,G).
+        # Target component_dist batch_shape: (B,K), event_shape: (G,)
 
-        # Base NB distribution:
-        # total_count=(K,G) -> (K,1,G), probs=(K,B,1)
-        # Results in batch_shape (K,B,G), event_shape ()
-        base_nb_dist_batch = dist.NegativeBinomialProbs(
-            total_count=r[:, None, :], 
-            probs=p_hat_for_mix[:, :, None] 
+        # Base NB distribution for ZINB
+        # total_count: r[None,:,:] is (1,K,G)
+        # probs: p_hat_batch[:,:,None] is (B,K,1)
+        # base_nb_dist_for_zinb has batch_shape (B,K,G)
+        base_nb_dist_for_zinb = dist.NegativeBinomialProbs(
+            total_count=r[None, :, :],
+            probs=p_hat_batch[:, :, None]
+        )
+
+        # ZeroInflatedDistribution for ZINB
+        # gate_logits: gate_unconstrained_comp[None,:,:] is (1,K,G)
+        # zinb_base_comp_dist has batch_shape (B,K,G)
+        zinb_base_comp_dist = dist.ZeroInflatedDistribution(
+            base_nb_dist_for_zinb,
+            gate_logits=gate_unconstrained_comp[None, :, :] 
         )
         
-        # ZeroInflatedDistribution:
-        # base_dist has batch (K,B,G). gate_logits (K,G) needs to be (K,1,G) to broadcast.
-        # Results in batch_shape (K,B,G), event_shape ()
-        zinb_base_comp_dist_batch = dist.ZeroInflatedDistribution(
-            base_nb_dist_batch, 
-            gate_logits=gate_unconstrained_comp[:, None, :] # (K,1,G)
-        )
-        
-        # .to_event(1) -> batch_shape (K,B), event_shape (G,)
-        component_dist_batch = zinb_base_comp_dist_batch.to_event(1)
+        component_dist_batch = zinb_base_comp_dist.to_event(1) # batch_shape=(B,K), event_shape=(G,)
         
         mixture_model_batch = dist.MixtureSameFamily(mixing_dist, component_dist_batch)
         # mixture_model_batch has batch_shape (B,), event_shape (G,)
