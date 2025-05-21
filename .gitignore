@@ -111,3 +111,10 @@ data/**
 output/**
 **/output/**
 **/fig/**
+
+# paper files
+paper/*_files/*
+paper/_*.html
+paper/_*.pdf
+paper/_output/*
+paper/site_libs/*
