@@ -8,7 +8,9 @@ csl: ieee.csl
 # Dirichlet-Multinomial model derivation
 
 In this section, we will walk through the derivation of the main model used in
-this paper. 
+this paper. For completeness, all algebraic steps are provided. This is with the
+intention that the reader can follow the derivation step by step, and verify
+for themselves that each step is correct.
 
 ## Model setup
 
@@ -1045,20 +1047,790 @@ First, we substitute the change of variables from @eq-mgf-gamma-3 and
 @eq-mgf-gamma-4
 
 $$
-\int_0^{\infty} d \lambda \lambda^{r-1} e^{-(\theta-t) \lambda} = 
-\int_0^{\infty} \frac{d x}{(\theta-t)}\left[\frac{x}{\theta-t}\right]^{r-1} e^{-x}
+\int_0^{\infty} d \lambda \, \lambda^{r-1} e^{-(\theta-t) \lambda} = 
+\int_0^{\infty} \frac{d x}{(\theta-t)}
+\left[\frac{x}{\theta-t}\right]^{r-1} e^{-x}.
 $${#eq-mgf-gamma-7}
 
 Next, we factor out terms that do not depend on $x$
 
 $$
-\int_0^{\infty} \frac{d x}{(\theta-t)}\left[\frac{x}{\theta-t}\right]^{r-1} e^{-x} = 
-\frac{1}{(\theta-t)^r} \int_0^{\infty} d x x^{r-1} e^{-x}
+\int_0^{\infty} \frac{d x}{(\theta-t)}
+\left[\frac{x}{\theta-t}\right]^{r-1} e^{-x} = 
+\frac{1}{(\theta-t)^r} \int_0^{\infty} d x x^{r-1} e^{-x}.
 $${#eq-mgf-gamma-8}
 
 Finally, we recognize that the remaining integral is the definition of the Gamma function
 
 $$
-\frac{1}{(\theta-t)^r} \int_0^{\infty} d x x^{r-1} e^{-x} = 
-\frac{\Gamma(r)}{(\theta-t)^r}
+\frac{1}{(\theta-t)^r} \int_0^{\infty} d x \, x^{r-1} e^{-x} = 
+\frac{\Gamma(r)}{(\theta-t)^r}.
 $${#eq-mgf-gamma-9}
+
+To use this results, first, we substitute our previous result into the moment
+generating function
+
+$$
+M_\lambda(t) = \frac{\theta^r}{\Gamma(r)} \frac{\Gamma(r)}{(\theta-t)^r}.
+$${#eq-mgf-gamma-10}
+
+Next, we simplify by canceling the Gamma functions and rearranging terms
+
+$$
+M_\lambda(t) = \left(\frac{\theta}{\theta-t}\right)^r.
+$${#eq-mgf-gamma-11}
+
+We can then rewrite this in a more convenient form by taking the reciprocal
+
+$$
+M_\lambda(t) = \left(\frac{\theta-t}{\theta}\right)^{-r}.
+$${#eq-mgf-gamma-12}
+
+Finally, we factor out $\theta$ from the denominator to get the standard form
+of the MGF for a Gamma distribution,
+
+$$
+M_\lambda(t) = \left(1-\frac{t}{\theta}\right)^{-r}.
+$${#eq-mgf-gamma-13}
+
+One useful fact about MGFs is that the MGF of a linear combination of random
+variables is the product of the MGFs of the individual variables. For our case,
+this means the following: First, we write the MGF of $\Lambda$ using its
+definition
+
+$$
+M_{\Lambda}(t) = \left\langle e^{t \Lambda}\right\rangle_{\pi(\Lambda)}
+$${#eq-mgf-lambda-1}
+
+Next, we substitute the definition of $\Lambda$ as a sum of $\lambda_g$ terms
+
+$$
+M_{\Lambda}(t) = \left\langle\exp \left(t \sum_{g=1}^G \lambda_g\right)\right\rangle_{\pi(\underline{\lambda})}
+$${#eq-mgf-lambda-2}
+
+Using the property of exponentials, we can rewrite this as a product
+
+$$
+M_{\Lambda}(t) = \left\langle e^{t \lambda_1} e^{t \lambda_2} \cdots e^{t \lambda_G}\right\rangle_{\pi(\underline{\lambda})}
+$${#eq-mgf-lambda-3}
+
+By independence of the $\lambda_g$ terms, we can factor the expectation
+
+$$
+M_{\Lambda}(t) = \left\langle e^{t \lambda_1}\right\rangle_{\pi\left(\lambda_1\right)}\left\langle e^{t \lambda_2}\right\rangle_{\pi\left(\lambda_2\right)} \cdots\left\langle e^{t \lambda_G}\right\rangle_{\pi\left(\lambda_G\right)}
+$${#eq-mgf-lambda-4}
+
+Finally, we recognize that each expectation is the MGF of an individual $\lambda_g$
+
+$$
+M_{\Lambda}(t) = \prod_{g=1}^G M_{\lambda_g}(t)
+$${#eq-mgf-lambda-5}
+
+Using our derived MGF for the Gamma distribution in @eq-mgf-gamma-13, we can
+express the MGF of $\Lambda$ as a product of individual MGFs
+
+$$
+M_{\Lambda}(t) = \prod_{g=1}^G M_{\lambda_g}(t).
+$${#eq-mgf-delta-1}
+
+Substituting the MGF form for each $\lambda_g$
+
+$$
+M_{\Lambda}(t) = \prod_{g=1}^G\left(1-\frac{t}{\theta}\right)^{-r_g}.
+$${#eq-mgf-delta-2}
+
+Finally, we can combine the exponents to get
+
+$$
+M_{\Lambda}(t) = \left(1-\frac{t}{\theta}\right)^{-\sum_{g=1}^G r_g}.
+$${#eq-mgf-delta-3}
+
+But we recognize that this is the MGF of a Gamma distribution with parameters
+$r_T = \sum_{g=1}^G r_g$ and $\theta$. Therefore, we have shown the desired
+property of @eq-sum-gamma-dist.
+
+Let us now consider the definition of the $\rho_g$ variables in @eq-rho-def. The
+claim we must now prove is that the joint distribution of these
+$\underline{\rho}$ parameters is given by
+
+$$
+\underline{\rho} \mid \underline{r}, \theta \sim 
+\text{Dirichlet}(\underline{r}).
+$${#eq-rho-dist}
+
+In other words, regardless of the value of $\theta$, the joint distribution of
+the $\underline{\rho}$ parameters is a Dirichlet distribution with parameters
+$\underline{r}$. To show show this, we transform the dist. of all
+$\underline{\lambda}$ to the joint distribution over $\Lambda, \rho_1, \rho_2,
+\ldots, \rho_{G-1}$. Note that $\rho_G = 1-\rho_1-\rho_2-\cdots-\rho_{G-1}$
+since the $\rho_g$ parameters must sum to 1. For this, we express the
+$\lambda_g$ parameters in terms of the $\rho_g$ parameters
+
+$$
+\lambda_g = \Lambda \rho_g \; \text{for} \; g \in \{1, 2, \ldots, G-1\},
+$${#eq-lambda-rho-1}
+
+and
+
+$$
+\lambda_G = \Lambda (1-\rho_1-\rho_2-\cdots-\rho_{G-1}).
+$${#eq-lambda-rho-2}
+
+When transforming between probability distributions over different sets of
+variables, we need to account for how the volume element changes. In this case,
+we're transforming from the distribution over the individual
+$\underline{\lambda}$ parameters to a distribution over the total $\Lambda$ and
+the proportions $\underline{\rho}$. This transformation requires multiplying the
+original distribution by the determinant of the Jacobian matrix, which captures
+how the volume element changes under the transformation via
+
+$$
+\pi\left(\Lambda, \rho_1, \ldots, \rho_{G-1} \mid \underline{r}, \theta\right) =
+\pi(\underline{\lambda} \mid \underline{r}, \theta)
+\left|\underline{\underline{J}}\right|,
+$${#eq-jacobian-1}
+
+where $\underline{\underline{J}}$ is the Jacobian matrix with entries
+
+$$
+J_{ij} = \frac{\partial \lambda_i}{\partial V_j},
+$${#eq-jacobian-2}
+
+where for convenience, we define
+
+$$
+\underline{V} = (\Lambda, \rho_1, \rho_2, \ldots, \rho_{G-1}).
+$${#eq-v-def}
+
+The Jacobian matrix $\underline{\underline{J}}$ for this transformation from
+$\underline{\lambda} = (\lambda_1, \ldots, \lambda_G)$ to $\underline{V}$ has
+entries $J_{ab} = \frac{\partial \lambda_a}{\partial V_b}$. Here, $a \in \{1,
+\ldots, G\}$ indexes the original variables $\lambda_a$, and $V_b$ refers to the
+$b$-th variable in the vector $\underline{V}$ (i.e., $V_1 = \Lambda, V_2 =
+\rho_1, \ldots, V_G = \rho_{G-1}$).
+
+Let's compute the required partial derivatives. For $k \in \{1, \ldots, G-1\}$,
+we have $\lambda_k = \Lambda \rho_k$. The partial derivatives with respect to
+the new variables are:
+
+$$
+\frac{\partial \lambda_k}{\partial \Lambda} = \rho_k,
+$${#eq-jac-deriv-lk-Lambda}
+
+and for $j \in \{1, \ldots, G-1\}$,
+
+$$
+\frac{\partial \lambda_k}{\partial \rho_j} = 
+\begin{cases} 
+\Lambda & \text{if } j=k \\
+0 & \text{if } j \neq k.
+\end{cases}
+$${#eq-jac-deriv-lk-rhoj}
+
+For the last original variable, $\lambda_G = \Lambda \left(1-\sum_{j=1}^{G-1}
+\rho_j\right)$, the partial derivatives are
+
+$$
+\frac{\partial \lambda_G}{\partial \Lambda} = 1-\sum_{j=1}^{G-1} \rho_j,
+$${#eq-jac-deriv-lG-Lambda}
+
+and for $j \in \{1, \ldots, G-1\}$,
+
+$$
+\frac{\partial \lambda_G}{\partial \rho_j} = -\Lambda.
+$${#eq-jac-deriv-lG-rhoj}
+
+Assembling these derivatives into the $G \times G$ Jacobian matrix
+$\underline{\underline{J}}$, where rows correspond to $\lambda_1, \ldots,
+\lambda_G$ and columns correspond to $\Lambda, \rho_1, \ldots, \rho_{G-1}$ in
+that order, we obtain
+
+$$
+\underline{\underline{J}}=\left[\begin{array}{c|cccc}
+\frac{\partial \lambda_1}{\partial \Lambda} & \frac{\partial \lambda_1}{\partial \rho_1} & \frac{\partial \lambda_1}{\partial \rho_2} & \cdots & \frac{\partial \lambda_1}{\partial \rho_{G-1}} \\
+\frac{\partial \lambda_2}{\partial \Lambda} & \frac{\partial \lambda_2}{\partial \rho_1} & \frac{\partial \lambda_2}{\partial \rho_2} & \cdots & \frac{\partial \lambda_2}{\partial \rho_{G-1}} \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+\frac{\partial \lambda_{G-1}}{\partial \Lambda} & \frac{\partial \lambda_{G-1}}{\partial \rho_1} & \frac{\partial \lambda_{G-1}}{\partial \rho_2} & \cdots & \frac{\partial \lambda_{G-1}}{\partial \rho_{G-1}} \\ \hline
+\frac{\partial \lambda_G}{\partial \Lambda} & \frac{\partial \lambda_G}{\partial \rho_1} & \frac{\partial \lambda_G}{\partial \rho_2} & \cdots & \frac{\partial \lambda_G}{\partial \rho_{G-1}}
+\end{array}\right].
+$${#eq-jacobian-matrix-structure}
+
+Substituting the derivatives from @eq-jac-deriv-lk-Lambda,
+@eq-jac-deriv-lk-rhoj, @eq-jac-deriv-lG-Lambda, and @eq-jac-deriv-lG-rhoj yields
+the specific form of the Jacobian matrix:
+
+$$
+\underline{\underline{J}}=\left[\begin{array}{ccccc}
+\rho_1 & \Lambda & 0 & \cdots & 0 \\
+\rho_2 & 0 & \Lambda & \cdots & 0 \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+\rho_{G-1} & 0 & 0 & \cdots & \Lambda \\
+\left(1-\sum_{k=1}^{G-1} \rho_k\right) & -\Lambda & -\Lambda & \cdots & -\Lambda
+\end{array}\right].
+$${#eq-jacobian-matrix-filled}
+
+To calculate the determinant of $\underline{\underline{J}}$, we utilize the
+property that adding a multiple of one row to another row does not alter the
+determinant's value. We apply the row operation $R_G \leftarrow R_G +
+\sum_{k=1}^{G-1} R_k$. This means we add each of the first $G-1$ rows ($R_1,
+\ldots, R_{G-1}$) to the last row ($R_G$).
+
+Let's examine the effect of this operation on the elements of the $G$-th row.
+The first element of the new $G$-th row (in the column corresponding to
+derivatives with respect to $\Lambda$) becomes
+
+$$
+\left(1-\sum_{k=1}^{G-1} \rho_k\right) + \sum_{k=1}^{G-1} (\text{element }(k,1) \text{ from } R_k) = \left(1-\sum_{k=1}^{G-1} \rho_k\right) + \sum_{k=1}^{G-1} \rho_k = 1.
+$${#eq-jac-rowop-elem1}
+
+Now, let's consider the $(j+1)$-th element of the new $G$-th row, which
+corresponds to the column of derivatives with respect to $\rho_j$ (for $j \in
+\{1, \ldots, G-1\}$). The original element in $\underline{\underline{J}}$ at
+position $(G, j+1)$ is $-\Lambda$. When we sum the corresponding elements from
+rows $R_1, \ldots, R_{G-1}$ and add them to this position: The element at
+position $(j, j+1)$ in row $R_j$ is $\Lambda$ (since $\frac{\partial
+\lambda_j}{\partial \rho_j} = \Lambda$ from @eq-jac-deriv-lk-rhoj). For any
+other row $R_k$ (where $k \in \{1, \ldots, G-1\}$ and $k \neq j$), the element
+at position $(k, j+1)$ is $0$ (since $\frac{\partial \lambda_k}{\partial \rho_j}
+= 0$ for $k \neq j$ from @eq-jac-deriv-lk-rhoj). Therefore, the new element at
+position $(G, j+1)$ in the modified $G$-th row becomes
+
+$$
+(-\Lambda)_{\text{original } R_G} + (\Lambda)_{\text{from } R_j} + \sum_{k \neq j, k < G} (0)_{\text{from } R_k} = -\Lambda + \Lambda = 0.
+$${#eq-jac-rowop-elem-other}
+
+After this row operation, the $G$-th row becomes $(1, 0, 0, \ldots, 0)$. The
+Jacobian matrix, let's call it $\underline{\underline{J}}'$, now takes the form
+
+$$
+\underline{\underline{J}}'=\left[\begin{array}{ccccc}
+\rho_1 & \Lambda & 0 & \cdots & 0 \\
+\rho_2 & 0 & \Lambda & \cdots & 0 \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+\rho_{G-1} & 0 & 0 & \cdots & \Lambda \\
+1 & 0 & 0 & \cdots & 0
+\end{array}\right].
+$${#eq-jacobian-matrix-simplified}
+
+The determinant of the original Jacobian $\underline{\underline{J}}$ is equal to
+$\det(\underline{\underline{J}}')$. We can compute
+$\det(\underline{\underline{J}}')$ by cofactor expansion along its last row.
+Since the last row is $(1, 0, \ldots, 0)$, the expansion simplifies
+significantly
+
+$$
+\det(\underline{\underline{J}}) = 1 \cdot C_{G1} + \sum_{j=2}^{G} (0 \cdot C_{Gj}) = C_{G1},
+$${#eq-jac-cofactor-expansion}
+
+where $C_{G1}$ is the cofactor of the element in the $G$-th row and $1$-st
+column of $\underline{\underline{J}}'$. The cofactor is defined as $C_{G1} =
+(-1)^{G+1} M_{G1}$, where $M_{G1}$ is the determinant of the $(G-1) \times
+(G-1)$ submatrix obtained by removing the $G$-th row and $1$-st column of
+$\underline{\underline{J}}'$. This submatrix, $\underline{\underline{M}}_{G1}$,
+is
+
+$$
+\underline{\underline{M}}_{G1} = \left[\begin{array}{cccc}
+\Lambda & 0 & \cdots & 0 \\
+0 & \Lambda & \cdots & 0 \\
+\vdots & \vdots & \ddots & \vdots \\
+0 & 0 & \cdots & \Lambda
+\end{array}\right].
+$${#eq-jac-minor-matrix}
+
+This is an upper triangular matrix (in fact, it is a diagonal matrix). Its
+determinant $M_{G1}$ is the product of its diagonal elements
+
+$$
+M_{G1} = \det(\underline{\underline{M}}_{G1}) = \Lambda^{G-1}.
+$${#eq-jac-minor-det}
+Substituting this result back into the expression for $\det(\underline{\underline{J}})$ from @eq-jac-cofactor-expansion gives
+
+$$
+\det(\underline{\underline{J}}) = (-1)^{G+1} \Lambda^{G-1}.
+$${#eq-jac-determinant-value}
+
+The change of variables formula in probability requires the absolute value of
+the Jacobian determinant.
+
+$$
+|\det(\underline{\underline{J}})| = |(-1)^{G+1} \Lambda^{G-1}| = |\Lambda^{G-1}|.
+$${#eq-jac-abs-det-almost}
+
+Since $\Lambda = \sum_{g=1}^G \lambda_g$ is a sum of rate parameters $\lambda_g$
+(which are parameters of Gamma distributions and thus positive), $\Lambda$
+itself must be positive. Consequently, $\Lambda^{G-1}$ will also be positive
+(assuming $G \ge 1$, which is true in this context as $G$ is the number of
+genes). Thus, the magnitude of the Jacobian determinant is
+
+$$
+|\underline{\underline{J}}|=\Lambda^{G-1}.
+$${#eq-jacobian-3}
+
+Substituting this into @eq-jacobian-1, we get
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\prod_{g=1}^G 
+\frac{
+    \lambda_g^{r-1} e^{-\theta \lambda_g} \theta^r
+}{\Gamma\left(r_g\right)} 
+\cdot\left(\Lambda^{G-1}\right).
+$${#eq-jacobian-4}
+
+Next, we split the first $G-1$ terms in the product, taking out the $G$-th term
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\Lambda^{G-1}
+\left[
+    \prod_{g=1}^{G-1} 
+    \frac{
+        \lambda_g^{r-1} e^{-\theta \lambda_g} \theta^r
+    }{
+        \Gamma\left(r_g\right)
+    }
+\right]
+\left[
+    \frac{
+        \lambda_G^{r_0-1} e^{-\theta \lambda_G} \theta^{r_G}
+    }{
+        \Gamma\left(r_G\right)
+    }
+\right].
+$${#eq-jacobian-5}
+
+Next, we substitute the expression for $\Lambda$ and $\underline{\rho}$ into
+@eq-jacobian-5, obtaining
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\Lambda^{G-1}
+\left[
+    \prod_{g=1}^{G-1} 
+    \frac{
+        \left(\Lambda \rho_g\right)^{r_g-1} 
+        e^{-\theta\left(\Lambda \rho_g\right)} \theta^{r_g}
+    }{
+        \Gamma\left(r_g\right)
+    }
+\right]
+\left[
+    \frac{
+        \left[
+            \Lambda\left(1-\rho_1, \ldots-\rho_{0-1}\right)
+        \right]^{r_{G-1}} 
+        e^{-\theta \Lambda\left(1-\rho_1 \ldots \rho_{G-1}\right)} \theta^{r_G}
+    }{
+        \Gamma\left(r_G\right)
+    }
+\right].
+$${#eq-jacobian-6}
+
+Grouping the terms in the numerator and denominator, and simplifying, we get
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\frac{
+    \left(\theta^{\sum_{g=1}^G r_g}\right)
+    \left(\Lambda^{(G-1)+\sum_{g=1}^G r_g-G}\right)
+    e^{-\theta \Lambda}
+}{
+    \prod_{g=1}^G \Gamma\left(r_g\right)
+}
+\prod_{g=1}^G \rho_g^{r_{g-1}}.
+$${#eq-jacobian-7}
+
+simplifying further, we find
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\left[
+    \frac{
+        \left(\theta^{\sum_{g=1}^G r_g}\right)
+        \left(\Lambda^{\sum_{g=1}^G r_g-1}\right)
+        e^{-\theta \Lambda}
+    }{
+        \prod_{g=1}^G \Gamma\left(r_g\right)
+    } 
+\right]
+\left[ 
+    \prod_{g=1}^G \rho_g^{r_{g-1}} 
+\right].
+$${#eq-jacobian-8}
+
+Let's focus on the first term in @eq-jacobian-8. If we substitute $r_T =
+\sum_{g=1}^G r_g$, we find
+
+$$
+\frac{
+    \left(\theta^{\sum_{g=1}^G r_g}\right)
+    \left(\Lambda^{\sum_{g=1}^G r_g-1}\right)
+    e^{-\theta \Lambda}
+}{
+    \prod_{g=1}^G \Gamma\left(r_g\right)
+} = 
+\frac{
+    \left(\theta^{r_T}\right)
+    \left(\Lambda^{r_T-1}\right)
+    e^{-\theta \Lambda}
+}{
+    \prod_{g=1}^G \Gamma\left(r_g\right)
+}.
+$${#eq-jacobian-9}
+
+@eq-jacobian-9 looks almost like the expression for the Gamma distribution for
+$\Lambda$ with parameters $r_T$ and $\theta$, with the exception that in the
+denominator, we would like to have $\Gamma(r_T)$ instead of $\prod_{g=1}^G
+\Gamma(r_g)$.
+
+The second term in @eq-jacobian-8 looks almost like the expression for the
+Dirichlet distribution, but without the normalization constant
+
+$$
+\frac{1}{B(\underline{r})} \equiv \frac{\Gamma\left(r_T\right)}{\prod_{g=1}^G \Gamma\left(r_g\right)} .
+$${#eq-dirichlet-normalization}
+
+Notice that the denominator for this normalization constant is the same as the
+denominator in @eq-jacobian-9. Thus, multiplying @eq-jacobian-8 by $\Gamma(r_T)
+/ \Gamma(r_T)$ suffices to turn both terms into the desired distributions. This
+then shows our original claim that the joint distribution of $\underline{V}$ is
+the product of a Gamma distribution and a Dirichlet distribution
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\operatorname{Gamma}(\Lambda \mid r, \theta) \times 
+\operatorname{Dirichlet}(\underline{\rho} \mid \underline{r}).
+$${#eq-dirichlet-multinomial-model}
+
+The final step in our proof is to show that the joint distribution of
+independent negative binomials with shared $p$ parameter is equivalent to the
+product of a negative binomial distribution and a dirichlet-multinomial
+distribution (not to be confused with the product of a Dirichlet distribution
+and a multinomial distribution).
+
+### Joint distribution of negative binomials as product of negative binomial and dirichlet-multinomial
+
+To prove this final point, we will make use of all the results derived in the
+previous section. Recall that we are after the joint distribution of independent
+negative binomial random variables with a shared $\hat{p}$ parameter,
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\prod_{g=1}^{G} \pi(u_g \mid r_g, \hat{p}).
+$${#eq-joint-target}
+
+We know we can express the negative binomial as a compound distribution between
+a Poisson and a Gamma distribution. Thus, we can rewrite @eq-joint-target as
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\int d^G \underline{\lambda} 
+\overbrace{
+\prod_{g=1}^G \pi\left(u_g \mid \lambda_g\right) 
+}^{\text{product of Poissons}}
+\underbrace{
+\prod_{g=1}^G \pi\left(\lambda_g \mid r_g, \theta\right)
+}_{\text{product of Gammas}},
+$${#eq-joint-target-int}
+
+where, since each of the $\lambda_g$ parameters are strictly positive, we have
+
+$$
+\int d^G \underline{\lambda} = \int_0^\infty d \lambda_1 \cdots \int_0^\infty d \lambda_G 
+$${#eq-int-lambda-def}
+
+Furthermore, we know that the product of Poissons can be written as the product
+of a Poisson distribution with rate parameter $\lambda_T =\sum_{g=1}^G
+\lambda_g$ and a multinomial distribution with parameters $r_T$ and
+$\underline{\rho}$
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\int d^G \underline{\lambda} \,
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{\lambda}) 
+}_{\text{multinomial}}
+\overbrace{
+\pi(u_T \mid \lambda_T) 
+}^{\text{Poisson}}
+\underbrace{
+\prod_{g=1}^G \pi\left(\lambda_g \mid r_g, \theta\right)
+}_{\text{product of Gammas}}.
+$${#eq-joint-target-int-poisson-multinomial}
+
+Furthermore, we know that the product of Gammas can be written as the product of
+a Gamma distribution and a Dirchlet distribution. This change brings with it a
+change of variables from $\underline{\lambda}$ to $\underline{V}$, as defined in
+@eq-v-def. These sets of variables are related by the transformations defined in
+@eq-lambda-rho-1 and @eq-lambda-rho-2.
+
+Therefore, rather than integrating each $\lambda_g$ from 0 to $\infty$, the
+integrals upon changing the variables to $\underline{V}$ are integrating
+$\Lambda$ from 0 to $\infty$, and $\underline{\rho}$ over the $G-1$ dimensional
+unit simplex---meaning that the integration is over the set of all vectors
+$\underline{\rho}$ such that $\rho_g \ge 0$ for all $g$ and $\sum_{g=1}^G \rho_g
+= 1$.
+
+We thus have
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\int_0^{\infty} d \Lambda \int d^{G-1} \underline{\rho} \,
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{\rho})
+}_{\text{multinomial}}
+\overbrace{
+\pi(u_T \mid \Lambda)
+}^{\text{Poisson}}
+\underbrace{
+\pi(\Lambda \mid r_T, \theta)
+}_{\text{Gamma}}
+\overbrace{
+\pi(\underline{\rho} \mid \underline{r})
+}^{\text{Dirichlet}}.
+$${#eq-joint-target-int-poisson-multinomial-dirichlet-multinomial}
+
+Rearranging the terms, we have
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\int_0^{\infty} d \Lambda \,
+\overbrace{
+\pi(u_T \mid \Lambda)
+}^{\text{Poisson}}
+\underbrace{
+\pi(\Lambda \mid r_T, \theta)
+}_{\text{Gamma}}
+\int d^{G-1} \underline{\rho} \,
+\overbrace{
+\pi(\underline{\rho} \mid \underline{r})
+}^{\text{Dirichlet}}
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{\rho})
+}_{\text{multinomial}}.
+$${#eq-joint-target-int-poisson-multinomial-dirichlet-multinomial-rearranged}
+
+The first integral, we recognize as the compound distribution between a Poisson
+and a Gamma distribution, which we have shown to be equivalent to a negative
+binomial distribution, i.e.,
+
+$$
+\int_0^{\infty} d \Lambda 
+\pi(u_T \mid \Lambda) \pi\left(\Lambda \mid r_T, \theta\right) =
+\operatorname{NB}\left(u_T \mid r_T, \hat{p}\right).
+$${#eq-joint-target-int-poisson-gamma-negative-binomial}
+
+The second integral, we recognize as the compound distribution between a
+Dirichlet and a multinomial distribution, which has a closed form solution.
+Let's derive this result in detail. We want to evaluate the integral
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\int d^{G-1} \underline{\rho} \, 
+\pi(\underline{\rho} \mid \underline{r}) 
+\pi(\underline{u} \mid u_T, \underline{\rho}).
+$${#eq-dm-integral-target}
+
+The probability mass function for the Multinomial distribution, which describes
+the probability of observing counts $\underline{u}$ given $u_T$ trials and
+success probabilities $\underline{\rho}$, is
+
+$$
+\pi(\underline{u} \mid u_T, \underline{\rho}) = 
+\frac{u_T!}{\prod_{g=1}^G u_g!} \prod_{g=1}^G \rho_g^{u_g}.
+$${#eq-multinomial-pmf}
+
+The probability density function for the Dirichlet distribution, which describes
+the distribution of the probabilities $\underline{\rho}$ given concentration
+parameters $\underline{r}$, is
+
+$$
+\pi(\underline{\rho} \mid \underline{r}) = 
+\frac{
+    \Gamma\left(\sum_{k=1}^G r_k\right)
+}{
+    \prod_{k=1}^G \Gamma(r_k)
+} 
+\prod_{g=1}^G \rho_g^{r_g-1}.
+$${#eq-dirichlet-pdf}
+
+Let $r_T = \sum_{k=1}^G r_k$. Then the Dirichlet PDF can be written as
+
+$$
+\pi(\underline{\rho} \mid \underline{r}) = 
+\frac{\Gamma(r_T)}{\prod_{k=1}^G \Gamma(r_k)} \prod_{g=1}^G \rho_g^{r_g-1}.
+$${#eq-dirichlet-pdf-rt}
+
+We substitute @eq-multinomial-pmf and @eq-dirichlet-pdf-rt into
+@eq-dm-integral-target
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\int d^{G-1} \underline{\rho} \, 
+\left( 
+    \frac{\Gamma(r_T)}{\prod_{k=1}^G \Gamma(r_k)} \prod_{g=1}^G \rho_g^{r_g-1} 
+\right) 
+\left( 
+    \frac{u_T!}{\prod_{k=1}^G u_k!} \prod_{g=1}^G \rho_g^{u_g} 
+\right).
+$${#eq-dm-integral-substituted}
+
+The terms that do not depend on $\underline{\rho}$ can be taken out of the
+integral. This yields
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) u_T!
+}{
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+} 
+\int d^{G-1} \underline{\rho} \, 
+\left( 
+    \prod_{g=1}^G \rho_g^{r_g-1} \right) \left( \prod_{g=1}^G \rho_g^{u_g} 
+\right).
+$${#eq-dm-integral-rearranged-1}
+
+We can combine the products of $\rho_g$ terms inside the integral
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) u_T!
+}{
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+} 
+\int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{u_g + r_g - 1}.
+$${#eq-dm-integral-rearranged-2}
+
+The integral term is related to the normalization constant of a Dirichlet
+distribution. Specifically, for a Dirichlet distribution with parameters
+$\underline{\alpha} = (\alpha_1, \ldots, \alpha_G)$, its PDF is
+
+$$
+\text{Dir}(\underline{\rho} \mid \underline{\alpha}) = 
+\frac{
+    \Gamma\left(\sum_{k=1}^G \alpha_k\right)
+}{
+    \prod_{k=1}^G \Gamma(\alpha_k)
+} 
+\prod_{g=1}^G \rho_g^{\alpha_g-1}.
+$${#eq-dirichlet-general-pdf}
+
+Since the Dirichlet distribution must integrate to 1 over the simplex $S = \{
+\underline{\rho} : \rho_g \ge 0, \sum \rho_g = 1 \}$, we have
+
+$$
+\int_S d^{G-1} \underline{\rho} \, 
+\frac{
+    \Gamma\left(\sum_{k=1}^G \alpha_k\right)
+}{
+    \prod_{k=1}^G \Gamma(\alpha_k)
+} 
+\prod_{g=1}^G \rho_g^{\alpha_g-1} = 1.
+$${#eq-dirichlet-integral-one}
+
+From this, we can deduce the value of the integral part of
+@eq-dm-integral-rearranged-2
+
+$$
+\int_S d^{G-1} \underline{\rho} \, 
+\prod_{g=1}^G \rho_g^{\alpha_g-1} = 
+\frac{\prod_{k=1}^G \Gamma(\alpha_k)}{\Gamma\left(\sum_{k=1}^G \alpha_k\right)}.
+$${#eq-dirichlet-integral-value}
+
+In our specific case, the parameters for the integral in
+@eq-dm-integral-rearranged-2 are $\alpha_g = u_g + r_g$. Therefore, the sum of
+these parameters is $\sum_{g=1}^G (u_g + r_g) = \sum_{g=1}^G u_g + \sum_{g=1}^G
+r_g = u_T + r_T$. Applying @eq-dirichlet-integral-value, the integral in
+@eq-dm-integral-rearranged-2 evaluates to
+
+$$
+\int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{u_g + r_g - 1} = 
+\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+$${#eq-dm-specific-integral-result}
+
+Now, we substitute this result back into @eq-dm-integral-rearranged-2
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) u_T!
+}{
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+} \cdot 
+\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+$${#eq-dm-intermediate-result}
+
+To match the standard form, we can use the identity $n! = \Gamma(n+1)$. So,
+$u_T! = \Gamma(u_T+1)$ and $u_k! = \Gamma(u_k+1)$. Substituting these into
+@eq-dm-intermediate-result, we get
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) \Gamma(u_T+1)
+}{
+    \left(
+        \prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G \Gamma(u_k+1)
+    \right)
+} \cdot 
+\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+$${#eq-dm-intermediate-result-gamma}
+
+Rearranging the terms to group them by gene $g$ and the totals, we arrive at the
+final expression for the Dirichlet-Multinomial distribution
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) =
+\frac{
+    \Gamma\left(r_T\right) \Gamma(u_T+1)
+}{
+    \Gamma\left(u_T+r_T\right)
+} 
+\prod_{g=1}^G \frac{
+    \Gamma\left(u_g+r_g\right)
+}{
+    \Gamma\left(r_g\right) \Gamma\left(u_g+1\right)
+}.
+$${#eq-joint-target-int-dirichlet-multinomial}
+
+Thus, we can write
+@eq-joint-target-int-poisson-multinomial-dirichlet-multinomial-rearranged as 
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\overbrace{
+\pi\left(u_T \mid r_T, \hat{p}\right)
+}^{\text{Negative Binomial}}
+\times 
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{r})
+}_{\text{Dirichlet-Multinomial}},
+$${#eq-joint-target-final}
+
+which is our final result.
+
+## What does this mean?
+
+As we just showed, The joint distribution of independent negative binomials with
+shared $\hat{p}$ parameter is equivalent to the product of a negative binomial
+distribution and a Dirichlet-Multinomial distribution. This has two important
+consequences for our model for single-cell RNA-seq data:
+
+First, the negative binomial is a common distribution in single-cell RNA-seq
+data due to the overdispersion of the counts. This distribution can be
+furthermore justified from biophysical principles, making it a natural choice
+for a parametric model of the counts. Moreover, this functional form already
+accounts for the conversion from mRNA molecules to our observed UMI counts. Our
+derivation shows that with the relatively benign assumption that the
+$\hat{p}$ parameter is shared across all genes, the resulting joint distribution
+has a much simpler functional form.
+
+Second, in the construction of the negative binomial/Dirichlet multinomial
+model, we summoned the use of $\underline{\rho}$ parameters that lie on the unit
+simplex. These parameters can be thought of as the fraction of the transcriptome
+occupied by each of the $G$ genes. Usually, when we want to "normalize" a 
+dataset, what we want is the equivalent of estimating these parameters. However,
+in our model, we marginalized over their values to find the joint distribution.
