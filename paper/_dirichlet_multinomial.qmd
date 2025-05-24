@@ -1,7 +1,7 @@
 ---
 editor:
     render-on-save: true
-# bibliography: references.bib
+bibliography: references.bib
 csl: ieee.csl
 ---
 
@@ -25,10 +25,8 @@ $$
 | & | & & | \\
 \underline{u}_1 & \underline{u}_2 & \cdots & \underline{u}_C \\
 | & | & & |
-\end{array}\right],
+\end{array}\right].
 $${#eq-umimatrix}
-
-where $\underline{u}_c$ is the vector of counts for cell $c$.
 
 For simplicity, let us assume that each cell vector is independent of the
 others. We can then focus on the data generative process for a single cell
@@ -60,7 +58,7 @@ as critical as it may seem.
 Let us now consider the case where we have a cell with $m_g$ transcripts for
 gene $g$. If we assume that each transcript is equally likely to be captured and
 converted into a UMI that we observe in the experiment---a probability we define
-as $\nu$---then the number of UMIs we observe for gene $g$ in cell $c$ is given
+as $\nu$---then, the number of UMIs we observe for gene $g$ in cell $c$ is given
 by
 
 $$
@@ -68,26 +66,36 @@ u_g \mid m_g, \nu \sim \text{Binomial}(m_g, \nu).
 $${#eq-umicounts}
 
 Notice that @eq-umicounts is a conditional distribution on the number of mRNA
-molecules in the cell, $m_g$. This is a variable we do not observe directly.
-Therefore, if we want to make inference on the parameters of the model, we need
-to marginalize over this variable. In other words, we need to sum over all valid
-values of $m_g$ weighted by the probability of observing $u_g$ given $m_g$,
-$\nu$, and the original parameters of the model, $r_g$ and $p$. Mathematically,
-this is a so-called compound distribution obtained from a sum of the form
+molecules in the cell, $m_g$. This mRNA count is a variable we do not observe
+directly. Therefore, if we want to make inference on the parameters of the
+model, we need to marginalize over this variable. In other words, we need to sum
+over all valid values of $m_g$ weighted by the probability of observing $u_g$
+given $m_g$, $\nu$, and the original parameters of the model, $r_g$ and $p$.
+Mathematically, this is a so-called compound distribution obtained from a sum of
+the form
 
 $$
 \pi(u_g \mid r_g, p, \nu) = 
-\sum_{m_g = u_g}^{\infty} \pi(u_g \mid m_g, \nu) \pi(m_g \mid r_g, p),
+\sum_{m_g = u_g}^{\infty} 
+\overbrace{
+\pi(u_g \mid m_g, \nu) 
+}^{\text{binomial}}
+\times
+\underbrace{
+\pi(m_g \mid r_g, p)
+}_{\text{negative binomial}},
 $${#eq-umicounts-marginal}
 
 where $\pi(\cdot)$ is a probability distribution. We abuse notation throughout
 this section by using $\pi(\cdot)$ to denote a probability distribution,
 assuming that the argument gives enough information to identify which
-distribution we are referring to. Notice that the sum is over all possible
-values of $m_g$ that are greater than or equal to $u_g$. This is because the
-number of UMIs $u_g$ is a non-negative integer, and the number of transcripts
-$m_g$ must be at least as large as the number of UMIs. Simply put, it is not
-possible to observe fewer UMIs than the number of transcripts.
+distribution we are referring to. When needed, we will explicitly state the
+distribution we are referring to as in @eq-umicounts-marginal. Notice that the
+sum is over all possible values of $m_g$ that are greater than or equal to
+$u_g$. This is because the number of UMIs $u_g$ is a non-negative integer, and
+the number of transcripts $m_g$ must be at least as large as the number of UMIs.
+Simply put, it is not possible to observe more UMIs than the number of
+transcripts.
 
 As we will prove later, the resulting distribution takes the form of a negative
 binomial distribution,
@@ -110,7 +118,7 @@ variable capture probability model.
 If we assume each gene is independent of the others, our data for a single cell
 
 $$
-\underline{u} = \left[u_1, u_2, \cdots, u_G\right],
+\underline{u} = \left(u_1, u_2, \ldots, u_G\right),
 $${#eq-umivector}
 
 is the result of drawing $G$ independent negative binomial random variables. The
@@ -122,13 +130,13 @@ $$
 \prod_{g=1}^G \pi(u_g \mid r_g, \hat{p}),
 $${#eq-umivector-joint}
 
-where $\underline{r} = \left[r_1, r_2, \cdots, r_G\right]$ is the vector of
+where $\underline{r} = \left(r_1, r_2, \ldots, r_G\right)$ is the vector of
 parameters of the negative binomial distribution for each gene---recall that we
-assumed that all genes share the same parameter $p$.
+assumed that all genes share the same parameter $p$, now $\hat{p}$.
 
-Again, as we will show later, it is possible to rewrite the joint distribution
-of independent negative binomial random variables sharing the same parameter
-$p$ as 
+Again, as we will show in our final result for this section, it is possible to
+rewrite the joint distribution of independent negative binomial random variables
+sharing the same parameter $\hat{p}$ as 
 
 $$
 \pi(\underline{u} \mid \underline{r}, \hat{p}) = 
@@ -263,24 +271,25 @@ follows a binomial distribution,
 
 $$
 u_g \mid m_g, \nu \sim \text{Binomial}(m_g, \nu).
-$${#eq-umicounts}
+$${#eq-umicounts-2}
 
 This is, thus, a composition of a negative binomial distribution with a binomial
 distribution. To remove the dependency on the unknown random variable $m_g$, we
-marginalize the distribution over $m_g$, as indicated by @eq-umicounts-marginal. 
-
+marginalize the distribution over $m_g$, as indicated by @eq-umicounts-marginal.
 To prove that the resulting distribution is a negative binomial distribution, we
 will make use of the probability generating function (PGF). The PGF is like the
-moment generating function, but it is useful for discrete random variables. The 
+moment generating function, but it is useful for discrete random variables. The
 PGF is defined as
 
 $$
-\mathcal{P}_X(z) = \langle z^X \rangle_{\pi(x)} = 
+\mathcal{P}_x(z) = \langle z^x \rangle_{\pi(x)} = 
 \sum_{x=0}^{\infty} z^x \pi(x),
 $${#eq-pgf}
 
-where $\pi(x)$ is the probability mass function of the random variable $X$.
-Let's begin by deriving the PGF of the negative binomial distribution.
+where $\pi(x)$ is the probability mass function of the random variable $x$, and
+$\langle \cdot \rangle_{\pi(x)}$ denotes the expectation of the random variable
+$X$ with respect to the probability distribution $\pi(x)$. Let's begin by
+deriving the PGF of the negative binomial distribution.
 
 ### Negative binomial distribution PGF
 
@@ -292,13 +301,14 @@ $$
 \sum_{m=0}^{\infty} z^{m} \pi(m)
 $${#eq-pgf-nb-1}
 
-First, we substitute the probability mass function of the negative binomial distribution:
+First, we substitute the probability mass function of the negative binomial
+distribution,
 
 $$
 \mathcal{P}_{m}(z) = \sum_{m=0}^{\infty} z^{m} \binom{m + r - 1}{m} p^r (1 - p)^m
 $${#eq-pgf-nb-2}
 
-Finally, we factor out $p^r$ and combine the $z$ and $(1-p)$ terms:
+Finally, we factor out $p^r$ and combine the $z$ and $(1-p)$ terms,
 
 $$
 \mathcal{P}_{m}(z) = p^r \sum_{m=0}^{\infty} \binom{m + r - 1}{m} \left[z(1 - p)\right]^m
@@ -329,7 +339,7 @@ and evaluating it at $y = 0$, we get
 
 $$
 \frac{d}{dy} \left(\sum_{m=0}^{\infty} y^m\right) =
-\left( \frac{1}{(1 - y)^r} \right).
+\frac{d}{dy} \left( \frac{1}{(1 - y)} \right).
 $${#eq-pgf-nb-simplified-series-derivative}
 
 This results in
@@ -354,10 +364,10 @@ Taking another derivative with respect to $y$,
 
 $$
 \frac{d}{dy} \left(\sum_{m'=0}^{\infty} (m' + 1) y^{m'}\right) =
-\frac{d}{dy} \left(\frac{1}{(1 - y)^2}\right).
+\frac{d}{dy} \left(\frac{1}{(1 - y)^2}\right),
 $${#eq-pgf-nb-simplified-series-derivative-result-4}
 
-This results in
+results in
 
 $$
 \sum_{m'=0}^{\infty} (m' + 1) m' y^{m' - 1} = \frac{2}{(1 - y)^3}.
@@ -377,7 +387,7 @@ $$
 \frac{1}{(1 - y)^4}.
 $${#eq-pgf-nb-simplified-series-derivative-result-7}
 
-The general form of the $n$-th derivative is given by
+The general form of the $r$-th derivative is given by
 
 $$
 \frac{1}{(1-y)^r} = 
@@ -390,14 +400,30 @@ $$
 \frac{1}{(1-y)^r} = \sum_{m=0}^{\infty} \binom{m+r-1}{m} y^m.
 $${#eq-pgf-nb-simplified-series-derivative-result-8b}
 
-Using this result gives
+Using this result with our original variables gives
 
 $$
 \begin{aligned}
-P_m(z) &= p^r \sum_{m=0}^{\infty}\binom{m+r-1}{m}[z(1-p)]^m \\
-& = \frac{p^r}{[1-z(1-p)]^r}.
+\mathcal{P}_m(z) &= p^r \sum_{m=0}^{\infty}\binom{m+r-1}{m}[z(1-p)]^m \\
 \end{aligned}
-$${#eq-pgf-nb-simplified-series-derivative-result-9}
+$${#eq-pgf-nb-simplified-series-derivative-result-9a}
+
+Substituting @eq-pgf-nb-simplified-series-derivative-result-8b into the equation
+above, we get
+
+$$
+\sum_{m=0}^{\infty}\binom{m+r-1}{m}[z(1-p)]^m = \frac{1}{(1-z(1-p))^r}
+$${#eq-pgf-nb-simplified-series-derivative-result-9c}
+
+Now we can continue our derivation:
+
+$$
+\begin{aligned}
+\mathcal{P}_m(z) &= p^r \sum_{m=0}^{\infty}\binom{m+r-1}{m}[z(1-p)]^m, \\
+&= p^r \cdot \frac{1}{(1-z(1-p))^r}, \\
+&= \frac{p^r}{[1-z(1-p)]^r}.
+\end{aligned}
+$${#eq-pgf-nb-simplified-series-derivative-result-9d}
 
 Therefore, the PGF of the negative binomial distribution is given by
 
@@ -407,6 +433,7 @@ $${#eq-pgf-nb-simplified-series-derivative-result-10}
 
 Next, let's derive the PGF for the binomial distribution.
 
+
 ### Binomial distribution PGF
 
 The probability mass function of the binomial distribution is given by
@@ -415,36 +442,23 @@ $$
 \pi(u \mid m, \nu) = \binom{m}{u} \nu^u (1 - \nu)^{m - u}.
 $${#eq-pgf-binomial-dist}
 
-Substituting this into @eq-pgf gives the probability generating function for the
-binomial distribution
+Substituting this into @eq-pgf gives the PGF for the binomial distribution,
 
 $$
-P_{u \mid m}(z) = \left\langle z^u\right\rangle
-$${#eq-pgf-binomial-dist-simplified-1}
-
-We can expand this expectation as a sum over all possible values of $u$
-
-$$
-P_{u \mid m}(z) = \sum_{u=0}^{\infty} z^u \pi(u \mid m, \nu)
-$${#eq-pgf-binomial-dist-simplified-2}
-
-Substituting the probability mass function from @eq-pgf-binomial-dist
-
-$$
-P_{u \mid m}(z) = \sum_{u=0}^{\infty} z^u\binom{m}{u} \nu^u(1-\nu)^{m-u}
+P_{u \mid m}(z) = \sum_{u=0}^{\infty} z^u\binom{m}{u} \nu^u(1-\nu)^{m-u}.
 $${#eq-pgf-binomial-dist-simplified-3}
 
-We can combine the $z^u$ and $\nu^u$ terms
+We can then combine the $z^u$ and $\nu^u$ terms,
 
 $$
-P_{u \mid m}(z) = \sum_{u=0}^{\infty}\binom{m}{u}(\nu z)^u(1-\nu)^{m-u}
+P_{u \mid m}(z) = \sum_{u=0}^{\infty}\binom{m}{u}(\nu z)^u(1-\nu)^{m-u}.
 $${#eq-pgf-binomial-dist-simplified-4}
 
-Since it's impossible to have more successes than trials, we can truncate the
-sum at $u = m$
+Since it's impossible to have more successes than trials, or in this context,
+more UMIs than transcripts, we can truncate the sum at $u = m$,
 
 $$
-P_{u \mid m}(z) = \sum_{u=0}^m\binom{m}{u}(\nu z)^u(1-\nu)^{m-u}
+P_{u \mid m}(z) = \sum_{u=0}^m\binom{m}{u}(\nu z)^u(1-\nu)^{m-u}.
 $${#eq-pgf-binomial-dist-simplified-5}
 
 By the binomial theorem, we can rewrite this sum as:
@@ -472,46 +486,44 @@ $$
 u = \sum_{i=1}^m b_i,
 $${#eq-binomial-dist-sum}
 
-where $b_i \sim \text{Bernoulli}(\nu)$. The PGF is thus given by
-
-First, we write the PGF of $u$ as an expectation over its probability mass
-function
+where $b_i \sim \text{Bernoulli}(\nu)$. In other words, the number of UMIs we
+observe for a given gene is the sum of the number of transcripts that were
+converted to UMIs and observed with probability $\nu$. Given this definition of
+our random variable $u$ in terms of these $b_i$ random variables, we can write
+the PGF as
 
 $$
 \mathcal{P}_u(z) = \left\langle z^u \right\rangle_{\pi(u)}
+= \left\langle z^{\sum_{i=1}^m b_i} \right\rangle_{\pi(u)}.
 $${#eq-pgf-composition-1a}
 
-Next, we substitute the definition of $u$ as a sum of Bernoulli random
-variables
+We then can rewrite the exponentiation of a sum as a product of exponentials,
+obtaining
 
 $$
-\mathcal{P}_u(z) = \left\langle z^{\sum_{i=1}^m b_i} \right\rangle_{\pi(u)}
-$${#eq-pgf-composition-1b}
-
-We can rewrite the exponentiation of a sum as a product of exponentials
-
-$$
-\mathcal{P}_u(z) = \left\langle \prod_{i=1}^m z^{b_i} \right\rangle_{\pi(u)}
+\mathcal{P}_u(z) = \left\langle \prod_{i=1}^m z^{b_i} \right\rangle_{\pi(u)}.
 $${#eq-pgf-composition-1c}
 
 Since the Bernoulli random variables are independent, we can move the
-expectation inside the product
+expectation inside the product, replacing the expectation over $\pi(u)$ with the
+expectation over $\pi(b_i)$,
 
 $$
-\mathcal{P}_u(z) = \prod_{i=1}^m \left\langle z^{b_i} \right\rangle_{\pi(b_i)}
+\mathcal{P}_u(z) = \prod_{i=1}^m \left\langle z^{b_i} \right\rangle_{\pi(b_i)}.
 $${#eq-pgf-composition-1d}
 
-Since all Bernoulli random variables are identically distributed, we can write
-this as a power
+Moreover, since all Bernoulli random variables are identically distributed, we
+can write this as a power,
 
 $$
-\mathcal{P}_u(z) = \left[\left\langle z^{b_i} \right\rangle_{\pi(b_i)}\right]^m
+\mathcal{P}_u(z) = \left[\left\langle z^{b_i} \right\rangle_{\pi(b_i)}\right]^m.
 $${#eq-pgf-composition-1e}
 
-Finally, we recognize that the expectation of $z^{b_i}$ is the PGF of a single Bernoulli random variable
+Finally, we recognize that the expectation of $z^{b_i}$ over the distribution
+$\pi(b_i)$ is the PGF of a single Bernoulli random variable, i.e.,
 
 $$
-\mathcal{P}_u(z) = \left[\mathcal{P}_{b_i}(z)\right]^m
+\mathcal{P}_u(z) = \left[\mathcal{P}_{b_i}(z)\right]^m.
 $${#eq-pgf-composition-1f}
 
 In other words, the PGF of a binomially distributed random variable is the
@@ -1822,15 +1834,38 @@ consequences for our model for single-cell RNA-seq data:
 First, the negative binomial is a common distribution in single-cell RNA-seq
 data due to the overdispersion of the counts. This distribution can be
 furthermore justified from biophysical principles, making it a natural choice
-for a parametric model of the counts. Moreover, this functional form already
-accounts for the conversion from mRNA molecules to our observed UMI counts. Our
-derivation shows that with the relatively benign assumption that the
+for a parametric model of the counts. Moreover, the functional form we derived
+already accounts for the conversion from mRNA molecules to our observed UMI
+counts via the composition of a negative binomial and a binomial distribution.
+Our derivation shows that with the relatively benign assumption that the
 $\hat{p}$ parameter is shared across all genes, the resulting joint distribution
 has a much simpler functional form.
 
 Second, in the construction of the negative binomial/Dirichlet multinomial
 model, we summoned the use of $\underline{\rho}$ parameters that lie on the unit
 simplex. These parameters can be thought of as the fraction of the transcriptome
-occupied by each of the $G$ genes. Usually, when we want to "normalize" a 
-dataset, what we want is the equivalent of estimating these parameters. However,
-in our model, we marginalized over their values to find the joint distribution.
+occupied by each of the $G$ genes. Commonly, when we want to "normalize" a
+dataset, what we seek is the equivalent of estimating these parameters that
+transform counts into a number between 0 and 1. For example, in the excellent
+work by @breda2021, the authors used the result we derived earlier that the
+joint distribution of independet Poisson random variables can be expressed as
+the product of a Poisson and a multinomial distribution. The overdispersion of
+UMI counts was accounted as external noise rather than an intrinsic property of
+the gene expression profiles. The goal of their model was then to estimate the
+probability parameters for the multinomial distribution; using them as the
+equivalent of the normalized gene expression counts.
+
+However, when we start from what we said is a perfectly reasonable assumption
+that gene expression can be modeled as a negative binomial distribution, we do
+not have this nice and simple property of simply estimating these probability
+parameters. Instead, we use a distribution over those probability
+parameters---the Dirichlet distribution---to then marginalize over them to find
+the joint distribution. The implication of this is that in the math leading up
+to our result, we learn that rather than reporting a single "fraction of the
+transcriptiome per gene" parameter, we should report a distribution over these
+parameters. If desired, we can still report the mean of this distribution to
+recover a point estimate of this fraction. However, in our view, we would be
+ignoring the important property of accounting for the overdispersion of gene
+expression profiles, which is arguably the main reason to perform single-cell
+RNA-seq in the first place. Thus, our principled model leads us to report a
+distribution over these parameters, rather than a single point estimate.
