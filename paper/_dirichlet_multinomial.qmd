@@ -1,0 +1,1836 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+---
+
+# Dirichlet-Multinomial model derivation
+
+In this section, we will walk through the derivation of the main model used in
+this paper. For completeness, all algebraic steps are provided. This is with the
+intention that the reader can follow the derivation step by step, and verify
+for themselves that each step is correct.
+
+## Model setup
+
+When dealing with single-cell RNA-seq data, our data consists of a $G \times C$
+matrix of counts, where $G$ is the number of genes and $C$ is the number of
+cells. The entries of these matrix $\underline{\underline{U}}$ are the UMI
+counts for each gene $g$ in each cell $c$, where each column $\underline{u}_c$
+is a vector defining the transcriptional profile captured for cell $c$, i.e.,
+
+$$
+\underline{\underline{U}}=\left[\begin{array}{cccc}
+| & | & & | \\
+\underline{u}_1 & \underline{u}_2 & \cdots & \underline{u}_C \\
+| & | & & |
+\end{array}\right],
+$${#eq-umimatrix}
+
+where $\underline{u}_c$ is the vector of counts for cell $c$.
+
+For simplicity, let us assume that each cell vector is independent of the
+others. We can then focus on the data generative process for a single cell
+$\underline{u}_c = \underline{u}$. Let us assume that each entry of the vector
+$\underline{u}$, $u_g$, is a random variable related to the true transcript
+count of gene $g$ in cell $c$ $m_g$. For the true underlying transcript count
+distribution, we can justify from first principles the use of a negative
+binomial distribution. In other words, given what is known about the physics of
+how gene expression works, one can formally derive that, at steady state, the
+number of RNA molecules produced by a gene is a random variable that follows a
+negative binomial distribution,
+
+$$
+m_g \sim \text{NB}(r_g, p_g),
+$${#eq-mrna-dist}
+
+where the two parameters of the negative binomial relate to the biophysical
+parameters of a two-state promoter model. The symbol $\sim$ is used here to
+indicate that $m_g$ is a random variable that follows the distribution defined
+on the right-hand side. The main assumption we make is that **all genes share
+the same $p_g$ parameter**, i.e., $p_g = p$ for all $g$. As we will show, this
+simplifying assumption allows us to derive a normalization scheme for the entire
+transcriptional profile of a cell. Moreover, this assumption is not as strong as
+it may seem, since the negative binomial distribution is degenerate on its
+parameters. In other words, different combinations of $r_g$ and $p_g$ can lead
+to distributions of very similar shape, making the choice of a single $p_g$ not
+as critical as it may seem.
+
+Let us now consider the case where we have a cell with $m_g$ transcripts for
+gene $g$. If we assume that each transcript is equally likely to be captured and
+converted into a UMI that we observe in the experiment---a probability we define
+as $\nu$---then the number of UMIs we observe for gene $g$ in cell $c$ is given
+by
+
+$$
+u_g \mid m_g, \nu \sim \text{Binomial}(m_g, \nu).
+$${#eq-umicounts}
+
+Notice that @eq-umicounts is a conditional distribution on the number of mRNA
+molecules in the cell, $m_g$. This is a variable we do not observe directly.
+Therefore, if we want to make inference on the parameters of the model, we need
+to marginalize over this variable. In other words, we need to sum over all valid
+values of $m_g$ weighted by the probability of observing $u_g$ given $m_g$,
+$\nu$, and the original parameters of the model, $r_g$ and $p$. Mathematically,
+this is a so-called compound distribution obtained from a sum of the form
+
+$$
+\pi(u_g \mid r_g, p, \nu) = 
+\sum_{m_g = u_g}^{\infty} \pi(u_g \mid m_g, \nu) \pi(m_g \mid r_g, p),
+$${#eq-umicounts-marginal}
+
+where $\pi(\cdot)$ is a probability distribution. We abuse notation throughout
+this section by using $\pi(\cdot)$ to denote a probability distribution,
+assuming that the argument gives enough information to identify which
+distribution we are referring to. Notice that the sum is over all possible
+values of $m_g$ that are greater than or equal to $u_g$. This is because the
+number of UMIs $u_g$ is a non-negative integer, and the number of transcripts
+$m_g$ must be at least as large as the number of UMIs. Simply put, it is not
+possible to observe fewer UMIs than the number of transcripts.
+
+As we will prove later, the resulting distribution takes the form of a negative
+binomial distribution,
+
+$$
+u_g \mid r_g, \hat{p}, \sim \text{NB}(r_g, \hat{p}),
+$${#eq-umicounts-marginal-nb}
+
+where
+
+$$
+\hat{p} = \frac{\nu (1 - p)}{\nu + (1 - \nu) p},
+$${#eq-umicounts-marginal-nb-p}
+
+is an effective probability of success that depends on the probability of
+capture $\nu$ and the probability of success $p$ of the original negative
+binomial distribution. This result will be relevant later when we define the
+variable capture probability model.
+
+If we assume each gene is independent of the others, our data for a single cell
+
+$$
+\underline{u} = \left[u_1, u_2, \cdots, u_G\right],
+$${#eq-umivector}
+
+is the result of drawing $G$ independent negative binomial random variables. The
+joint distribution of the vector $\underline{u}$ is then simply given by the
+product of the marginal distributions, i.e.,
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\prod_{g=1}^G \pi(u_g \mid r_g, \hat{p}),
+$${#eq-umivector-joint}
+
+where $\underline{r} = \left[r_1, r_2, \cdots, r_G\right]$ is the vector of
+parameters of the negative binomial distribution for each gene---recall that we
+assumed that all genes share the same parameter $p$.
+
+Again, as we will show later, it is possible to rewrite the joint distribution
+of independent negative binomial random variables sharing the same parameter
+$p$ as 
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\pi(u_T \mid r_T, \hat{p})
+\pi(\underline{u} \mid u_T, \underline{r}),
+$${#eq-umivector-joint-nb}
+
+where
+
+$$
+\pi(u_T \mid r_T, \hat{p}) = \text{NB}(u_T \mid r_T, \hat{p}),
+$${#eq-umivector-joint-nb-u-dist}
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\text{Dirichlet-Multinomial}(\underline{u} \mid u_T, \underline{r}),
+$${#eq-umivector-joint-nb-u-dist-dirichlet-multinomial}
+
+with $u_T$ being the total number of transcripts in the cell,
+
+$$
+u_T = \sum_{g=1}^G u_g,
+$${#eq-umivector-joint-nb-u}
+
+and $r_T$ being the equivalent sum of the $r$ parameters of the negative
+binomial distribution for each gene,
+
+$$
+r_T = \sum_{g=1}^G r_g.
+$${#eq-umivector-joint-nb-r}
+
+## Bayesian inference
+
+Given this very simple and compact generative model, we want to perform Bayesian
+inference on the parameters of the model. By Bayes' theorem, we have that
+
+$$
+\pi(\underline{r}, \hat{p} \mid \underline{u}) \propto
+\overbrace{
+\pi(\underline{u} \mid \underline{r}, \hat{p}) 
+}^{\text{likelihood}}
+\overbrace{\pi(\underline{r}, \hat{p})}^{\text{prior}}
+$${#eq-bayes-theorem}
+
+where the proportionality constant is independent of the model parameters.
+
+### Prior
+
+For the prior, we can assume that each of the parameters is independent of each
+other, resulting in
+
+$$
+\pi(\underline{r}, \hat{p}) =
+\prod_{g=1}^G \pi(r_g) \cdot \pi(\hat{p}).
+$${#eq-prior}
+
+The parameter $\hat{p}$ is a probability, thus, $\hat{p} \in [0, 1]$. The 
+natural prior for this interval is given by the Beta distribution. Thus, we
+assign
+
+$$
+\hat{p} \sim \text{Beta}(\alpha_p, \beta_p), \; \alpha_p, \beta_p > 0.
+$${#eq-prior-hatp}
+
+Each of the $r_g$ parameters is a positive real number, thus, we can assign any
+strictly positive prior to each of them. A natural choice is to assign a Gamma
+distribution to each of them (although an inverse Gamma or a log-normal
+distribution would also be valid choices),
+
+$$
+r_g \sim \text{Gamma}(\alpha_r, \beta_r), \; \alpha_r, \beta_r > 0.
+$${#eq-prior-rg}
+
+
+### Likelihood
+
+For the likelihood function, we have the---yet to be proven---functional forms
+in @eq-umivector-joint-nb-u-dist and
+@eq-umivector-joint-nb-u-dist-dirichlet-multinomial. Thus, the likelihood
+function is given by
+
+$$
+u_T \mid r_T, \hat{p} \sim \text{NB}(r_T, \hat{p}),
+$${#eq-likelihood-u}
+
+and
+
+$$
+\underline{u} \mid u_T, \underline{r} \sim 
+\text{Dirichlet-Multinomial}(\underline{u} \mid u_T, \underline{r}).
+$${#eq-likelihood-u-dirichlet-multinomial}
+
+If we assume that all cells are independent, our Bayesian model takes the form 
+
+$$
+\pi(\underline{r}, \hat{p} \mid \underline{\underline{U}}) \propto
+\prod_{c=1}^C \left[
+    \pi(u_{T,c} \mid r_T, \hat{p})
+    \pi(\underline{u}_c \mid u_{T,c}, \underline{r})
+\right] \cdot \left[\pi(r_g)\right]^G \cdot \pi(\hat{p}).
+$${#eq-bayes-model}
+
+To justify this functional form, there are two main steps we need to prove:
+
+- The composition of a negative binomial distribution with a binomial
+distribution results in a negative binomial distribution.
+- The joint distribution of independent negative binomials sharing the same
+parameter $p$ can be expressed as the product of a negative binomial distribution
+and a Dirichlet-Multinomial distribution.
+    - A negative binomial can be expressed as a composition of a Poisson and a
+    Gamma distribution.
+    - The joint distribution of independent Poisson random variables can be
+    expressed as the product of a Poisson distribution and a multinomial
+    distribution.
+    - The joint distribution of independent Gamma random variable with the same
+    shape/rate parameter can be expressed as the product of a Gamma distribution
+    and a Dirichlet distribution.
+
+Let's walk through each of these steps in detail.
+
+## Composition of a negative binomial distribution with a binomial distribution
+
+We began with the assumption that the number of transcripts in a cell follows a
+negative binomial distribution,
+
+$$
+m_g \sim \text{NB}(r_g, p).
+$${#eq-mrna-dist}
+
+Conditioned on the number of transcripts $m_g$, the number of UMIs we observe
+follows a binomial distribution,
+
+$$
+u_g \mid m_g, \nu \sim \text{Binomial}(m_g, \nu).
+$${#eq-umicounts}
+
+This is, thus, a composition of a negative binomial distribution with a binomial
+distribution. To remove the dependency on the unknown random variable $m_g$, we
+marginalize the distribution over $m_g$, as indicated by @eq-umicounts-marginal. 
+
+To prove that the resulting distribution is a negative binomial distribution, we
+will make use of the probability generating function (PGF). The PGF is like the
+moment generating function, but it is useful for discrete random variables. The 
+PGF is defined as
+
+$$
+\mathcal{P}_X(z) = \langle z^X \rangle_{\pi(x)} = 
+\sum_{x=0}^{\infty} z^x \pi(x),
+$${#eq-pgf}
+
+where $\pi(x)$ is the probability mass function of the random variable $X$.
+Let's begin by deriving the PGF of the negative binomial distribution.
+
+### Negative binomial distribution PGF
+
+We begin by substituting the probability mass function of the negative binomial
+distribution into @eq-pgf,
+
+$$
+\mathcal{P}_{m}(z) = \langle z^{m} \rangle_{\pi(m)} = 
+\sum_{m=0}^{\infty} z^{m} \pi(m)
+$${#eq-pgf-nb-1}
+
+First, we substitute the probability mass function of the negative binomial distribution:
+
+$$
+\mathcal{P}_{m}(z) = \sum_{m=0}^{\infty} z^{m} \binom{m + r - 1}{m} p^r (1 - p)^m
+$${#eq-pgf-nb-2}
+
+Finally, we factor out $p^r$ and combine the $z$ and $(1-p)$ terms:
+
+$$
+\mathcal{P}_{m}(z) = p^r \sum_{m=0}^{\infty} \binom{m + r - 1}{m} \left[z(1 - p)\right]^m
+$${#eq-pgf-nb-3}
+
+where we ommit the subindex $g$ for brevity. To simplify this expression, let us
+define $y = z(1 - p)$. Then, we can rewrite @eq-pgf-nb-3 as
+
+$$
+\mathcal{P}_{m}(z) = p^r \sum_{m=0}^{\infty} \binom{m + r - 1}{m} y^m.
+$${#eq-pgf-nb-simplified}
+
+The infinite series on the right-hand side can be simplified to
+
+$$
+\sum_{m=0}^{\infty} \binom{m + r - 1}{m} y^m = \frac{1}{(1 - y)^r} \; 
+\text{for} \; |y| < 1.
+$${#eq-pgf-nb-simplified-series}
+
+This is because the geometric series is given by
+
+$$
+\sum_{m=0}^{\infty} y^m = \frac{1}{1 - y} \; \text{for} \; |y| < 1.
+$${#eq-pgf-nb-simplified-series-geometric}
+
+Taking the first derivative of @eq-pgf-nb-simplified-series with respect to $y$
+and evaluating it at $y = 0$, we get
+
+$$
+\frac{d}{dy} \left(\sum_{m=0}^{\infty} y^m\right) =
+\left( \frac{1}{(1 - y)^r} \right).
+$${#eq-pgf-nb-simplified-series-derivative}
+
+This results in
+
+$$
+\sum_{m=0}^{\infty} m y^{m-1} = \frac{1}{(1 - y)^2}.
+$${#eq-pgf-nb-simplified-series-derivative-result}
+
+Since the term with $m = 0$ is zero, we can start the sum at $m = 1$,
+
+$$
+\sum_{m=1}^{\infty} m y^{m-1} = \frac{1}{(1 - y)^2}.
+$${#eq-pgf-nb-simplified-series-derivative-result-2}
+
+We can then define $m' = m - 1$, and rewrite the sum as
+
+$$
+\sum_{m'=0}^{\infty} (m' + 1) y^{m'} = \frac{1}{(1 - y)^2}.
+$${#eq-pgf-nb-simplified-series-derivative-result-3}
+
+Taking another derivative with respect to $y$,
+
+$$
+\frac{d}{dy} \left(\sum_{m'=0}^{\infty} (m' + 1) y^{m'}\right) =
+\frac{d}{dy} \left(\frac{1}{(1 - y)^2}\right).
+$${#eq-pgf-nb-simplified-series-derivative-result-4}
+
+This results in
+
+$$
+\sum_{m'=0}^{\infty} (m' + 1) m' y^{m' - 1} = \frac{2}{(1 - y)^3}.
+$${#eq-pgf-nb-simplified-series-derivative-result-5}
+
+Using the same argument as before, we can rewrite the sum as
+
+$$
+\frac{1}{2} \sum_{m''=0}^{\infty} m'' (m'' + 1) y^{m'' - 1} = 
+\frac{1}{(1 - y)^3}.
+$${#eq-pgf-nb-simplified-series-derivative-result-6}
+
+By induction, we can show that one more derivative results in
+
+$$
+\frac{1}{3 \cdot 2} \sum_{m'''=0}^{\infty} m'''(m'''+1)(m'''+2) y^{m'''-1} = 
+\frac{1}{(1 - y)^4}.
+$${#eq-pgf-nb-simplified-series-derivative-result-7}
+
+The general form of the $n$-th derivative is given by
+
+$$
+\frac{1}{(1-y)^r} = 
+\frac{1}{(r-1)!} \sum_{m=0}^{\infty} \frac{(m+r-1)!}{m!} y^m,
+$${#eq-pgf-nb-simplified-series-derivative-result-8a}
+
+which can be rewritten using the binomial coefficient definition as
+
+$$
+\frac{1}{(1-y)^r} = \sum_{m=0}^{\infty} \binom{m+r-1}{m} y^m.
+$${#eq-pgf-nb-simplified-series-derivative-result-8b}
+
+Using this result gives
+
+$$
+\begin{aligned}
+P_m(z) &= p^r \sum_{m=0}^{\infty}\binom{m+r-1}{m}[z(1-p)]^m \\
+& = \frac{p^r}{[1-z(1-p)]^r}.
+\end{aligned}
+$${#eq-pgf-nb-simplified-series-derivative-result-9}
+
+Therefore, the PGF of the negative binomial distribution is given by
+
+$$
+\mathcal{P}_{m}(z) = \left[\frac{p}{1-z(1-p)}\right]^r.
+$${#eq-pgf-nb-simplified-series-derivative-result-10}
+
+Next, let's derive the PGF for the binomial distribution.
+
+### Binomial distribution PGF
+
+The probability mass function of the binomial distribution is given by
+
+$$
+\pi(u \mid m, \nu) = \binom{m}{u} \nu^u (1 - \nu)^{m - u}.
+$${#eq-pgf-binomial-dist}
+
+Substituting this into @eq-pgf gives the probability generating function for the
+binomial distribution
+
+$$
+P_{u \mid m}(z) = \left\langle z^u\right\rangle
+$${#eq-pgf-binomial-dist-simplified-1}
+
+We can expand this expectation as a sum over all possible values of $u$
+
+$$
+P_{u \mid m}(z) = \sum_{u=0}^{\infty} z^u \pi(u \mid m, \nu)
+$${#eq-pgf-binomial-dist-simplified-2}
+
+Substituting the probability mass function from @eq-pgf-binomial-dist
+
+$$
+P_{u \mid m}(z) = \sum_{u=0}^{\infty} z^u\binom{m}{u} \nu^u(1-\nu)^{m-u}
+$${#eq-pgf-binomial-dist-simplified-3}
+
+We can combine the $z^u$ and $\nu^u$ terms
+
+$$
+P_{u \mid m}(z) = \sum_{u=0}^{\infty}\binom{m}{u}(\nu z)^u(1-\nu)^{m-u}
+$${#eq-pgf-binomial-dist-simplified-4}
+
+Since it's impossible to have more successes than trials, we can truncate the
+sum at $u = m$
+
+$$
+P_{u \mid m}(z) = \sum_{u=0}^m\binom{m}{u}(\nu z)^u(1-\nu)^{m-u}
+$${#eq-pgf-binomial-dist-simplified-5}
+
+By the binomial theorem, we can rewrite this sum as:
+
+$$
+\sum_{u=0}^m\binom{m}{u}(\nu z)^u(1-\nu)^{m-u} = (1 - (1 - \nu)z)^m.
+$${#eq-pgf-binomial-dist-simplified-2}
+
+Therefore, the PGF of the binomial distribution is given by
+
+$$
+\mathcal{P}_{u \mid m}(z) = (1 - (1 - \nu)z)^m.
+$${#eq-pgf-binomial-dist-simplified-3}
+
+### Composition of PGFs
+
+With both PGFs in hand, we can now compose them to get the PGF of the negative
+binomial distribution conditioned on the binomial distribution. For this, we
+need to show how such composition is done.
+
+Our binomially distributed random variable $u$ can be thought as the sum of $m$
+i.i.d. Bernoulli random variables,
+
+$$
+u = \sum_{i=1}^m b_i,
+$${#eq-binomial-dist-sum}
+
+where $b_i \sim \text{Bernoulli}(\nu)$. The PGF is thus given by
+
+First, we write the PGF of $u$ as an expectation over its probability mass
+function
+
+$$
+\mathcal{P}_u(z) = \left\langle z^u \right\rangle_{\pi(u)}
+$${#eq-pgf-composition-1a}
+
+Next, we substitute the definition of $u$ as a sum of Bernoulli random
+variables
+
+$$
+\mathcal{P}_u(z) = \left\langle z^{\sum_{i=1}^m b_i} \right\rangle_{\pi(u)}
+$${#eq-pgf-composition-1b}
+
+We can rewrite the exponentiation of a sum as a product of exponentials
+
+$$
+\mathcal{P}_u(z) = \left\langle \prod_{i=1}^m z^{b_i} \right\rangle_{\pi(u)}
+$${#eq-pgf-composition-1c}
+
+Since the Bernoulli random variables are independent, we can move the
+expectation inside the product
+
+$$
+\mathcal{P}_u(z) = \prod_{i=1}^m \left\langle z^{b_i} \right\rangle_{\pi(b_i)}
+$${#eq-pgf-composition-1d}
+
+Since all Bernoulli random variables are identically distributed, we can write
+this as a power
+
+$$
+\mathcal{P}_u(z) = \left[\left\langle z^{b_i} \right\rangle_{\pi(b_i)}\right]^m
+$${#eq-pgf-composition-1e}
+
+Finally, we recognize that the expectation of $z^{b_i}$ is the PGF of a single Bernoulli random variable
+
+$$
+\mathcal{P}_u(z) = \left[\mathcal{P}_{b_i}(z)\right]^m
+$${#eq-pgf-composition-1f}
+
+In other words, the PGF of a binomially distributed random variable is the
+$m$-th power of the PGF of a Bernoulli random variable. For this calculation, we
+assumed that $m$ was a fixed number. However, in our case, $m$ is a random
+variable that follows a negative binomial distribution. Therefore, we need to
+take the expectation of the PGF of the binomial distribution conditioned on $m$.
+
+$$
+\begin{aligned}
+\mathcal{P}_u(z) &=
+\left\langle\left\langle 
+    z^u \mid m
+\right\rangle_{\pi(u \mid m)}\right\rangle_{\pi(m)}, \\
+&= \left\langle\left\langle 
+    z^{\sum_{i=1}^m b_i} \mid m
+\right\rangle_{\pi\left(\sum_{i=1}^m b_i \mid m\right)}\right\rangle_{\pi(m)}
+\end{aligned},
+$${#eq-pgf-composition-2}
+
+where all we did was to explicitly state that $u$ is conditioned on $m$ and $m$
+has its own distribution. Notice that $\left\langle z^{\sum_{i=1}^m b_i} \mid m
+\right\rangle$ is a random variable---since $m$ is a random variable---but it is
+also the PGF of $u$. Therefore, we can write
+
+$$
+\mathcal{P}_u(z) = \left\langle 
+    \left[\mathcal{P}_{b_i}(z)\right]^m
+\right\rangle_{\pi(m)}.
+$${#eq-pgf-composition-3}
+
+But this looks exactly like computing the PGF over $\pi(m)$ of the expression
+$\left[\mathcal{P}_{b_i}(z)\right]^m$. Therefore, we can rewrite
+@eq-pgf-composition-2 as
+
+$$
+\mathcal{P}_u(z) = \mathcal{P}_m\left(\mathcal{P}_{b_i}(z)\right).
+$${#eq-pgf-composition-4}
+
+In words, what we just showed is that the composition of the PGF of a negative
+binomial distribution with a binomial distribution is equivalent to taking the
+PGF of the negative binomial distribution, where the "dummy" variable $z$ is
+replaced by the PGF of a Bernoulli random variable. Let's now perform this
+operation. First, we start with the PGF of the negative binomial distribution
+where $m=1$,
+
+$$
+P_u(z) = P_m((1-(1-z)\nu))
+$${#eq-pgf-composition-5}
+
+Next, we substitute $z$ in our PGF for the negative binomial distribution
+that we derived in @eq-pgf-nb-simplified-series-derivative-result-10
+
+$$
+P_u(z) = \left[\frac{p}{1-(1-(1-z)\nu)(1-p)}\right]^r
+$${#eq-pgf-composition-6}
+
+We now expand the denominator
+
+$$
+P_u(z) = \left[\frac{p}{1-(1-\nu+z\nu)(1-p)}\right]^r
+$${#eq-pgf-composition-7}
+
+We expand the expression further
+
+$$
+P_u(z) = \left[\frac{p}{1-\nu+z\nu+p-\nu p+z\nu p}\right]^r
+$${#eq-pgf-composition-8}
+
+Next, we group terms with and without $z$
+
+$$
+P_u(z) = \left[\frac{p}{(\nu+p-\nu p)-z(\nu-\nu p)}\right]^r
+$${#eq-pgf-composition-9}
+
+Next, we multiply by $\frac{(\nu+p(1-\nu))}{(\nu+p(1-\nu))}$
+
+$$
+P_u(z) = \left[\frac{p}{(\nu+p(1-\nu))-z\nu(1-p)} \frac{(\nu+p(1-\nu))}{(\nu+p(1-\nu))}\right]^r
+$${#eq-pgf-composition-10}
+
+We can simplify the expression as
+
+$$
+P_u(z) = \left[\frac{\frac{p}{(\nu+p(1-\nu))}}{1-\frac{z\nu(1-p)}{(\nu+p(1-\nu))}}\right]^r
+$${#eq-pgf-composition-11}
+
+Finally, we factor out $z$
+
+$$
+P_u(z) = \left[\frac{\frac{p}{(\nu+p(1-\nu))}}{1-z\left[\frac{\nu(1-p)}{(\nu+p(1-\nu))}\right]}\right]^r
+$${#eq-pgf-composition-12}
+
+Notice that this expression looks a lot like the PGF of a negative binomial
+distribution, except that the parameter $p$ is replaced by $\hat{p} =
+\frac{p}{(\nu+p(1-\nu))}$. We just need to show that this is indeed the case. In
+the negative binomial PGF, the $z$ term is being multiplied by $1-p$. In our
+case, the $z$ term is being multiplied by $\frac{\nu(1-p)}{(\nu+p(1-\nu))}$.
+Let's show that $1-\hat{p}$ equals the coefficient of $z$ in our expression.
+First, we write out $1-\hat{p}$
+$$
+1-\hat{p} = 1-\frac{p}{(\nu+p(1-\nu))}.
+$${#eq-pgf-composition-13}
+
+Next, we find a common denominator,
+$$
+1-\hat{p} = \frac{\nu+p(1-\nu)-p}{(\nu+p(1-\nu))}.
+$${#eq-pgf-composition-14}
+
+Finally, we simplify the numerator,
+$$
+1-\hat{p} = \frac{\nu(1-p)}{\nu+p(1-\nu)}.
+$${#eq-pgf-composition-15}
+
+This shows that $1-\hat{p}$ exactly matches the coefficient of $z$ in our PGF
+expression, confirming that our transformed distribution is indeed a negative
+binomial with parameter $\hat{p}$.
+
+Therefore, since there is a one-to-one correspondence between the PGFs and
+probability mass functions, we can conclude that the distribution of $u$ is
+negative binomial with the same $r$ parameter as the negative binomial
+distribution of $m$ and 
+
+$$
+\hat{p} = \frac{p}{(\nu+p(1-\nu))}
+$${#eq-phat}
+
+as an adjusted probability of success. This non-linear transformation of the
+probability of success will be key to defining our variable capture probability
+model later on.
+
+## Joint distribution of negative binomial random variables
+
+We have shown that the distribution of $u$ is negative binomial with parameters
+$r$ and $\hat{p}$. Recall that we assumed that each gene $g$ has a unique $r_g$
+parameer, but share the $p$ (in this case $\hat{p}$) parameter. Earlier, we 
+claimed that this joint distribution of negative binomials could be described as
+the product of a negative binomial and a dirichlet-multinomial distribution. Let's
+show that this is indeed the case.
+
+The first step consists of showing that a single negative binomial can be
+expressed as a product of a Poisson and a gamma distribution.
+
+### Negative binomial as a Poisson-Gamma compound distribution
+
+The negative binomial distribution can be expressed as a Poisson-Gamma
+compound distribution. In other words, we can write
+
+$$
+\pi(u \mid r, \hat{p}) = 
+\int_0^{\infty} d \lambda \, \pi(u, \lambda \mid r, \theta),
+$${#eq-nb-poisson-gamma-1}
+
+where $\pi(u \mid r, \hat{p})$ is the probability mass function of a negative
+binomial distribution, and $\lambda$ is the rate parameter of the Poisson
+distribution. What @eq-nb-poisson-gamma-1 says is that a negative binomial
+distribution is equivalent to marginalizing over all valid values of $\lambda$
+for some probability mass function $\pi(u, \lambda \mid r, \theta)$. The key
+point is that we can write this probability mass function as
+
+$$
+\pi(u, \lambda \mid r, \theta) = 
+\overbrace{
+    \pi(u \mid \lambda) 
+}^{\text{Poisson}}
+\times
+\underbrace{
+    \pi(\lambda \mid r, \theta)
+}_{\text{Gamma}},
+$${#eq-nb-factorized-dist}
+
+where $\pi(u \mid \lambda)$ is the probability mass function of a Poisson
+distribution, i.e.,
+
+$$
+\pi(u \mid \lambda) = \frac{\lambda^u e^{-\lambda}}{u!},
+$${#eq-poisson-dist}
+
+and $\pi(\lambda \mid r, \theta)$ is the probability density
+function of a gamma distribution, i.e.,
+
+$$
+\pi(\lambda \mid r, \theta) =
+\frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)},
+$${#eq-gamma-dist}
+
+where $\Gamma(\cdot)$ is the gamma function, and $\theta$ is the scale parameter
+of the gamma distribution. This parameter relates to the original $\hat{p}$
+parameter of the negative binomial distribution via
+
+$$
+\theta = \frac{\hat{p}}{1-\hat{p}}.
+$${#eq-theta-hatp}
+
+Substituting @eq-poisson-dist and @eq-gamma-dist into @eq-nb-factorized-dist,
+and that into @eq-nb-poisson-gamma-1, we get
+
+$$
+\pi(u \mid r, \hat{p}) = 
+\int_0^{\infty} d \lambda \, \frac{\lambda^u e^{-\lambda}}{u!}
+\frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)}.
+$${#eq-nb-poisson-gamma-2}
+
+Substituting @eq-theta-hatp into @eq-nb-poisson-gamma-2, we get
+
+$$
+\pi(u \mid r, \hat{p}) = 
+\int_0^{\infty} d \lambda 
+\frac{\lambda^u e^{-\lambda}}{u!} 
+\frac{
+    \lambda^{r-1} e^{-\left(\frac{\hat{p}}{1-\hat{p}}\right) \lambda}}
+{\Gamma(r)}
+\left(\frac{\hat{p}}{1-\hat{p}}\right)^r.
+$${#eq-nb-poisson-gamma-3}
+
+Taking out terms that do not depend on $\lambda$, we get
+
+$$
+\pi(u \mid r, p) =
+\frac{1}{u!\Gamma(r)}
+\left(\frac{\hat{p}}{1-\hat{p}}\right)^r 
+\int_0^{\infty} d \lambda \,
+\lambda^{u+r-1} e^{-\left(\frac{1}{1-\hat{p}}\right) \lambda}.
+$${#eq-nb-poisson-gamma-4}
+
+Let's focus on the integral. We define
+
+$$
+x = \left(\frac{1}{1-\hat{p}}\right) \lambda.
+$${#eq-nb-poisson-gamma-5}
+
+Then, we have that
+
+$$
+dx = \left(\frac{1}{1-\hat{p}}\right) d\lambda.
+$${#eq-nb-poisson-gamma-6}
+
+and limits
+
+$$
+\lambda = 0 \implies x = 0,
+$${#eq-x-lim1}
+
+and
+
+$$
+\lambda = \infty \implies x = \infty.
+$${#eq-x-lim2}
+
+We then factorize the terms that do not depend on $x$, obtaining
+
+$$
+\int_0^{\infty} d \lambda \,
+\lambda^{u+r-1} e^{-\left(\frac{1}{1-\hat{p}}\right) \lambda} = 
+\int_0^{\infty} dx \, (1-\hat{p}) [(1-\hat{p}) x]^{u+r-1} e^{-x}.
+$${#eq-nb-poisson-gamma-7}
+
+Substituting the change of variables from @eq-nb-poisson-gamma-5 and
+@eq-nb-poisson-gamma-6
+
+$$
+\int_0^{\infty} dx \, (1-\hat{p}) [(1-\hat{p}) x]^{u+r-1} e^{-x} = 
+(1-\hat{p})^{u+r} \int_0^{\infty} dx \, x^{u+r-1} e^{-x}.
+$${#eq-nb-poisson-gamma-8}
+
+Notice that the integral on the right-hand side is exactly the definition of the
+Gamma function with parameter $u+r$. Therefore, we can write
+
+$$
+(1-\hat{p})^{u+r} \int_0^{\infty} dx \, x^{u+r-1} e^{-x} = 
+(1-\hat{p})^{u+r} \Gamma(u+r).
+$${#eq-nb-poisson-gamma-9}
+
+Now we can substitute the result from @eq-nb-poisson-gamma-9 back into our
+original expression for $\pi(u \mid r, p)$, obtaining
+
+$$
+\pi(u \mid r, p) = \frac{1}{u!\Gamma(r)}
+\left(\frac{\hat{p}}{1-\hat{p}}\right)^r 
+\int_0^{\infty} d \lambda \, 
+\lambda^{u+r-1} e^{-\left(\frac{1}{1-\hat{p}}\right) \lambda}.
+$${#eq-nb-poisson-gamma-10}
+
+Substituting the integral solution from @eq-nb-poisson-gamma-9, we obtain
+
+$$
+\pi(u \mid r, p) = 
+\frac{1}{u!\Gamma(r)}
+\left(\frac{\hat{p}}{1-\hat{p}}\right)^r
+(1-\hat{p})^{u+r} \Gamma(u+r).
+$${#eq-nb-poisson-gamma-11}
+
+Rearranging the terms and simplifying, we get
+
+$$
+\pi(u \mid r, p) = \frac{\Gamma(u+r)}{u!\Gamma(r)}(1-\hat{p})^u \hat{p}^r,
+$${#eq-nb-poisson-gamma-12}
+
+We can express the Gamma functions in terms of factorials using the relationship
+$\Gamma(x) = (x-1)!$. This allows us to rewrite @eq-nb-poisson-gamma-12 as
+
+$$
+\pi(u \mid r, p) = \frac{(u+r-1)!}{(r-1)!u!}(1-\hat{p})^u \hat{p}^r,
+$${#eq-nb-poisson-gamma-13}
+
+Finally, we recognize that the ratio of factorials is equivalent to a binomial
+coefficient, giving us the final form of the negative binomial distribution
+
+$$
+\pi(u \mid r, p) = \binom{u+r-1}{u}(1-\hat{p})^u \hat{p}^r.
+$${#eq-nb-poisson-gamma-14}
+
+This shows that a negative binomial distribution can be expressed as a product
+of a Poisson and a gamma distribution. Furthermore, this result implies that
+the joint distribution of our $G$ independent negative binomials,
+
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\prod_{g=1}^G \pi\left(u_g \mid r_g, \hat{p}\right),
+$${#eq-nb-joint-dist}
+
+can be expressed as
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = \prod_{g=1}^G 
+\int_0^{\infty} d \lambda \, 
+\overbrace{
+\pi\left(u_g \mid \lambda\right) 
+}^{\text{Poisson}}
+\times
+\underbrace{
+\pi\left(\lambda_g \mid r_g, \theta\right)
+}_{\text{Gamma}}.
+$${#eq-nb-joint-dist-2}
+
+Moreover, since the $\lambda_g$ parameters are independent, we can factorize
+the integral as
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = \
+\int_0^{\infty} d \lambda_1 
+\int_0^{\infty} d \lambda_2 \cdots 
+\int_0^{\infty} d \lambda_g 
+\prod_{g=1}^G 
+\pi\left(u_g \mid \lambda\right) 
+\pi\left(\lambda_g \mid r_J, \theta\right),
+$${#eq-nb-joint-dist-3}
+
+Written more compactly, we can write
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = \
+\int d^G \underline{\lambda} 
+\overbrace{
+\prod_{g=1}^G \pi\left(u_g \mid \lambda_g \right) 
+}^{\text{Product of Poissons}}
+\times
+\underbrace{
+\prod_{g=1}^G \pi\left(\lambda_g \mid r_g, \theta\right)
+}_{\text{Product of Gammas}}.
+$${#eq-nb-joint-dist-4}
+
+where $\underline{\lambda} = (\lambda_1, \lambda_2, \ldots, \lambda_G)$ is a
+vector of $G$ independent variables.
+
+Next, we will show that the product of Poissons in @eq-nb-joint-dist-4 is
+equivalent to the product of a single Poisson and a multinomial distribution.
+
+### Product of Poissons as a product of a Poisson and a Multinomial
+
+The joint distribution of independent Poisson random variables can be expressed
+as the product of a single Poisson and a multinomial random variable.
+Intuitively, we can think of this statement as follows: There are two different
+protocols to draw random variables from a joint distribution consisting of
+indepdent Poisson random variables:
+
+1. We draw a random variable from each of the $G$ Poisson distribution, each
+with parameter $\lambda_g$ for $g \in \{0, 1,  \ldots, G\}$.
+
+2. We firs draw a single random variable representing the "total," i.e., the sum
+of the output we would obtain following the first protocol, and then distribute
+this total among the $G$ different classes using a multinomial distribution.
+
+To show why this is the case, let us begin defining the joint distribution over
+these independent Poisson random variables,
+
+$$
+\pi(\underline{u} \mid \underline{\lambda}) =
+\prod_{g=1}^6 
+\pi\left(u_g \mid \lambda_g\right) =
+\prod_{g=1}^G \frac{\lambda_g}{u_{g}!} e^{-\lambda_g}.
+$${#eq-joint-poisson}
+
+Next, we define the sum of the Poisson random variables as $u_T = \sum_g u_g$.
+The claim is that if we write the product of a single Poisson and a multinomial,
+
+$$
+\pi(\underline{u} \mid u_T, \underline{\lambda}) 
+\pi(u_T \mid \underline{\lambda}) =
+\left[
+    \left(u_T! \prod_{g=1}^G \frac{\rho_g^{u_g}}{u_g!} \right)
+\left(
+    \frac{\left(\sum_{j=1}^G \lambda_g\right)^{u_T}}{u_T!} 
+    e^{-\sum_{j=1}^G \lambda_g}
+\right)
+\right]
+$${#eq-poisson-multinomial-1}
+
+we can recover the joint distribution of Poisson random variables in
+@eq-joint-poisson. The parameters $\underline{\rho} = (\rho_1, \rho_2, \ldots,
+\rho_G)$ in the multinomial distribution are constrained to lie on the simplex,
+i.e., 
+
+$$
+\sum_{g=1}^G \rho_g = 1.
+$${#eq-rho-sum}
+
+Each of these parameters can be interpreted as the probability of assigning a
+given draw to class $g$. They are related to the $\lambda_g$ parameters in the
+Poisson distributions via
+
+$$
+\rho_g = \frac{\lambda_g}{\sum_{j=1}^G \lambda_j}.
+$${#eq-rho-def}
+
+Substituting @eq-rho-def into @eq-poisson-multinomial-1, we get
+$$
+\pi(\underline{u} \mid u_T, \underline{\lambda}) 
+\pi(u_T \mid \underline{\lambda}) =
+\prod_{g=1}^G
+\left[
+    \frac{1}{u_{g}!}\left(\frac{\lambda_g}{\sum_{j=1}^G \lambda_j}\right)^{u_g}
+\right]
+\left(\sum_{j=1}^G \lambda_j\right)^{u_T} e^{-\sum_{g=1}^G \lambda_g}.
+$${#eq-poisson-multinomial-2}
+
+Next, we rearrange terms and split the sum in the exponential into a product
+
+$$
+\pi(\underline{u} \mid u_T, \underline{\lambda}) 
+\pi(u_T \mid \underline{\lambda}) =
+\frac{1}{\left(\sum_{g=1}^G \lambda_g\right)^{u_T}} 
+\prod_{g=1}^G 
+\frac{\lambda_g^{u_g}}{u_{g}!}\left(\sum_{g=1}^G \lambda_g\right)^{u_T} 
+\prod_{g=1}^G e^{-\lambda_g}.
+$${#eq-poisson-multinomial-3}
+
+Finally, we cancel the common terms and simplify
+
+$$
+\pi(\underline{u} \mid u_T, \underline{\lambda}) 
+\pi(u_T \mid \underline{\lambda}) =
+\prod_{g=1}^G \frac{\lambda_g^{u_g}}{u_{g}!} e^{-\lambda_g}.
+$${#eq-poisson-multinomial-4}
+
+This shows that the product of Poissons in @eq-poisson-multinomial-1 is
+equivalent to the product of a single Poisson and a multinomial distribution.
+
+Next in our agenda is to show that the product of Gammas in @eq-nb-joint-dist-4
+is equivalent to the product of a single Gamma and a Dirichlet distribution.
+
+### Product of Gammas as a product of a Gamma and a Dirichlet
+
+The joint distribution of independent gamma random variables,
+
+$$
+\pi\left(\underline{\lambda} \mid \underline{r}, \theta\right) =
+\prod_{g=1}^G 
+\frac{
+    \lambda_g^{r_g-1} e^{-\theta \lambda_g} \theta^{r_g}
+}{\Gamma\left(r_g\right)},
+$${#eq-gamma-dirichlet-1}
+
+can be expressed as the product of a single gamma and a Dirichlet distribution.
+In the same way we defined $u_T$ as the sum of the Poisson random variables, we
+can define $\lambda_T = \sum_{g=1}^G \lambda_g$ as the sum of the gamma random
+variables. The first claim is that the joint distribution of Gamma random
+variables with independent $r_g$ parameters but a common $\theta$ rate
+parameter, we have the property that
+
+$$
+\lambda_T \sim \text{Gamma}(r_T, \theta),
+$${#eq-sum-gamma-dist}
+
+i.e., the sum of these random variables is also Gamma distributed with parameter
+$r_T = \sum_{g=1}^G r_g$ and $\theta$. To show this is the case, we will use
+the moment generating function (MGF). Recall that the MGF is defined as
+
+$$
+M_{\lambda}(t) = \left\langle e^{t\lambda} \right\rangle_{\pi(\lambda)}.
+$${#eq-mgf-def}
+
+for $\lambda \sim \text{Gamma}(r, \theta)$, we have
+
+$$
+M_\lambda(t)=\int_0^{\infty} d \lambda \,
+e^{t \lambda} \frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)}
+$${#eq-mgf-gamma-1}
+
+We can factor out the terms that do not depend on $\lambda$ to obtain
+
+$$
+M_\lambda(t)=\frac{\theta^r}{\Gamma(r)} \int_0^{\infty} d \lambda \,
+\lambda^{r-1} e^{-(\theta-t) \lambda}
+$${#eq-mgf-gamma-2}
+
+Analogous to our previous encounter with an integral of this form, we define
+
+$$
+x = (\theta-t) \lambda,
+$${#eq-mgf-gamma-3}
+
+and
+
+$$
+d x = (\theta-t) d \lambda.
+$${#eq-mgf-gamma-4}
+
+For the limits, we have
+
+$$
+\lambda \rightarrow 0 \implies x \rightarrow 0,
+$${#eq-mgf-gamma-5}
+
+and
+
+$$
+\lambda \rightarrow \infty \implies x \rightarrow \infty.
+$${#eq-mgf-gamma-6}
+
+First, we substitute the change of variables from @eq-mgf-gamma-3 and
+@eq-mgf-gamma-4
+
+$$
+\int_0^{\infty} d \lambda \, \lambda^{r-1} e^{-(\theta-t) \lambda} = 
+\int_0^{\infty} \frac{d x}{(\theta-t)}
+\left[\frac{x}{\theta-t}\right]^{r-1} e^{-x}.
+$${#eq-mgf-gamma-7}
+
+Next, we factor out terms that do not depend on $x$
+
+$$
+\int_0^{\infty} \frac{d x}{(\theta-t)}
+\left[\frac{x}{\theta-t}\right]^{r-1} e^{-x} = 
+\frac{1}{(\theta-t)^r} \int_0^{\infty} d x x^{r-1} e^{-x}.
+$${#eq-mgf-gamma-8}
+
+Finally, we recognize that the remaining integral is the definition of the Gamma function
+
+$$
+\frac{1}{(\theta-t)^r} \int_0^{\infty} d x \, x^{r-1} e^{-x} = 
+\frac{\Gamma(r)}{(\theta-t)^r}.
+$${#eq-mgf-gamma-9}
+
+To use this results, first, we substitute our previous result into the moment
+generating function
+
+$$
+M_\lambda(t) = \frac{\theta^r}{\Gamma(r)} \frac{\Gamma(r)}{(\theta-t)^r}.
+$${#eq-mgf-gamma-10}
+
+Next, we simplify by canceling the Gamma functions and rearranging terms
+
+$$
+M_\lambda(t) = \left(\frac{\theta}{\theta-t}\right)^r.
+$${#eq-mgf-gamma-11}
+
+We can then rewrite this in a more convenient form by taking the reciprocal
+
+$$
+M_\lambda(t) = \left(\frac{\theta-t}{\theta}\right)^{-r}.
+$${#eq-mgf-gamma-12}
+
+Finally, we factor out $\theta$ from the denominator to get the standard form
+of the MGF for a Gamma distribution,
+
+$$
+M_\lambda(t) = \left(1-\frac{t}{\theta}\right)^{-r}.
+$${#eq-mgf-gamma-13}
+
+One useful fact about MGFs is that the MGF of a linear combination of random
+variables is the product of the MGFs of the individual variables. For our case,
+this means the following: First, we write the MGF of $\Lambda$ using its
+definition
+
+$$
+M_{\Lambda}(t) = \left\langle e^{t \Lambda}\right\rangle_{\pi(\Lambda)}
+$${#eq-mgf-lambda-1}
+
+Next, we substitute the definition of $\Lambda$ as a sum of $\lambda_g$ terms
+
+$$
+M_{\Lambda}(t) = \left\langle\exp \left(t \sum_{g=1}^G \lambda_g\right)\right\rangle_{\pi(\underline{\lambda})}
+$${#eq-mgf-lambda-2}
+
+Using the property of exponentials, we can rewrite this as a product
+
+$$
+M_{\Lambda}(t) = \left\langle e^{t \lambda_1} e^{t \lambda_2} \cdots e^{t \lambda_G}\right\rangle_{\pi(\underline{\lambda})}
+$${#eq-mgf-lambda-3}
+
+By independence of the $\lambda_g$ terms, we can factor the expectation
+
+$$
+M_{\Lambda}(t) = \left\langle e^{t \lambda_1}\right\rangle_{\pi\left(\lambda_1\right)}\left\langle e^{t \lambda_2}\right\rangle_{\pi\left(\lambda_2\right)} \cdots\left\langle e^{t \lambda_G}\right\rangle_{\pi\left(\lambda_G\right)}
+$${#eq-mgf-lambda-4}
+
+Finally, we recognize that each expectation is the MGF of an individual $\lambda_g$
+
+$$
+M_{\Lambda}(t) = \prod_{g=1}^G M_{\lambda_g}(t)
+$${#eq-mgf-lambda-5}
+
+Using our derived MGF for the Gamma distribution in @eq-mgf-gamma-13, we can
+express the MGF of $\Lambda$ as a product of individual MGFs
+
+$$
+M_{\Lambda}(t) = \prod_{g=1}^G M_{\lambda_g}(t).
+$${#eq-mgf-delta-1}
+
+Substituting the MGF form for each $\lambda_g$
+
+$$
+M_{\Lambda}(t) = \prod_{g=1}^G\left(1-\frac{t}{\theta}\right)^{-r_g}.
+$${#eq-mgf-delta-2}
+
+Finally, we can combine the exponents to get
+
+$$
+M_{\Lambda}(t) = \left(1-\frac{t}{\theta}\right)^{-\sum_{g=1}^G r_g}.
+$${#eq-mgf-delta-3}
+
+But we recognize that this is the MGF of a Gamma distribution with parameters
+$r_T = \sum_{g=1}^G r_g$ and $\theta$. Therefore, we have shown the desired
+property of @eq-sum-gamma-dist.
+
+Let us now consider the definition of the $\rho_g$ variables in @eq-rho-def. The
+claim we must now prove is that the joint distribution of these
+$\underline{\rho}$ parameters is given by
+
+$$
+\underline{\rho} \mid \underline{r}, \theta \sim 
+\text{Dirichlet}(\underline{r}).
+$${#eq-rho-dist}
+
+In other words, regardless of the value of $\theta$, the joint distribution of
+the $\underline{\rho}$ parameters is a Dirichlet distribution with parameters
+$\underline{r}$. To show show this, we transform the dist. of all
+$\underline{\lambda}$ to the joint distribution over $\Lambda, \rho_1, \rho_2,
+\ldots, \rho_{G-1}$. Note that $\rho_G = 1-\rho_1-\rho_2-\cdots-\rho_{G-1}$
+since the $\rho_g$ parameters must sum to 1. For this, we express the
+$\lambda_g$ parameters in terms of the $\rho_g$ parameters
+
+$$
+\lambda_g = \Lambda \rho_g \; \text{for} \; g \in \{1, 2, \ldots, G-1\},
+$${#eq-lambda-rho-1}
+
+and
+
+$$
+\lambda_G = \Lambda (1-\rho_1-\rho_2-\cdots-\rho_{G-1}).
+$${#eq-lambda-rho-2}
+
+When transforming between probability distributions over different sets of
+variables, we need to account for how the volume element changes. In this case,
+we're transforming from the distribution over the individual
+$\underline{\lambda}$ parameters to a distribution over the total $\Lambda$ and
+the proportions $\underline{\rho}$. This transformation requires multiplying the
+original distribution by the determinant of the Jacobian matrix, which captures
+how the volume element changes under the transformation via
+
+$$
+\pi\left(\Lambda, \rho_1, \ldots, \rho_{G-1} \mid \underline{r}, \theta\right) =
+\pi(\underline{\lambda} \mid \underline{r}, \theta)
+\left|\underline{\underline{J}}\right|,
+$${#eq-jacobian-1}
+
+where $\underline{\underline{J}}$ is the Jacobian matrix with entries
+
+$$
+J_{ij} = \frac{\partial \lambda_i}{\partial V_j},
+$${#eq-jacobian-2}
+
+where for convenience, we define
+
+$$
+\underline{V} = (\Lambda, \rho_1, \rho_2, \ldots, \rho_{G-1}).
+$${#eq-v-def}
+
+The Jacobian matrix $\underline{\underline{J}}$ for this transformation from
+$\underline{\lambda} = (\lambda_1, \ldots, \lambda_G)$ to $\underline{V}$ has
+entries $J_{ab} = \frac{\partial \lambda_a}{\partial V_b}$. Here, $a \in \{1,
+\ldots, G\}$ indexes the original variables $\lambda_a$, and $V_b$ refers to the
+$b$-th variable in the vector $\underline{V}$ (i.e., $V_1 = \Lambda, V_2 =
+\rho_1, \ldots, V_G = \rho_{G-1}$).
+
+Let's compute the required partial derivatives. For $k \in \{1, \ldots, G-1\}$,
+we have $\lambda_k = \Lambda \rho_k$. The partial derivatives with respect to
+the new variables are:
+
+$$
+\frac{\partial \lambda_k}{\partial \Lambda} = \rho_k,
+$${#eq-jac-deriv-lk-Lambda}
+
+and for $j \in \{1, \ldots, G-1\}$,
+
+$$
+\frac{\partial \lambda_k}{\partial \rho_j} = 
+\begin{cases} 
+\Lambda & \text{if } j=k \\
+0 & \text{if } j \neq k.
+\end{cases}
+$${#eq-jac-deriv-lk-rhoj}
+
+For the last original variable, $\lambda_G = \Lambda \left(1-\sum_{j=1}^{G-1}
+\rho_j\right)$, the partial derivatives are
+
+$$
+\frac{\partial \lambda_G}{\partial \Lambda} = 1-\sum_{j=1}^{G-1} \rho_j,
+$${#eq-jac-deriv-lG-Lambda}
+
+and for $j \in \{1, \ldots, G-1\}$,
+
+$$
+\frac{\partial \lambda_G}{\partial \rho_j} = -\Lambda.
+$${#eq-jac-deriv-lG-rhoj}
+
+Assembling these derivatives into the $G \times G$ Jacobian matrix
+$\underline{\underline{J}}$, where rows correspond to $\lambda_1, \ldots,
+\lambda_G$ and columns correspond to $\Lambda, \rho_1, \ldots, \rho_{G-1}$ in
+that order, we obtain
+
+$$
+\underline{\underline{J}}=\left[\begin{array}{c|cccc}
+\frac{\partial \lambda_1}{\partial \Lambda} & \frac{\partial \lambda_1}{\partial \rho_1} & \frac{\partial \lambda_1}{\partial \rho_2} & \cdots & \frac{\partial \lambda_1}{\partial \rho_{G-1}} \\
+\frac{\partial \lambda_2}{\partial \Lambda} & \frac{\partial \lambda_2}{\partial \rho_1} & \frac{\partial \lambda_2}{\partial \rho_2} & \cdots & \frac{\partial \lambda_2}{\partial \rho_{G-1}} \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+\frac{\partial \lambda_{G-1}}{\partial \Lambda} & \frac{\partial \lambda_{G-1}}{\partial \rho_1} & \frac{\partial \lambda_{G-1}}{\partial \rho_2} & \cdots & \frac{\partial \lambda_{G-1}}{\partial \rho_{G-1}} \\ \hline
+\frac{\partial \lambda_G}{\partial \Lambda} & \frac{\partial \lambda_G}{\partial \rho_1} & \frac{\partial \lambda_G}{\partial \rho_2} & \cdots & \frac{\partial \lambda_G}{\partial \rho_{G-1}}
+\end{array}\right].
+$${#eq-jacobian-matrix-structure}
+
+Substituting the derivatives from @eq-jac-deriv-lk-Lambda,
+@eq-jac-deriv-lk-rhoj, @eq-jac-deriv-lG-Lambda, and @eq-jac-deriv-lG-rhoj yields
+the specific form of the Jacobian matrix:
+
+$$
+\underline{\underline{J}}=\left[\begin{array}{ccccc}
+\rho_1 & \Lambda & 0 & \cdots & 0 \\
+\rho_2 & 0 & \Lambda & \cdots & 0 \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+\rho_{G-1} & 0 & 0 & \cdots & \Lambda \\
+\left(1-\sum_{k=1}^{G-1} \rho_k\right) & -\Lambda & -\Lambda & \cdots & -\Lambda
+\end{array}\right].
+$${#eq-jacobian-matrix-filled}
+
+To calculate the determinant of $\underline{\underline{J}}$, we utilize the
+property that adding a multiple of one row to another row does not alter the
+determinant's value. We apply the row operation $R_G \leftarrow R_G +
+\sum_{k=1}^{G-1} R_k$. This means we add each of the first $G-1$ rows ($R_1,
+\ldots, R_{G-1}$) to the last row ($R_G$).
+
+Let's examine the effect of this operation on the elements of the $G$-th row.
+The first element of the new $G$-th row (in the column corresponding to
+derivatives with respect to $\Lambda$) becomes
+
+$$
+\left(1-\sum_{k=1}^{G-1} \rho_k\right) + \sum_{k=1}^{G-1} (\text{element }(k,1) \text{ from } R_k) = \left(1-\sum_{k=1}^{G-1} \rho_k\right) + \sum_{k=1}^{G-1} \rho_k = 1.
+$${#eq-jac-rowop-elem1}
+
+Now, let's consider the $(j+1)$-th element of the new $G$-th row, which
+corresponds to the column of derivatives with respect to $\rho_j$ (for $j \in
+\{1, \ldots, G-1\}$). The original element in $\underline{\underline{J}}$ at
+position $(G, j+1)$ is $-\Lambda$. When we sum the corresponding elements from
+rows $R_1, \ldots, R_{G-1}$ and add them to this position: The element at
+position $(j, j+1)$ in row $R_j$ is $\Lambda$ (since $\frac{\partial
+\lambda_j}{\partial \rho_j} = \Lambda$ from @eq-jac-deriv-lk-rhoj). For any
+other row $R_k$ (where $k \in \{1, \ldots, G-1\}$ and $k \neq j$), the element
+at position $(k, j+1)$ is $0$ (since $\frac{\partial \lambda_k}{\partial \rho_j}
+= 0$ for $k \neq j$ from @eq-jac-deriv-lk-rhoj). Therefore, the new element at
+position $(G, j+1)$ in the modified $G$-th row becomes
+
+$$
+(-\Lambda)_{\text{original } R_G} + (\Lambda)_{\text{from } R_j} + \sum_{k \neq j, k < G} (0)_{\text{from } R_k} = -\Lambda + \Lambda = 0.
+$${#eq-jac-rowop-elem-other}
+
+After this row operation, the $G$-th row becomes $(1, 0, 0, \ldots, 0)$. The
+Jacobian matrix, let's call it $\underline{\underline{J}}'$, now takes the form
+
+$$
+\underline{\underline{J}}'=\left[\begin{array}{ccccc}
+\rho_1 & \Lambda & 0 & \cdots & 0 \\
+\rho_2 & 0 & \Lambda & \cdots & 0 \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+\rho_{G-1} & 0 & 0 & \cdots & \Lambda \\
+1 & 0 & 0 & \cdots & 0
+\end{array}\right].
+$${#eq-jacobian-matrix-simplified}
+
+The determinant of the original Jacobian $\underline{\underline{J}}$ is equal to
+$\det(\underline{\underline{J}}')$. We can compute
+$\det(\underline{\underline{J}}')$ by cofactor expansion along its last row.
+Since the last row is $(1, 0, \ldots, 0)$, the expansion simplifies
+significantly
+
+$$
+\det(\underline{\underline{J}}) = 1 \cdot C_{G1} + \sum_{j=2}^{G} (0 \cdot C_{Gj}) = C_{G1},
+$${#eq-jac-cofactor-expansion}
+
+where $C_{G1}$ is the cofactor of the element in the $G$-th row and $1$-st
+column of $\underline{\underline{J}}'$. The cofactor is defined as $C_{G1} =
+(-1)^{G+1} M_{G1}$, where $M_{G1}$ is the determinant of the $(G-1) \times
+(G-1)$ submatrix obtained by removing the $G$-th row and $1$-st column of
+$\underline{\underline{J}}'$. This submatrix, $\underline{\underline{M}}_{G1}$,
+is
+
+$$
+\underline{\underline{M}}_{G1} = \left[\begin{array}{cccc}
+\Lambda & 0 & \cdots & 0 \\
+0 & \Lambda & \cdots & 0 \\
+\vdots & \vdots & \ddots & \vdots \\
+0 & 0 & \cdots & \Lambda
+\end{array}\right].
+$${#eq-jac-minor-matrix}
+
+This is an upper triangular matrix (in fact, it is a diagonal matrix). Its
+determinant $M_{G1}$ is the product of its diagonal elements
+
+$$
+M_{G1} = \det(\underline{\underline{M}}_{G1}) = \Lambda^{G-1}.
+$${#eq-jac-minor-det}
+Substituting this result back into the expression for $\det(\underline{\underline{J}})$ from @eq-jac-cofactor-expansion gives
+
+$$
+\det(\underline{\underline{J}}) = (-1)^{G+1} \Lambda^{G-1}.
+$${#eq-jac-determinant-value}
+
+The change of variables formula in probability requires the absolute value of
+the Jacobian determinant.
+
+$$
+|\det(\underline{\underline{J}})| = |(-1)^{G+1} \Lambda^{G-1}| = |\Lambda^{G-1}|.
+$${#eq-jac-abs-det-almost}
+
+Since $\Lambda = \sum_{g=1}^G \lambda_g$ is a sum of rate parameters $\lambda_g$
+(which are parameters of Gamma distributions and thus positive), $\Lambda$
+itself must be positive. Consequently, $\Lambda^{G-1}$ will also be positive
+(assuming $G \ge 1$, which is true in this context as $G$ is the number of
+genes). Thus, the magnitude of the Jacobian determinant is
+
+$$
+|\underline{\underline{J}}|=\Lambda^{G-1}.
+$${#eq-jacobian-3}
+
+Substituting this into @eq-jacobian-1, we get
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\prod_{g=1}^G 
+\frac{
+    \lambda_g^{r-1} e^{-\theta \lambda_g} \theta^r
+}{\Gamma\left(r_g\right)} 
+\cdot\left(\Lambda^{G-1}\right).
+$${#eq-jacobian-4}
+
+Next, we split the first $G-1$ terms in the product, taking out the $G$-th term
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\Lambda^{G-1}
+\left[
+    \prod_{g=1}^{G-1} 
+    \frac{
+        \lambda_g^{r-1} e^{-\theta \lambda_g} \theta^r
+    }{
+        \Gamma\left(r_g\right)
+    }
+\right]
+\left[
+    \frac{
+        \lambda_G^{r_0-1} e^{-\theta \lambda_G} \theta^{r_G}
+    }{
+        \Gamma\left(r_G\right)
+    }
+\right].
+$${#eq-jacobian-5}
+
+Next, we substitute the expression for $\Lambda$ and $\underline{\rho}$ into
+@eq-jacobian-5, obtaining
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\Lambda^{G-1}
+\left[
+    \prod_{g=1}^{G-1} 
+    \frac{
+        \left(\Lambda \rho_g\right)^{r_g-1} 
+        e^{-\theta\left(\Lambda \rho_g\right)} \theta^{r_g}
+    }{
+        \Gamma\left(r_g\right)
+    }
+\right]
+\left[
+    \frac{
+        \left[
+            \Lambda\left(1-\rho_1, \ldots-\rho_{0-1}\right)
+        \right]^{r_{G-1}} 
+        e^{-\theta \Lambda\left(1-\rho_1 \ldots \rho_{G-1}\right)} \theta^{r_G}
+    }{
+        \Gamma\left(r_G\right)
+    }
+\right].
+$${#eq-jacobian-6}
+
+Grouping the terms in the numerator and denominator, and simplifying, we get
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\frac{
+    \left(\theta^{\sum_{g=1}^G r_g}\right)
+    \left(\Lambda^{(G-1)+\sum_{g=1}^G r_g-G}\right)
+    e^{-\theta \Lambda}
+}{
+    \prod_{g=1}^G \Gamma\left(r_g\right)
+}
+\prod_{g=1}^G \rho_g^{r_{g-1}}.
+$${#eq-jacobian-7}
+
+simplifying further, we find
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\left[
+    \frac{
+        \left(\theta^{\sum_{g=1}^G r_g}\right)
+        \left(\Lambda^{\sum_{g=1}^G r_g-1}\right)
+        e^{-\theta \Lambda}
+    }{
+        \prod_{g=1}^G \Gamma\left(r_g\right)
+    } 
+\right]
+\left[ 
+    \prod_{g=1}^G \rho_g^{r_{g-1}} 
+\right].
+$${#eq-jacobian-8}
+
+Let's focus on the first term in @eq-jacobian-8. If we substitute $r_T =
+\sum_{g=1}^G r_g$, we find
+
+$$
+\frac{
+    \left(\theta^{\sum_{g=1}^G r_g}\right)
+    \left(\Lambda^{\sum_{g=1}^G r_g-1}\right)
+    e^{-\theta \Lambda}
+}{
+    \prod_{g=1}^G \Gamma\left(r_g\right)
+} = 
+\frac{
+    \left(\theta^{r_T}\right)
+    \left(\Lambda^{r_T-1}\right)
+    e^{-\theta \Lambda}
+}{
+    \prod_{g=1}^G \Gamma\left(r_g\right)
+}.
+$${#eq-jacobian-9}
+
+@eq-jacobian-9 looks almost like the expression for the Gamma distribution for
+$\Lambda$ with parameters $r_T$ and $\theta$, with the exception that in the
+denominator, we would like to have $\Gamma(r_T)$ instead of $\prod_{g=1}^G
+\Gamma(r_g)$.
+
+The second term in @eq-jacobian-8 looks almost like the expression for the
+Dirichlet distribution, but without the normalization constant
+
+$$
+\frac{1}{B(\underline{r})} \equiv \frac{\Gamma\left(r_T\right)}{\prod_{g=1}^G \Gamma\left(r_g\right)} .
+$${#eq-dirichlet-normalization}
+
+Notice that the denominator for this normalization constant is the same as the
+denominator in @eq-jacobian-9. Thus, multiplying @eq-jacobian-8 by $\Gamma(r_T)
+/ \Gamma(r_T)$ suffices to turn both terms into the desired distributions. This
+then shows our original claim that the joint distribution of $\underline{V}$ is
+the product of a Gamma distribution and a Dirichlet distribution
+
+$$
+\pi\left(\underline{V} \mid \underline{r}, \theta\right) =
+\operatorname{Gamma}(\Lambda \mid r, \theta) \times 
+\operatorname{Dirichlet}(\underline{\rho} \mid \underline{r}).
+$${#eq-dirichlet-multinomial-model}
+
+The final step in our proof is to show that the joint distribution of
+independent negative binomials with shared $p$ parameter is equivalent to the
+product of a negative binomial distribution and a dirichlet-multinomial
+distribution (not to be confused with the product of a Dirichlet distribution
+and a multinomial distribution).
+
+### Joint distribution of negative binomials as product of negative binomial and dirichlet-multinomial
+
+To prove this final point, we will make use of all the results derived in the
+previous section. Recall that we are after the joint distribution of independent
+negative binomial random variables with a shared $\hat{p}$ parameter,
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\prod_{g=1}^{G} \pi(u_g \mid r_g, \hat{p}).
+$${#eq-joint-target}
+
+We know we can express the negative binomial as a compound distribution between
+a Poisson and a Gamma distribution. Thus, we can rewrite @eq-joint-target as
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\int d^G \underline{\lambda} 
+\overbrace{
+\prod_{g=1}^G \pi\left(u_g \mid \lambda_g\right) 
+}^{\text{product of Poissons}}
+\underbrace{
+\prod_{g=1}^G \pi\left(\lambda_g \mid r_g, \theta\right)
+}_{\text{product of Gammas}},
+$${#eq-joint-target-int}
+
+where, since each of the $\lambda_g$ parameters are strictly positive, we have
+
+$$
+\int d^G \underline{\lambda} = \int_0^\infty d \lambda_1 \cdots \int_0^\infty d \lambda_G 
+$${#eq-int-lambda-def}
+
+Furthermore, we know that the product of Poissons can be written as the product
+of a Poisson distribution with rate parameter $\lambda_T =\sum_{g=1}^G
+\lambda_g$ and a multinomial distribution with parameters $r_T$ and
+$\underline{\rho}$
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\int d^G \underline{\lambda} \,
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{\lambda}) 
+}_{\text{multinomial}}
+\overbrace{
+\pi(u_T \mid \lambda_T) 
+}^{\text{Poisson}}
+\underbrace{
+\prod_{g=1}^G \pi\left(\lambda_g \mid r_g, \theta\right)
+}_{\text{product of Gammas}}.
+$${#eq-joint-target-int-poisson-multinomial}
+
+Furthermore, we know that the product of Gammas can be written as the product of
+a Gamma distribution and a Dirchlet distribution. This change brings with it a
+change of variables from $\underline{\lambda}$ to $\underline{V}$, as defined in
+@eq-v-def. These sets of variables are related by the transformations defined in
+@eq-lambda-rho-1 and @eq-lambda-rho-2.
+
+Therefore, rather than integrating each $\lambda_g$ from 0 to $\infty$, the
+integrals upon changing the variables to $\underline{V}$ are integrating
+$\Lambda$ from 0 to $\infty$, and $\underline{\rho}$ over the $G-1$ dimensional
+unit simplex---meaning that the integration is over the set of all vectors
+$\underline{\rho}$ such that $\rho_g \ge 0$ for all $g$ and $\sum_{g=1}^G \rho_g
+= 1$.
+
+We thus have
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\int_0^{\infty} d \Lambda \int d^{G-1} \underline{\rho} \,
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{\rho})
+}_{\text{multinomial}}
+\overbrace{
+\pi(u_T \mid \Lambda)
+}^{\text{Poisson}}
+\underbrace{
+\pi(\Lambda \mid r_T, \theta)
+}_{\text{Gamma}}
+\overbrace{
+\pi(\underline{\rho} \mid \underline{r})
+}^{\text{Dirichlet}}.
+$${#eq-joint-target-int-poisson-multinomial-dirichlet-multinomial}
+
+Rearranging the terms, we have
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\int_0^{\infty} d \Lambda \,
+\overbrace{
+\pi(u_T \mid \Lambda)
+}^{\text{Poisson}}
+\underbrace{
+\pi(\Lambda \mid r_T, \theta)
+}_{\text{Gamma}}
+\int d^{G-1} \underline{\rho} \,
+\overbrace{
+\pi(\underline{\rho} \mid \underline{r})
+}^{\text{Dirichlet}}
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{\rho})
+}_{\text{multinomial}}.
+$${#eq-joint-target-int-poisson-multinomial-dirichlet-multinomial-rearranged}
+
+The first integral, we recognize as the compound distribution between a Poisson
+and a Gamma distribution, which we have shown to be equivalent to a negative
+binomial distribution, i.e.,
+
+$$
+\int_0^{\infty} d \Lambda 
+\pi(u_T \mid \Lambda) \pi\left(\Lambda \mid r_T, \theta\right) =
+\operatorname{NB}\left(u_T \mid r_T, \hat{p}\right).
+$${#eq-joint-target-int-poisson-gamma-negative-binomial}
+
+The second integral, we recognize as the compound distribution between a
+Dirichlet and a multinomial distribution, which has a closed form solution.
+Let's derive this result in detail. We want to evaluate the integral
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\int d^{G-1} \underline{\rho} \, 
+\pi(\underline{\rho} \mid \underline{r}) 
+\pi(\underline{u} \mid u_T, \underline{\rho}).
+$${#eq-dm-integral-target}
+
+The probability mass function for the Multinomial distribution, which describes
+the probability of observing counts $\underline{u}$ given $u_T$ trials and
+success probabilities $\underline{\rho}$, is
+
+$$
+\pi(\underline{u} \mid u_T, \underline{\rho}) = 
+\frac{u_T!}{\prod_{g=1}^G u_g!} \prod_{g=1}^G \rho_g^{u_g}.
+$${#eq-multinomial-pmf}
+
+The probability density function for the Dirichlet distribution, which describes
+the distribution of the probabilities $\underline{\rho}$ given concentration
+parameters $\underline{r}$, is
+
+$$
+\pi(\underline{\rho} \mid \underline{r}) = 
+\frac{
+    \Gamma\left(\sum_{k=1}^G r_k\right)
+}{
+    \prod_{k=1}^G \Gamma(r_k)
+} 
+\prod_{g=1}^G \rho_g^{r_g-1}.
+$${#eq-dirichlet-pdf}
+
+Let $r_T = \sum_{k=1}^G r_k$. Then the Dirichlet PDF can be written as
+
+$$
+\pi(\underline{\rho} \mid \underline{r}) = 
+\frac{\Gamma(r_T)}{\prod_{k=1}^G \Gamma(r_k)} \prod_{g=1}^G \rho_g^{r_g-1}.
+$${#eq-dirichlet-pdf-rt}
+
+We substitute @eq-multinomial-pmf and @eq-dirichlet-pdf-rt into
+@eq-dm-integral-target
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\int d^{G-1} \underline{\rho} \, 
+\left( 
+    \frac{\Gamma(r_T)}{\prod_{k=1}^G \Gamma(r_k)} \prod_{g=1}^G \rho_g^{r_g-1} 
+\right) 
+\left( 
+    \frac{u_T!}{\prod_{k=1}^G u_k!} \prod_{g=1}^G \rho_g^{u_g} 
+\right).
+$${#eq-dm-integral-substituted}
+
+The terms that do not depend on $\underline{\rho}$ can be taken out of the
+integral. This yields
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) u_T!
+}{
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+} 
+\int d^{G-1} \underline{\rho} \, 
+\left( 
+    \prod_{g=1}^G \rho_g^{r_g-1} \right) \left( \prod_{g=1}^G \rho_g^{u_g} 
+\right).
+$${#eq-dm-integral-rearranged-1}
+
+We can combine the products of $\rho_g$ terms inside the integral
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) u_T!
+}{
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+} 
+\int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{u_g + r_g - 1}.
+$${#eq-dm-integral-rearranged-2}
+
+The integral term is related to the normalization constant of a Dirichlet
+distribution. Specifically, for a Dirichlet distribution with parameters
+$\underline{\alpha} = (\alpha_1, \ldots, \alpha_G)$, its PDF is
+
+$$
+\text{Dir}(\underline{\rho} \mid \underline{\alpha}) = 
+\frac{
+    \Gamma\left(\sum_{k=1}^G \alpha_k\right)
+}{
+    \prod_{k=1}^G \Gamma(\alpha_k)
+} 
+\prod_{g=1}^G \rho_g^{\alpha_g-1}.
+$${#eq-dirichlet-general-pdf}
+
+Since the Dirichlet distribution must integrate to 1 over the simplex $S = \{
+\underline{\rho} : \rho_g \ge 0, \sum \rho_g = 1 \}$, we have
+
+$$
+\int_S d^{G-1} \underline{\rho} \, 
+\frac{
+    \Gamma\left(\sum_{k=1}^G \alpha_k\right)
+}{
+    \prod_{k=1}^G \Gamma(\alpha_k)
+} 
+\prod_{g=1}^G \rho_g^{\alpha_g-1} = 1.
+$${#eq-dirichlet-integral-one}
+
+From this, we can deduce the value of the integral part of
+@eq-dm-integral-rearranged-2
+
+$$
+\int_S d^{G-1} \underline{\rho} \, 
+\prod_{g=1}^G \rho_g^{\alpha_g-1} = 
+\frac{\prod_{k=1}^G \Gamma(\alpha_k)}{\Gamma\left(\sum_{k=1}^G \alpha_k\right)}.
+$${#eq-dirichlet-integral-value}
+
+In our specific case, the parameters for the integral in
+@eq-dm-integral-rearranged-2 are $\alpha_g = u_g + r_g$. Therefore, the sum of
+these parameters is $\sum_{g=1}^G (u_g + r_g) = \sum_{g=1}^G u_g + \sum_{g=1}^G
+r_g = u_T + r_T$. Applying @eq-dirichlet-integral-value, the integral in
+@eq-dm-integral-rearranged-2 evaluates to
+
+$$
+\int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{u_g + r_g - 1} = 
+\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+$${#eq-dm-specific-integral-result}
+
+Now, we substitute this result back into @eq-dm-integral-rearranged-2
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) u_T!
+}{
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+} \cdot 
+\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+$${#eq-dm-intermediate-result}
+
+To match the standard form, we can use the identity $n! = \Gamma(n+1)$. So,
+$u_T! = \Gamma(u_T+1)$ and $u_k! = \Gamma(u_k+1)$. Substituting these into
+@eq-dm-intermediate-result, we get
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) = 
+\frac{
+    \Gamma(r_T) \Gamma(u_T+1)
+}{
+    \left(
+        \prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G \Gamma(u_k+1)
+    \right)
+} \cdot 
+\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+$${#eq-dm-intermediate-result-gamma}
+
+Rearranging the terms to group them by gene $g$ and the totals, we arrive at the
+final expression for the Dirichlet-Multinomial distribution
+
+$$
+\pi(\underline{u} \mid u_T, \underline{r}) =
+\frac{
+    \Gamma\left(r_T\right) \Gamma(u_T+1)
+}{
+    \Gamma\left(u_T+r_T\right)
+} 
+\prod_{g=1}^G \frac{
+    \Gamma\left(u_g+r_g\right)
+}{
+    \Gamma\left(r_g\right) \Gamma\left(u_g+1\right)
+}.
+$${#eq-joint-target-int-dirichlet-multinomial}
+
+Thus, we can write
+@eq-joint-target-int-poisson-multinomial-dirichlet-multinomial-rearranged as 
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\overbrace{
+\pi\left(u_T \mid r_T, \hat{p}\right)
+}^{\text{Negative Binomial}}
+\times 
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{r})
+}_{\text{Dirichlet-Multinomial}},
+$${#eq-joint-target-final}
+
+which is our final result.
+
+## What does this mean?
+
+As we just showed, The joint distribution of independent negative binomials with
+shared $\hat{p}$ parameter is equivalent to the product of a negative binomial
+distribution and a Dirichlet-Multinomial distribution. This has two important
+consequences for our model for single-cell RNA-seq data:
+
+First, the negative binomial is a common distribution in single-cell RNA-seq
+data due to the overdispersion of the counts. This distribution can be
+furthermore justified from biophysical principles, making it a natural choice
+for a parametric model of the counts. Moreover, this functional form already
+accounts for the conversion from mRNA molecules to our observed UMI counts. Our
+derivation shows that with the relatively benign assumption that the
+$\hat{p}$ parameter is shared across all genes, the resulting joint distribution
+has a much simpler functional form.
+
+Second, in the construction of the negative binomial/Dirichlet multinomial
+model, we summoned the use of $\underline{\rho}$ parameters that lie on the unit
+simplex. These parameters can be thought of as the fraction of the transcriptome
+occupied by each of the $G$ genes. Usually, when we want to "normalize" a 
+dataset, what we want is the equivalent of estimating these parameters. However,
+in our model, we marginalized over their values to find the joint distribution.
