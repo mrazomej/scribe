@@ -30,6 +30,10 @@ jax.clear_caches()  # In newer JAX versions
 
 # %% ---------------------------------------------------------------------------
 
+print("Setting up MCMC parameters...")
+
+# Setup the PRNG key
+rng_key = random.PRNGKey(42)
 # Define number of MCMC burn-in samples
 n_mcmc_burnin = 5_000
 # Define number of MCMC samples
@@ -37,26 +41,24 @@ n_mcmc_samples = 10_000
 
 # %% ---------------------------------------------------------------------------
 
-# Define model type
-model_type = "nbdm_log_mix"
+print("Setting up directory structure...")
 
-# Define number of steps for scribe
-n_steps = 30_000
+# Define model type
+model_type = "nbdm_mix"
 
 # Define number of components in mixture model
 n_components = 2
 
-# Define r_distribution
-r_distribution = "lognormal"
-
 # Define data directory
-DATA_DIR = f"{scribe.utils.git_root()}/data/" \
-    f"10xGenomics/50-50_Jurkat-293T_mixture"
+DATA_DIR = f"data/10xGenomics/50-50_Jurkat-293T_mixture"
 
 # Define output directory
-OUTPUT_DIR = f"{scribe.utils.git_root()}/output/" \
+OUTPUT_DIR = f"output/" \
     f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
 
+# If the output directory does not exist, create it
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
 
 # %% ---------------------------------------------------------------------------
 
@@ -67,39 +69,13 @@ data = sc.read_h5ad(f"{DATA_DIR}/data.h5ad")
 
 # %% ---------------------------------------------------------------------------
 
-print("Loading scribe results...")
-
-svi_results = pickle.load(open(f"{OUTPUT_DIR}/"
-                               f"scribe_{model_type}_r-{r_distribution}_results_"
-                               f"{n_components:02d}components_"
-                               f"{n_steps}steps.pkl", "rb"))
-
 # Define number of genes to use
-n_genes = svi_results.n_genes
+n_genes = data.n_vars
 # Define number of cells to use
-n_cells = svi_results.n_cells
+n_cells = data.n_obs
 
 # Extract counts
-counts = jnp.array(data.X.toarray())
-
-# %% ---------------------------------------------------------------------------
-
-# Extract model function
-model, _ = svi_results._model_and_guide()
-# Extract model configuration
-model_config = svi_results.model_config
-# Set prior parameters
-model_config.p_param_prior = (1, 1)
-model_config.r_param_prior = (1, 1)
-model_config.mixing_param_prior = (47, 47)
-
-# Extract posterior map from SVI results
-param_map = svi_results.get_map(use_mean=True)
-# Keep only first entry of mixing_weights - A two-component model only needs one
-# probability value
-param_map["mixing_weights"] = jnp.expand_dims(
-    param_map["mixing_weights"][0], axis=0
-)
+counts = jnp.array(data.X.toarray(), dtype=jnp.float64)
 
 # %% ---------------------------------------------------------------------------
 
@@ -109,31 +85,38 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-    f"mcmc_{model_type}_r-{r_distribution}_results_" \
-    f"{n_components:02d}components_" \
+    f"mcmc_{model_type}_results_" \
+    f"{n_cells}cells_" \
+    f"{n_genes}genes_" \
     f"{n_mcmc_burnin}burnin_" \
     f"{n_mcmc_samples}samples.pkl"
 
+print("Defining kernel kwargs...")
+
+# Define kernel kwargs
+kernel_kwargs = {
+    "target_accept_prob": 0.85,
+    "max_tree_depth": (10, 10),
+    "step_size": jnp.array(1.0, dtype=jnp.float64),
+    "find_heuristic_step_size": False,
+    "dense_mass": False,
+    "adapt_step_size": True,
+    "adapt_mass_matrix": True,
+    "regularize_mass_matrix": False
+}
+
+print("Running MCMC sampling...")
+
 if not os.path.exists(file_name):
-    # Define MCMC sampler with initial position from SVI results
-    mcmc_results = MCMC(
-        NUTS(model),
+    # Run MCMC sampling
+    mcmc_results = scribe.mcmc.run_scribe(
+        counts=data,
+        mixture_model=True,
+        n_components=2,
         num_warmup=n_mcmc_burnin,
-        num_samples=n_mcmc_samples
-    )
-    # Run MCMC sampler
-    mcmc_results.run(
-        random.PRNGKey(0),
-        n_cells=n_cells,
-        n_genes=n_genes,
-        counts=jnp.array(counts),
-        model_config=model_config,
-        init_params=param_map
+        num_samples=n_mcmc_samples,
+        kernel_kwargs=kernel_kwargs,
     )
     # Save MCMC results
     with open(file_name, "wb") as f:
         pickle.dump(mcmc_results, f)
-# %% ---------------------------------------------------------------------------
-
-# Load MCMC results
-mcmc_results = pickle.load(open(file_name, "rb"))
