@@ -13,7 +13,7 @@ from scribe.sampling import (
     generate_predictive_samples,
     generate_ppc_samples
 )
-from scribe.model_config import ModelConfig
+from scribe.model_config import ConstrainedModelConfig
 from scribe.model_registry import get_model_and_guide, get_log_likelihood_fn
 
 # ------------------------------------------------------------------------------
@@ -68,7 +68,7 @@ def test_inference_run(small_dataset, rng_key):
     assert len(results.loss_history) == N_STEPS
     assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
     assert results.model_type == "zinbvcp"
-    assert isinstance(results.model_config, ModelConfig)
+    assert isinstance(results.model_config, ConstrainedModelConfig)
 
 def test_parameter_ranges(example_zinbvcp_results):
     """Test that inferred parameters are in valid ranges."""
@@ -219,14 +219,14 @@ def test_get_map(example_zinbvcp_results):
 
 def test_model_and_guide_retrieval(example_zinbvcp_results):
     """Test that model and guide functions can be retrieved from results."""
-    model, guide = example_zinbvcp_results.get_model_and_guide()
+    model, guide = example_zinbvcp_results._model_and_guide()
     
     assert callable(model)
     assert callable(guide)
 
 def test_log_likelihood_fn_retrieval(example_zinbvcp_results):
     """Test that log likelihood function can be retrieved from results."""
-    log_lik_fn = example_zinbvcp_results.get_log_likelihood_fn()
+    log_lik_fn = example_zinbvcp_results._log_likelihood_fn()
     
     assert callable(log_lik_fn)
 
@@ -336,7 +336,7 @@ def test_compute_log_likelihood(example_zinbvcp_results, small_dataset, rng_key)
     )
     
     # Compute per-cell log likelihood
-    cell_ll = example_zinbvcp_results.compute_log_likelihood(
+    cell_ll = example_zinbvcp_results.log_likelihood(
         counts,
         return_by='cell'
     )
@@ -347,7 +347,7 @@ def test_compute_log_likelihood(example_zinbvcp_results, small_dataset, rng_key)
     assert jnp.all(cell_ll <= 0)  # Log likelihoods should be negative
     
     # Compute per-gene log likelihood
-    gene_ll = example_zinbvcp_results.compute_log_likelihood(
+    gene_ll = example_zinbvcp_results.log_likelihood(
         counts,
         return_by='gene'
     )
@@ -368,13 +368,13 @@ def test_compute_log_likelihood_batched(example_zinbvcp_results, small_dataset, 
     )
     
     # Compute without batching
-    full_ll = example_zinbvcp_results.compute_log_likelihood(
+    full_ll = example_zinbvcp_results.log_likelihood(
         counts,
         return_by='cell'
     )
     
     # Compute with batching
-    batched_ll = example_zinbvcp_results.compute_log_likelihood(
+    batched_ll = example_zinbvcp_results.log_likelihood(
         counts,
         batch_size=3,
         return_by='cell'

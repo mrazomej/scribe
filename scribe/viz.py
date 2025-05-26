@@ -443,7 +443,7 @@ def plot_histogram_credible_regions_stairs(
 
 # ------------------------------------------------------------------------------
 
-def plot_ecdf_credible_regions(
+def plot_ecdf_credible_regions_stairs(
     ax,
     ecdf_results,
     colors=None,
@@ -454,10 +454,10 @@ def plot_ecdf_credible_regions(
     median_alpha=0.2,
     median_linewidth=1.5,
     label_prefix='',
-    drawstyle='steps-post'
+    max_bin=None
 ):
     """
-    Plot ECDF credible regions as fill_between on a given axis.
+    Plot ECDF credible regions as stairs on a given axis.
     
     Parameters
     ----------
@@ -483,16 +483,20 @@ def plot_ecdf_credible_regions(
         Line width for median line (default: 1.5)
     label_prefix : str, optional
         Prefix for legend labels (default: '')
-    drawstyle : str, optional
-        Style for drawing steps, either 'steps-post' or 'steps-pre' (default:
-        'steps-post')
+    max_bin : int, optional
+        Maximum x-value index to plot. If provided, only points up to this index
+        will be shown. Default is None (show all points).
         
     Returns
     -------
     matplotlib.axes.Axes
         The axis with plots added
     """
-    x = ecdf_results['x_values']
+    bin_edges = ecdf_results['bin_edges']
+    
+    # Apply max_bin limit if specified
+    if max_bin is not None:
+        bin_edges = bin_edges[:max_bin + 1]
     
     # Sort credible regions from largest to smallest for proper layering
     cr_values = sorted(ecdf_results['regions'].keys(), reverse=True)
@@ -517,29 +521,40 @@ def plot_ecdf_credible_regions(
         
     # Plot credible regions
     for cr, color, alpha in zip(cr_values, colors, alphas):
+        # Get region data
         region = ecdf_results['regions'][cr]
-        ax.fill_between(
-            x,
-            region['lower'],
-            region['upper'],
+        
+        # Apply max_bin limit to the data if specified
+        upper = region['upper'][:max_bin] if max_bin is not None else region['upper']
+        lower = region['lower'][:max_bin] if max_bin is not None else region['lower']
+        
+        # Plot credible region as stairs
+        ax.stairs(
+            upper,
+            bin_edges,
+            fill=True,
+            baseline=lower,
             color=color,
             alpha=alpha,
-            label=f'{label_prefix}{cr}% CR',
-            step=drawstyle
+            label=f'{label_prefix}{cr}% CR'
         )
     
     # Plot median
     if plot_median:
         # Use the median from any region (they're all the same)
         median = ecdf_results['regions'][cr_values[0]]['median']
-        ax.plot(
-            x,
+        
+        # Apply max_bin limit to median if specified
+        if max_bin is not None:
+            median = median[:max_bin]
+        
+        ax.stairs(
             median,
-            color=median_color,
+            bin_edges,
+            color=median_color, 
             alpha=median_alpha,
             linewidth=median_linewidth,
-            label=f'{label_prefix}median',
-            drawstyle=drawstyle
+            label=f'{label_prefix}median'
         )
     
     return ax

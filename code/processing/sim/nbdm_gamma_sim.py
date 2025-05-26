@@ -21,6 +21,9 @@ print("Setting up the simulation...")
 # Define model type
 model_type = "nbdm"
 
+# r-distribution
+r_distribution = "gamma"
+
 # Define output directory
 OUTPUT_DIR = f"{scribe.utils.git_root()}/output/sim/{model_type}"
 
@@ -36,10 +39,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define number of cells
-n_cells = 10_000
+n_cells = 3_000
 
 # Define number of genes
-n_genes = 20_000
+n_genes = 1_000
 
 # Define batch size for memory-efficient sampling
 batch_size = 4096
@@ -47,13 +50,10 @@ batch_size = 4096
 # Define number of steps for scribe
 n_steps = 20_000
 
-# Define r_distribution
-r_distribution = "gamma"
-
 # Define parameters for prior
 r_alpha = 2
 r_beta = 1
-r_prior = (r_alpha, r_beta)
+r_prior = (r_alpha, r_beta) if r_distribution == "gamma" else (1, 1)
 
 # Define prior for p parameter
 p_prior = (1, 1)
@@ -129,9 +129,9 @@ if not os.path.exists(file_name):
     scribe_results = scribe.svi.run_scribe(
         counts=jnp.array(data['counts']),
         n_steps=n_steps,
-        batch_size=batch_size,
+        batch_size=min(batch_size, n_cells),
         p_prior=p_prior,
-        r_prior=(1, 1),
+        r_prior=r_prior,
         r_dist=r_distribution,
     )
 

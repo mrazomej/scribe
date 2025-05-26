@@ -62,7 +62,7 @@ print("Loading data...")
 data = sc.read_h5ad(f"{DATA_DIR}/data.h5ad")
 
 # Extract counts
-counts = data.X.toarray()
+counts = jnp.array(data.X.toarray())
 
 # %% ---------------------------------------------------------------------------
 
@@ -237,17 +237,8 @@ fig.savefig(
 
 print("Plotting KL divergence for r parameters...")
 
-# Extract r distribution parameters
-mu_r_1 = results.params["r_loc"][0, :]
-sigma_r_1 = results.params["r_scale"][0, :]
-
-mu_r_2 = results.params["r_loc"][1, :]
-sigma_r_2 = results.params["r_scale"][1, :]
-
 # Compute KL divergence
-kl_divergence = scribe.stats.kl_lognormal(
-    mu_r_1, sigma_r_1, mu_r_2, sigma_r_2
-)
+kl_divergence = results.kl_divergence()
 
 # Initialize figure
 fig, ax = plt.subplots(figsize=(3.5, 3))
@@ -267,6 +258,21 @@ ax.set_xscale('log')
 
 # Save figure
 fig.savefig(f"{FIG_DIR}/kl_divergence_{n_steps}steps.png", bbox_inches="tight")
+
+# %% ---------------------------------------------------------------------------
+
+print("Computing cell type assignments MAP...")
+# Compute cell assignments with mean substitution
+cell_types_map = results.cell_type_assignments_map(
+    counts=jnp.array(counts),
+    batch_size=100,
+    temperature=100.0,
+    use_mean=True
+)
+
+# Define cell assignment as class with highest probability
+cell_assignments_map = np.argmax(cell_types_map["probabilities"], axis=1)
+
 # %% ---------------------------------------------------------------------------
 
 print("Sampling from full posterior distribution...")
@@ -275,34 +281,13 @@ results.get_posterior_samples(n_samples=1_500)
 
 # %% ---------------------------------------------------------------------------
 
-print("Compute log-likelihood per cell...")
-
-# Compute log-likelihood per cell
-log_lik = results.compute_log_likelihood(
-    counts=jnp.array(counts),
-    return_by="cell",
-    ignore_nans=True,
-    split_components=True
-)
-
-# Count how many times each component is greater than the other
-# Shape: (n_cells,)
-comp1_greater = np.sum(log_lik[:, :, 0] > log_lik[:, :, 1], axis=0)
-comp2_greater = np.sum(log_lik[:, :, 0] < log_lik[:, :, 1], axis=0)
-
-frac_comp1 = comp1_greater / n_samples
-frac_comp2 = comp2_greater / n_samples
-
-# %% ---------------------------------------------------------------------------
-
 print("Computing cell type assignments...")
 # Use posterior samples to assign cell types
-cell_types = results.compute_cell_type_assignments(
+cell_types = results.cell_type_assignments(
     counts=jnp.array(counts),
-    ignore_nans=True
+    ignore_nans=True,
+    temperature=100.0
 )
-
-# %% ---------------------------------------------------------------------------
 
 # Extract mean prob assignments
 mean_assignments = cell_types["mean_probabilities"]
@@ -315,20 +300,8 @@ cell_assignments = np.argmax(mean_assignments, axis=1)
 
 print("Plotting Hellinger distance for r parameters...")
 
-# Extract r distribution parameters
-mu_r_1 = results.params["r_loc"][0, :]
-sigma_r_1 = results.params["r_scale"][0, :]
-
-mu_r_2 = results.params["r_loc"][1, :]
-sigma_r_2 = results.params["r_scale"][1, :]
-
 # Compute Hellinger distance
-hellinger_distance = scribe.stats.hellinger_lognormal(
-    mu_r_1, 
-    sigma_r_1,
-    mu_r_2, 
-    sigma_r_2
-)
+hellinger_distance = results.hellinger_distance()["0_1"]
 
 # Initialize figure
 fig, ax = plt.subplots(figsize=(3.5, 3))
@@ -344,7 +317,9 @@ ax.set_ylabel("ECDF")
 ax.set_ylim(-0.01, 1.01)
 
 # Save figure
-fig.savefig(f"{FIG_DIR}/hellinger_distance_{n_steps}steps.png", bbox_inches="tight")
+fig.savefig(
+    f"{FIG_DIR}/hellinger_distance_{n_steps}steps.png", bbox_inches="tight"
+)
 
 
 # %% ---------------------------------------------------------------------------
@@ -384,7 +359,9 @@ ax.set_ylabel('ECDF')
 plt.tight_layout()
 
 # Save figure with extra space for legends
-fig.savefig(f"{FIG_DIR}/example_ECDF_hellinger_{n_steps}steps.png", bbox_inches="tight") 
+fig.savefig(
+    f"{FIG_DIR}/example_ECDF_hellinger_{n_steps}steps.png", bbox_inches="tight"
+) 
 # %% ---------------------------------------------------------------------------
 
 # Index results for shared genes
@@ -480,11 +457,92 @@ fig.savefig(
 )
 # %% ---------------------------------------------------------------------------
 
-print("Computing cell type assignments...")
-# Use posterior samples to assign cell types
-cell_types_hellinger = results.compute_cell_type_assignments(
+print("Computing cell type assignments MAP with hellinger distance weights...")
+
+# Compute cell assignments with mean substitution
+cell_types_hellinger_map = results.cell_type_assignments_map(
+    counts=jnp.array(counts),
+    batch_size=100,
+    use_mean=True,
+    temperature=100.0,
+    weights=jnp.log(hellinger_distance),
+    weight_type="additive"
+)
+
+# Define cell assignment as class with highest probability
+cell_assignments_hellinger_map = np.argmax(
+    cell_types_hellinger_map["probabilities"], axis=1)
+
+# %% ---------------------------------------------------------------------------
+
+# Get index of genes with hellinger distance > 0.7
+idx_hellinger = np.where(hellinger_distance > 0.7)[0]
+
+# Extract results for these genes
+results_subset_hellinger = results[idx_hellinger]
+
+# Extract data for these genes
+data_subset_hellinger = jnp.array(counts[:, idx_hellinger])
+
+# Compute cell type assignments for these genes
+cell_types_hellinger_weights = results_subset_hellinger.cell_type_assignments_map(
+    counts=data_subset_hellinger,
+    batch_size=100,
+    use_mean=True,
+    temperature=len(idx_hellinger),
+    # weights=jnp.log(hellinger_distance),
+    # weight_type="additive"
+)
+
+# Define cell assignment as class with highest probability
+cell_assignments_hellinger_weights = np.argmax(
+    cell_types_hellinger_weights["probabilities"], axis=1)
+
+# %% ---------------------------------------------------------------------------
+
+# Compute component entropy
+entropy = results.assignment_entropy(
     counts=jnp.array(counts),
     ignore_nans=True,
-    weights=hellinger_distance
+    return_by="gene",
 )
+
+# Compute the mean entropy over samples
+mean_entropy = jnp.mean(entropy, axis=0)
+sns.ecdfplot(mean_entropy)
+
+# Compute weights based on mean entropy
+# weights = 1 - mean_entropy / jnp.log(results.n_components)
+
 # %% ---------------------------------------------------------------------------
+
+# Compute entropy per gene
+entropy_map = results.assignment_entropy_map(counts, batch_size=100)
+
+sns.ecdfplot(entropy_map)
+
+# %% ---------------------------------------------------------------------------
+
+# Find index of genes with entropy > 0.3
+idx_entropy = np.where(mean_entropy < 0.06)[0]
+
+# Extract results for these genes
+results_subset_entropy = results[idx_entropy]
+
+# Extract data for these genes
+data_subset_entropy = jnp.array(counts[:, idx_entropy])
+
+# Compute cell type assignments for these genes
+cell_types_entropy = results_subset_entropy.cell_type_assignments(
+    counts=data_subset_entropy,
+    ignore_nans=True,
+    temperature=10.0,
+    batch_size=100
+)
+
+# Define cell assignment as class with highest probability
+cell_assignments_entropy = jnp.argmax(
+    cell_types_entropy["mean_probabilities"], axis=1)
+
+# %% ---------------------------------------------------------------------------
+
