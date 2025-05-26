@@ -387,7 +387,7 @@ def compute_cell_type_assignments_weighted(
 
     Parameters
     ----------
-    results : ScribeResults
+    results : ScribeSVIResults
         The results object containing the fitted model
     counts : jnp.ndarray
         Count data to evaluate assignments for
@@ -561,7 +561,7 @@ def compute_cell_type_assignments_map_weighted(
     
     Parameters
     ----------
-    results : ScribeResults
+    results : ScribeSVIResults
         The results object containing the fitted model
     counts : jnp.ndarray
         Count data to evaluate assignments for
@@ -717,7 +717,7 @@ def get_top_discriminative_genes(
     
     Parameters
     ----------
-    results : ScribeResults
+    results : ScribeSVIResults
         The results object containing the fitted model
     n_genes : int, default=50
         Number of top genes to return
@@ -794,7 +794,7 @@ def visualize_gene_weights(
     
     Parameters
     ----------
-    results : ScribeResults
+    results : ScribeSVIResults
         The results object containing the fitted model
     weights_method : str, default="hellinger"
         Method to compute gene weights
@@ -885,7 +885,7 @@ def visualize_component_distances(
     
     Parameters
     ----------
-    results : ScribeResults
+    results : ScribeSVIResults
         The results object containing the fitted model
     counts : Optional[jnp.ndarray], default=None
         Count data to evaluate component distances. If provided, uses empirical

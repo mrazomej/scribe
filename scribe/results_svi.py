@@ -29,7 +29,7 @@ from .stats import (
     jensen_shannon_gamma,
     jensen_shannon_lognormal
 )
-from .model_config import ModelConfig
+from .model_config import ConstrainedModelConfig
 from .utils import numpyro_to_scipy
 
 from .cell_assignment import (
@@ -41,9 +41,9 @@ from .cell_assignment import (
 # ------------------------------------------------------------------------------
 
 @dataclass
-class ScribeResults:
+class ScribeSVIResults:
     """
-    Base class for SCRIBE inference results.
+    Base class for SCRIBE variational inference results.
     
     This class stores the results from SCRIBE's variational inference procedure,
     including model parameters, loss history, dataset dimensions, and model
@@ -62,7 +62,7 @@ class ScribeResults:
         Number of genes in the dataset
     model_type : str
         Type of model used for inference
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object specifying model architecture and priors
     prior_params : Dict[str, Any]
         Dictionary of prior parameter values used during inference
@@ -89,7 +89,7 @@ class ScribeResults:
     n_cells: int
     n_genes: int
     model_type: str
-    model_config: ModelConfig
+    model_config: ConstrainedModelConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
@@ -160,7 +160,7 @@ class ScribeResults:
                 )
 
     # --------------------------------------------------------------------------
-    # Create ScribeResults from AnnData object
+    # Create ScribeSVIResults from AnnData object
     # --------------------------------------------------------------------------
 
     @classmethod
@@ -169,10 +169,10 @@ class ScribeResults:
         adata: "AnnData",
         params: Dict,
         loss_history: jnp.ndarray,
-        model_config: ModelConfig,
+        model_config: ConstrainedModelConfig,
         **kwargs
     ):
-        """Create ScribeResults from AnnData object."""
+        """Create ScribeSVIResults from AnnData object."""
         return cls(
             params=params,
             loss_history=loss_history,
@@ -452,7 +452,7 @@ class ScribeResults:
 
     def __getitem__(self, index):
         """
-        Enable indexing of ScribeResults object.
+        Enable indexing of ScribeSVIResults object.
         """
         # Handle integer indexing
         if isinstance(index, int):
@@ -517,7 +517,7 @@ class ScribeResults:
         new_var: Optional[pd.DataFrame],
         new_posterior_samples: Optional[Dict],
         new_predictive_samples: Optional[jnp.ndarray]
-    ) -> 'ScribeResults':
+    ) -> 'ScribeSVIResults':
         """Create a new instance with a subset of genes."""
         return type(self)(
             params=new_params,
@@ -545,7 +545,7 @@ class ScribeResults:
         """
         Create a view of the results selecting a specific mixture component.
         
-        This method returns a new ScribeResults object that contains parameter
+        This method returns a new ScribeSVIResults object that contains parameter
         values for the specified component, allowing for further gene-based
         indexing. Only applicable to mixture models.
         
@@ -556,8 +556,8 @@ class ScribeResults:
         
         Returns
         -------
-        ScribeResults
-            A new ScribeResults object with parameters for the selected component
+        ScribeSVIResults
+            A new ScribeSVIResults object with parameters for the selected component
             
         Raises
         ------
@@ -668,7 +668,7 @@ class ScribeResults:
         new_params: Dict,
         new_posterior_samples: Optional[Dict],
         new_predictive_samples: Optional[jnp.ndarray]
-    ) -> 'ScribeResults':
+    ) -> 'ScribeSVIResults':
         """Create a new instance for a specific component."""
         # Create a non-mixture model type
         base_model = self.model_type.replace('_mix', '')
@@ -740,10 +740,6 @@ class ScribeResults:
             'model_config': self.model_config
         }
         
-        # Add specialized arguments based on model type
-        if self.model_type == "nbdm":
-            model_args['total_counts'] = None  # Will be filled during sampling
-            
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
             guide,
@@ -778,10 +774,6 @@ class ScribeResults:
             'model_config': self.model_config,
         }
         
-        # Add specialized arguments based on model type
-        if self.model_type == "nbdm":
-            model_args['total_counts'] = None  # Will be filled during sampling
-            
         # Check if posterior samples exist
         if self.posterior_samples is None:
             raise ValueError(
@@ -1418,7 +1410,7 @@ class ScribeResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
+        # Get r distribution from ConstrainedModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding Hellinger distance function
         if r_distribution == dist.LogNormal:
@@ -1501,7 +1493,7 @@ class ScribeResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
+        # Get r distribution from ConstrainedModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding KL divergence function
         if r_distribution == dist.LogNormal:
@@ -1591,7 +1583,7 @@ class ScribeResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
+        # Get r distribution from ConstrainedModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         
         # Define corresponding JS divergence function based on distribution type

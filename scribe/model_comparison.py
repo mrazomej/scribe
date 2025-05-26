@@ -7,7 +7,8 @@ from jax import random, jit, vmap
 import numpy as np
 from typing import List, Dict, Union, Tuple, Optional, Callable
 from functools import partial
-from .results import ScribeResults
+from .results_svi import ScribeSVIResults
+from .results_mcmc import ScribeMCMCResults
 import pandas as pd
 
 # ------------------------------------------------------------------------------
@@ -311,7 +312,7 @@ def _compute_waic_stats(
 # ------------------------------------------------------------------------------
 
 def compute_waic(
-    results: ScribeResults,
+    results: ScribeSVIResults,
     counts: jnp.ndarray,
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
@@ -328,7 +329,7 @@ def compute_waic(
     
     Parameters
     ----------
-    results : BaseScribeResults
+    results : BaseScribeSVIResults
         A fitted model results object containing the posterior samples or the
         ability to generate them
     counts : jnp.ndarray
@@ -399,7 +400,7 @@ def compute_waic(
 # ------------------------------------------------------------------------------
 
 def compute_waic_by_gene(
-    results: BaseScribeResults,
+    results: BaseScribeSVIResults,
     counts: jnp.ndarray,
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
@@ -420,7 +421,7 @@ def compute_waic_by_gene(
 
     Parameters
     ----------
-    results : BaseScribeResults
+    results : BaseScribeSVIResults
         Results object containing model fit information
     counts : jnp.ndarray
         Array of shape (n_cells, n_genes) containing observed counts
@@ -523,7 +524,7 @@ def _compute_waic_weights(
 # ------------------------------------------------------------------------------
 
 def compare_models(
-    results_list: List[ScribeResults],
+    results_list: List[ScribeSVIResults],
     counts: Union[np.ndarray, jnp.ndarray],
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
@@ -539,7 +540,7 @@ def compare_models(
     
     Parameters
     ----------
-    results_list : List[ScribeResults]
+    results_list : List[ScribeSVIResults]
         List of results objects from different model fits
     counts : Union[np.ndarray, jnp.ndarray]
         Observed count data
@@ -634,7 +635,7 @@ def compare_models(
 # ------------------------------------------------------------------------------
 
 def compare_models_by_gene(
-    results_list: List[ScribeResults],
+    results_list: List[ScribeSVIResults],
     counts: Union[np.ndarray, jnp.ndarray],
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
@@ -650,7 +651,7 @@ def compare_models_by_gene(
     
     Parameters
     ----------
-    results_list : List[ScribeResults]
+    results_list : List[ScribeSVIResults]
         List of results objects from different model fits
     counts : Union[np.ndarray, jnp.ndarray]
         Observed count data

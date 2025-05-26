@@ -13,7 +13,7 @@ from numpyro.distributions import constraints
 from typing import Callable, Dict, Tuple, Optional
 
 # Import model config
-from .model_config import ModelConfig
+from .model_config import ConstrainedModelConfig
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
@@ -22,7 +22,7 @@ from .model_config import ModelConfig
 def nbdm_model(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     total_counts=None,
     batch_size=None,
@@ -37,16 +37,22 @@ def nbdm_model(
         2. Given the total count, the individual gene counts follow a
            Dirichlet-Multinomial distribution with concentration parameters r
     
+    Note: This model is mathematically equivalent to directly modeling each gene
+    count with an independent Negative Binomial distribution. The hierarchical
+    structure with the Dirichlet-Multinomial is kept for interpretability and
+    compatibility with other models.
+    
     Parameters
     ----------
     n_cells : int
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object containing prior distributions for model
-        parameters: - p_distribution_model: Prior for success probability p -
-        r_distribution_model: Prior for dispersion parameters r
+        parameters: 
+            - p_distribution_model: Prior for success probability p
+            - r_distribution_model: Prior for dispersion parameters r
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). If None, generates
         samples from the prior.
@@ -63,9 +69,12 @@ def nbdm_model(
         - Success probability p ~ model_config.p_distribution_model
         - Gene-specific dispersion r ~ model_config.r_distribution_model
 
-    Likelihood:
+    Likelihood (Original Hierarchical Version):
         - total_counts ~ NegativeBinomialProbs(r_total, p)
         - counts ~ DirichletMultinomial(r, total_count=total_counts)
+        
+    Likelihood (Equivalent Direct Version):
+        - counts[i,j] ~ NegativeBinomialProbs(r[j], p) for each cell i and gene j
     """
     # Sample p
     p = numpyro.sample("p", model_config.p_distribution_model)
@@ -73,8 +82,8 @@ def nbdm_model(
     # Sample r
     r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
 
-    # Sum of r parameters
-    r_total = numpyro.deterministic("r_total", jnp.sum(r))
+    # Create base distribution for total counts
+    base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
 
     # If we have observed data, condition on it
     if counts is not None:
@@ -82,21 +91,8 @@ def nbdm_model(
         if batch_size is None:
             # Define plate for cells total counts
             with numpyro.plate("cells", n_cells):
-                # Likelihood for the total counts - one for each cell
-                numpyro.sample(
-                    "total_counts",
-                    dist.NegativeBinomialProbs(r_total, p),
-                    obs=total_counts
-                )
-
-            # Define plate for cells individual counts
-            with numpyro.plate("cells", n_cells):
-                # Likelihood for the individual counts - one for each cell
-                numpyro.sample(
-                    "counts",
-                    dist.DirichletMultinomial(r, total_count=total_counts),
-                    obs=counts
-                )
+                # Likelihood for the counts - one for each cell
+                numpyro.sample("counts", base_dist, obs=counts)
         else:
             # Define plate for cells total counts
             with numpyro.plate(
@@ -104,33 +100,14 @@ def nbdm_model(
                 n_cells,
                 subsample_size=batch_size,
             ) as idx:
-                # Likelihood for the total counts - one for each cell
-                numpyro.sample(
-                    "total_counts",
-                    dist.NegativeBinomialProbs(r_total, p),
-                    obs=total_counts[idx]
-                )
-
-            # Define plate for cells individual counts
-            with numpyro.plate(
-                "cells",
-                n_cells,
-                subsample_size=batch_size
-            ) as idx:
-                # Likelihood for the individual counts - one for each cell
-                numpyro.sample(
-                    "counts",
-                    dist.DirichletMultinomial(
-                        r, total_count=total_counts[idx]),
-                    obs=counts[idx]
-                )
+                # Likelihood for the counts - one for each cell
+                numpyro.sample("counts", base_dist, obs=counts[idx])
     else:
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Make a NegativeBinomial distribution that returns a vector of
             # length n_genes
-            dist_nb = dist.NegativeBinomialProbs(r, p).to_event(1)
-            counts = numpyro.sample("counts", dist_nb)
+            counts = numpyro.sample("counts", base_dist)
 
 
 # ------------------------------------------------------------------------------
@@ -140,7 +117,7 @@ def nbdm_model(
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     total_counts=None,
     batch_size=None,
@@ -215,7 +192,7 @@ def nbdm_guide(
 def zinb_model(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -233,7 +210,7 @@ def zinb_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object for model distributions containing:
             - p_distribution_model: Distribution for success probability p
             - r_distribution_model: Distribution for dispersion parameters r
@@ -304,7 +281,7 @@ def zinb_model(
 def zinb_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -323,7 +300,7 @@ def zinb_guide(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object containing guide distributions for model parameters:
         - p_distribution_guide: Guide distribution for success probability p
         - r_distribution_guide: Guide distribution for dispersion parameters r
@@ -399,7 +376,7 @@ def zinb_guide(
 def nbvcp_model(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -423,7 +400,7 @@ def nbvcp_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object containing prior distributions for model parameters:
         - p_distribution_model: Prior for success probability p
         - r_distribution_model: Prior for dispersion parameters r
@@ -535,7 +512,7 @@ def nbvcp_model(
 def nbvcp_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -553,7 +530,7 @@ def nbvcp_guide(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object containing the variational distribution
         specifications:
             - p_distribution_guide: Distribution for success probability p
@@ -650,7 +627,7 @@ def nbvcp_guide(
 def zinbvcp_model(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -675,7 +652,7 @@ def zinbvcp_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ModelConfig
+    model_config : ConstrainedModelConfig
         Configuration object containing prior distributions for model
         parameters:
             - p_distribution_model: Prior for success probability p
@@ -808,7 +785,7 @@ def zinbvcp_model(
 def zinbvcp_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ModelConfig,
+    model_config: ConstrainedModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -998,7 +975,6 @@ def nbdm_log_likelihood(
     # Extract parameters from dictionary - handle both old and new formats
     p = jnp.squeeze(params['p']).astype(dtype)
     r = jnp.squeeze(params['r']).astype(dtype)
-    r_total = jnp.sum(r)
     
     # Extract dimensions
     if cells_axis == 0:
@@ -1010,19 +986,12 @@ def nbdm_log_likelihood(
         counts = jnp.array(counts, dtype=dtype)
 
     if return_by == 'cell':
-        # Compute total counts for each cell
-        total_counts = jnp.sum(counts, axis=1)
-        
         # If no batch size provided, process all cells at once
         if batch_size is None:
-            # Compute log probability for total counts
-            log_prob_total = dist.NegativeBinomialProbs(
-                r_total, p).log_prob(total_counts)
-            # Compute log probability for each gene
-            log_prob_genes = dist.DirichletMultinomial(
-                r, total_count=total_counts).log_prob(counts)
-            # Return sum of log probabilities
-            return log_prob_total + log_prob_genes
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+            # Return per-cell log probabilities
+            return base_dist.log_prob(counts)
         
         # Initialize array to store per-cell log probabilities
         cell_log_probs = jnp.zeros(n_cells)
@@ -1035,18 +1004,12 @@ def nbdm_log_likelihood(
             
             # Get batch data
             batch_counts = counts[start_idx:end_idx]
-            batch_total_counts = total_counts[start_idx:end_idx]
             
-            # Compute log probability for total counts
-            batch_log_prob_total = dist.NegativeBinomialProbs(
-                r_total, p).log_prob(batch_total_counts)
-            # Compute log probability for each gene
-            batch_log_prob_genes = dist.DirichletMultinomial(
-                r, total_count=batch_total_counts).log_prob(batch_counts)
-            
+            # Create base Negative Binomial distribution
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             # Store batch log probabilities
             cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
-                batch_log_prob_total + batch_log_prob_genes
+                base_dist.log_prob(batch_counts)
             )
         
         return cell_log_probs
