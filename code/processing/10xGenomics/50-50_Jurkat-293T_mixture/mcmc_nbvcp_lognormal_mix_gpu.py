@@ -45,7 +45,7 @@ rng_key = random.PRNGKey(42)
 # Define number of MCMC burn-in samples
 n_mcmc_burnin = 5_000
 # Define number of MCMC samples
-n_mcmc_samples = 10_000
+n_mcmc_samples = 4_000
 
 # %% ---------------------------------------------------------------------------
 
@@ -61,7 +61,7 @@ n_components = 2
 DATA_DIR = f"data/10xGenomics/50-50_Jurkat-293T_mixture"
 
 # Define output directory
-OUTPUT_DIR = f"output/" \
+OUTPUT_DIR = f"/home/groups/dpetrov/mrazo/" \
     f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
 
 # If the output directory does not exist, create it
