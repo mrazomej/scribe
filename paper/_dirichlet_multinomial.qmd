@@ -305,13 +305,15 @@ First, we substitute the probability mass function of the negative binomial
 distribution,
 
 $$
-\mathcal{P}_{m}(z) = \sum_{m=0}^{\infty} z^{m} \binom{m + r - 1}{m} p^r (1 - p)^m
+\mathcal{P}_{m}(z) = \sum_{m=0}^{\infty} z^{m} 
+\binom{m + r - 1}{m} p^r (1 - p)^m.
 $${#eq-pgf-nb-2}
 
 Finally, we factor out $p^r$ and combine the $z$ and $(1-p)$ terms,
 
 $$
-\mathcal{P}_{m}(z) = p^r \sum_{m=0}^{\infty} \binom{m + r - 1}{m} \left[z(1 - p)\right]^m
+\mathcal{P}_{m}(z) = p^r \sum_{m=0}^{\infty} 
+\binom{m + r - 1}{m} \left[z(1 - p)\right]^m,
 $${#eq-pgf-nb-3}
 
 where we ommit the subindex $g$ for brevity. To simplify this expression, let us
@@ -526,28 +528,47 @@ $$
 \mathcal{P}_u(z) = \left[\mathcal{P}_{b_i}(z)\right]^m.
 $${#eq-pgf-composition-1f}
 
+
 In other words, the PGF of a binomially distributed random variable is the
 $m$-th power of the PGF of a Bernoulli random variable. For this calculation, we
 assumed that $m$ was a fixed number. However, in our case, $m$ is a random
 variable that follows a negative binomial distribution. Therefore, we need to
 take the expectation of the PGF of the binomial distribution conditioned on $m$.
 
+To handle the case where $m$ is random, we need to use the law of total
+expectation. We can write the PGF of $u$ as a nested expectation. Since $u$
+depends on $m$, and $m$ is a random variable, we the law of total expectation
+writes,
+
 $$
-\begin{aligned}
-\mathcal{P}_u(z) &=
+\mathcal{P}_u(z) =
 \left\langle\left\langle 
     z^u \mid m
-\right\rangle_{\pi(u \mid m)}\right\rangle_{\pi(m)}, \\
-&= \left\langle\left\langle 
-    z^{\sum_{i=1}^m b_i} \mid m
-\right\rangle_{\pi\left(\sum_{i=1}^m b_i \mid m\right)}\right\rangle_{\pi(m)}
-\end{aligned},
-$${#eq-pgf-composition-2}
+\right\rangle_{\pi(u \mid m)}\right\rangle_{\pi(m)}.
+$${#eq-pgf-composition-2b}
 
-where all we did was to explicitly state that $u$ is conditioned on $m$ and $m$
-has its own distribution. Notice that $\left\langle z^{\sum_{i=1}^m b_i} \mid m
-\right\rangle$ is a random variable---since $m$ is a random variable---but it is
-also the PGF of $u$. Therefore, we can write
+In words, this says: "Take the expectation of $z^u$ conditioned on a specific
+value of $m$, then take the expectation of that result over all possible values
+of $m$."
+
+We can be more explicit about the structure of $u$ by substituting its definition in terms of the $b_i$ random variables,
+
+$$
+\mathcal{P}_u(z) = \left\langle\left\langle 
+    z^{\sum_{i=1}^m b_i} \mid m
+\right\rangle_{\pi\left(\sum_{i=1}^m b_i \mid m\right)}\right\rangle_{\pi(m)}.
+$${#eq-pgf-composition-2c}
+
+Now, let's focus on the inner expectation $\left\langle z^{\sum_{i=1}^m b_i}
+\mid m \right\rangle$. For a fixed value of $m$, this is exactly the PGF of a
+binomial random variable, which we showed earlier equals
+$\left[\mathcal{P}_{b_i}(z)\right]^m$. Therefore,
+
+$$
+\left\langle z^{\sum_{i=1}^m b_i} \mid m \right\rangle_{\pi\left(\sum_{i=1}^m b_i \mid m\right)} = \left[\mathcal{P}_{b_i}(z)\right]^m.
+$${#eq-pgf-composition-2d}
+
+Substituting this result back into our nested expectation, we get
 
 $$
 \mathcal{P}_u(z) = \left\langle 
@@ -555,9 +576,26 @@ $$
 \right\rangle_{\pi(m)}.
 $${#eq-pgf-composition-3}
 
-But this looks exactly like computing the PGF over $\pi(m)$ of the expression
-$\left[\mathcal{P}_{b_i}(z)\right]^m$. Therefore, we can rewrite
-@eq-pgf-composition-2 as
+Now we need to evaluate the expectation of $\left[\mathcal{P}_{b_i}(z)\right]^m$
+with respect to the distribution of $m$. For a Bernoulli random variable with
+success probability $\nu$, the PGF is the same as the PGF of a binomial random
+variable but to the power of 1, i.e.,
+
+$$
+\mathcal{P}_{b_i}(z) = (1-\nu) + \nu z = 1 - \nu(1-z).
+$${#eq-bernoulli-pgf}
+
+Therefore, our expression becomes
+
+$$
+\mathcal{P}_u(z) = \left\langle 
+    \left[1 - \nu(1-z)\right]^m
+\right\rangle_{\pi(m)}.
+$${#eq-pgf-composition-3b}
+
+But this expectation has exactly the same form as the definition of a PGF! The
+only difference being that the dummy variable $z$ is replaced by $1 - \nu(1-z)$.
+Comparing @eq-pgf-composition-3b with @eq-pgf, we see that we can write
 
 $$
 \mathcal{P}_u(z) = \mathcal{P}_m\left(\mathcal{P}_{b_i}(z)\right).
@@ -566,25 +604,27 @@ $${#eq-pgf-composition-4}
 In words, what we just showed is that the composition of the PGF of a negative
 binomial distribution with a binomial distribution is equivalent to taking the
 PGF of the negative binomial distribution, where the "dummy" variable $z$ is
-replaced by the PGF of a Bernoulli random variable. Let's now perform this
-operation. First, we start with the PGF of the negative binomial distribution
-where $m=1$,
+replaced by the PGF of a Bernoulli random variable.
+
+Let's now perform this operation. First, we start with the PGF of the Bernoulli
+distribution,
 
 $$
-P_u(z) = P_m((1-(1-z)\nu))
+P_u(z) = P_m((1-(1-z)\nu)).
 $${#eq-pgf-composition-5}
 
 Next, we substitute $z$ in our PGF for the negative binomial distribution
-that we derived in @eq-pgf-nb-simplified-series-derivative-result-10
+that we derived in @eq-pgf-nb-simplified-series-derivative-result-10 with this
+argument,
 
 $$
-P_u(z) = \left[\frac{p}{1-(1-(1-z)\nu)(1-p)}\right]^r
+P_u(z) = \left[\frac{p}{1-(1-(1-z)\nu)(1-p)}\right]^r.
 $${#eq-pgf-composition-6}
 
 We now expand the denominator
 
 $$
-P_u(z) = \left[\frac{p}{1-(1-\nu+z\nu)(1-p)}\right]^r
+P_u(z) = \left[\frac{p}{1-(1-\nu+z\nu)(1-p)}\right]^r.
 $${#eq-pgf-composition-7}
 
 We expand the expression further
@@ -659,13 +699,15 @@ model later on.
 
 We have shown that the distribution of $u$ is negative binomial with parameters
 $r$ and $\hat{p}$. Recall that we assumed that each gene $g$ has a unique $r_g$
-parameer, but share the $p$ (in this case $\hat{p}$) parameter. Earlier, we 
-claimed that this joint distribution of negative binomials could be described as
-the product of a negative binomial and a dirichlet-multinomial distribution. Let's
-show that this is indeed the case.
+parameter, but share the $p$ parameter---now $\hat{p}$ since we assume the
+capture probability for all transcripts is the same. Earlier in
+@eq-umivector-joint-nb we claimed that this joint distribution of negative
+binomials with shared $\hat{p}$ parameter could be described as the product of a
+negative binomial and a dirichlet-multinomial distribution. Let's show that this
+is indeed the case.
 
 The first step consists of showing that a single negative binomial can be
-expressed as a product of a Poisson and a gamma distribution.
+expressed as a compound distribution of a Poisson and a gamma distribution.
 
 ### Negative binomial as a Poisson-Gamma compound distribution
 
@@ -674,18 +716,7 @@ compound distribution. In other words, we can write
 
 $$
 \pi(u \mid r, \hat{p}) = 
-\int_0^{\infty} d \lambda \, \pi(u, \lambda \mid r, \theta),
-$${#eq-nb-poisson-gamma-1}
-
-where $\pi(u \mid r, \hat{p})$ is the probability mass function of a negative
-binomial distribution, and $\lambda$ is the rate parameter of the Poisson
-distribution. What @eq-nb-poisson-gamma-1 says is that a negative binomial
-distribution is equivalent to marginalizing over all valid values of $\lambda$
-for some probability mass function $\pi(u, \lambda \mid r, \theta)$. The key
-point is that we can write this probability mass function as
-
-$$
-\pi(u, \lambda \mid r, \theta) = 
+\int_0^{\infty} d \lambda \,
 \overbrace{
     \pi(u \mid \lambda) 
 }^{\text{Poisson}}
@@ -718,8 +749,11 @@ $$
 \theta = \frac{\hat{p}}{1-\hat{p}}.
 $${#eq-theta-hatp}
 
-Substituting @eq-poisson-dist and @eq-gamma-dist into @eq-nb-factorized-dist,
-and that into @eq-nb-poisson-gamma-1, we get
+What @eq-nb-factorized-dist says is that sampling from a negative binomial
+distribution is equivalent to sampling from a Poisson distribution whose rate
+parameter is itself a random variable sampled from a Gamma distribution.
+Substituting @eq-poisson-dist and @eq-gamma-dist into @eq-nb-factorized-dist, we
+get
 
 $$
 \pi(u \mid r, \hat{p}) = 
@@ -727,7 +761,7 @@ $$
 \frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)}.
 $${#eq-nb-poisson-gamma-2}
 
-Substituting @eq-theta-hatp into @eq-nb-poisson-gamma-2, we get
+Substituting @eq-theta-hatp into @eq-nb-poisson-gamma-2, results in
 
 $$
 \pi(u \mid r, \hat{p}) = 
@@ -739,7 +773,8 @@ $$
 \left(\frac{\hat{p}}{1-\hat{p}}\right)^r.
 $${#eq-nb-poisson-gamma-3}
 
-Taking out terms that do not depend on $\lambda$, we get
+Taking out terms that do not depend on $\lambda$ and grouping the remaining
+terms, we obtain
 
 $$
 \pi(u \mid r, p) =
@@ -749,7 +784,7 @@ $$
 \lambda^{u+r-1} e^{-\left(\frac{1}{1-\hat{p}}\right) \lambda}.
 $${#eq-nb-poisson-gamma-4}
 
-Let's focus on the integral. We define
+Let's focus on the integral. Let us define
 
 $$
 x = \left(\frac{1}{1-\hat{p}}\right) \lambda.
@@ -761,7 +796,7 @@ $$
 dx = \left(\frac{1}{1-\hat{p}}\right) d\lambda.
 $${#eq-nb-poisson-gamma-6}
 
-and limits
+Furthermore, the integraiton limits upon this change of variables are
 
 $$
 \lambda = 0 \implies x = 0,
@@ -773,7 +808,8 @@ $$
 \lambda = \infty \implies x = \infty.
 $${#eq-x-lim2}
 
-We then factorize the terms that do not depend on $x$, obtaining
+We then substitute the change of variables from @eq-nb-poisson-gamma-5 and
+@eq-nb-poisson-gamma-6 into the integral, obtaining
 
 $$
 \int_0^{\infty} d \lambda \,
@@ -781,8 +817,7 @@ $$
 \int_0^{\infty} dx \, (1-\hat{p}) [(1-\hat{p}) x]^{u+r-1} e^{-x}.
 $${#eq-nb-poisson-gamma-7}
 
-Substituting the change of variables from @eq-nb-poisson-gamma-5 and
-@eq-nb-poisson-gamma-6
+We then factorize the terms that do not depend on $x$, obtaining
 
 $$
 \int_0^{\infty} dx \, (1-\hat{p}) [(1-\hat{p}) x]^{u+r-1} e^{-x} = 
@@ -798,16 +833,7 @@ $$
 $${#eq-nb-poisson-gamma-9}
 
 Now we can substitute the result from @eq-nb-poisson-gamma-9 back into our
-original expression for $\pi(u \mid r, p)$, obtaining
-
-$$
-\pi(u \mid r, p) = \frac{1}{u!\Gamma(r)}
-\left(\frac{\hat{p}}{1-\hat{p}}\right)^r 
-\int_0^{\infty} d \lambda \, 
-\lambda^{u+r-1} e^{-\left(\frac{1}{1-\hat{p}}\right) \lambda}.
-$${#eq-nb-poisson-gamma-10}
-
-Substituting the integral solution from @eq-nb-poisson-gamma-9, we obtain
+original expression for $\pi(u \mid r, p)$,
 
 $$
 \pi(u \mid r, p) = 
@@ -819,7 +845,7 @@ $${#eq-nb-poisson-gamma-11}
 Rearranging the terms and simplifying, we get
 
 $$
-\pi(u \mid r, p) = \frac{\Gamma(u+r)}{u!\Gamma(r)}(1-\hat{p})^u \hat{p}^r,
+\pi(u \mid r, p) = \frac{\Gamma(u+r)}{u!\Gamma(r)}(1-\hat{p})^u \, \hat{p}^r,
 $${#eq-nb-poisson-gamma-12}
 
 We can express the Gamma functions in terms of factorials using the relationship
@@ -836,10 +862,9 @@ $$
 \pi(u \mid r, p) = \binom{u+r-1}{u}(1-\hat{p})^u \hat{p}^r.
 $${#eq-nb-poisson-gamma-14}
 
-This shows that a negative binomial distribution can be expressed as a product
-of a Poisson and a gamma distribution. Furthermore, this result implies that
-the joint distribution of our $G$ independent negative binomials,
-
+This shows that a negative binomial distribution can be expressed as a compound
+distribution of a Poisson and a gamma distribution. Furthermore, this result
+implies that the joint distribution of our $G$ independent negative binomials,
 
 $$
 \pi(\underline{u} \mid \underline{r}, \hat{p}) =
@@ -869,8 +894,8 @@ $$
 \int_0^{\infty} d \lambda_2 \cdots 
 \int_0^{\infty} d \lambda_g 
 \prod_{g=1}^G 
-\pi\left(u_g \mid \lambda\right) 
-\pi\left(\lambda_g \mid r_J, \theta\right),
+\pi\left(u_g \mid \lambda_g \right) 
+\pi\left(\lambda_g \mid r_g, \theta\right),
 $${#eq-nb-joint-dist-3}
 
 Written more compactly, we can write
@@ -913,7 +938,7 @@ these independent Poisson random variables,
 
 $$
 \pi(\underline{u} \mid \underline{\lambda}) =
-\prod_{g=1}^6 
+\prod_{g=1}^G
 \pi\left(u_g \mid \lambda_g\right) =
 \prod_{g=1}^G \frac{\lambda_g}{u_{g}!} e^{-\lambda_g}.
 $${#eq-joint-poisson}
@@ -939,7 +964,7 @@ we can recover the joint distribution of Poisson random variables in
 i.e., 
 
 $$
-\sum_{g=1}^G \rho_g = 1.
+\rho_g \geq 0 \quad \text{and} \quad \sum_{g=1}^G \rho_g = 1.
 $${#eq-rho-sum}
 
 Each of these parameters can be interpreted as the probability of assigning a
@@ -1017,18 +1042,18 @@ $$
 M_{\lambda}(t) = \left\langle e^{t\lambda} \right\rangle_{\pi(\lambda)}.
 $${#eq-mgf-def}
 
-for $\lambda \sim \text{Gamma}(r, \theta)$, we have
+For $\lambda \sim \text{Gamma}(r, \theta)$, we have
 
 $$
 M_\lambda(t)=\int_0^{\infty} d \lambda \,
-e^{t \lambda} \frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)}
+e^{t \lambda} \frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)}.
 $${#eq-mgf-gamma-1}
 
 We can factor out the terms that do not depend on $\lambda$ to obtain
 
 $$
 M_\lambda(t)=\frac{\theta^r}{\Gamma(r)} \int_0^{\infty} d \lambda \,
-\lambda^{r-1} e^{-(\theta-t) \lambda}
+\lambda^{r-1} e^{-(\theta-t) \lambda}.
 $${#eq-mgf-gamma-2}
 
 Analogous to our previous encounter with an integral of this form, we define
@@ -1080,7 +1105,7 @@ $$
 $${#eq-mgf-gamma-9}
 
 To use this results, first, we substitute our previous result into the moment
-generating function
+generating function in @eq-mgf-gamma-2, obtaining
 
 $$
 M_\lambda(t) = \frac{\theta^r}{\Gamma(r)} \frac{\Gamma(r)}{(\theta-t)^r}.
@@ -1111,55 +1136,71 @@ this means the following: First, we write the MGF of $\Lambda$ using its
 definition
 
 $$
-M_{\Lambda}(t) = \left\langle e^{t \Lambda}\right\rangle_{\pi(\Lambda)}
+M_{\Lambda}(t) = \left\langle e^{t \Lambda}\right\rangle_{\pi(\Lambda)}.
 $${#eq-mgf-lambda-1}
 
-Next, we substitute the definition of $\Lambda$ as a sum of $\lambda_g$ terms
+Next, we substitute the definition of $\Lambda$ as a sum of $\lambda_g$ terms.
+Since $\Lambda = \sum_{g=1}^G \lambda_g$, the expectation of any function of
+$\Lambda$ can be computed using the joint distribution of the $\lambda_g$
+variables. Thus, we can rewrite the MGF as an expectation over
+$\pi(\underline{\lambda})$,
 
 $$
-M_{\Lambda}(t) = \left\langle\exp \left(t \sum_{g=1}^G \lambda_g\right)\right\rangle_{\pi(\underline{\lambda})}
+M_{\Lambda}(t) = 
+\left\langle
+    \exp \left(t \sum_{g=1}^G \lambda_g\right)
+\right\rangle_{\pi(\underline{\lambda})}.
 $${#eq-mgf-lambda-2}
 
 Using the property of exponentials, we can rewrite this as a product
 
 $$
-M_{\Lambda}(t) = \left\langle e^{t \lambda_1} e^{t \lambda_2} \cdots e^{t \lambda_G}\right\rangle_{\pi(\underline{\lambda})}
+M_{\Lambda}(t) = 
+\left\langle 
+    e^{t \lambda_1} e^{t \lambda_2} \cdots e^{t \lambda_G}
+\right\rangle_{\pi(\underline{\lambda})}.
 $${#eq-mgf-lambda-3}
 
 By independence of the $\lambda_g$ terms, we can factor the expectation
 
 $$
-M_{\Lambda}(t) = \left\langle e^{t \lambda_1}\right\rangle_{\pi\left(\lambda_1\right)}\left\langle e^{t \lambda_2}\right\rangle_{\pi\left(\lambda_2\right)} \cdots\left\langle e^{t \lambda_G}\right\rangle_{\pi\left(\lambda_G\right)}
+M_{\Lambda}(t) = 
+\left\langle 
+    e^{t \lambda_1}
+\right\rangle_{\pi\left(\lambda_1\right)}
+\left\langle 
+    e^{t \lambda_2}
+\right\rangle_{\pi\left(\lambda_2\right)} 
+\cdots
+\left\langle 
+    e^{t \lambda_G}
+\right\rangle_{\pi\left(\lambda_G\right)}.
 $${#eq-mgf-lambda-4}
 
-Finally, we recognize that each expectation is the MGF of an individual $\lambda_g$
+Finally, we recognize that each expectation is the MGF of an individual
+$\lambda_g$
 
 $$
-M_{\Lambda}(t) = \prod_{g=1}^G M_{\lambda_g}(t)
+M_{\Lambda}(t) = \prod_{g=1}^G M_{\lambda_g}(t).
 $${#eq-mgf-lambda-5}
 
 Using our derived MGF for the Gamma distribution in @eq-mgf-gamma-13, we can
 express the MGF of $\Lambda$ as a product of individual MGFs
 
 $$
-M_{\Lambda}(t) = \prod_{g=1}^G M_{\lambda_g}(t).
-$${#eq-mgf-delta-1}
-
-Substituting the MGF form for each $\lambda_g$
-
-$$
 M_{\Lambda}(t) = \prod_{g=1}^G\left(1-\frac{t}{\theta}\right)^{-r_g}.
-$${#eq-mgf-delta-2}
+$${#eq-mgf-delta-1}
 
 Finally, we can combine the exponents to get
 
 $$
 M_{\Lambda}(t) = \left(1-\frac{t}{\theta}\right)^{-\sum_{g=1}^G r_g}.
-$${#eq-mgf-delta-3}
+$${#eq-mgf-delta-2}
 
 But we recognize that this is the MGF of a Gamma distribution with parameters
-$r_T = \sum_{g=1}^G r_g$ and $\theta$. Therefore, we have shown the desired
-property of @eq-sum-gamma-dist.
+$r_T = \sum_{g=1}^G r_g$ and $\theta$. Therefore, given the one-to-one matching
+between distributions and MGFs, we have shown the desired property of
+@eq-sum-gamma-dist.
 
 Let us now consider the definition of the $\rho_g$ variables in @eq-rho-def. The
 claim we must now prove is that the joint distribution of these
@@ -1172,14 +1213,14 @@ $${#eq-rho-dist}
 
 In other words, regardless of the value of $\theta$, the joint distribution of
 the $\underline{\rho}$ parameters is a Dirichlet distribution with parameters
-$\underline{r}$. To show show this, we transform the dist. of all
+$\underline{r}$. To show show this, we transform the distribution of all
 $\underline{\lambda}$ to the joint distribution over $\Lambda, \rho_1, \rho_2,
 \ldots, \rho_{G-1}$. Note that $\rho_G = 1-\rho_1-\rho_2-\cdots-\rho_{G-1}$
 since the $\rho_g$ parameters must sum to 1. For this, we express the
-$\lambda_g$ parameters in terms of the $\rho_g$ parameters
+$\lambda_g$ parameters in terms of the $\rho_g$ parameters and $\Lambda$ as
 
 $$
-\lambda_g = \Lambda \rho_g \; \text{for} \; g \in \{1, 2, \ldots, G-1\},
+\lambda_g = \Lambda \rho_g \quad \text{for} \; g \in \{1, 2, \ldots, G-1\},
 $${#eq-lambda-rho-1}
 
 and
@@ -1214,13 +1255,6 @@ $$
 \underline{V} = (\Lambda, \rho_1, \rho_2, \ldots, \rho_{G-1}).
 $${#eq-v-def}
 
-The Jacobian matrix $\underline{\underline{J}}$ for this transformation from
-$\underline{\lambda} = (\lambda_1, \ldots, \lambda_G)$ to $\underline{V}$ has
-entries $J_{ab} = \frac{\partial \lambda_a}{\partial V_b}$. Here, $a \in \{1,
-\ldots, G\}$ indexes the original variables $\lambda_a$, and $V_b$ refers to the
-$b$-th variable in the vector $\underline{V}$ (i.e., $V_1 = \Lambda, V_2 =
-\rho_1, \ldots, V_G = \rho_{G-1}$).
-
 Let's compute the required partial derivatives. For $k \in \{1, \ldots, G-1\}$,
 we have $\lambda_k = \Lambda \rho_k$. The partial derivatives with respect to
 the new variables are:
@@ -1229,12 +1263,12 @@ $$
 \frac{\partial \lambda_k}{\partial \Lambda} = \rho_k,
 $${#eq-jac-deriv-lk-Lambda}
 
-and for $j \in \{1, \ldots, G-1\}$,
+and,
 
 $$
 \frac{\partial \lambda_k}{\partial \rho_j} = 
 \begin{cases} 
-\Lambda & \text{if } j=k \\
+\Lambda & \text{if } j=k, \\
 0 & \text{if } j \neq k.
 \end{cases}
 $${#eq-jac-deriv-lk-rhoj}
@@ -1246,7 +1280,7 @@ $$
 \frac{\partial \lambda_G}{\partial \Lambda} = 1-\sum_{j=1}^{G-1} \rho_j,
 $${#eq-jac-deriv-lG-Lambda}
 
-and for $j \in \{1, \ldots, G-1\}$,
+and,
 
 $$
 \frac{\partial \lambda_G}{\partial \rho_j} = -\Lambda.
@@ -1312,7 +1346,8 @@ $$
 $${#eq-jac-rowop-elem-other}
 
 After this row operation, the $G$-th row becomes $(1, 0, 0, \ldots, 0)$. The
-Jacobian matrix, let's call it $\underline{\underline{J}}'$, now takes the form
+modified Jacobian matrix, let's call it $\underline{\underline{J}}'$, now takes
+the form
 
 $$
 \underline{\underline{J}}'=\left[\begin{array}{ccccc}
@@ -1324,11 +1359,12 @@ $$
 \end{array}\right].
 $${#eq-jacobian-matrix-simplified}
 
-The determinant of the original Jacobian $\underline{\underline{J}}$ is equal to
-$\det(\underline{\underline{J}}')$. We can compute
+Since we only need the determinat of the original matrix, and the modifications
+we made do not affect the determinant, computing the determinant of
+$\det(\underline{\underline{J}}')$ satisfies our needs. We can compute
 $\det(\underline{\underline{J}}')$ by cofactor expansion along its last row.
 Since the last row is $(1, 0, \ldots, 0)$, the expansion simplifies
-significantly
+significantly.
 
 $$
 \det(\underline{\underline{J}}) = 1 \cdot C_{G1} + \sum_{j=2}^{G} (0 \cdot C_{Gj}) = C_{G1},
