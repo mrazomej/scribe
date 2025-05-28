@@ -1,6 +1,9 @@
 # %% ---------------------------------------------------------------------------
 # Import base libraries
 # Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
+import jax.experimental.maps as maps
+from jax.sharding import Mesh, PartitionSpec
+from jax.experimental import mesh_utils
 import gc
 import scanpy as sc
 import scribe
@@ -19,6 +22,10 @@ os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
 # Disable the memory preallocation completely
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 
+# Add these near the top with other environment variables
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'  # Explicitly specify GPUs to use
+# Use 90% of available GPU memory
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '1.0'
 
 # Import JAX-related libraries
 # Enable double precision (Float64)
@@ -27,6 +34,7 @@ jax.config.update("jax_enable_x64", True)
 # Clear caches before running
 gc.collect()
 jax.clear_caches()  # In newer JAX versions
+
 
 # %% ---------------------------------------------------------------------------
 
@@ -105,19 +113,33 @@ kernel_kwargs = {
     "regularize_mass_matrix": False
 }
 
+print("Setting up multi-GPU configuration...")
+
+# Get the number of available devices
+n_devices = jax.device_count()
+print(f"Number of available devices: {n_devices}")
+
+# Create a mesh for device partitioning
+devices = mesh_utils.create_device_mesh((n_devices,))
+mesh = Mesh(devices, axis_names=('data',))
+
+# Define the partition specification
+partition_spec = PartitionSpec('data')
+
 print("Running MCMC sampling...")
 
 if not os.path.exists(file_name):
-    # Run MCMC sampling
-    mcmc_results = scribe.mcmc.run_scribe(
-        counts=data,
-        variable_capture=True,
-        mixture_model=True,
-        n_components=2,
-        num_warmup=n_mcmc_burnin,
-        num_samples=n_mcmc_samples,
-        kernel_kwargs=kernel_kwargs,
-    )
+    # Run MCMC sampling with device mesh
+    with mesh:
+        mcmc_results = scribe.mcmc.run_scribe(
+            counts=data,
+            variable_capture=True,
+            mixture_model=True,
+            n_components=2,
+            num_warmup=n_mcmc_burnin,
+            num_samples=n_mcmc_samples,
+            kernel_kwargs=kernel_kwargs,
+        )
     # Save MCMC results
     with open(file_name, "wb") as f:
         pickle.dump(mcmc_results, f)
