@@ -1359,15 +1359,18 @@ $$
 \end{array}\right].
 $${#eq-jacobian-matrix-simplified}
 
-Since we only need the determinat of the original matrix, and the modifications
-we made do not affect the determinant, computing the determinant of
-$\det(\underline{\underline{J}}')$ satisfies our needs. We can compute
+The determinant of the original Jacobian $\underline{\underline{J}}$ is equal to
+$\det(\underline{\underline{J}}')$. We can compute
 $\det(\underline{\underline{J}}')$ by cofactor expansion along its last row.
-Since the last row is $(1, 0, \ldots, 0)$, the expansion simplifies
-significantly.
+Cofactor expansion is a method to compute the determinant of a matrix by summing
+the products of the elements of a chosen row (or column) with their
+corresponding cofactors; it is particularly efficient when the chosen row (or
+column) has many zero entries. Since the last row is $(1, 0, \ldots, 0)$, the
+expansion simplifies significantly,
 
 $$
-\det(\underline{\underline{J}}) = 1 \cdot C_{G1} + \sum_{j=2}^{G} (0 \cdot C_{Gj}) = C_{G1},
+\det(\underline{\underline{J}}) = 
+1 \cdot C_{G1} + \sum_{j=2}^{G} (0 \cdot C_{Gj}) = C_{G1},
 $${#eq-jac-cofactor-expansion}
 
 where $C_{G1}$ is the cofactor of the element in the $G$-th row and $1$-st
@@ -1536,18 +1539,20 @@ The second term in @eq-jacobian-8 looks almost like the expression for the
 Dirichlet distribution, but without the normalization constant
 
 $$
-\frac{1}{B(\underline{r})} \equiv \frac{\Gamma\left(r_T\right)}{\prod_{g=1}^G \Gamma\left(r_g\right)} .
+\frac{1}{B(\underline{r})} 
+\equiv \frac{\Gamma\left(r_T\right)}{\prod_{g=1}^G \Gamma\left(r_g\right)},
 $${#eq-dirichlet-normalization}
 
-Notice that the denominator for this normalization constant is the same as the
-denominator in @eq-jacobian-9. Thus, multiplying @eq-jacobian-8 by $\Gamma(r_T)
-/ \Gamma(r_T)$ suffices to turn both terms into the desired distributions. This
-then shows our original claim that the joint distribution of $\underline{V}$ is
-the product of a Gamma distribution and a Dirichlet distribution
+where we use $B(\underline{r})$ to denote the Beta function. Notice that the
+denominator for this normalization constant is the same as the denominator in
+@eq-jacobian-9. Thus, multiplying @eq-jacobian-8 by $\Gamma(r_T) / \Gamma(r_T)$
+suffices to turn both terms into the desired distributions. This then shows our
+original claim that the joint distribution of $\underline{V}$ is the product of
+a Gamma distribution and a Dirichlet distribution
 
 $$
 \pi\left(\underline{V} \mid \underline{r}, \theta\right) =
-\operatorname{Gamma}(\Lambda \mid r, \theta) \times 
+\operatorname{Gamma}(\Lambda \mid r_T, \theta) \times 
 \operatorname{Dirichlet}(\underline{\rho} \mid \underline{r}).
 $${#eq-dirichlet-multinomial-model}
 
@@ -1560,8 +1565,9 @@ and a multinomial distribution).
 ### Joint distribution of negative binomials as product of negative binomial and dirichlet-multinomial
 
 To prove this final point, we will make use of all the results derived in the
-previous section. Recall that we are after the joint distribution of independent
-negative binomial random variables with a shared $\hat{p}$ parameter,
+previous sections. Recall that we are after the joint distribution of
+independent negative binomial random variables with a shared $\hat{p}$
+parameter,
 
 $$
 \pi(\underline{u} \mid \underline{r}, \hat{p}) =
@@ -1577,6 +1583,7 @@ $$
 \overbrace{
 \prod_{g=1}^G \pi\left(u_g \mid \lambda_g\right) 
 }^{\text{product of Poissons}}
+\times
 \underbrace{
 \prod_{g=1}^G \pi\left(\lambda_g \mid r_g, \theta\right)
 }_{\text{product of Gammas}},
@@ -1596,12 +1603,16 @@ $\underline{\rho}$
 $$
 \pi(\underline{u} \mid \underline{r}, \hat{p}) = 
 \int d^G \underline{\lambda} \,
-\underbrace{
-\pi(\underline{u} \mid u_T, \underline{\lambda}) 
-}_{\text{multinomial}}
-\overbrace{
-\pi(u_T \mid \lambda_T) 
-}^{\text{Poisson}}
+\left[
+    \underbrace{
+    \pi(\underline{u} \mid u_T, \underline{\lambda}) 
+    }_{\text{multinomial}}
+    \times
+    \overbrace{
+    \pi(u_T \mid \lambda_T) 
+    }^{\text{Poisson}}
+\right]
+\times
 \underbrace{
 \prod_{g=1}^G \pi\left(\lambda_g \mid r_g, \theta\right)
 }_{\text{product of Gammas}}.
@@ -1628,12 +1639,15 @@ $$
 \underbrace{
 \pi(\underline{u} \mid u_T, \underline{\rho})
 }_{\text{multinomial}}
+\times
 \overbrace{
 \pi(u_T \mid \Lambda)
 }^{\text{Poisson}}
+\times
 \underbrace{
 \pi(\Lambda \mid r_T, \theta)
 }_{\text{Gamma}}
+\times
 \overbrace{
 \pi(\underline{\rho} \mid \underline{r})
 }^{\text{Dirichlet}}.
@@ -1647,6 +1661,7 @@ $$
 \overbrace{
 \pi(u_T \mid \Lambda)
 }^{\text{Poisson}}
+\times
 \underbrace{
 \pi(\Lambda \mid r_T, \theta)
 }_{\text{Gamma}}
@@ -1654,6 +1669,7 @@ $$
 \overbrace{
 \pi(\underline{\rho} \mid \underline{r})
 }^{\text{Dirichlet}}
+\times
 \underbrace{
 \pi(\underline{u} \mid u_T, \underline{\rho})
 }_{\text{multinomial}}.
@@ -1664,8 +1680,8 @@ and a Gamma distribution, which we have shown to be equivalent to a negative
 binomial distribution, i.e.,
 
 $$
-\int_0^{\infty} d \Lambda 
-\pi(u_T \mid \Lambda) \pi\left(\Lambda \mid r_T, \theta\right) =
+\int_0^{\infty} d \Lambda \,
+\pi(u_T \mid \Lambda) \times \pi\left(\Lambda \mid r_T, \theta\right) =
 \operatorname{NB}\left(u_T \mid r_T, \hat{p}\right).
 $${#eq-joint-target-int-poisson-gamma-negative-binomial}
 
@@ -1676,8 +1692,13 @@ Let's derive this result in detail. We want to evaluate the integral
 $$
 \pi(\underline{u} \mid u_T, \underline{r}) = 
 \int d^{G-1} \underline{\rho} \, 
-\pi(\underline{\rho} \mid \underline{r}) 
-\pi(\underline{u} \mid u_T, \underline{\rho}).
+\overbrace{
+    \pi(\underline{\rho} \mid \underline{r}) 
+}^{\text{Dirichlet}}
+\times
+\underbrace{
+    \pi(\underline{u} \mid u_T, \underline{\rho})
+}_{\text{multinomial}}.
 $${#eq-dm-integral-target}
 
 The probability mass function for the Multinomial distribution, which describes
@@ -1703,7 +1724,8 @@ $$
 \prod_{g=1}^G \rho_g^{r_g-1}.
 $${#eq-dirichlet-pdf}
 
-Let $r_T = \sum_{k=1}^G r_k$. Then the Dirichlet PDF can be written as
+Using our definition $r_T = \sum_{k=1}^G r_k$, the Dirichlet PDF can be written
+as
 
 $$
 \pi(\underline{\rho} \mid \underline{r}) = 
@@ -1749,50 +1771,31 @@ $$
 }{
     \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
 } 
-\int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{u_g + r_g - 1}.
+\int d^{G-1} \underline{\rho} \, 
+\left(
+    \prod_{g=1}^G \rho_g^{u_g + r_g - 1}
+\right).
 $${#eq-dm-integral-rearranged-2}
 
-The integral term is related to the normalization constant of a Dirichlet
-distribution. Specifically, for a Dirichlet distribution with parameters
-$\underline{\alpha} = (\alpha_1, \ldots, \alpha_G)$, its PDF is
-
-$$
-\text{Dir}(\underline{\rho} \mid \underline{\alpha}) = 
-\frac{
-    \Gamma\left(\sum_{k=1}^G \alpha_k\right)
-}{
-    \prod_{k=1}^G \Gamma(\alpha_k)
-} 
-\prod_{g=1}^G \rho_g^{\alpha_g-1}.
-$${#eq-dirichlet-general-pdf}
-
-Since the Dirichlet distribution must integrate to 1 over the simplex $S = \{
-\underline{\rho} : \rho_g \ge 0, \sum \rho_g = 1 \}$, we have
-
-$$
-\int_S d^{G-1} \underline{\rho} \, 
-\frac{
-    \Gamma\left(\sum_{k=1}^G \alpha_k\right)
-}{
-    \prod_{k=1}^G \Gamma(\alpha_k)
-} 
-\prod_{g=1}^G \rho_g^{\alpha_g-1} = 1.
-$${#eq-dirichlet-integral-one}
-
-From this, we can deduce the value of the integral part of
-@eq-dm-integral-rearranged-2
+Notice that the integral term in @eq-dm-integral-rearranged-2 integrates the
+product of a bunch of variables $\rho_g$ over the simplex $S = \{
+\underline{\rho} : \rho_g \ge 0, \sum \rho_g = 1 \}$. If we were to perform the
+same integral in @eq-dirichlet-pdf, which also has the same product of simplex
+variables, the integral would return 1 given that a PDF must be normalized. We
+can use this fact to solve for the integral without having to do any complicated
+math. First, we define $\alpha_g = u_g + r_g$ to be our parameter for the
+Dirichlet PDF. This implies right away that
 
 $$
 \int_S d^{G-1} \underline{\rho} \, 
 \prod_{g=1}^G \rho_g^{\alpha_g-1} = 
-\frac{\prod_{k=1}^G \Gamma(\alpha_k)}{\Gamma\left(\sum_{k=1}^G \alpha_k\right)}.
+\frac{\prod_{k=1}^G \Gamma(\alpha_k)}{\Gamma\left(\sum_{k=1}^G \alpha_k\right)},
 $${#eq-dirichlet-integral-value}
 
-In our specific case, the parameters for the integral in
-@eq-dm-integral-rearranged-2 are $\alpha_g = u_g + r_g$. Therefore, the sum of
-these parameters is $\sum_{g=1}^G (u_g + r_g) = \sum_{g=1}^G u_g + \sum_{g=1}^G
-r_g = u_T + r_T$. Applying @eq-dirichlet-integral-value, the integral in
-@eq-dm-integral-rearranged-2 evaluates to
+i.e., the inverse of the normalization constant of the Dirchlet PDF. The sum of
+the parameters results in $\sum_{g=1}^G (u_g + r_g) = \sum_{g=1}^G u_g +
+\sum_{g=1}^G r_g = u_T + r_T$. Applying @eq-dirichlet-integral-value, the
+integral in @eq-dm-integral-rearranged-2 evaluates to
 
 $$
 \int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{u_g + r_g - 1} = 
@@ -1807,7 +1810,7 @@ $$
     \Gamma(r_T) u_T!
 }{
     \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
-} \cdot 
+} \times
 \frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
 $${#eq-dm-intermediate-result}
 
@@ -1823,7 +1826,7 @@ $$
     \left(
         \prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G \Gamma(u_k+1)
     \right)
-} \cdot 
+} \times
 \frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
 $${#eq-dm-intermediate-result-gamma}
 
@@ -1875,7 +1878,8 @@ already accounts for the conversion from mRNA molecules to our observed UMI
 counts via the composition of a negative binomial and a binomial distribution.
 Our derivation shows that with the relatively benign assumption that the
 $\hat{p}$ parameter is shared across all genes, the resulting joint distribution
-has a much simpler functional form.
+has a much simpler functional form---the product of two distributions rather
+than the product of $G$ distributions.
 
 Second, in the construction of the negative binomial/Dirichlet multinomial
 model, we summoned the use of $\underline{\rho}$ parameters that lie on the unit
@@ -1885,11 +1889,11 @@ dataset, what we seek is the equivalent of estimating these parameters that
 transform counts into a number between 0 and 1. For example, in the excellent
 work by @breda2021, the authors used the result we derived earlier that the
 joint distribution of independet Poisson random variables can be expressed as
-the product of a Poisson and a multinomial distribution. The overdispersion of
-UMI counts was accounted as external noise rather than an intrinsic property of
-the gene expression profiles. The goal of their model was then to estimate the
-probability parameters for the multinomial distribution; using them as the
-equivalent of the normalized gene expression counts.
+the product of a Poisson and a multinomial distribution. In their work, the
+overdispersion of UMI counts was accounted as external noise rather than an
+intrinsic property of the gene expression profiles. The goal of their model was
+then to estimate the probability parameters for the multinomial distribution;
+using them as the equivalent of the normalized gene expression counts.
 
 However, when we start from what we said is a perfectly reasonable assumption
 that gene expression can be modeled as a negative binomial distribution, we do
