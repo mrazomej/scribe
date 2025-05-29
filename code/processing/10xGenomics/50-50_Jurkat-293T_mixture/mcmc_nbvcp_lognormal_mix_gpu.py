@@ -1,9 +1,6 @@
 # %% ---------------------------------------------------------------------------
 # Import base libraries
 # Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
-import jax.experimental.maps as maps
-from jax.sharding import Mesh, PartitionSpec
-from jax.experimental import mesh_utils
 import gc
 import scanpy as sc
 import scribe
@@ -13,15 +10,6 @@ from jax import random
 import jax
 import pickle
 import os
-# os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
-
-# Preallocate a specific amount of memory (in bytes)
-# os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false' # This was duplicated
-os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
-
-# Disable the memory preallocation completely
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-
 # Add these near the top with other environment variables
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'  # Explicitly specify GPUs to use
 # Use 90% of available GPU memory
@@ -45,7 +33,7 @@ rng_key = random.PRNGKey(42)
 # Define number of MCMC burn-in samples
 n_mcmc_burnin = 5_000
 # Define number of MCMC samples
-n_mcmc_samples = 4_000
+n_mcmc_samples = 2_500
 
 # %% ---------------------------------------------------------------------------
 
@@ -61,7 +49,7 @@ n_components = 2
 DATA_DIR = f"data/10xGenomics/50-50_Jurkat-293T_mixture"
 
 # Define output directory
-OUTPUT_DIR = f"/home/groups/dpetrov/mrazo/" \
+OUTPUT_DIR = f"/home/scratch/dpetrov/mrazo/" \
     f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
 
 # If the output directory does not exist, create it
@@ -113,33 +101,20 @@ kernel_kwargs = {
     "regularize_mass_matrix": False
 }
 
-print("Setting up multi-GPU configuration...")
-
-# Get the number of available devices
-n_devices = jax.device_count()
-print(f"Number of available devices: {n_devices}")
-
-# Create a mesh for device partitioning
-devices = mesh_utils.create_device_mesh((n_devices,))
-mesh = Mesh(devices, axis_names=('data',))
-
-# Define the partition specification
-partition_spec = PartitionSpec('data')
-
 print("Running MCMC sampling...")
 
 if not os.path.exists(file_name):
-    # Run MCMC sampling with device mesh
-    with mesh:
-        mcmc_results = scribe.mcmc.run_scribe(
-            counts=data,
-            variable_capture=True,
-            mixture_model=True,
-            n_components=2,
-            num_warmup=n_mcmc_burnin,
-            num_samples=n_mcmc_samples,
-            kernel_kwargs=kernel_kwargs,
-        )
+    # Run MCMC sampling
+    mcmc_results = scribe.mcmc.run_scribe(
+        counts=data,
+        variable_capture=True,
+        mixture_model=True,
+        n_components=2,
+        num_warmup=n_mcmc_burnin,
+        num_samples=n_mcmc_samples,
+        kernel_kwargs=kernel_kwargs,
+        chain_method="parallel",
+    )
     # Save MCMC results
     with open(file_name, "wb") as f:
         pickle.dump(mcmc_results, f)
