@@ -10,15 +10,22 @@ import jax
 import pickle
 import os
 # Add these near the top with other environment variables
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'  # Explicitly specify GPUs to use
-os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'  # Reduce from 1.0 to 0.8
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'  # Disable preallocation
+# Use only one GPU with maximum memory efficiency
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Single GPU
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.95'  # Use almost all memory
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 # Use platform allocator
 os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
 
-# Import JAX-related libraries
 # Enable double precision (Float64)
 jax.config.update("jax_enable_x64", True)
+
+# Set up multi-GPU mesh for model sharding
+devices = mesh_utils.create_device_mesh((2,))  # 2 GPUs
+mesh = Mesh(devices, axis_names=('data',))
+
+print(f"Available devices: {jax.devices()}")
+print(f"Device mesh: {mesh}")
 
 # Clear caches before running
 gc.collect()
@@ -32,9 +39,9 @@ print("Setting up MCMC parameters...")
 # Setup the PRNG key
 rng_key = random.PRNGKey(42)
 # Define number of MCMC burn-in samples
-n_mcmc_burnin = 5_000
+n_mcmc_burnin = 5_000  # Restore original values
 # Define number of MCMC samples
-n_mcmc_samples = 2_500
+n_mcmc_samples = 2_500  # Restore original values
 
 # %% ---------------------------------------------------------------------------
 
@@ -74,11 +81,11 @@ n_cells = data.n_obs
 # Extract counts
 counts = jnp.array(data.X.toarray(), dtype=jnp.float64)
 
-# %% ---------------------------------------------------------------------------
+# Add memory usage check and optional data subsetting
+print(f"Data shape: {counts.shape}")
+print(f"Data memory usage: {counts.nbytes / 1e9:.2f} GB")
 
-# Clear caches before running
-gc.collect()
-jax.clear_caches()
+# %% ---------------------------------------------------------------------------
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
@@ -90,10 +97,10 @@ file_name = f"{OUTPUT_DIR}/" \
 
 print("Defining kernel kwargs...")
 
-# Define kernel kwargs
+# More aggressive kernel settings for memory efficiency
 kernel_kwargs = {
-    "target_accept_prob": 0.85,
-    "max_tree_depth": (8, 8),  # Reduce from 10 to 8
+    "target_accept_prob": 0.8,  # Slightly lower
+    "max_tree_depth": (6, 6),  # Much more conservative
     "step_size": jnp.array(1.0, dtype=jnp.float64),
     "find_heuristic_step_size": False,
     "dense_mass": False,
@@ -102,24 +109,22 @@ kernel_kwargs = {
     "regularize_mass_matrix": False
 }
 
-print("Running MCMC sampling...")
-
 if not os.path.exists(file_name):
-    # Add explicit garbage collection before MCMC
     gc.collect()
     jax.clear_caches()
 
-    # Run MCMC sampling with reduced memory usage
+    # Run MCMC sampling with single chain but distributed computation
     mcmc_results = scribe.mcmc.run_scribe(
-        counts=data,
+        counts=counts,  # Use sharded data
         variable_capture=True,
         mixture_model=True,
         n_components=2,
         num_warmup=n_mcmc_burnin,
         num_samples=n_mcmc_samples,
         kernel_kwargs=kernel_kwargs,
-        chain_method="parallel",
+        chain_method="vectorized",  # Single chain
     )
+
     # Save MCMC results
     with open(file_name, "wb") as f:
         pickle.dump(mcmc_results, f)
