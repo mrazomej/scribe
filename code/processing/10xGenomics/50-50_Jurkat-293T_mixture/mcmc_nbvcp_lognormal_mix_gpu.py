@@ -4,7 +4,6 @@
 import gc
 import scanpy as sc
 import scribe
-from numpyro.infer import MCMC, NUTS
 import jax.numpy as jnp
 from jax import random
 import jax
@@ -12,8 +11,10 @@ import pickle
 import os
 # Add these near the top with other environment variables
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'  # Explicitly specify GPUs to use
-# Use 90% of available GPU memory
-os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '1.0'
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'  # Reduce from 1.0 to 0.8
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'  # Disable preallocation
+# Use platform allocator
+os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
 
 # Import JAX-related libraries
 # Enable double precision (Float64)
@@ -49,7 +50,7 @@ n_components = 2
 DATA_DIR = f"data/10xGenomics/50-50_Jurkat-293T_mixture"
 
 # Define output directory
-OUTPUT_DIR = f"/home/scratch/dpetrov/mrazo/" \
+OUTPUT_DIR = f"/scratch/groups/dpetrov/mrazo/" \
     f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
 
 # If the output directory does not exist, create it
@@ -92,7 +93,7 @@ print("Defining kernel kwargs...")
 # Define kernel kwargs
 kernel_kwargs = {
     "target_accept_prob": 0.85,
-    "max_tree_depth": (10, 10),
+    "max_tree_depth": (8, 8),  # Reduce from 10 to 8
     "step_size": jnp.array(1.0, dtype=jnp.float64),
     "find_heuristic_step_size": False,
     "dense_mass": False,
@@ -104,7 +105,11 @@ kernel_kwargs = {
 print("Running MCMC sampling...")
 
 if not os.path.exists(file_name):
-    # Run MCMC sampling
+    # Add explicit garbage collection before MCMC
+    gc.collect()
+    jax.clear_caches()
+
+    # Run MCMC sampling with reduced memory usage
     mcmc_results = scribe.mcmc.run_scribe(
         counts=data,
         variable_capture=True,
