@@ -377,6 +377,18 @@ def run_scribe(
     # Set p distribution for model and guide
     p_dist_model = dist.Beta(*p_prior)
     p_dist_guide = dist.Beta(*p_prior)
+    
+    # Set up NegativeBinomial2 parameterization distributions
+    # Mean parameter: use LogNormal with parameters derived from r and p priors
+    # For NB2, mean = r * (1-p) / p, so we can estimate reasonable mean priors
+    mean_loc = 2.0  # ln(mean) ~ 2, so mean ~ 7.4
+    mean_scale = 1.0
+    mean_dist_model = dist.LogNormal(mean_loc, mean_scale)
+    mean_dist_guide = dist.LogNormal(mean_loc, mean_scale)
+    
+    # Concentration parameter: use the same distribution as r
+    concentration_dist_model = r_dist_model
+    concentration_dist_guide = r_dist_guide
 
     # Configure gate distribution if needed
     gate_dist_model = None
@@ -410,6 +422,15 @@ def run_scribe(
         p_distribution_guide=p_dist_guide,
         p_param_prior=p_prior,
         p_param_guide=p_prior,
+        # NegativeBinomial2 parameterization fields
+        mean_distribution_model=mean_dist_model,
+        mean_distribution_guide=mean_dist_guide,
+        mean_param_prior=(mean_loc, mean_scale),
+        mean_param_guide=(mean_loc, mean_scale),
+        concentration_distribution_model=concentration_dist_model,
+        concentration_distribution_guide=concentration_dist_guide,
+        concentration_param_prior=r_prior,
+        concentration_param_guide=r_prior,
         gate_distribution_model=gate_dist_model,
         gate_distribution_guide=gate_dist_guide,
         gate_param_prior=gate_prior if gate_dist_model else None,
