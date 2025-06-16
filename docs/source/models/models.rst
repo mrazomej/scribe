@@ -8,8 +8,6 @@ This document explains the mathematical formulation, assumptions, and
 implementation details of each model to help you select the most appropriate one
 for your analysis.
 
-.. _nbdm-model:
-
 Core Model: Negative Binomial-Dirichlet Multinomial (NBDM)
 ----------------------------------------------------------
 
@@ -202,8 +200,6 @@ the total transcriptome. This provides a principled, model-based way of
 normalizing single-cell RNA-seq data by explicitly modeling both the total
 number of UMIs and the gene-level fractions that compose it.
 
-.. _zinb-model:
-
 Zero-Inflated Negative Binomial Model (ZINB)
 --------------------------------------------
 
@@ -322,8 +318,6 @@ where:
 * :math:`\underline{\pi}` is the vector of dropout probabilities
 * :math:`\underline{r}` is the vector of dispersion parameters
 
-.. _nbvcp-model:
-
 Negative Binomial with Variable Capture Probability Model (NBVCP)
 -----------------------------------------------------------------
 
@@ -429,8 +423,6 @@ Marginalizing over the unobserved mRNA counts :math:`m_g^{(c)}`, we get:
    \tag{18}
 
 where :math:`\hat{p}^{(c)}` is the effective probability defined in Eq. (15).
-
-.. _zinbvcp-model:
 
 Zero-Inflated Negative Binomial with Variable Capture Probability Model (ZINBVCP)
 ---------------------------------------------------------------------------------

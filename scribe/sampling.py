@@ -162,10 +162,57 @@ def generate_ppc_samples(
         posterior_param_samples,
         model_args,
         key_pred,
-        batch_size
+        batch_size,
     )
     
     return {
         'parameter_samples': posterior_param_samples,
         'predictive_samples': predictive_samples
     }
+
+# ------------------------------------------------------------------------------
+
+def generate_prior_predictive_samples(
+    model: Callable,
+    model_args: Dict,
+    rng_key: random.PRNGKey,
+    n_samples: int = 100,
+    batch_size: Optional[int] = None,
+) -> jnp.ndarray:
+    """
+    Generate prior predictive samples using the model.
+    
+    Parameters
+    ----------
+    model : Callable
+        Model function
+    model_args : Dict
+        Dictionary containing model arguments. For standard models, this is
+        just the number of cells and genes. For mixture models, this is the
+        number of cells, genes, and components.
+    rng_key : random.PRNGKey
+        JAX random number generator key
+    n_samples : int, optional
+        Number of prior predictive samples to generate (default: 100)
+    batch_size : int, optional
+        Batch size for generating samples. If None, uses full dataset.
+        
+    Returns
+    -------
+    jnp.ndarray
+        Array of prior predictive samples
+    """
+    # Create predictive object for generating new data from the prior
+    predictive = Predictive(
+        model,
+        num_samples=n_samples
+    )
+    
+    # Generate prior predictive samples
+    prior_predictive_samples = predictive(
+        rng_key,
+        **model_args,
+        batch_size=batch_size
+    )
+    
+    return prior_predictive_samples["counts"]
