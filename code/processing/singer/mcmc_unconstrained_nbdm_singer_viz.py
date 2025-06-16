@@ -123,7 +123,8 @@ az.plot_pair(
 
 plt.tight_layout()
 
-# Save figure
+# Get the current figure and save it
+fig = plt.gcf()
 fig.savefig(f"{FIG_DIR}/mcmc_unconstrained_pairplot.png", bbox_inches="tight")
 
 

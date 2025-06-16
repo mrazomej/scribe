@@ -110,11 +110,8 @@ fig.savefig(f"{FIG_DIR}/mcmc_constrained_trace.png", bbox_inches="tight")
 
 # %% ---------------------------------------------------------------------------
 
-# Initialize figure
-# fig, ax = plt.subplots(2, 2, figsize=(12, 6))
-
 # Plot pair
-az.plot_pair(
+axes = az.plot_pair(
     mcmc_az,
     var_names=["p", "r"],
     divergences=True,
@@ -123,7 +120,8 @@ az.plot_pair(
 
 plt.tight_layout()
 
-# Save figure
+# Get the current figure and save it
+fig = plt.gcf()
 fig.savefig(f"{FIG_DIR}/mcmc_constrained_pairplot.png", bbox_inches="tight")
 
 

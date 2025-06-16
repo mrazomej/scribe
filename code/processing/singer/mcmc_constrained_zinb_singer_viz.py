@@ -124,14 +124,15 @@ fig.savefig(f"{FIG_DIR}/mcmc_constrained_trace.png", bbox_inches="tight")
 # Plot pair
 az.plot_pair(
     mcmc_az,
-    var_names=["p", "r", "gate"],
+    var_names=["p", "r"],
     divergences=True,
     textsize=25,
 )
 
 plt.tight_layout()
 
-# Save figure
+# Get the current figure and save it
+fig = plt.gcf()
 fig.savefig(f"{FIG_DIR}/mcmc_constrained_pairplot.png", bbox_inches="tight")
 
 
