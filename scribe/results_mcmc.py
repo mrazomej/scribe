@@ -12,7 +12,7 @@ import pandas as pd
 from numpyro.infer import MCMC
 
 from .sampling import generate_predictive_samples
-from .model_config import UnconstrainedModelConfig
+from .model_config import UnconstrainedModelConfig, ConstrainedModelConfig
 
 # ------------------------------------------------------------------------------
 # MCMC results class
@@ -59,7 +59,7 @@ class ScribeMCMCResults(MCMC):
         n_cells: int,
         n_genes: int,
         model_type: str,
-        model_config: UnconstrainedModelConfig,
+        model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig],
         prior_params: Dict[str, Any],
         obs: Optional[pd.DataFrame] = None,
         var: Optional[pd.DataFrame] = None,
@@ -138,7 +138,7 @@ class ScribeMCMCResults(MCMC):
         n_cells: int,
         n_genes: int,
         model_type: str,
-        model_config: UnconstrainedModelConfig,
+        model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig],
         prior_params: Dict[str, Any],
         **kwargs
     ):
@@ -191,7 +191,7 @@ class ScribeMCMCResults(MCMC):
         mcmc: MCMC,
         adata: "AnnData",
         model_type: str,
-        model_config: UnconstrainedModelConfig,
+        model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig],
         prior_params: Dict[str, Any],
         **kwargs
     ):
@@ -332,7 +332,8 @@ class ScribeMCMCResults(MCMC):
 
     def _model(self) -> Callable:
         """Get the model function for this model type."""
-        return _get_model_fn(self.model_type)
+        unconstrained = isinstance(self.model_config, UnconstrainedModelConfig)
+        return _get_model_fn(self.model_type, unconstrained=unconstrained)
 
     
     # --------------------------------------------------------------------------
@@ -613,7 +614,7 @@ class ScribeMCMCResults(MCMC):
             n_cells: int
             n_genes: int
             model_type: str
-            model_config: UnconstrainedModelConfig
+            model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig]
             obs: Optional[pd.DataFrame] = None
             var: Optional[pd.DataFrame] = None
             uns: Optional[Dict] = None
@@ -754,10 +755,10 @@ class ScribeMCMCResults(MCMC):
 # Shared helper functions for both ScribeMCMCResults and ScribeMCMCSubset
 # ------------------------------------------------------------------------------
 
-def _get_model_fn(model_type: str) -> Callable:
+def _get_model_fn(model_type: str, unconstrained: bool = True) -> Callable:
     """Get the model function for this model type."""
-    from .model_registry import get_unconstrained_model
-    return get_unconstrained_model(model_type)
+    from .model_registry import get_model_fn
+    return get_model_fn(model_type, unconstrained=unconstrained)
 
 # ------------------------------------------------------------------------------
 
@@ -875,13 +876,14 @@ def _generate_ppc_samples(
     model_type: str,
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig],
     rng_key: random.PRNGKey = random.PRNGKey(42),
     batch_size: Optional[int] = None,
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples."""
     # Get the model function
-    model = _get_model_fn(model_type)
+    unconstrained = isinstance(model_config, UnconstrainedModelConfig)
+    model = _get_model_fn(model_type, unconstrained=unconstrained)
     
     # Prepare base model arguments
     model_args = {
@@ -906,14 +908,15 @@ def _generate_prior_predictive_samples(
     model_type: str,
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig],
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_samples: int = 100,
     batch_size: Optional[int] = None,
 ) -> jnp.ndarray:
     """Generate prior predictive samples using the model."""
     # Get the model function
-    model = _get_model_fn(model_type)
+    unconstrained = isinstance(model_config, UnconstrainedModelConfig)
+    model = _get_model_fn(model_type, unconstrained=unconstrained)
     
     # Prepare base model arguments
     model_args = {
