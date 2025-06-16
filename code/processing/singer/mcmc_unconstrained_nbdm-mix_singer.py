@@ -83,7 +83,7 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_{model_type}_results_" \
+        f"mcmc_unconstrained_{model_type}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
@@ -106,6 +106,7 @@ if not os.path.exists(file_name):
     mcmc_results = scribe.mcmc.run_scribe(
         counts=data,
         mixture_model=True,
+        unconstrained_model=True,
         n_components=2,
         num_warmup=n_mcmc_burnin,
         num_samples=n_mcmc_samples,

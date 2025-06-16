@@ -29,7 +29,7 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define model type
-model_type = "zinbvcp"
+model_type = "nbvcp_mix"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -68,7 +68,7 @@ n_mcmc_samples = 5_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_{model_type}_results_" \
+        f"mcmc_unconstrained_{model_type}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
@@ -99,14 +99,14 @@ fig, ax = plt.subplots(4, 2, figsize=(12, 12))
 # Plot trace
 az.plot_trace(
     mcmc_az,
-    var_names=["p", "r", "gate", "p_capture"],
+    var_names=["p", "r", "p_capture", "mixing_weights"],
     axes=ax,
 )
 
 plt.tight_layout()
 
 # Save figure
-fig.savefig(f"{FIG_DIR}/mcmc_trace.png", bbox_inches="tight")
+fig.savefig(f"{FIG_DIR}/mcmc_unconstrained_trace.png", bbox_inches="tight")
 
 # %% ---------------------------------------------------------------------------
 
@@ -123,6 +123,8 @@ az.plot_pair(
 
 plt.tight_layout()
 
+# Save figure
+fig.savefig(f"{FIG_DIR}/mcmc_unconstrained_pairplot.png", bbox_inches="tight")
 
 # %% ---------------------------------------------------------------------------
 
@@ -197,7 +199,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/ppc.png", 
+    f"{FIG_DIR}/mcmc_unconstrained_ppc.png", 
     bbox_inches="tight"
 )
 
@@ -216,7 +218,7 @@ for i, ax in enumerate(axes):
     print(f"Plotting gene {i} PPC...")
 
     # Extract true counts for this gene from the dataframe
-    true_counts = df.iloc[:, i].values
+    true_counts = df.iloc[:, i].values + 1
     # Define max bin
     max_bin = true_counts.max()
 
@@ -275,7 +277,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/ppc_ecdf.png", 
+    f"{FIG_DIR}/mcmc_unconstrained_ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define model type
-model_type = "zinb"
+model_type = "zinb_mix"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -68,7 +68,7 @@ n_mcmc_samples = 5_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_{model_type}_results_" \
+        f"mcmc_unconstrained_{model_type}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
@@ -81,40 +81,32 @@ with open(file_name, "rb") as f:
 # %% ---------------------------------------------------------------------------
 
 # Get ppc_samples
-ppc_samples = mcmc_results.get_ppc_samples()
+mcmc_results.get_ppc_samples()
+
 
 # %% ---------------------------------------------------------------------------
 
-# Define gene names from the dataframe columns
-gene_names = df.columns.tolist()
-
-# Build Arviz object with gene names
+# Build Arviz object
 mcmc_az = az.from_numpyro(
     mcmc_results,
-    posterior_predictive={
-        "counts": ppc_samples,
-    },
-    coords={"gene": gene_names},
-    dims={"r": ["gene"], "gate": ["gene"]}
 )
-
 # %% ---------------------------------------------------------------------------
 
 # Initialize figure
-fig, ax = plt.subplots(3, 2, figsize=(12, 8))
+fig, ax = plt.subplots(4, 2, figsize=(12, 12))
 
 
 # Plot trace
 az.plot_trace(
     mcmc_az,
-    var_names=["p", "r", "gate"],
+    var_names=["p", "r", "gate", "mixing_weights"],
     axes=ax,
 )
 
 plt.tight_layout()
 
 # Save figure
-fig.savefig(f"{FIG_DIR}/mcmc_trace.png", bbox_inches="tight")
+fig.savefig(f"{FIG_DIR}/mcmc_unconstrained_trace.png", bbox_inches="tight")
 
 # %% ---------------------------------------------------------------------------
 
@@ -124,12 +116,15 @@ fig.savefig(f"{FIG_DIR}/mcmc_trace.png", bbox_inches="tight")
 # Plot pair
 az.plot_pair(
     mcmc_az,
-    var_names=["p", "r", "gate"],
+    var_names=["p", "r"],
     divergences=True,
     textsize=25,
 )
 
 plt.tight_layout()
+
+# Save figure
+fig.savefig(f"{FIG_DIR}/mcmc_unconstrained_pairplot.png", bbox_inches="tight")
 
 
 # %% ---------------------------------------------------------------------------
@@ -205,7 +200,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/ppc.png", 
+    f"{FIG_DIR}/mcmc_unconstrained_ppc.png", 
     bbox_inches="tight"
 )
 
@@ -225,19 +220,21 @@ for i, ax in enumerate(axes):
 
     # Extract true counts for this gene from the dataframe
     true_counts = df.iloc[:, i].values
+    # Define max bin
+    max_bin = true_counts.max()
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_ecdf_credible_regions(
         mcmc_results.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
-        max_bin=true_counts.max()
+        max_bin=max_bin
     )
 
     # Get x_values - need to add an extra point for stairs function
     x_values = credible_regions['bin_edges']
     
     # For stairs, we need to add an extra point at the end for proper edges
-    x_edges = np.append(x_values, x_values[-1] + 1)
+    x_edges = np.append(x_values[0] - 1, x_values)
     
     # Plot credible regions
     scribe.viz.plot_ecdf_credible_regions_stairs(
@@ -268,6 +265,8 @@ for i, ax in enumerate(axes):
 
     # Set title with gene name
     ax.set_title(df.columns[i], fontsize=10)
+    # Set x-axis limits
+    ax.set_xlim(x_values[0] - 1, max_bin - 0.1)
 
     # Add legend
     ax.legend()
@@ -279,7 +278,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/ppc_ecdf.png", 
+    f"{FIG_DIR}/mcmc_unconstrained_ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------

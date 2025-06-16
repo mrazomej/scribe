@@ -42,7 +42,7 @@ import scribe
 
 # %% ---------------------------------------------------------------------------
 # Define model type
-model_type = "zinb"
+model_type = "zinb_mix"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -83,7 +83,7 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_{model_type}_results_" \
+        f"mcmc_unconstrained_{model_type}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
@@ -105,13 +105,13 @@ if not os.path.exists(file_name):
     # Run MCMC sampling
     mcmc_results = scribe.mcmc.run_scribe(
         counts=data,
+        unconstrained_model=True,
         zero_inflated=True,
+        mixture_model=True,
+        n_components=2,
         num_warmup=n_mcmc_burnin,
         num_samples=n_mcmc_samples,
         kernel_kwargs=kernel_kwargs,
-        r_prior=(0, 1),
-        p_prior=(0, 1),
-        gate_prior=(0, 1),
     )
     # Save MCMC results
     with open(file_name, "wb") as f:
