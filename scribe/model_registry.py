@@ -325,3 +325,29 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
         prior_params = {}  # Empty dict for custom models if none provided
 
     return prior_params
+
+# ------------------------------------------------------------------------------
+# General model function getter
+# ------------------------------------------------------------------------------
+
+def get_model_fn(model_type: str, unconstrained: bool = True) -> Callable:
+    """
+    Get the model function for a specified model type and parameterization.
+    
+    Parameters
+    ----------
+    model_type : str
+        Type of model to use
+    unconstrained : bool, default=True
+        Whether to use unconstrained parameterization
+        
+    Returns
+    -------
+    Callable
+        The model function
+    """
+    if unconstrained:
+        return get_unconstrained_model(model_type)
+    else:
+        model_fn, _ = get_model_and_guide(model_type)
+        return model_fn

@@ -19,7 +19,7 @@ from numpyro.infer.reparam import LocScaleReparam
 from numpyro.distributions import constraints
 import scipy.sparse
 
-from .model_config import UnconstrainedModelConfig
+from .model_config import UnconstrainedModelConfig, ConstrainedModelConfig
 from .model_registry import get_unconstrained_model
 from .results_mcmc import ScribeMCMCResults
 
@@ -29,6 +29,7 @@ from .results_mcmc import ScribeMCMCResults
 
 def create_mcmc_instance(
     model_type: Optional[str] = None,
+    unconstrained_model: bool = True,
     num_warmup: int = 1000,
     num_samples: int = 1000,
     num_chains: int = 1,
@@ -54,6 +55,10 @@ def create_mcmc_instance(
             - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
               probability
             - Mixture variants with "_mix" suffix (e.g. "nbdm_mix")
+    unconstrained_model : bool, default=True
+        Whether to use unconstrained model parameterization. If True, uses
+        unconstrained models with normal priors on transformed parameters. 
+        If False, uses constrained models with natural parameter distributions.
     num_warmup : int, default=1000
         Number of warmup/burn-in steps
     num_samples : int, default=1000
@@ -103,33 +108,64 @@ def create_mcmc_instance(
     ValueError
         If model_type is invalid or reparam_config is invalid
     """
-    # Get the unconstrained model
-    model_fn = get_unconstrained_model(model_type)
-    
-    # Apply reparameterization if configured
-    if reparam_config is not None:
-        # If reparam_config is a single reparameterization instance, apply it to
-        # all parameters
-        if not isinstance(reparam_config, dict):
-            # Store the original reparameterizer instance
-            original_reparam_instance = reparam_config
-            
-            # Initialize the reparam_config dictionary
-            reparam_config = {
-                "p_unconstrained": original_reparam_instance,
-                "r_unconstrained": original_reparam_instance,
-            }
-            
-            # Add more reparameterizations based on model type, using the stored instance
-            if "zinb" in model_type:
-                reparam_config["gate_unconstrained"] = original_reparam_instance
-            if "vcp" in model_type:
-                reparam_config["p_capture_unconstrained"] = original_reparam_instance
-            if "_mix" in model_type:
-                reparam_config["mixing_logits_unconstrained"] = original_reparam_instance
+    # Get the model function based on parameterization choice
+    if unconstrained_model:
+        model_fn = get_unconstrained_model(model_type)
         
-        # Apply reparameterization
-        model_fn = reparam(model_fn, config=reparam_config)
+        # Apply reparameterization if configured for unconstrained models
+        if reparam_config is not None:
+            # If reparam_config is a single reparameterization instance, apply
+            # it to all parameters
+            if not isinstance(reparam_config, dict):
+                # Store the original reparameterizer instance
+                original_reparam_instance = reparam_config
+                
+                # Initialize the reparam_config dictionary
+                reparam_config = {
+                    "p_unconstrained": original_reparam_instance,
+                    "r_unconstrained": original_reparam_instance,
+                }
+                
+                # Add more reparameterizations based on model type, using the
+                # stored instance
+                if "zinb" in model_type:
+                    reparam_config["gate_unconstrained"] = original_reparam_instance
+                if "vcp" in model_type:
+                    reparam_config["p_capture_unconstrained"] = original_reparam_instance
+                if "_mix" in model_type:
+                    reparam_config["mixing_logits_unconstrained"] = original_reparam_instance
+            
+            # Apply reparameterization
+            model_fn = reparam(model_fn, config=reparam_config)
+    else:
+        # Get constrained model (no guide needed for MCMC)
+        from .model_registry import get_model_and_guide
+        model_fn, _ = get_model_and_guide(model_type)
+        
+        # For constrained models, reparameterization can still be applied
+        # but with different parameter names
+        if reparam_config is not None:
+            if not isinstance(reparam_config, dict):
+                # Store the original reparameterizer instance
+                original_reparam_instance = reparam_config
+                
+                # Initialize the reparam_config dictionary for constrained
+                # parameters
+                reparam_config = {
+                    "p": original_reparam_instance,
+                    "r": original_reparam_instance,
+                }
+                
+                # Add more reparameterizations based on model type
+                if "zinb" in model_type:
+                    reparam_config["gate"] = original_reparam_instance
+                if "vcp" in model_type:
+                    reparam_config["p_capture"] = original_reparam_instance
+                if "_mix" in model_type:
+                    reparam_config["mixing_weights"] = original_reparam_instance
+            
+            # Apply reparameterization
+            model_fn = reparam(model_fn, config=reparam_config)
     
     # Set up initialization strategy if provided
     init_fn = None
@@ -161,7 +197,7 @@ def run_mcmc_sampling(
     rng_key: random.PRNGKey,
     counts: jnp.ndarray,
     model_type: str,
-    model_config: UnconstrainedModelConfig,
+    model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig],
     cells_axis: int = 0,
     **kwargs
 ) -> Dict:
@@ -178,7 +214,7 @@ def run_mcmc_sampling(
         The observed count matrix
     model_type : str
         The type of model being used
-    model_config : UnconstrainedModelConfig
+    model_config : Union[UnconstrainedModelConfig, ConstrainedModelConfig]
         Configuration object for the model
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows.
@@ -225,12 +261,16 @@ def run_scribe(
     variable_capture: bool = False, 
     mixture_model: bool = False,
     n_components: Optional[int] = None,
+    # Parameterization choice
+    unconstrained_model: bool = True,
     # Prior parameters
     r_prior: Optional[tuple] = None,
     p_prior: Optional[tuple] = None,
     gate_prior: Optional[tuple] = None,
     p_capture_prior: Optional[tuple] = None,
     mixing_prior: Optional[tuple] = None,
+    # Prior distribution types (only for constrained models)
+    r_dist: str = "gamma",
     # MCMC parameters
     num_warmup: int = 1000,
     num_samples: int = 1000,
@@ -271,21 +311,40 @@ def run_scribe(
         Whether to use mixture model components
     n_components : Optional[int], default=None
         Number of mixture components. Required if mixture_model=True.
+    unconstrained_model : bool, default=True
+        Whether to use unconstrained model parameterization. If True, uses
+        unconstrained models with normal priors on transformed parameters 
+        (logit-normal for probabilities, log-normal for dispersion). If False,
+        uses constrained models with natural parameter distributions (Beta for
+        probabilities, Gamma/LogNormal for dispersion).
     r_prior : Optional[tuple], default=None
-        Prior parameters (loc, scale) for dispersion (r) parameter. Defaults to
-        (0, 1).
+        Prior parameters for dispersion (r) parameter. For unconstrained models:
+        (loc, scale) for log-normal prior. For constrained models: (shape, rate)
+        for Gamma or (mu, sigma) for LogNormal. Defaults to (0, 1) for 
+        unconstrained, (2, 0.1) for constrained.
     p_prior : Optional[tuple], default=None
-        Prior parameters (loc, scale) for success probability. Defaults to (0,
-        1).
+        Prior parameters for success probability. For unconstrained models:
+        (loc, scale) for logit-normal prior. For constrained models: (alpha, 
+        beta) for Beta prior. Defaults to (0, 1) for unconstrained, (1, 1) for
+        constrained.
     gate_prior : Optional[tuple], default=None
-        Prior parameters (loc, scale) for dropout gate. Only used if
-        zero_inflated=True. Defaults to (0, 1).
+        Prior parameters for dropout gate. Only used if zero_inflated=True.
+        For unconstrained models: (loc, scale) for logit-normal prior. For 
+        constrained models: (alpha, beta) for Beta prior. Defaults to (0, 1) 
+        for unconstrained, (1, 1) for constrained.
     p_capture_prior : Optional[tuple], default=None
-        Prior parameters (loc, scale) for capture efficiency. Only used if
-        variable_capture=True. Defaults to (0, 1).
+        Prior parameters for capture efficiency. Only used if 
+        variable_capture=True. For unconstrained models: (loc, scale) for 
+        logit-normal prior. For constrained models: (alpha, beta) for Beta 
+        prior. Defaults to (0, 1) for unconstrained, (1, 1) for constrained.
     mixing_prior : Optional[tuple], default=None
-        Prior parameters (loc, scale) for unconstrained mixture weight logits.
-        Required if mixture_model=True. If None, defaults to (0.0, 1.0).
+        Prior parameters for mixture weights. For unconstrained models: (loc, 
+        scale) for normal prior on logits. For constrained models: concentration
+        parameters for Dirichlet prior. Required if mixture_model=True. If None,
+        defaults to (0.0, 1.0) for unconstrained, (1.0,) for constrained.
+    r_dist : str, default="gamma"
+        Prior distribution type for r parameter (only for constrained models).
+        Options: "gamma" or "lognormal"
     num_warmup : int, default=1000
         Number of warmup/burn-in steps
     num_samples : int, default=1000
@@ -364,58 +423,155 @@ def run_scribe(
         n_genes, n_cells = count_data.shape
         count_data = count_data.T
     
-    # Set default priors based on distribution choices
-    if r_prior is None:
-        r_prior = (0, 1)
-    if p_prior is None:
-        p_prior = (0, 1)
-    if "zinb" in model_type and gate_prior is None:
-        gate_prior = (0, 1)
-    if "vcp" in model_type and p_capture_prior is None:
-        p_capture_prior = (0, 1)
-    if "mix" in model_type and mixing_prior is None:
-        mixing_prior = (0, 1)
+    # Set default priors based on model parameterization
+    if unconstrained_model:
+        # Defaults for unconstrained models (log-normal for r, logit-normal for
+        # p, gate, p_capture)
+        if r_prior is None:
+            r_prior = (0, 1)
+        if p_prior is None:
+            p_prior = (0, 1)
+        if "zinb" in model_type and gate_prior is None:
+            gate_prior = (0, 1)
+        if "vcp" in model_type and p_capture_prior is None:
+            p_capture_prior = (0, 1)
+        if "mix" in model_type and mixing_prior is None:
+            mixing_prior = (0, 1)
+    else:
+        # Defaults for constrained models (Beta for p, gate, p_capture;
+        # Gamma/LogNormal for r)
+        if r_prior is None:
+            r_prior = (2, 0.1) if r_dist == "gamma" else (1, 1)
+        if p_prior is None:
+            p_prior = (1, 1)
+        if "zinb" in model_type and gate_prior is None:
+            gate_prior = (1, 1)
+        if "vcp" in model_type and p_capture_prior is None:
+            p_capture_prior = (1, 1)
+        if "mix" in model_type and mixing_prior is None:
+            mixing_prior = (1.0,)  # Symmetric Dirichlet
 
     # Create random key
     rng_key = random.PRNGKey(seed)
     
-    # Determine loc/scale for mixing logits
-    mixing_logits_loc = None
-    mixing_logits_scale = None
-    if "mix" in model_type:
-        if mixing_prior is None:
-            # Let UnconstrainedModelConfig.validate() set defaults (0.0, 1.0)
-            pass
-        elif isinstance(mixing_prior, tuple) and len(mixing_prior) == 2:
-            mixing_logits_loc = mixing_prior[0]
-            mixing_logits_scale = mixing_prior[1]
-        else:
-            # If mixing_prior is not None and not a 2-tuple, it's an error.
-            raise ValueError(
-                "mixing_prior for unconstrained mixture models must be a tuple (loc, scale) or None."
-            )
+    # Create model config based on parameterization choice
+    if unconstrained_model:
+        # Determine loc/scale for mixing logits
+        mixing_logits_loc = None
+        mixing_logits_scale = None
+        if "mix" in model_type:
+            if mixing_prior is None:
+                # Let UnconstrainedModelConfig.validate() set defaults (0.0,
+                # 1.0)
+                pass
+            elif isinstance(mixing_prior, tuple) and len(mixing_prior) == 2:
+                mixing_logits_loc = mixing_prior[0]
+                mixing_logits_scale = mixing_prior[1]
+            else:
+                # If mixing_prior is not None and not a 2-tuple, it's an error.
+                raise ValueError(
+                    "mixing_prior for unconstrained mixture models must be a tuple (loc, scale) or None."
+                )
 
-    # Create model config based on model type and specified distributions
-    model_config = UnconstrainedModelConfig(
-        base_model=model_type,
-        n_components=n_components, # Pass n_components
-        # Unconstrained parameterization
-        p_unconstrained_loc=p_prior[0],
-        p_unconstrained_scale=p_prior[1],
-        r_unconstrained_loc=r_prior[0],
-        r_unconstrained_scale=r_prior[1],
-        gate_unconstrained_loc=gate_prior[0] if "zinb" in model_type and gate_prior else None,
-        gate_unconstrained_scale=gate_prior[1] if "zinb" in model_type and gate_prior else None,
-        p_capture_unconstrained_loc=p_capture_prior[0] if "vcp" in model_type and p_capture_prior else None,
-        p_capture_unconstrained_scale=p_capture_prior[1] if "vcp" in model_type and p_capture_prior else None,
-        mixing_logits_unconstrained_loc=mixing_logits_loc,
-        mixing_logits_unconstrained_scale=mixing_logits_scale,
-    )
-    model_config.validate() # This will set defaults for mixing logits if they were None
+        # Create unconstrained model config
+        model_config = UnconstrainedModelConfig(
+            base_model=model_type,
+            n_components=n_components,
+            # Unconstrained parameterization
+            p_unconstrained_loc=p_prior[0],
+            p_unconstrained_scale=p_prior[1],
+            r_unconstrained_loc=r_prior[0],
+            r_unconstrained_scale=r_prior[1],
+            gate_unconstrained_loc=gate_prior[0] if "zinb" in model_type and gate_prior else None,
+            gate_unconstrained_scale=gate_prior[1] if "zinb" in model_type and gate_prior else None,
+            p_capture_unconstrained_loc=p_capture_prior[0] if "vcp" in model_type and p_capture_prior else None,
+            p_capture_unconstrained_scale=p_capture_prior[1] if "vcp" in model_type and p_capture_prior else None,
+            mixing_logits_unconstrained_loc=mixing_logits_loc,
+            mixing_logits_unconstrained_scale=mixing_logits_scale,
+        )
+        # This will set defaults for mixing logits if they were None
+        model_config.validate()     
+    else:
+        # Import necessary distributions for constrained model
+        import numpyro.distributions as dist
+        
+        # Create distribution objects for constrained model
+        # Success probability distribution
+        p_dist_model = dist.Beta(p_prior[0], p_prior[1])
+        p_dist_guide = dist.Beta(p_prior[0], p_prior[1])
+        
+        # Dispersion parameter distribution
+        if r_dist == "gamma":
+            r_dist_model = dist.Gamma(r_prior[0], r_prior[1])
+            r_dist_guide = dist.Gamma(r_prior[0], r_prior[1])
+        else:  # lognormal
+            r_dist_model = dist.LogNormal(r_prior[0], r_prior[1])
+            r_dist_guide = dist.LogNormal(r_prior[0], r_prior[1])
+        
+        # Optional distributions
+        gate_dist_model = gate_dist_guide = None
+        if "zinb" in model_type:
+            gate_dist_model = dist.Beta(gate_prior[0], gate_prior[1])
+            gate_dist_guide = dist.Beta(gate_prior[0], gate_prior[1])
+        
+        p_capture_dist_model = p_capture_dist_guide = None
+        if "vcp" in model_type:
+            p_capture_dist_model = dist.Beta(p_capture_prior[0], p_capture_prior[1])
+            p_capture_dist_guide = dist.Beta(p_capture_prior[0], p_capture_prior[1])
+        
+        mixing_dist_model = mixing_dist_guide = None
+        if "mix" in model_type:
+            if isinstance(mixing_prior, tuple) and len(mixing_prior) == 1:
+                # Symmetric Dirichlet
+                concentration = jnp.ones(n_components) * mixing_prior[0]
+            elif isinstance(mixing_prior, tuple) and len(mixing_prior) == n_components:
+                # Asymmetric Dirichlet
+                concentration = jnp.array(mixing_prior)
+            else:
+                # Default to symmetric Dirichlet
+                concentration = jnp.ones(n_components)
+            mixing_dist_model = dist.Dirichlet(concentration)
+            mixing_dist_guide = dist.Dirichlet(concentration)
+        
+        # Create constrained model config
+        from .model_config import ConstrainedModelConfig
+        model_config = ConstrainedModelConfig(
+            base_model=model_type,
+            n_components=n_components,
+            # Distribution objects
+            r_distribution_model=r_dist_model,
+            r_distribution_guide=r_dist_guide,
+            r_param_prior=r_prior,
+            r_param_guide=r_prior,
+            p_distribution_model=p_dist_model,
+            p_distribution_guide=p_dist_guide,
+            p_param_prior=p_prior,
+            p_param_guide=p_prior,
+            gate_distribution_model=gate_dist_model,
+            gate_distribution_guide=gate_dist_guide,
+            gate_param_prior=gate_prior if gate_dist_model else None,
+            gate_param_guide=gate_prior if gate_dist_model else None,
+            p_capture_distribution_model=p_capture_dist_model,
+            p_capture_distribution_guide=p_capture_dist_guide,
+            p_capture_param_prior=p_capture_prior if p_capture_dist_model else None,
+            p_capture_param_guide=p_capture_prior if p_capture_dist_model else None,
+            mixing_distribution_model=mixing_dist_model,
+            mixing_distribution_guide=mixing_dist_guide,
+            mixing_param_prior=mixing_prior if mixing_dist_model else None,
+            mixing_param_guide=mixing_prior if mixing_dist_model else None,
+        )
+        model_config.validate()
     
-    # Create MCMC instance
+    # Create MCMC instance For constrained models, disable reparameterization by
+    # default since LocScaleReparam doesn't work with bounded distributions
+    # (Beta, Dirichlet, etc.)
+    if not unconstrained_model and reparam_config is not None:
+        if isinstance(reparam_config, LocScaleReparam):
+            reparam_config = None  # Disable reparameterization for constrained models
+    
     mcmc = create_mcmc_instance(
         model_type=model_type,
+        unconstrained_model=unconstrained_model,
         num_warmup=num_warmup,
         num_samples=num_samples,
         num_chains=num_chains,
