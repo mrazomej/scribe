@@ -212,71 +212,125 @@ class ScribeSVIResults:
             
         distributions = {}
         
-        # Handle r distribution
-        r_params = {}
-        for param_name in self.model_config.r_distribution_guide.arg_constraints:
-            r_params[param_name] = self.params[f"r_{param_name}"]
+        # Handle mean distribution (NB2 parameterization)
+        if (self.model_config.mean_distribution_guide is not None and 
+            hasattr(self.model_config.mean_distribution_guide, 'arg_constraints')):
+            mean_params = {}
+            for param_name in self.model_config.mean_distribution_guide.arg_constraints:
+                param_key = f"mean_{param_name}"
+                if param_key in self.params:
+                    mean_params[param_name] = self.params[param_key]
+            
+            if mean_params:  # Only create distribution if we have parameters
+                if backend == "scipy":
+                    distributions['mean'] = numpyro_to_scipy(
+                        self.model_config.mean_distribution_guide.__class__(**mean_params)
+                    )
+                else:  # numpyro
+                    distributions['mean'] = self.model_config.mean_distribution_guide.__class__(**mean_params)
         
-        if backend == "scipy":
-            distributions['r'] = numpyro_to_scipy(
-                self.model_config.r_distribution_guide.__class__(**r_params)
-            )
-        else:  # numpyro
-            distributions['r'] = self.model_config.r_distribution_guide.__class__(**r_params)
+        # Handle concentration distribution (NB2 parameterization)
+        if (self.model_config.concentration_distribution_guide is not None and 
+            hasattr(self.model_config.concentration_distribution_guide, 'arg_constraints')):
+            concentration_params = {}
+            for param_name in self.model_config.concentration_distribution_guide.arg_constraints:
+                param_key = f"concentration_{param_name}"
+                if param_key in self.params:
+                    concentration_params[param_name] = self.params[param_key]
+            
+            if concentration_params:  # Only create distribution if we have parameters
+                if backend == "scipy":
+                    distributions['concentration'] = numpyro_to_scipy(
+                        self.model_config.concentration_distribution_guide.__class__(**concentration_params)
+                    )
+                else:  # numpyro
+                    distributions['concentration'] = self.model_config.concentration_distribution_guide.__class__(**concentration_params)
         
-        # Handle p distribution
-        p_params = {}
-        for param_name in self.model_config.p_distribution_guide.arg_constraints:
-            p_params[param_name] = self.params[f"p_{param_name}"]
+        # Handle legacy r distribution (backward compatibility)
+        if (self.model_config.r_distribution_guide is not None and 
+            hasattr(self.model_config.r_distribution_guide, 'arg_constraints')):
+            r_params = {}
+            for param_name in self.model_config.r_distribution_guide.arg_constraints:
+                param_key = f"r_{param_name}"
+                if param_key in self.params:
+                    r_params[param_name] = self.params[param_key]
+            
+            if r_params:  # Only create distribution if we have parameters
+                if backend == "scipy":
+                    distributions['r'] = numpyro_to_scipy(
+                        self.model_config.r_distribution_guide.__class__(**r_params)
+                    )
+                else:  # numpyro
+                    distributions['r'] = self.model_config.r_distribution_guide.__class__(**r_params)
         
-        if backend == "scipy":
-            distributions['p'] = numpyro_to_scipy(
-                self.model_config.p_distribution_guide.__class__(**p_params)
-            )
-        else:  # numpyro
-            distributions['p'] = self.model_config.p_distribution_guide.__class__(**p_params)
+        # Handle legacy p distribution (backward compatibility)
+        if (self.model_config.p_distribution_guide is not None and 
+            hasattr(self.model_config.p_distribution_guide, 'arg_constraints')):
+            p_params = {}
+            for param_name in self.model_config.p_distribution_guide.arg_constraints:
+                param_key = f"p_{param_name}"
+                if param_key in self.params:
+                    p_params[param_name] = self.params[param_key]
+            
+            if p_params:  # Only create distribution if we have parameters
+                if backend == "scipy":
+                    distributions['p'] = numpyro_to_scipy(
+                        self.model_config.p_distribution_guide.__class__(**p_params)
+                    )
+                else:  # numpyro
+                    distributions['p'] = self.model_config.p_distribution_guide.__class__(**p_params)
         
         # Add gate distribution if present
-        if self.model_config.gate_distribution_guide is not None:
+        if (self.model_config.gate_distribution_guide is not None and 
+            hasattr(self.model_config.gate_distribution_guide, 'arg_constraints')):
             gate_params = {}
             for param_name in self.model_config.gate_distribution_guide.arg_constraints:
-                gate_params[param_name] = self.params[f"gate_{param_name}"]
+                param_key = f"gate_{param_name}"
+                if param_key in self.params:
+                    gate_params[param_name] = self.params[param_key]
                 
-            if backend == "scipy":
-                distributions['gate'] = numpyro_to_scipy(
-                    self.model_config.gate_distribution_guide.__class__(**gate_params)
-                )
-            else:  # numpyro
-                distributions['gate'] = self.model_config.gate_distribution_guide.__class__(**gate_params)
+            if gate_params:  # Only create distribution if we have parameters
+                if backend == "scipy":
+                    distributions['gate'] = numpyro_to_scipy(
+                        self.model_config.gate_distribution_guide.__class__(**gate_params)
+                    )
+                else:  # numpyro
+                    distributions['gate'] = self.model_config.gate_distribution_guide.__class__(**gate_params)
             
         # Add p_capture distribution if present
-        if self.model_config.p_capture_distribution_guide is not None:
+        if (self.model_config.p_capture_distribution_guide is not None and 
+            hasattr(self.model_config.p_capture_distribution_guide, 'arg_constraints')):
             p_capture_params = {}
             for param_name in self.model_config.p_capture_distribution_guide.arg_constraints:
-                p_capture_params[param_name] = self.params[f"p_capture_{param_name}"]
+                param_key = f"p_capture_{param_name}"
+                if param_key in self.params:
+                    p_capture_params[param_name] = self.params[param_key]
                 
-            if backend == "scipy":
-                distributions['p_capture'] = numpyro_to_scipy(
-                    self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
-                )
-            else:  # numpyro
-                distributions['p_capture'] = self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+            if p_capture_params:  # Only create distribution if we have parameters
+                if backend == "scipy":
+                    distributions['p_capture'] = numpyro_to_scipy(
+                        self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                    )
+                else:  # numpyro
+                    distributions['p_capture'] = self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
             
         # Add mixing weights if mixture model
         if self.model_config.n_components is not None:
             # Extract mixing weights
-            mixing_params = self.params[f"mixing_concentration"]
-            
-            if backend == "scipy":
-                distributions['mixing_weights'] = numpyro_to_scipy(
-                    self.model_config.mixing_distribution_guide.__class__(
+            mixing_param_key = "mixing_concentration"
+            if mixing_param_key in self.params:
+                mixing_params = self.params[mixing_param_key]
+                
+                if backend == "scipy":
+                    distributions['mixing_weights'] = numpyro_to_scipy(
+                        self.model_config.mixing_distribution_guide.__class__(
+                            concentration=mixing_params
+                        )
+                    )
+                else:
+                    distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
                         concentration=mixing_params
                     )
-                )
-            else:
-                distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
-                    concentration=mixing_params
-                )
         
         return distributions
 
@@ -347,20 +401,51 @@ class ScribeSVIResults:
         """
         new_params = dict(params)
         
-        # Handle r parameters (always gene-specific)
-        r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
-        for param_name in r_param_names:
-            param_key = f"r_{param_name}"
-            if param_key in params:
-                if self.n_components is not None:
-                    # Keep component dimension but subset gene dimension
-                    new_params[param_key] = params[param_key][..., index]
-                else:
-                    # Just subset gene dimension
-                    new_params[param_key] = params[param_key][index]
+        # Handle mean parameters (NB2 parameterization, always gene-specific)
+        if (self.model_config.mean_distribution_guide is not None and 
+            hasattr(self.model_config.mean_distribution_guide, 'arg_constraints')):
+            mean_param_names = list(self.model_config.mean_distribution_guide.arg_constraints.keys())
+            for param_name in mean_param_names:
+                param_key = f"mean_{param_name}"
+                if param_key in params:
+                    if self.n_components is not None:
+                        # Keep component dimension but subset gene dimension
+                        new_params[param_key] = params[param_key][..., index]
+                    else:
+                        # Just subset gene dimension
+                        new_params[param_key] = params[param_key][index]
+        
+        # Handle concentration parameters (NB2 parameterization, always gene-specific)
+        if (self.model_config.concentration_distribution_guide is not None and 
+            hasattr(self.model_config.concentration_distribution_guide, 'arg_constraints')):
+            concentration_param_names = list(self.model_config.concentration_distribution_guide.arg_constraints.keys())
+            for param_name in concentration_param_names:
+                param_key = f"concentration_{param_name}"
+                if param_key in params:
+                    if self.n_components is not None:
+                        # Keep component dimension but subset gene dimension
+                        new_params[param_key] = params[param_key][..., index]
+                    else:
+                        # Just subset gene dimension
+                        new_params[param_key] = params[param_key][index]
+        
+        # Handle legacy r parameters (backward compatibility, always gene-specific)
+        if (self.model_config.r_distribution_guide is not None and 
+            hasattr(self.model_config.r_distribution_guide, 'arg_constraints')):
+            r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
+            for param_name in r_param_names:
+                param_key = f"r_{param_name}"
+                if param_key in params:
+                    if self.n_components is not None:
+                        # Keep component dimension but subset gene dimension
+                        new_params[param_key] = params[param_key][..., index]
+                    else:
+                        # Just subset gene dimension
+                        new_params[param_key] = params[param_key][index]
         
         # Handle gate parameters if present (gene-specific)
-        if self.model_config.gate_distribution_guide is not None:
+        if (self.model_config.gate_distribution_guide is not None and 
+            hasattr(self.model_config.gate_distribution_guide, 'arg_constraints')):
             gate_param_names = list(self.model_config.gate_distribution_guide.arg_constraints.keys())
             for param_name in gate_param_names:
                 param_key = f"gate_{param_name}"
@@ -401,7 +486,25 @@ class ScribeSVIResults:
         
         # Handle gene-specific parameters
         
-        # r samples (always gene-specific)
+        # mean samples (NB2 parameterization, always gene-specific)
+        if 'mean' in samples:
+            if self.n_components is not None:
+                # Shape: (n_samples, n_components, n_genes)
+                new_posterior_samples['mean'] = samples['mean'][..., index]
+            else:
+                # Shape: (n_samples, n_genes)
+                new_posterior_samples['mean'] = samples['mean'][..., index]
+        
+        # concentration samples (NB2 parameterization, always gene-specific)
+        if 'concentration' in samples:
+            if self.n_components is not None:
+                # Shape: (n_samples, n_components, n_genes)
+                new_posterior_samples['concentration'] = samples['concentration'][..., index]
+            else:
+                # Shape: (n_samples, n_genes)
+                new_posterior_samples['concentration'] = samples['concentration'][..., index]
+        
+        # r samples (legacy, always gene-specific)
         if 'r' in samples:
             if self.n_components is not None:
                 # Shape: (n_samples, n_components, n_genes)
@@ -579,21 +682,54 @@ class ScribeSVIResults:
         # Create new params dict with component subset
         new_params = dict(self.params)
         
-        # Handle r parameters (always gene-specific)
-        r_param_names = list(
-            self.model_config.r_distribution_guide.arg_constraints.keys()
-        )
-        # Loop through r parameters
-        for param_name in r_param_names:
-            # Create parameter key
-            param_key = f"r_{param_name}"
-            # Check if parameter is present
-            if param_key in self.params:
-                # Select component dimension
-                new_params[param_key] = self.params[param_key][component_index]
+        # Handle mean parameters (NB2 parameterization, always gene-specific)
+        if (self.model_config.mean_distribution_guide is not None and 
+            hasattr(self.model_config.mean_distribution_guide, 'arg_constraints')):
+            mean_param_names = list(
+                self.model_config.mean_distribution_guide.arg_constraints.keys()
+            )
+            # Loop through mean parameters
+            for param_name in mean_param_names:
+                # Create parameter key
+                param_key = f"mean_{param_name}"
+                # Check if parameter is present
+                if param_key in self.params:
+                    # Select component dimension
+                    new_params[param_key] = self.params[param_key][component_index]
+        
+        # Handle concentration parameters (NB2 parameterization, always gene-specific)
+        if (self.model_config.concentration_distribution_guide is not None and 
+            hasattr(self.model_config.concentration_distribution_guide, 'arg_constraints')):
+            concentration_param_names = list(
+                self.model_config.concentration_distribution_guide.arg_constraints.keys()
+            )
+            # Loop through concentration parameters
+            for param_name in concentration_param_names:
+                # Create parameter key
+                param_key = f"concentration_{param_name}"
+                # Check if parameter is present
+                if param_key in self.params:
+                    # Select component dimension
+                    new_params[param_key] = self.params[param_key][component_index]
+        
+        # Handle legacy r parameters (backward compatibility, always gene-specific)
+        if (self.model_config.r_distribution_guide is not None and 
+            hasattr(self.model_config.r_distribution_guide, 'arg_constraints')):
+            r_param_names = list(
+                self.model_config.r_distribution_guide.arg_constraints.keys()
+            )
+            # Loop through r parameters
+            for param_name in r_param_names:
+                # Create parameter key
+                param_key = f"r_{param_name}"
+                # Check if parameter is present
+                if param_key in self.params:
+                    # Select component dimension
+                    new_params[param_key] = self.params[param_key][component_index]
         
         # Handle gate parameters if present (gene-specific)
-        if self.model_config.gate_distribution_guide is not None:
+        if (self.model_config.gate_distribution_guide is not None and 
+            hasattr(self.model_config.gate_distribution_guide, 'arg_constraints')):
             # Get gate parameter names
             gate_param_names = list(
                 self.model_config.gate_distribution_guide.arg_constraints.keys()
@@ -637,8 +773,19 @@ class ScribeSVIResults:
             
         new_posterior_samples = {}
         
+        # Handle mean parameters (NB2 parameterization, component and gene-specific)
+        if 'mean' in samples:
+            # Shape is typically (n_samples, n_components, n_genes)
+            # Select component dimension to get (n_samples, n_genes)
+            new_posterior_samples['mean'] = samples['mean'][:, component_index, :]
+        
+        # Handle concentration parameters (NB2 parameterization, component and gene-specific)
+        if 'concentration' in samples:
+            # Shape is typically (n_samples, n_components, n_genes)
+            # Select component dimension to get (n_samples, n_genes)
+            new_posterior_samples['concentration'] = samples['concentration'][:, component_index, :]
             
-        # Handle r parameters (component and gene-specific)
+        # Handle legacy r parameters (component and gene-specific)
         if 'r' in samples:
             # Shape is typically (n_samples, n_components, n_genes)
             # Select component dimension to get (n_samples, n_genes)
@@ -1410,26 +1557,53 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ConstrainedModelConfig
-        r_distribution = type(self.model_config.r_distribution_guide)
-        # Define corresponding Hellinger distance function
-        if r_distribution == dist.LogNormal:
-            hellinger_distance_fn = hellinger_lognormal
-        elif r_distribution == dist.Gamma:
-            hellinger_distance_fn = hellinger_gamma
-        else:
-            raise ValueError(
-                f"Unsupported distribution type: {r_distribution}. "
-                "Must be 'lognormal' or 'gamma'."
-            )
+        # Get concentration distribution from ConstrainedModelConfig (NB2 parameterization)
+        if (self.model_config.concentration_distribution_guide is not None and 
+            hasattr(self.model_config.concentration_distribution_guide, '__class__')):
+            concentration_distribution = type(self.model_config.concentration_distribution_guide)
+            # Define corresponding Hellinger distance function
+            if concentration_distribution == dist.LogNormal:
+                hellinger_distance_fn = hellinger_lognormal
+            elif concentration_distribution == dist.Gamma:
+                hellinger_distance_fn = hellinger_gamma
+            else:
+                raise ValueError(
+                    f"Unsupported distribution type: {concentration_distribution}. "
+                    "Must be 'lognormal' or 'gamma'."
+                )
 
-        # Extract parameters from r distribution based on distribution type
-        if r_distribution == dist.LogNormal:
-            r_param1 = self.params['r_loc'].astype(dtype)
-            r_param2 = self.params['r_scale'].astype(dtype)
-        elif r_distribution == dist.Gamma:
-            r_param1 = self.params['r_concentration'].astype(dtype)
-            r_param2 = self.params['r_rate'].astype(dtype)
+            # Extract parameters from concentration distribution based on distribution type
+            if concentration_distribution == dist.LogNormal:
+                param1 = self.params['concentration_loc'].astype(dtype)
+                param2 = self.params['concentration_scale'].astype(dtype)
+            elif concentration_distribution == dist.Gamma:
+                param1 = self.params['concentration_concentration'].astype(dtype)
+                param2 = self.params['concentration_rate'].astype(dtype)
+        
+        # Fallback to legacy r distribution for backward compatibility
+        elif (self.model_config.r_distribution_guide is not None and 
+              hasattr(self.model_config.r_distribution_guide, '__class__')):
+            r_distribution = type(self.model_config.r_distribution_guide)
+            # Define corresponding Hellinger distance function
+            if r_distribution == dist.LogNormal:
+                hellinger_distance_fn = hellinger_lognormal
+            elif r_distribution == dist.Gamma:
+                hellinger_distance_fn = hellinger_gamma
+            else:
+                raise ValueError(
+                    f"Unsupported distribution type: {r_distribution}. "
+                    "Must be 'lognormal' or 'gamma'."
+                )
+
+            # Extract parameters from r distribution based on distribution type
+            if r_distribution == dist.LogNormal:
+                param1 = self.params['r_loc'].astype(dtype)
+                param2 = self.params['r_scale'].astype(dtype)
+            elif r_distribution == dist.Gamma:
+                param1 = self.params['r_concentration'].astype(dtype)
+                param2 = self.params['r_rate'].astype(dtype)
+        else:
+            raise ValueError("No concentration or r distribution found in model config")
 
         # Initialize dictionary to store distances
         hellinger_distances = {}
@@ -1439,7 +1613,7 @@ class ScribeSVIResults:
             for j in range(i + 1, self.n_components):
                 # Compute Hellinger distance between component i and j
                 hellinger_distances[f'{i}_{j}'] = hellinger_distance_fn(
-                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                    param1[i], param2[i], param1[j], param2[j]
                 )
 
         return hellinger_distances
@@ -1493,26 +1667,53 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ConstrainedModelConfig
-        r_distribution = type(self.model_config.r_distribution_guide)
-        # Define corresponding KL divergence function
-        if r_distribution == dist.LogNormal:
-            kl_divergence_fn = kl_lognormal
-        elif r_distribution == dist.Gamma:
-            kl_divergence_fn = kl_gamma
-        else:
-            raise ValueError(
-                f"Unsupported distribution type: {r_distribution}. "
-                "Must be 'lognormal' or 'gamma'."
-            )
+        # Get concentration distribution from ConstrainedModelConfig (NB2 parameterization)
+        if (self.model_config.concentration_distribution_guide is not None and 
+            hasattr(self.model_config.concentration_distribution_guide, '__class__')):
+            concentration_distribution = type(self.model_config.concentration_distribution_guide)
+            # Define corresponding KL divergence function
+            if concentration_distribution == dist.LogNormal:
+                kl_divergence_fn = kl_lognormal
+            elif concentration_distribution == dist.Gamma:
+                kl_divergence_fn = kl_gamma
+            else:
+                raise ValueError(
+                    f"Unsupported distribution type: {concentration_distribution}. "
+                    "Must be 'lognormal' or 'gamma'."
+                )
 
-        # Extract parameters from r distribution based on distribution type
-        if r_distribution == dist.LogNormal:
-            r_param1 = self.params['r_loc'].astype(dtype)
-            r_param2 = self.params['r_scale'].astype(dtype)
-        elif r_distribution == dist.Gamma:
-            r_param1 = self.params['r_concentration'].astype(dtype)
-            r_param2 = self.params['r_rate'].astype(dtype)
+            # Extract parameters from concentration distribution based on distribution type
+            if concentration_distribution == dist.LogNormal:
+                param1 = self.params['concentration_loc'].astype(dtype)
+                param2 = self.params['concentration_scale'].astype(dtype)
+            elif concentration_distribution == dist.Gamma:
+                param1 = self.params['concentration_concentration'].astype(dtype)
+                param2 = self.params['concentration_rate'].astype(dtype)
+        
+        # Fallback to legacy r distribution for backward compatibility
+        elif (self.model_config.r_distribution_guide is not None and 
+              hasattr(self.model_config.r_distribution_guide, '__class__')):
+            r_distribution = type(self.model_config.r_distribution_guide)
+            # Define corresponding KL divergence function
+            if r_distribution == dist.LogNormal:
+                kl_divergence_fn = kl_lognormal
+            elif r_distribution == dist.Gamma:
+                kl_divergence_fn = kl_gamma
+            else:
+                raise ValueError(
+                    f"Unsupported distribution type: {r_distribution}. "
+                    "Must be 'lognormal' or 'gamma'."
+                )
+
+            # Extract parameters from r distribution based on distribution type
+            if r_distribution == dist.LogNormal:
+                param1 = self.params['r_loc'].astype(dtype)
+                param2 = self.params['r_scale'].astype(dtype)
+            elif r_distribution == dist.Gamma:
+                param1 = self.params['r_concentration'].astype(dtype)
+                param2 = self.params['r_rate'].astype(dtype)
+        else:
+            raise ValueError("No concentration or r distribution found in model config")
 
         # Initialize dictionary to store divergences
         kl_divergences = {}
@@ -1523,7 +1724,7 @@ class ScribeSVIResults:
                 if i != j:  # Skip self-comparisons
                     # Compute KL divergence from component i to j
                     kl_divergences[f'{i}_{j}'] = kl_divergence_fn(
-                        r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                        param1[i], param2[i], param1[j], param2[j]
                     )
 
         return kl_divergences
@@ -1583,27 +1784,53 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ConstrainedModelConfig
-        r_distribution = type(self.model_config.r_distribution_guide)
-        
-        # Define corresponding JS divergence function based on distribution type
-        if r_distribution == dist.LogNormal:
-            js_divergence_fn = jensen_shannon_lognormal
-        elif r_distribution == dist.Gamma:
-            js_divergence_fn = jensen_shannon_gamma
-        else:
-            raise ValueError(
-                f"Unsupported distribution type: {r_distribution}. "
-                "Must be 'lognormal' or 'gamma'."
-            )
+        # Get concentration distribution from ConstrainedModelConfig (NB2 parameterization)
+        if (self.model_config.concentration_distribution_guide is not None and 
+            hasattr(self.model_config.concentration_distribution_guide, '__class__')):
+            concentration_distribution = type(self.model_config.concentration_distribution_guide)
+            # Define corresponding JS divergence function based on distribution type
+            if concentration_distribution == dist.LogNormal:
+                js_divergence_fn = jensen_shannon_lognormal
+            elif concentration_distribution == dist.Gamma:
+                js_divergence_fn = jensen_shannon_gamma
+            else:
+                raise ValueError(
+                    f"Unsupported distribution type: {concentration_distribution}. "
+                    "Must be 'lognormal' or 'gamma'."
+                )
 
-        # Extract parameters from r distribution based on distribution type
-        if r_distribution == dist.LogNormal:
-            r_param1 = self.params['r_loc'].astype(dtype)
-            r_param2 = self.params['r_scale'].astype(dtype)
-        elif r_distribution == dist.Gamma:
-            r_param1 = self.params['r_concentration'].astype(dtype)
-            r_param2 = self.params['r_rate'].astype(dtype)
+            # Extract parameters from concentration distribution based on distribution type
+            if concentration_distribution == dist.LogNormal:
+                param1 = self.params['concentration_loc'].astype(dtype)
+                param2 = self.params['concentration_scale'].astype(dtype)
+            elif concentration_distribution == dist.Gamma:
+                param1 = self.params['concentration_concentration'].astype(dtype)
+                param2 = self.params['concentration_rate'].astype(dtype)
+        
+        # Fallback to legacy r distribution for backward compatibility
+        elif (self.model_config.r_distribution_guide is not None and 
+              hasattr(self.model_config.r_distribution_guide, '__class__')):
+            r_distribution = type(self.model_config.r_distribution_guide)
+            # Define corresponding JS divergence function based on distribution type
+            if r_distribution == dist.LogNormal:
+                js_divergence_fn = jensen_shannon_lognormal
+            elif r_distribution == dist.Gamma:
+                js_divergence_fn = jensen_shannon_gamma
+            else:
+                raise ValueError(
+                    f"Unsupported distribution type: {r_distribution}. "
+                    "Must be 'lognormal' or 'gamma'."
+                )
+
+            # Extract parameters from r distribution based on distribution type
+            if r_distribution == dist.LogNormal:
+                param1 = self.params['r_loc'].astype(dtype)
+                param2 = self.params['r_scale'].astype(dtype)
+            elif r_distribution == dist.Gamma:
+                param1 = self.params['r_concentration'].astype(dtype)
+                param2 = self.params['r_rate'].astype(dtype)
+        else:
+            raise ValueError("No concentration or r distribution found in model config")
 
         # Initialize dictionary to store divergences
         js_divergences = {}
@@ -1613,7 +1840,7 @@ class ScribeSVIResults:
             for j in range(i + 1, self.n_components):  # Only compute for i < j since JS is symmetric
                 # Compute JS divergence between components i and j
                 js_divergences[f'{i}_{j}'] = js_divergence_fn(
-                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
+                    param1[i], param2[i], param1[j], param2[j]
                 )
 
         return js_divergences

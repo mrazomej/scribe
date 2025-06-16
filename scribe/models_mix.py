@@ -26,13 +26,13 @@ def nbdm_mixture_model(
     batch_size=None,
 ):
     """
-    Numpyro mixture model for single-cell RNA sequencing data using Negative
-    Binomial distributions with shared p parameter per component.
+    Numpyro mixture model for single-cell RNA sequencing data using 
+    NegativeBinomial2 parameterization.
     
     This model assumes a hierarchical mixture structure where:
         1. Each mixture component has:
-           - A shared success probability p across all genes
-           - Gene-specific dispersion parameters r
+           - Component-specific mean expression levels per gene
+           - Component-specific concentration (dispersion) parameters per gene
         2. The mixture is handled using Numpyro's MixtureSameFamily
     
     Parameters
@@ -54,11 +54,11 @@ def nbdm_mixture_model(
     --------------
     Global Parameters:
         - Mixture weights ~ model_config.mixing_distribution_model
-        - Success probability p ~ model_config.p_distribution_model
-        - Component-specific dispersion r ~ model_config.r_distribution_model per gene and component
+        - Component-specific mean expression levels ~ model_config.mean_distribution_model per gene and component
+        - Component-specific concentration ~ model_config.concentration_distribution_model per gene and component
 
     Likelihood: counts ~ MixtureSameFamily(
-        Categorical(mixing_weights), NegativeBinomialProbs(r, p)
+        Categorical(mixing_weights), NegativeBinomial2(mean, concentration)
     )
     """
     # Extract number of components
@@ -73,17 +73,24 @@ def nbdm_mixture_model(
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
-    # Define the prior on the p parameters - one for each component
-    p = numpyro.sample("p", model_config.p_distribution_model)
-
-    # Define the prior on the r parameters - one for each gene and component
-    r = numpyro.sample(
-        "r",
-        model_config.r_distribution_model.expand([n_components, n_genes])
+    # Define the prior on the mean parameters - one for each gene and component
+    mean = numpyro.sample(
+        "mean",
+        model_config.mean_distribution_model.expand([n_components, n_genes])
     )
 
-    # Create base negative binomial distribution
-    base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+    # Define the prior on the concentration parameters - one for each gene and component
+    concentration = numpyro.sample(
+        "concentration",
+        model_config.concentration_distribution_model.expand([n_components, n_genes])
+    )
+
+    # For backward compatibility, compute equivalent p and r
+    p = numpyro.deterministic("p", concentration / (concentration + mean))
+    r = numpyro.deterministic("r", concentration)
+
+    # Create base negative binomial distribution using NegativeBinomial2
+    base_dist = dist.NegativeBinomial2(mean, concentration).to_event(1)
     
     # Create mixture distribution
     mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
@@ -122,20 +129,12 @@ def nbdm_mixture_guide(
     batch_size=None,
 ):
     """
-    Variational guide for the NBDM mixture model.
+    Variational guide for the NBDM mixture model using mean-concentration parameterization.
 
     This guide function defines the form of the variational distribution that
     will be optimized to approximate the true posterior. It specifies a
     mean-field variational family where each parameter has its own independent
-    distribution:
-
-    - The mixing weights follow a Dirichlet distribution
-    - The success probability p follows a Beta distribution 
-    - Each gene's overdispersion parameter r follows an independent distribution
-      (typically Gamma or LogNormal)
-
-    The specific distributions used are configured via the model_config
-    parameter.
+    distribution using the NegativeBinomial2 parameterization.
 
     Parameters
     ----------
@@ -154,8 +153,8 @@ def nbdm_mixture_guide(
     --------------
     Variational Parameters:
         - Mixing weights ~ model_config.mixing_distribution_guide
-        - Success probability p ~ model_config.p_distribution_guide
-        - Component-specific dispersion r ~ model_config.r_distribution_guide per gene and component
+        - Component-specific mean expression levels ~ model_config.mean_distribution_guide per gene and component
+        - Component-specific concentration ~ model_config.concentration_distribution_guide per gene and component
     """
     # Extract number of components
     n_components = model_config.n_components
@@ -174,31 +173,31 @@ def nbdm_mixture_guide(
             constraint=constraint
         )
 
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
+    # Extract mean distribution values
+    mean_values = model_config.mean_distribution_guide.get_args()
+    # Extract mean distribution parameters and constraints
+    mean_constraints = model_config.mean_distribution_guide.arg_constraints
     # Initialize parameters for each constraint in the distribution
-    p_params = {}
+    mean_params = {}
     # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
+    for param_name, constraint in mean_constraints.items():
+        mean_params[param_name] = numpyro.param(
+            f"mean_{param_name}",
+            jnp.ones((n_components, n_genes)) * mean_values[param_name],
             constraint=constraint
         )
 
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints 
-    r_constraints = model_config.r_distribution_guide.arg_constraints
+    # Extract concentration distribution values
+    concentration_values = model_config.concentration_distribution_guide.get_args()
+    # Extract concentration distribution parameters and constraints 
+    concentration_constraints = model_config.concentration_distribution_guide.arg_constraints
     # Initialize parameters for each constraint in the distribution
-    r_params = {}
+    concentration_params = {}
     # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones((n_components, n_genes)) * r_values[param_name],
+    for param_name, constraint in concentration_constraints.items():
+        concentration_params[param_name] = numpyro.param(
+            f"concentration_{param_name}",
+            jnp.ones((n_components, n_genes)) * concentration_values[param_name],
             constraint=constraint
         )
 
@@ -207,8 +206,8 @@ def nbdm_mixture_guide(
         "mixing_weights", 
         model_config.mixing_distribution_guide.__class__(**mixing_params)
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    numpyro.sample("mean", model_config.mean_distribution_guide.__class__(**mean_params))
+    numpyro.sample("concentration", model_config.concentration_distribution_guide.__class__(**concentration_params))
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model
