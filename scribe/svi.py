@@ -210,7 +210,7 @@ def run_scribe(
     # Parameterization type
     parameterization: str = "mean_field",
     # Extra guide type parameters
-    mu_dist: Optional[str] = "lognormal",
+    mu_dist: Optional[str] = None,
     mu_prior: Optional[tuple] = None,
     phi_prior: Optional[tuple] = None,
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
@@ -387,6 +387,7 @@ def run_scribe(
     if mu_prior is None and (
         parameterization == "mean_variance" or parameterization == "beta_prime"
     ):
+        mu_dist = "lognormal"
         mu_prior = (1, 1)
     if phi_prior is None and parameterization == "beta_prime":
         phi_prior = (1, 1)
@@ -448,7 +449,9 @@ def run_scribe(
     ):
         mu_dist_model = dist.Gamma(*mu_prior)
         mu_dist_guide = mu_dist_model
-    else:
+    elif (
+        parameterization == "mean_variance" or parameterization == "beta_prime"
+    ):
         raise ValueError(f"Unsupported mu_dist: {mu_dist}")
     
     # Set phi distribution for guide if specified
