@@ -11,12 +11,12 @@ from typing import Callable, Tuple, Dict
 # Model registry
 # ------------------------------------------------------------------------------
 
-def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
+def get_model_and_guide(model_type: str, guide_type: str = "mean_field") -> Tuple[Callable, Callable]:
     """
-    Get model and guide functions for a specified model type.
+    Get model and guide functions for a specified model type and guide type.
 
     This function returns the appropriate model and guide functions based on the
-    requested model type. Currently supports:
+    requested model type and guide parameterization. Currently supports:
         - "nbdm": Negative Binomial-Dirichlet Multinomial model
         - "zinb": Zero-Inflated Negative Binomial model
         - "nbvcp": Negative Binomial with variable mRNA capture probability
@@ -35,58 +35,86 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         The type of model to retrieve functions for. Must be one of ["nbdm",
         "zinb", "nbvcp", "zinbvcp", "nbdm_mix", "zinb_mix", "nbvcp_mix",
         "zinbvcp_mix"].
+    guide_type : str, default="mean_field"
+        The type of variational guide to use:
+            - "mean_field": Independent parameters (original)
+            - "mean_variance": Correlated r-p parameters via mean-variance parameterization
 
     Returns
     -------
     Tuple[Callable, Callable]
         A tuple containing (model_function, guide_function) for the requested
-        model type.
+        model type and guide type.
 
     Raises
     ------
     ValueError
-        If an unsupported model type is provided.
+        If an unsupported model type or guide type is provided.
     """
+    # Validate guide_type
+    valid_guide_types = ["mean_field", "mean_variance"]
+    if guide_type not in valid_guide_types:
+        raise ValueError(f"Unknown guide type: {guide_type}. Must be one of {valid_guide_types}")
+    
     # Handle Negative Binomial-Dirichlet Multinomial model
     if model_type == "nbdm":
-        # Import model and guide functions locally to avoid circular imports
-        from .models import nbdm_model, nbdm_guide
-        return nbdm_model, nbdm_guide
+        # Import model function
+        from .models import nbdm_model
+        
+        # Select guide based on guide_type
+        if guide_type == "mean_field":
+            from .models import nbdm_guide
+            return nbdm_model, nbdm_guide
+        elif guide_type == "mean_variance":
+            from .models import nbdm_guide_mean_variance
+            return nbdm_model, nbdm_guide_mean_variance
     
     # Handle Zero-Inflated Negative Binomial model
     elif model_type == "zinb":
         # Import model and guide functions locally to avoid circular imports
         from .models import zinb_model, zinb_guide
+        if guide_type != "mean_field":
+            raise ValueError(f"Guide type '{guide_type}' not yet supported for model '{model_type}'")
         return zinb_model, zinb_guide
     
     # Handle Negative Binomial with variable mRNA capture probability model
     elif model_type == "nbvcp":
         # Import model and guide functions locally to avoid circular imports
         from .models import nbvcp_model, nbvcp_guide
+        if guide_type != "mean_field":
+            raise ValueError(f"Guide type '{guide_type}' not yet supported for model '{model_type}'")
         return nbvcp_model, nbvcp_guide
     
     # Handle Zero-Inflated Negative Binomial with variable capture probability
     elif model_type == "zinbvcp":
         # Import model and guide functions locally to avoid circular imports
         from .models import zinbvcp_model, zinbvcp_guide
+        if guide_type != "mean_field":
+            raise ValueError(f"Guide type '{guide_type}' not yet supported for model '{model_type}'")
         return zinbvcp_model, zinbvcp_guide
     
     # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
     elif model_type == "nbdm_mix":
         # Import model and guide functions locally to avoid circular imports
         from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
+        if guide_type != "mean_field":
+            raise ValueError(f"Guide type '{guide_type}' not yet supported for model '{model_type}'")
         return nbdm_mixture_model, nbdm_mixture_guide
 
     # Handle Zero-Inflated Negative Binomial Mixture Model
     elif model_type == "zinb_mix":
         # Import model and guide functions locally to avoid circular imports
         from .models_mix import zinb_mixture_model, zinb_mixture_guide
+        if guide_type != "mean_field":
+            raise ValueError(f"Guide type '{guide_type}' not yet supported for model '{model_type}'")
         return zinb_mixture_model, zinb_mixture_guide
     
     # Handle Negative Binomial-Variable Capture Probability Mixture Model
     elif model_type == "nbvcp_mix":
         # Import model and guide functions locally to avoid circular imports
         from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
+        if guide_type != "mean_field":
+            raise ValueError(f"Guide type '{guide_type}' not yet supported for model '{model_type}'")
         return nbvcp_mixture_model, nbvcp_mixture_guide
     
     # Handle Zero-Inflated Negative Binomial-Variable Capture Probability
@@ -94,6 +122,8 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
     elif model_type == "zinbvcp_mix":
         # Import model and guide functions locally to avoid circular imports
         from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
+        if guide_type != "mean_field":
+            raise ValueError(f"Guide type '{guide_type}' not yet supported for model '{model_type}'")
         return zinbvcp_mixture_model, zinbvcp_mixture_guide
     
     # Raise error for unsupported model types
