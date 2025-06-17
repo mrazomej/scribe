@@ -336,7 +336,7 @@ def nbdm_guide_mean_variance(
     if model_config.mu_distribution_guide is None:
         raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
 
-    # Sample shared success probability p using existing infrastructure
+    # Define p parameters
     p_values = model_config.p_distribution_guide.get_args()
     p_constraints = model_config.p_distribution_guide.arg_constraints
     p_params = {}
@@ -347,10 +347,8 @@ def nbdm_guide_mean_variance(
             p_values[param_name],
             constraint=constraint
         )
-    
-    p = numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    
-    # Sample gene-specific means using mu_distribution_guide
+       
+    # Define mu parameters
     mu_values = model_config.mu_distribution_guide.get_args()
     mu_constraints = model_config.mu_distribution_guide.arg_constraints
     mu_params = {}
@@ -362,17 +360,14 @@ def nbdm_guide_mean_variance(
             constraint=constraint
         )
     
-    # Sample mu using the mu_distribution_guide
-    mu = numpyro.sample(
+    # Sample p from variational distribution
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+
+    # Sample mu from variational distribution
+    numpyro.sample(
         "mu", 
         model_config.mu_distribution_guide.__class__(**mu_params),
-        infer={"is_auxiliary": True}
     )
-        
-    # Compute r from mean and p, then sample it as a Delta distribution This
-    # ensures r is a sample site (as expected by the model) while maintaining
-    # the deterministic relationship r = μ * (1 - p) / p
-    numpyro.sample("r", dist.Delta(mu * p / (1 - p)))
 
 # ------------------------------------------------------------------------------
 # Beta-Prime Parameterized Guide for Negative Binomial-Dirichlet Multinomial
@@ -440,12 +435,13 @@ def nbdm_guide_beta_prime(
         - nbdm_guide_mean_variance: Uses mean-variance relationship where r_g =
           μ_g * (1 - p) / p for gene-specific means μ_g
     """
+    # Add checks for required distributions
     if model_config.phi_distribution_guide is None:
         raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
         raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
 
-    # Sample phi from BetaPrime variational posterior
+    # Define phi parameters
     phi_values = model_config.phi_distribution_guide.get_args()
     phi_constraints = model_config.phi_distribution_guide.arg_constraints
     phi_params = {}
@@ -455,13 +451,8 @@ def nbdm_guide_beta_prime(
             phi_values[param_name],
             constraint=constraint
         )
-    
-    numpyro.sample(
-        "phi",
-        model_config.phi_distribution_guide.__class__(**phi_params),
-    )
 
-    # Sample gene-specific means using mu_distribution_guide
+    # Define mu parameters
     mu_values = model_config.mu_distribution_guide.get_args()
     mu_constraints = model_config.mu_distribution_guide.arg_constraints
     mu_params = {}
@@ -473,6 +464,12 @@ def nbdm_guide_beta_prime(
             constraint=constraint
         )
     
+    # Sample phi from variational distribution
+    numpyro.sample(
+        "phi",
+        model_config.phi_distribution_guide.__class__(**phi_params),
+    )
+    # Sample mu from variational distribution
     numpyro.sample(
         "mu",
         model_config.mu_distribution_guide.__class__(**mu_params),
@@ -505,8 +502,17 @@ def zinb_model(
         Number of genes in the dataset
     model_config : ConstrainedModelConfig
         Configuration object for model distributions containing:
+        - For default parameterization:
             - p_distribution_model: Distribution for success probability p
             - r_distribution_model: Distribution for dispersion parameters r
+            - gate_distribution_model: Distribution for dropout probabilities
+        - For "mean_variance" parameterization:
+            - p_distribution_model: Distribution for success probability p
+            - mu_distribution_model: Distribution for gene means
+            - gate_distribution_model: Distribution for dropout probabilities
+        - For "beta_prime" parameterization:
+            - phi_distribution_model: Distribution for phi parameter
+            - mu_distribution_model: Distribution for gene means
             - gate_distribution_model: Distribution for dropout probabilities
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). If None, generates
@@ -526,11 +532,37 @@ def zinb_model(
     Likelihood:
         - counts ~ ZeroInflatedNegativeBinomial(r, p, gate)
     """
-    # Sample p
-    p = numpyro.sample("p", model_config.p_distribution_model)
-    
-    # Sample r
-    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
+    # Check if we are using the beta-prime parameterization
+    if model_config.parameterization == "beta_prime":
+        # Sample phi
+        phi = numpyro.sample("phi", model_config.phi_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_genes])
+        )
+        # Compute p
+        p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+        # Compute r
+        r = numpyro.deterministic("r", mu * phi)
+    elif model_config.parameterization == "mean_variance":
+        # Sample p
+        p = numpyro.sample("p", model_config.p_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_genes])
+        )
+        # Compute r
+        r = numpyro.deterministic("r", mu * p / (1 - p))
+    else:
+        # Sample p
+        p = numpyro.sample("p", model_config.p_distribution_model)
+        # Sample r
+        r = numpyro.sample(
+            "r", 
+            model_config.r_distribution_model.expand([n_genes])
+        )
     
     # Sample gate (dropout) parameters for all genes simultaneously
     gate = numpyro.sample(
@@ -568,7 +600,7 @@ def zinb_model(
             counts = numpyro.sample("counts", zinb)
 
 # ------------------------------------------------------------------------------
-# Beta-Gamma-Beta Variational Posterior for Zero-Inflated Negative Binomial
+# Variational Guide for Zero-Inflated Negative Binomial
 # ------------------------------------------------------------------------------
 
 def zinb_guide(
@@ -579,13 +611,68 @@ def zinb_guide(
     batch_size=None,
 ):
     """
-    Define the variational distribution for stochastic variational inference of
-    the Zero-Inflated Negative Binomial model.
+    Wrapper for ZINB variational guides with different parameterizations.
     
-    This guide function specifies the form of the variational distribution that
-    will be optimized to approximate the true posterior. It defines a mean-field
-    variational family where each parameter has its own independent distribution
-    specified by the model_config object.
+    Parameters
+    ----------
+    parameterization : str, default="mean_field"
+        Choice of guide parameterization:
+        - "mean_field": Independent r and p (original)
+        - "mean_variance": Correlated r and p via mean-variance relationship
+        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+    """
+    if model_config.parameterization == "mean_field":
+        return zinb_guide_mean_field(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    elif model_config.parameterization == "mean_variance":
+        return zinb_guide_mean_variance(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    elif model_config.parameterization == "beta_prime":
+        return zinb_guide_beta_prime(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    else:
+        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
+
+# ------------------------------------------------------------------------------
+# Mean-Field Parameterized Guide for Zero-Inflated Negative Binomial
+# ------------------------------------------------------------------------------
+
+def zinb_guide_mean_field(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the Zero-Inflated Negative Binomial (ZINB)
+    model.
+    
+    This guide implements a mean-field approximation where the variational
+    distribution factorizes into independent distributions for each parameter.
+    Specifically:
+        - A shared success probability p ~ Beta(α_p, β_p) across all genes
+        - Gene-specific dispersion parameters r_g ~ Gamma(α_r, β_r) for each
+          gene g
+        - Gene-specific dropout probabilities gate_g ~ Beta(α_gate, β_gate) for
+          each gene g
+    
+    The guide samples from these distributions to approximate the true
+    posterior. In the mean-field approximation, p, r, and gate are assumed to be
+    independent, so their joint distribution factorizes:
+    
+        q(p, r, gate) = q(p) * q(r) * q(gate)
+    
+    where:
+        - q(p) = Beta(α_p, β_p) 
+        - q(r_g) = Gamma(α_r, β_r) for each gene g
+        - q(gate_g) = Beta(α_gate, β_gate) for each gene g
+    
+    This independence assumption means the guide cannot capture correlations
+    between parameters that may exist in the true posterior.
     
     Parameters
     ----------
@@ -594,10 +681,11 @@ def zinb_guide(
     n_genes : int
         Number of genes in the dataset
     model_config : ConstrainedModelConfig
-        Configuration object containing guide distributions for model parameters:
-        - p_distribution_guide: Guide distribution for success probability p
-        - r_distribution_guide: Guide distribution for dispersion parameters r
-        - gate_distribution_guide: Guide distribution for dropout probabilities
+        Configuration object containing guide distributions for model
+        parameters: - p_distribution_guide: Guide distribution for success
+        probability p - r_distribution_guide: Guide distribution for dispersion
+        parameters r - gate_distribution_guide: Guide distribution for dropout
+        probabilities
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). Not directly used in
         the guide but included for API consistency with the model
@@ -660,7 +748,239 @@ def zinb_guide(
     # Sample r from variational distribution using unpacked parameters
     numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
     # Sample gate from variational distribution using unpacked parameters
-    numpyro.sample("gate", model_config.gate_distribution_guide.__class__(**gate_params))
+    numpyro.sample(
+        "gate", 
+        model_config.gate_distribution_guide.__class__(**gate_params)
+    )
+
+# ------------------------------------------------------------------------------
+# Mean-Variance Parameterized Guide for Zero-Inflated Negative Binomial
+# ------------------------------------------------------------------------------
+
+def zinb_guide_mean_variance(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-variance parameterized variational guide for the Zero-Inflated Negative
+    Binomial (ZINB) model.
+    
+    This guide implements a mean-variance parameterization that captures the
+    correlation between the success probability p and dispersion parameters r
+    through gene-specific means μ:
+        - A shared success probability p ~ Beta(α_p, β_p) across all genes
+        - Gene-specific means μ_g ~ LogNormal(μ_μ, σ_μ) for each gene g
+        - Gene-specific dropout probabilities gate_g ~ Beta(α_gate, β_gate) for
+          each gene g
+        - Deterministic relationship r_g = μ_g * (1 - p) / p
+    
+    The guide samples from these distributions to approximate the true
+    posterior. The mean-variance parameterization captures the natural
+    relationship between means and variances in count data:
+    
+        q(p, μ, gate, r) = q(p) * q(μ) * q(gate) * δ(r - μ * (1-p)/p)
+    
+    where:
+        - q(p) = Beta(α_p, β_p)
+        - q(μ_g) = LogNormal(μ_μ, σ_μ) for each gene g
+        - q(gate_g) = Beta(α_gate, β_gate) for each gene g
+        - δ(·) is the Dirac delta function enforcing the deterministic
+          relationship
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing guide distributions for model
+        parameters: - p_distribution_guide: Guide distribution for success
+        probability p - mu_distribution_guide: Guide distribution for gene means
+        μ - gate_distribution_guide: Guide distribution for dropout
+        probabilities
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+    """
+    # Add checks for required distributions
+    if model_config.p_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+    if model_config.gate_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'gate_distribution_guide'.")
+
+    # Define p parameters
+    p_values = model_config.p_distribution_guide.get_args()
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    p_params = {}
+    
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
+    
+    # Define mu parameters
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
+    
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones(n_genes) * mu_values[param_name],
+            constraint=constraint
+        )
+        
+    # Define gate parameters
+    gate_values = model_config.gate_distribution_guide.get_args()
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    gate_params = {}
+    
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones(n_genes) * gate_values[param_name],
+            constraint=constraint
+        )
+
+    # Sample p from variational distribution
+    numpyro.sample(
+        "p", 
+        model_config.p_distribution_guide.__class__(**p_params)
+    )
+    # Sample mu from variational distribution
+    numpyro.sample(
+        "mu", 
+        model_config.mu_distribution_guide.__class__(**mu_params)
+    )
+    # Sample gate from variational distribution
+    numpyro.sample(
+        "gate", 
+        model_config.gate_distribution_guide.__class__(**gate_params)
+    )
+
+# ------------------------------------------------------------------------------
+# Beta-Prime Parameterized Guide for Zero-Inflated Negative Binomial
+# ------------------------------------------------------------------------------
+
+def zinb_guide_beta_prime(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Beta-Prime reparameterized variational guide for the Zero-Inflated Negative
+    Binomial (ZINB) model.
+    
+    This guide implements a Beta-Prime parameterization that captures the
+    correlation between the success probability p and dispersion parameters r
+    through gene-specific means μ and a shared parameter φ:
+        - A shared parameter φ ~ BetaPrime(α_φ, β_φ) across all genes
+        - Gene-specific means μ_g ~ LogNormal(μ_μ, σ_μ) for each gene g
+        - Gene-specific dropout probabilities gate_g ~ Beta(α_gate, β_gate) for
+          each gene g
+        - Deterministic relationships:
+            - p = φ / (1 + φ) 
+            - r_g = μ_g / φ
+    
+    The guide samples from these distributions to approximate the true
+    posterior. The Beta-Prime parameterization provides a natural way to model
+    the relationship between p and r:
+    
+        q(φ, μ, gate, p, r) = q(φ) * q(μ) * q(gate) * δ(p - φ/(1+φ)) * δ(r -
+        μ/φ)
+    
+    where:
+        - q(φ) = BetaPrime(α_φ, β_φ)
+        - q(μ_g) = LogNormal(μ_μ, σ_μ) for each gene g
+        - q(gate_g) = Beta(α_gate, β_gate) for each gene g
+        - δ(·) is the Dirac delta function enforcing the deterministic
+          relationships
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing guide distributions for model
+        parameters: - phi_distribution_guide: Guide distribution for φ
+        (BetaPrime distribution) - mu_distribution_guide: Guide distribution for
+        gene means μ - gate_distribution_guide: Guide distribution for dropout
+        probabilities
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+    """
+    # Add checks for required distributions
+    if model_config.phi_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+    if model_config.gate_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'gate_distribution_guide'.")
+
+    # Define phi parameters
+    phi_values = model_config.phi_distribution_guide.get_args()
+    phi_constraints = model_config.phi_distribution_guide.arg_constraints
+    phi_params = {}
+    for param_name, constraint in phi_constraints.items():
+        phi_params[param_name] = numpyro.param(
+            f"phi_{param_name}",
+            phi_values[param_name],
+            constraint=constraint
+        )
+
+    # Define mu parameters
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
+    
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones(n_genes) * mu_values[param_name],
+            constraint=constraint
+        )
+    
+    # Define gate parameters
+    gate_values = model_config.gate_distribution_guide.get_args()
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    gate_params = {}
+    
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones(n_genes) * gate_values[param_name],
+            constraint=constraint
+        )
+    # Sample phi from variational distribution
+    numpyro.sample(
+        "phi",
+        model_config.phi_distribution_guide.__class__(**phi_params),
+    )
+    # Sample mu from variational distribution
+    numpyro.sample(
+        "mu",
+        model_config.mu_distribution_guide.__class__(**mu_params),
+    )
+    # Sample gate from variational distribution
+    numpyro.sample(
+        "gate", 
+        model_config.gate_distribution_guide.__class__(**gate_params)
+    )
 
 # ------------------------------------------------------------------------------
 # Negative Binomial with variable capture probability
