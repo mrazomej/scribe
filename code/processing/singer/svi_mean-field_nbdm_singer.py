@@ -19,10 +19,10 @@ import scribe
 
 # %% ---------------------------------------------------------------------------
 # Define model type
-model_type = "zinb"
+model_type = "nbdm"
 
-# Define prior distribution
-r_dist = "gamma"
+# Define parameterization type
+parameterization = "mean_field"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -51,7 +51,7 @@ n_genes = data.shape[1]
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define training parameters
-n_steps = 25_000
+n_steps = 50_000
 
 # %% ---------------------------------------------------------------------------
 
@@ -61,7 +61,7 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{r_dist}_{model_type}_results_" \
+        f"svi_{parameterization}_{model_type}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"
@@ -70,9 +70,9 @@ if not os.path.exists(file_name):
     # Run SVI
     svi_results = scribe.svi.run_scribe(
         counts=data,
-        zero_inflated=True,
-        r_dist=r_dist,
         n_steps=n_steps,
+        parameterization=parameterization,
+        phi_prior=(3, 2),
     )
     # Save MCMC results
     with open(file_name, "wb") as f:
