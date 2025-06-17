@@ -80,6 +80,11 @@ class ConstrainedModelConfig(AbstractModelConfig):
         Parameters (alpha,beta) for p Beta distribution in model
     p_param_guide : tuple
         Parameters (alpha,beta) for p Beta distribution in guide
+
+    log_mu_distribution_guide : Optional[dist.Distribution]
+        Distribution object for log gene means in mean-variance guides (Normal)
+    log_mu_param_guide : Optional[tuple]
+        Parameters (loc,scale) for log_mu Normal distribution in guide
         
     gate_distribution_model : Optional[dist.Distribution]
         Beta distribution object for dropout gate in zero-inflated models
@@ -122,6 +127,10 @@ class ConstrainedModelConfig(AbstractModelConfig):
     p_distribution_guide: dist.Distribution
     p_param_prior: tuple
     p_param_guide: tuple
+
+    # Optional: Log gene means for mean-variance parameterization  
+    log_mu_distribution_guide: Optional[dist.Distribution] = None
+    log_mu_param_guide: Optional[tuple] = None
     
     # Optional: Zero-inflation gate distributions
     gate_distribution_model: Optional[dist.Distribution] = None

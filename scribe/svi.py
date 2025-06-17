@@ -33,6 +33,7 @@ from .model_config import ConstrainedModelConfig
 
 def create_svi_instance(
     model_type: Optional[str] = None,
+    guide_type: str = "mean_field",
     optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ):
@@ -49,6 +50,10 @@ def create_svi_instance(
             - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
               probability
             - Mixture variants with "_mix" suffix (e.g. "nbdm_mix")
+    guide_type : str, default="mean_field"
+        Type of variational guide to use:
+            - "mean_field": Independent parameters (original)
+            - "mean_variance": Correlated r-p parameters via mean-variance parameterization
     optimizer : numpyro.optim.optimizers, optional
         Optimizer to use for stochastic optimization. Default is Adam with 
         step_size=0.001
@@ -63,10 +68,10 @@ def create_svi_instance(
     Raises
     ------
     ValueError
-        If model_type is invalid
+        If model_type or guide_type is invalid
     """
     # Get model and guide functions
-    model_fn, guide_fn = get_model_and_guide(model_type)
+    model_fn, guide_fn = get_model_and_guide(model_type, guide_type=guide_type)
 
     return SVI(
         model_fn,
@@ -199,6 +204,7 @@ def run_scribe(
     seed: int = 42,
     stable_update: bool = True,
     r_guide: Optional[str] = None,
+    guide_type: str = "mean_field",
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ) -> ScribeSVIResults:
     """
@@ -279,6 +285,10 @@ def run_scribe(
     r_guide : Optional[str], default=None
         Distribution family for guide of dispersion parameter. If None, uses
         same as r_dist. Options: "gamma" or "lognormal".
+    guide_type : str, default="mean_field"
+        Type of variational guide to use:
+            - "mean_field": Independent parameters (original)
+            - "mean_variance": Correlated r-p parameters via mean-variance parameterization
     loss : numpyro.infer.elbo, default=TraceMeanField_ELBO()
         Loss function for variational inference
         
@@ -425,8 +435,17 @@ def run_scribe(
         mixing_param_guide=mixing_prior
     )
     
+    # Configure log_mu distribution for mean_variance guide
+    if guide_type == "mean_variance":
+        if model_type == "nbdm":
+            # Set up log_mu distribution (Normal distribution for log gene means)
+            model_config.log_mu_distribution_guide = dist.Normal(0.0, 1.0)
+            model_config.log_mu_param_guide = (0.0, 1.0)
+        else:
+            raise ValueError(f"mean_variance guide not yet supported for model type '{model_type}'")
+    
     # Get model and guide functions
-    model, guide = get_model_and_guide(model_type)
+    model, guide = get_model_and_guide(model_type, guide_type=guide_type)
     
     # Set up SVI
     svi = SVI(model, guide, optimizer, loss=loss)
