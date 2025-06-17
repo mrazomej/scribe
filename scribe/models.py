@@ -14,6 +14,8 @@ from typing import Callable, Dict, Tuple, Optional
 
 # Import model config
 from .model_config import ConstrainedModelConfig
+# Import custom distributions
+from .stats import BetaPrime
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
@@ -24,7 +26,6 @@ def nbdm_model(
     n_genes: int,
     model_config: ConstrainedModelConfig,
     counts=None,
-    total_counts=None,
     batch_size=None,
 ):
     """
@@ -56,9 +57,6 @@ def nbdm_model(
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). If None, generates
         samples from the prior.
-    total_counts : array-like, optional
-        Total UMI counts per cell of shape (n_cells,). Required if counts is
-        provided.
     batch_size : int, optional
         Mini-batch size for stochastic variational inference. If None, uses full
         dataset.
@@ -76,11 +74,37 @@ def nbdm_model(
     Likelihood (Equivalent Direct Version):
         - counts[i,j] ~ NegativeBinomialProbs(r[j], p) for each cell i and gene j
     """
-    # Sample p
-    p = numpyro.sample("p", model_config.p_distribution_model)
-    
-    # Sample r
-    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
+    # Check if we are using the beta-prime parameterization
+    if model_config.parameterization == "beta_prime":
+        # Sample phi
+        phi = numpyro.sample("phi", model_config.phi_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_genes])
+        )
+        # Compute p
+        p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+        # Compute r
+        r = numpyro.deterministic("r", mu * phi)
+    elif model_config.parameterization == "mean_variance":
+        # Sample p
+        p = numpyro.sample("p", model_config.p_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_genes])
+        )
+        # Compute r
+        r = numpyro.deterministic("r", mu * p / (1 - p))
+    else:
+        # Sample p
+        p = numpyro.sample("p", model_config.p_distribution_model)
+        # Sample r
+        r = numpyro.sample(
+            "r", 
+            model_config.r_distribution_model.expand([n_genes]),
+        )
 
     # Create base distribution for total counts
     base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
@@ -109,9 +133,8 @@ def nbdm_model(
             # length n_genes
             counts = numpyro.sample("counts", base_dist)
 
-
 # ------------------------------------------------------------------------------
-# Mean-Variance Parameterized Guide for Negative Binomial-Dirichlet Multinomial
+# Variational Guide for Negative Binomial-Dirichlet Multinomial
 # ------------------------------------------------------------------------------
 
 def nbdm_guide(
@@ -119,9 +142,7 @@ def nbdm_guide(
     n_genes: int,
     model_config: ConstrainedModelConfig,
     counts=None,
-    total_counts=None,
     batch_size=None,
-    parameterization: str = "mean_field"
 ):
     """
     Wrapper for NBDM variational guides with different parameterizations.
@@ -132,30 +153,85 @@ def nbdm_guide(
         Choice of guide parameterization:
         - "mean_field": Independent r and p (original)
         - "mean_variance": Correlated r and p via mean-variance relationship
+        - "beta_prime": Correlated r and p via Beta Prime reparameterization
     """
-    if parameterization == "mean_field":
+    if model_config.parameterization == "mean_field":
         return nbdm_guide_mean_field(
-            n_cells, n_genes, model_config, counts, total_counts, batch_size
+            n_cells, n_genes, model_config, counts, batch_size
         )
-    elif parameterization == "mean_variance":
+    elif model_config.parameterization == "mean_variance":
         return nbdm_guide_mean_variance(
-            n_cells, n_genes, model_config, counts, total_counts, batch_size
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    elif model_config.parameterization == "beta_prime":
+        return nbdm_guide_beta_prime(
+            n_cells, n_genes, model_config, counts, batch_size
         )
     else:
-        raise ValueError(f"Unknown parameterization: {parameterization}")
+        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
 
-# Rename the original guide for clarity
+# ------------------------------------------------------------------------------
+# Mean-Field Parameterized Guide for Negative Binomial-Dirichlet Multinomial
+# ------------------------------------------------------------------------------
+
 def nbdm_guide_mean_field(
     n_cells: int,
     n_genes: int,
     model_config: ConstrainedModelConfig,
     counts=None,
-    total_counts=None,
     batch_size=None,
 ):
     """
-    Original mean-field variational guide for NBDM model.
-    This is the existing implementation renamed for clarity.
+    Mean-field variational guide for the Negative Binomial-Dirichlet Multinomial
+    (NBDM) model.
+    
+    This guide implements a mean-field approximation where the variational
+    distribution factorizes into independent distributions for each parameter.
+    Specifically:
+        - A shared success probability p ~ Beta(α_p, β_p) across all genes
+        - Gene-specific dispersion parameters r_g ~ Gamma(α_r, β_r) for each
+          gene g
+    
+    The guide samples from these distributions to approximate the true
+    posterior. In the mean-field approximation, p and r are assumed to be
+    independent, so their joint distribution factorizes:
+    
+        q(p, r) = q(p) * q(r)
+    
+    where:
+        - q(p) = Beta(α_p, β_p) 
+        - q(r_g) = Gamma(α_r, β_r) for each gene g
+    
+    This independence assumption means the guide cannot capture correlations
+    between p and r that may exist in the true posterior. The parameters α_p,
+    β_p, α_r, and β_r are learned during variational inference.
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing: - p_distribution_guide: Guide
+        distribution for success probability p
+          (Beta distribution with parameters α_p, β_p)
+        - r_distribution_guide: Guide distribution for dispersion parameters r
+          (Gamma distribution with parameters α_r, β_r)
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+        
+    Notes
+    -----
+    The mean-field approximation assumes independence between p and r
+    parameters, which may not capture important correlations in the true
+    posterior. For parameterizations that model these correlations, see:
+        - nbdm_guide_mean_variance: Uses mean-variance relationship where r_g =
+          μ_g * (1 - p) / p for gene-specific means μ_g
+        - nbdm_guide_beta_prime: Uses Beta Prime reparameterization where r_g =
+          φ_g * (1 - p) / p for gene-specific parameters φ_g
     """
     # Extract p distribution values
     p_values = model_config.p_distribution_guide.get_args()
@@ -199,34 +275,67 @@ def nbdm_guide_mean_variance(
     n_genes: int,
     model_config: ConstrainedModelConfig,
     counts=None,
-    total_counts=None,
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the NBDM model.
+    Mean-variance parameterized variational guide for the Negative
+    Binomial-Dirichlet Multinomial (NBDM) model.
     
-    Uses mean-variance parameterization to capture r-p correlation:
-    - Sample shared success probability p
-    - Sample gene-specific means μ_g via log_mu parameters
-    - Compute r_g deterministically as r_g = μ_g * p / (1 - p)
+    This guide implements a mean-variance parameterization that captures the
+    correlation between the success probability p and dispersion parameters r
+    through gene-specific means μ:
+        - A shared success probability p ~ Beta(α_p, β_p) across all genes
+        - Gene-specific means μ_g ~ LogNormal(μ_μ, σ_μ) for each gene g
+        - Deterministic relationship r_g = μ_g * (1 - p) / p
+    
+    The guide samples from these distributions to approximate the true
+    posterior. The mean-variance parameterization captures the natural
+    relationship between means and variances in count data:
+    
+        q(p, μ, r) = q(p) * q(μ) * δ(r - μ * (1-p)/p)
+    
+    where:
+        - q(p) = Beta(α_p, β_p)
+        - q(μ_g) = LogNormal(μ_μ, σ_μ) for each gene g
+        - δ(·) is the Dirac delta function enforcing the deterministic
+          relationship
+    
+    This parameterization allows the guide to capture the correlation between p
+    and r that exists in the true posterior through the gene-specific means μ.
+    The parameters α_p, β_p, μ_μ, and σ_μ are learned during variational
+    inference.
     
     Parameters
     ----------
     n_cells : int
         Number of cells in the dataset
     n_genes : int
-        Number of genes in the dataset  
+        Number of genes in the dataset
     model_config : ConstrainedModelConfig
-        Configuration object containing:
-        - p_distribution_guide: Guide distribution for success probability p  
-        - log_mu_distribution_guide: Guide distribution for log gene means
+        Configuration object containing: - p_distribution_guide: Guide
+        distribution for success probability p
+          (Beta distribution with parameters α_p, β_p)
+        - mu_distribution_guide: Guide distribution for gene means (LogNormal
+          distribution with parameters μ_μ, σ_μ)
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
-    total_counts : array-like, optional  
-        Total counts per cell (kept for API consistency)
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
+        
+    Notes
+    -----
+    The mean-variance parameterization captures the natural relationship between
+    means and variances in count data. For alternative parameterizations, see:
+        - nbdm_guide_mean_field: Uses independent distributions for p and r
+        - nbdm_guide_beta_prime: Uses Beta Prime reparameterization where r_g =
+          φ_g * (1 - p) / p for gene-specific parameters φ_g
     """
+    # Add checks for required distributions
+    if model_config.p_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+
     # Sample shared success probability p using existing infrastructure
     p_values = model_config.p_distribution_guide.get_args()
     p_constraints = model_config.p_distribution_guide.arg_constraints
@@ -241,34 +350,134 @@ def nbdm_guide_mean_variance(
     
     p = numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     
-    # Sample gene-specific log means using log_mu_distribution_guide
-    log_mu_values = model_config.log_mu_distribution_guide.get_args()
-    log_mu_constraints = model_config.log_mu_distribution_guide.arg_constraints
-    log_mu_params = {}
+    # Sample gene-specific means using mu_distribution_guide
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
     
-    for param_name, constraint in log_mu_constraints.items():
-        log_mu_params[param_name] = numpyro.param(
-            f"log_mu_{param_name}",
-            jnp.ones(n_genes) * log_mu_values[param_name],
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones(n_genes) * mu_values[param_name],
             constraint=constraint
         )
     
-    # Sample log_mu using the log_mu_distribution_guide
-    log_mu = numpyro.sample(
-        "log_mu", 
-        model_config.log_mu_distribution_guide.__class__(**log_mu_params),
+    # Sample mu using the mu_distribution_guide
+    mu = numpyro.sample(
+        "mu", 
+        model_config.mu_distribution_guide.__class__(**mu_params),
         infer={"is_auxiliary": True}
     )
-    
-    # Compute gene means
-    mu = numpyro.deterministic("mu", jnp.exp(log_mu))
-    
+        
     # Compute r from mean and p, then sample it as a Delta distribution This
     # ensures r is a sample site (as expected by the model) while maintaining
-    # the deterministic relationship r = μ * p / (1 - p)
-    r_computed = mu * p / (1 - p)
-    r = numpyro.sample("r", dist.Delta(r_computed))
+    # the deterministic relationship r = μ * (1 - p) / p
+    numpyro.sample("r", dist.Delta(mu * p / (1 - p)))
 
+# ------------------------------------------------------------------------------
+# Beta-Prime Parameterized Guide for Negative Binomial-Dirichlet Multinomial
+# ------------------------------------------------------------------------------
+
+def nbdm_guide_beta_prime(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Beta-Prime reparameterized variational guide for the Negative
+    Binomial-Dirichlet Multinomial (NBDM) model.
+    
+    This guide implements a Beta-Prime parameterization that captures the
+    correlation between the success probability p and dispersion parameters r
+    through gene-specific means μ and a shared parameter φ:
+        - A shared parameter φ ~ BetaPrime(α_φ, β_φ) across all genes
+        - Gene-specific means μ_g ~ LogNormal(μ_μ, σ_μ) for each gene g
+        - Deterministic relationships:
+            p = φ / (1 + φ) r_g = μ_g / φ
+    
+    The guide samples from these distributions to approximate the true
+    posterior. The Beta-Prime parameterization provides a natural way to model
+    the relationship between p and r:
+    
+        q(φ, μ, p, r) = q(φ) * q(μ) * δ(p - φ/(1+φ)) * δ(r - μ/φ)
+    
+    where:
+        - q(φ) = BetaPrime(α_φ, β_φ)
+        - q(μ_g) = LogNormal(μ_μ, σ_μ) for each gene g
+        - δ(·) is the Dirac delta function enforcing the deterministic
+          relationships
+    
+    This parameterization allows the guide to capture the correlation between p
+    and r that exists in the true posterior through the shared parameter φ and
+    gene-specific means μ. The parameters α_φ, β_φ, μ_μ, and σ_μ are learned
+    during variational inference.
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing: - phi_distribution_guide: Guide
+        distribution for φ (BetaPrime
+          distribution with parameters α_φ, β_φ)
+        - mu_distribution_guide: Guide distribution for gene means (LogNormal
+          distribution with parameters μ_μ, σ_μ)
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+        
+    Notes
+    -----
+    The Beta-Prime parameterization provides a natural way to model the
+    relationship between p and r through the shared parameter φ. For alternative
+    parameterizations, see:
+        - nbdm_guide_mean_field: Uses independent distributions for p and r
+        - nbdm_guide_mean_variance: Uses mean-variance relationship where r_g =
+          μ_g * (1 - p) / p for gene-specific means μ_g
+    """
+    if model_config.phi_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+
+    # Sample phi from BetaPrime variational posterior
+    phi_values = model_config.phi_distribution_guide.get_args()
+    phi_constraints = model_config.phi_distribution_guide.arg_constraints
+    phi_params = {}
+    for param_name, constraint in phi_constraints.items():
+        phi_params[param_name] = numpyro.param(
+            f"phi_{param_name}",
+            phi_values[param_name],
+            constraint=constraint
+        )
+    
+    numpyro.sample(
+        "phi",
+        model_config.phi_distribution_guide.__class__(**phi_params),
+    )
+
+    # Sample gene-specific means using mu_distribution_guide
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
+    
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones(n_genes) * mu_values[param_name],
+            constraint=constraint
+        )
+    
+    numpyro.sample(
+        "mu",
+        model_config.mu_distribution_guide.__class__(**mu_params),
+    )
+    
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Model
 # ------------------------------------------------------------------------------
