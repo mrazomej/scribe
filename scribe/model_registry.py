@@ -82,11 +82,19 @@ def get_model_and_guide(
     
     # Handle Zero-Inflated Negative Binomial model
     elif model_type == "zinb":
-        # Import model and guide functions locally to avoid circular imports
-        from .models import zinb_model, zinb_guide
-        if parameterization != "mean_field":
-            raise ValueError(f"Guide type '{parameterization}' not yet supported for model '{model_type}'")
-        return zinb_model, zinb_guide
+        # Import model function
+        from .models import zinb_model
+        
+        # Select guide based on guide_type
+        if parameterization == "mean_field":
+            from .models import zinb_guide
+            return zinb_model, zinb_guide
+        elif parameterization == "mean_variance":
+            from .models import zinb_guide_mean_variance
+            return zinb_model, zinb_guide_mean_variance
+        elif parameterization == "beta_prime":
+            from .models import zinb_guide_beta_prime
+            return zinb_model, zinb_guide_beta_prime
     
     # Handle Negative Binomial with variable mRNA capture probability model
     elif model_type == "nbvcp":
