@@ -708,7 +708,19 @@ class ScribeSVIResults:
     def _model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the model and guide functions based on model type."""
         from .model_registry import get_model_and_guide
-        return get_model_and_guide(self.model_type)
+        return get_model_and_guide(
+            self.model_type, 
+            self.model_config.parameterization
+        )
+
+    
+    # --------------------------------------------------------------------------
+    # Get parameterization
+    # --------------------------------------------------------------------------
+
+    def _parameterization(self) -> str:
+        """Get the parameterization type."""
+        return self.model_config.parameterization
 
     # --------------------------------------------------------------------------
     # Get log likelihood function

@@ -27,6 +27,9 @@ from anndata import AnnData
 from .model_registry import get_model_and_guide
 from .model_config import ConstrainedModelConfig
 
+# Imports for custom distributions
+from .stats import BetaPrime
+
 # ------------------------------------------------------------------------------
 # Stochastic Variational Inference with Numpyro
 # ------------------------------------------------------------------------------
@@ -204,7 +207,12 @@ def run_scribe(
     seed: int = 42,
     stable_update: bool = True,
     r_guide: Optional[str] = None,
-    guide_type: str = "mean_field",
+    # Parameterization type
+    parameterization: str = "mean_field",
+    # Extra guide type parameters
+    mu_dist: Optional[str] = "lognormal",
+    mu_prior: Optional[tuple] = None,
+    phi_prior: Optional[tuple] = None,
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ) -> ScribeSVIResults:
     """
@@ -285,10 +293,22 @@ def run_scribe(
     r_guide : Optional[str], default=None
         Distribution family for guide of dispersion parameter. If None, uses
         same as r_dist. Options: "gamma" or "lognormal".
-    guide_type : str, default="mean_field"
+    parameterization : str, default="mean_field"
         Type of variational guide to use:
             - "mean_field": Independent parameters (original)
-            - "mean_variance": Correlated r-p parameters via mean-variance parameterization
+            - "mean_variance": Correlated r-p parameters via mean-variance
+              parameterization
+    mu_dist : Optional[str], default="lognormal"
+        Distribution family for mean parameter guide when using mean_variance
+        guide type. Options: "lognormal" or "gamma". Only used if
+        parameterization="mean_variance".
+    mu_prior : Optional[tuple], default=None
+        Prior parameters for mean parameter distribution when using
+        mean_variance guide type. Only used if parameterization="mean_variance".
+        Defaults to (1, 1).
+    phi_prior : Optional[tuple], default=None
+        Prior parameters for phi parameter distribution when using
+        beta_prime guide type. Only used if parameterization="beta_prime".
     loss : numpyro.infer.elbo, default=TraceMeanField_ELBO()
         Loss function for variational inference
         
@@ -364,6 +384,12 @@ def run_scribe(
         p_capture_prior = (1, 1)
     if "mix" in model_type and mixing_prior is None:
         mixing_prior = jnp.ones(n_components)
+    if mu_prior is None and (
+        parameterization == "mean_variance" or parameterization == "beta_prime"
+    ):
+        mu_prior = (1, 1)
+    if phi_prior is None and parameterization == "beta_prime":
+        phi_prior = (1, 1)
 
     # Create random key
     rng_key = random.PRNGKey(seed)
@@ -408,7 +434,30 @@ def run_scribe(
     if "mix" in model_type:
         mixing_dist_model = dist.Dirichlet(jnp.array(mixing_prior))
         mixing_dist_guide = mixing_dist_model
-
+    
+    # Set mu distribution for guide if specified
+    mu_dist_model = None
+    mu_dist_guide = None
+    if mu_dist == "lognormal" and (
+        parameterization == "mean_variance" or parameterization == "beta_prime"
+    ):
+        mu_dist_model = dist.LogNormal(*mu_prior)
+        mu_dist_guide = mu_dist_model
+    elif mu_dist == "gamma" and (
+        parameterization == "mean_variance" or parameterization == "beta_prime"
+    ):
+        mu_dist_model = dist.Gamma(*mu_prior)
+        mu_dist_guide = mu_dist_model
+    else:
+        raise ValueError(f"Unsupported mu_dist: {mu_dist}")
+    
+    # Set phi distribution for guide if specified
+    phi_dist_model = None
+    phi_dist_guide = None
+    if parameterization == "beta_prime":
+        phi_dist_model = BetaPrime(*phi_prior)
+        phi_dist_guide = phi_dist_model
+        
     # Create model_config with all the configurations
     model_config = ConstrainedModelConfig(
         base_model=model_type,
@@ -432,20 +481,27 @@ def run_scribe(
         mixing_distribution_model=mixing_dist_model,
         mixing_distribution_guide=mixing_dist_guide,
         mixing_param_prior=mixing_prior,
-        mixing_param_guide=mixing_prior
+        mixing_param_guide=mixing_prior,
+        mu_distribution_model=mu_dist_model,
+        mu_param_prior=mu_prior if mu_dist_model else None,
+        mu_distribution_guide=mu_dist_guide,
+        mu_param_guide=mu_prior if mu_dist_guide else None,
+        phi_distribution_model=phi_dist_model,
+        phi_param_prior=phi_prior if phi_dist_model else None,
+        phi_distribution_guide=phi_dist_guide,
+        phi_param_guide=phi_prior if phi_dist_guide else None,
+        parameterization=parameterization
     )
     
-    # Configure log_mu distribution for mean_variance guide
-    if guide_type == "mean_variance":
-        if model_type == "nbdm":
-            # Set up log_mu distribution (Normal distribution for log gene means)
-            model_config.log_mu_distribution_guide = dist.Normal(0.0, 1.0)
-            model_config.log_mu_param_guide = (0.0, 1.0)
-        else:
-            raise ValueError(f"mean_variance guide not yet supported for model type '{model_type}'")
-    
     # Get model and guide functions
-    model, guide = get_model_and_guide(model_type, guide_type=guide_type)
+    model, guide = get_model_and_guide(
+        model_type, 
+        parameterization=parameterization
+    )
+    
+    # --------------------------------------------------------------------------
+    # Run inference
+    # --------------------------------------------------------------------------
     
     # Set up SVI
     svi = SVI(model, guide, optimizer, loss=loss)
@@ -467,7 +523,30 @@ def run_scribe(
         **model_args
     )
     
+    # --------------------------------------------------------------------------
+    # Define prior parameters based on parameterization
+    # --------------------------------------------------------------------------
+    if parameterization == "mean_field":
+        prior_params = {
+            'r_prior': r_prior,
+            'p_prior': p_prior,
+        }
+    elif parameterization == "mean_variance":
+        prior_params = {
+            'p_prior': p_prior,
+            'mu_prior': mu_prior,
+        }
+    elif parameterization == "beta_prime":
+        prior_params = {
+            'phi_prior': phi_prior,
+            'mu_prior': mu_prior,
+        }
+    else:
+        raise ValueError(f"Unsupported parameterization: {parameterization}")
+
+    # --------------------------------------------------------------------------
     # Create results object
+    # --------------------------------------------------------------------------
     if adata is not None:
         results = ScribeSVIResults.from_anndata(
             adata=adata,
@@ -476,13 +555,7 @@ def run_scribe(
             model_type=model_type,
             model_config=model_config,
             n_components=n_components,
-            prior_params={
-                'r_prior': r_prior,
-                'p_prior': p_prior,
-                'gate_prior': gate_prior if "zinb" in model_type else None,
-                'p_capture_prior': p_capture_prior if "vcp" in model_type else None,
-                'mixing_prior': mixing_prior if n_components is not None else None
-            }
+            prior_params=prior_params,
         )
     else:
         results = ScribeSVIResults(
@@ -493,13 +566,7 @@ def run_scribe(
             model_type=model_type,
             model_config=model_config,
             n_components=n_components,
-            prior_params={
-                'r_prior': r_prior,
-                'p_prior': p_prior,
-                'gate_prior': gate_prior if "zinb" in model_type else None,
-                'p_capture_prior': p_capture_prior if "vcp" in model_type else None,
-                'mixing_prior': mixing_prior if n_components is not None else None
-            }
+            prior_params=prior_params,
         )
     
     return results
