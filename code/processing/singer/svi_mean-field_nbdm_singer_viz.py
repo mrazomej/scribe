@@ -32,7 +32,7 @@ colors = scribe.viz.colors()
 model_type = "nbdm"
 
 # Define parameterization
-parameterization = "beta_prime"
+parameterization = "mean_field"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
