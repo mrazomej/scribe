@@ -99,6 +99,7 @@ inference for 25,000 steps using the base NBDM model:
     # Run SCRIBE inference with the NBDM model (default settings)
     results = scribe.run_scribe(
         counts=counts_true,
+        inference_method="svi",     # Use stochastic variational inference
         zero_inflated=False,        # NBDM model has no zero-inflation
         variable_capture=False,     # NBDM model has no variable capture probabilities
         mixture_model=False,        # Not using a mixture model
@@ -141,7 +142,8 @@ the posterior distribution for p:
     fig, ax = plt.subplots(figsize=(3.5, 3))
     
     # Get posterior distribution for p
-    distribution = results.get_distributions()['p']
+    distributions = results.get_distributions()
+    distribution = distributions['p']
     
     # Plot posterior with true value
     scribe.viz.plot_posterior(
@@ -185,7 +187,8 @@ parameter:
     # Loop through selected genes
     for i, ax in enumerate(axes):
         # Get the r distribution for this gene
-        gene_dist = results.get_distributions(backend="scipy")['r'][selected_idx[i]]
+        r_distributions = results.get_distributions(backend="scipy")['r']
+        gene_dist = r_distributions[selected_idx[i]]
         
         # Plot distribution
         scribe.viz.plot_posterior(
@@ -216,7 +219,7 @@ Finally, we can generate posterior predictive checks (PPCs) to assess model fit:
 
     # Generate PPC samples
     n_samples = 500
-    ppc = results.get_ppc_samples(n_samples=n_samples, rng_key=random.PRNGKey(43))
+    ppc = results.ppc_samples(n_samples=n_samples, rng_key=random.PRNGKey(43))
     
     # Select a gene to visualize
     gene_idx = 0
@@ -275,6 +278,7 @@ model to see which fits the data better:
     # Fit the ZINB model
     zinb_results = scribe.run_scribe(
         counts=counts_true,
+        inference_method="svi",     # Use stochastic variational inference
         zero_inflated=True,         # Use zero-inflation
         variable_capture=False,
         mixture_model=False,
@@ -287,25 +291,32 @@ model to see which fits the data better:
     )
     
     # Compare models using WAIC
-    from scribe.model_comparison import compare_models
+    from scribe.model_comparison import compute_waic
     
-    # Generate posterior samples if not already done
-    if results.posterior_samples is None:
-        results.get_posterior_samples(n_samples=100)
+    # Compute WAIC for both models
+    nbdm_waic = compute_waic(
+        results, 
+        counts_true, 
+        n_samples=100,
+        batch_size=batch_size
+    )
     
-    if zinb_results.posterior_samples is None:
-        zinb_results.get_posterior_samples(n_samples=100)
-    
-    # Compare models
-    comparison = compare_models(
-        [results, zinb_results],
-        counts_true,
+    zinb_waic = compute_waic(
+        zinb_results, 
+        counts_true, 
         n_samples=100,
         batch_size=batch_size
     )
     
     # Display comparison results
-    print(comparison[["model", "waic_2", "delta_waic_2", "weight_2"]])
+    print(f"NBDM WAIC: {nbdm_waic['waic_2']:.2f}")
+    print(f"ZINB WAIC: {zinb_waic['waic_2']:.2f}")
+    print(f"Delta WAIC: {zinb_waic['waic_2'] - nbdm_waic['waic_2']:.2f}")
+    
+    if nbdm_waic['waic_2'] < zinb_waic['waic_2']:
+        print("NBDM model fits better (lower WAIC)")
+    else:
+        print("ZINB model fits better (lower WAIC)")
 
 Working with the Results
 -----------------------
@@ -345,14 +356,14 @@ model:
 .. code-block:: python
 
     # Compute log likelihoods for each cell
-    log_liks = results.compute_log_likelihood(
+    log_liks = results.log_likelihood(
         counts_true,
         return_by='cell',
         batch_size=batch_size
     )
     
     # Compute log likelihoods for each gene
-    gene_log_liks = results.compute_log_likelihood(
+    gene_log_liks = results.log_likelihood(
         counts_true,
         return_by='gene',
         batch_size=batch_size
