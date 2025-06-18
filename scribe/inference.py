@@ -30,8 +30,8 @@ def run_scribe(
     n_components: Optional[int] = None,
     
     # Parameterization (now unified!)
-    # "mean_field", "mean_variance", "beta_prime", "unconstrained"
-    parameterization: str = "mean_field",  
+    # "standard", "linked", "odds_ratio", "unconstrained"
+    parameterization: str = "standard",  
     
     # Data processing parameters  
     cells_axis: int = 0,
@@ -72,8 +72,8 @@ def run_scribe(
     This function provides a single entry point for both SVI and MCMC inference
     methods, treating unconstrained as just another parameterization. This means:
     
-    - You can run MCMC with any parameterization (mean_field, mean_variance,
-      beta_prime, unconstrained)
+    - You can run MCMC with any parameterization (standard, linked,
+      odds_ratio, unconstrained)
     - You can run SVI with any parameterization (though guides may not exist for
       all yet)
     - The interface is completely unified and consistent
@@ -98,11 +98,11 @@ def run_scribe(
         
     Parameterization:
     ----------------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Model parameterization to use:
-        - "mean_field": Beta/Gamma or LogNormal distributions for p/r
-        - "mean_variance": Beta/LogNormal for p/mu parameters
-        - "beta_prime": BetaPrime/LogNormal for phi/mu parameters  
+        - "standard": Beta/Gamma or LogNormal distributions for p/r
+        - "linked": Beta/LogNormal for p/mu parameters
+        - "odds_ratio": BetaPrime/LogNormal for phi/mu parameters  
         - "unconstrained": Normal distributions on transformed parameters
         
     Data Processing:
@@ -171,30 +171,30 @@ def run_scribe(
         
     Examples
     --------
-    # SVI with mean_field parameterization
+    # SVI with standard parameterization
     results = run_scribe(
-        counts, inference_method="svi", parameterization="mean_field")
+        counts, inference_method="svi", parameterization="standard")
     
     # MCMC with unconstrained parameterization  
     results = run_scribe(
         counts, inference_method="mcmc", parameterization="unconstrained")
     
-    # SVI with beta_prime parameterization for ZINBVCP mixture model
+    # SVI with odds_ratio parameterization for ZINBVCP mixture model
     results = run_scribe(
         counts, 
         inference_method="svi",
-        parameterization="beta_prime",
+        parameterization="odds_ratio",
         zero_inflated=True,
         variable_capture=True,
         mixture_model=True,
         n_components=3
     )
     
-    # MCMC with mean_variance parameterization
+    # MCMC with linked parameterization
     results = run_scribe(
         counts,
         inference_method="mcmc", 
-        parameterization="mean_variance",
+        parameterization="linked",
         n_samples=1000
     )
     """

@@ -154,14 +154,14 @@ class ScribeSVIResults:
                 raise ValueError("Non-ZINB models should not have gate distributions")
                 
         if "vcp" in self.model_type and (
-            self.model_config.parameterization == "mean_field" or 
-            self.model_config.parameterization == "mean_variance"
+            self.model_config.parameterization == "standard" or 
+            self.model_config.parameterization == "linked"
         ):
             if (self.model_config.p_capture_distribution_model is None or
                 self.model_config.p_capture_distribution_guide is None):
                 raise ValueError("VCP models require capture probability distributions")
         elif "vcp" in self.model_type and (
-            self.model_config.parameterization == "beta_prime"
+            self.model_config.parameterization == "odds_ratio"
         ):
             if (self.model_config.phi_capture_distribution_model is None or
                 self.model_config.phi_capture_distribution_guide is None):

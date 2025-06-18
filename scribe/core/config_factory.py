@@ -32,7 +32,7 @@ class ModelConfigFactory:
         model_type : str
             Type of model (e.g., "nbdm", "zinb_mix", etc.)
         parameterization : str
-            Parameterization type ("mean_field", "mean_variance", "beta_prime",
+            Parameterization type ("standard", "linked", "odds_ratio",
             "unconstrained")
         inference_method : str
             Inference method ("svi" or "mcmc")
@@ -101,20 +101,20 @@ class ModelConfigFactory:
         inference_method: str
     ):
         """Configure constrained parameterizations."""
-        if parameterization == "mean_field":
-            ModelConfigFactory._configure_mean_field(
+        if parameterization == "standard":
+            ModelConfigFactory._configure_standard(
                 config, priors, inference_method)
-        elif parameterization == "mean_variance":
-            ModelConfigFactory._configure_mean_variance(
+        elif parameterization == "linked":
+            ModelConfigFactory._configure_linked(
                 config, priors, inference_method)
-        elif parameterization == "beta_prime":
-            ModelConfigFactory._configure_beta_prime(
+        elif parameterization == "odds_ratio":
+            ModelConfigFactory._configure_odds_ratio(
                 config, priors, inference_method)
     
     @staticmethod
-    def _configure_mean_field(
+    def _configure_standard(
         config: ModelConfig, priors: Dict[str, Any], inference_method: str):
-        """Configure mean_field parameterization."""
+        """Configure standard parameterization."""
         # Success probability
         p_prior = priors.get("p_prior", (1, 1))
         config.p_distribution_model = dist.Beta(p_prior[0], p_prior[1])
@@ -126,7 +126,7 @@ class ModelConfigFactory:
         # Dispersion parameter
         r_prior = priors.get("r_prior", (1, 1))
         if len(r_prior) == 2:
-            # Could be Gamma or LogNormal - default to LogNormal for mean_field
+            # Could be Gamma or LogNormal - default to LogNormal for standard
             config.r_distribution_model = dist.LogNormal(r_prior[0], r_prior[1])
             config.r_param_prior = r_prior
             if inference_method == "svi":
@@ -138,9 +138,9 @@ class ModelConfigFactory:
             config, priors, inference_method)
     
     @staticmethod
-    def _configure_mean_variance(
+    def _configure_linked(
         config: ModelConfig, priors: Dict[str, Any], inference_method: str):
-        """Configure mean_variance parameterization."""
+        """Configure linked parameterization."""
         # Success probability
         p_prior = priors.get("p_prior", (1, 1))
         config.p_distribution_model = dist.Beta(p_prior[0], p_prior[1])
@@ -162,9 +162,9 @@ class ModelConfigFactory:
             config, priors, inference_method)
     
     @staticmethod
-    def _configure_beta_prime(
+    def _configure_odds_ratio(
         config: ModelConfig, priors: Dict[str, Any], inference_method: str):
-        """Configure beta_prime parameterization."""
+        """Configure odds_ratio parameterization."""
         # Phi parameter
         phi_prior = priors.get("phi_prior", (1, 1))
         config.phi_distribution_model = BetaPrime(phi_prior[0], phi_prior[1])
@@ -183,7 +183,7 @@ class ModelConfigFactory:
                 mu_prior[0], mu_prior[1])
             config.mu_param_guide = mu_prior
         
-        # Special handling for capture probability in beta_prime
+        # Special handling for capture probability in odds_ratio
         if config.uses_variable_capture():
             phi_capture_prior = priors.get("phi_capture_prior", (1, 1))
             config.phi_capture_distribution_model = BetaPrime(

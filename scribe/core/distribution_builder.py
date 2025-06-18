@@ -32,7 +32,7 @@ class DistributionBuilder:
         model_type : str
             Type of model (e.g., "nbdm", "zinb_mix", etc.)
         parameterization : str
-            Parameterization type ("mean_field", "mean_variance", "beta_prime",
+            Parameterization type ("standard", "linked", "odds_ratio",
             "unconstrained")
         inference_method : str
             Inference method ("svi" or "mcmc")
@@ -63,19 +63,19 @@ class DistributionBuilder:
             mu_distribution = dist.LogNormal
         
         # Build core distributions based on parameterization
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             distributions.update(
-                DistributionBuilder._build_mean_field_distributions(
+                DistributionBuilder._build_standard_distributions(
                     priors, r_distribution, inference_method
                 ))
-        elif parameterization == "mean_variance":
+        elif parameterization == "linked":
             distributions.update(
-                DistributionBuilder._build_mean_variance_distributions(
+                DistributionBuilder._build_linked_distributions(
                     priors, mu_distribution, inference_method
                 ))
-        elif parameterization == "beta_prime":
+        elif parameterization == "odds_ratio":
             distributions.update(
-                DistributionBuilder._build_beta_prime_distributions(
+                DistributionBuilder._build_odds_ratio_distributions(
                     priors, mu_distribution, inference_method
                 ))
         elif parameterization == "unconstrained":
@@ -108,7 +108,7 @@ class DistributionBuilder:
         return distributions
     
     @staticmethod
-    def _build_mean_field_distributions(
+    def _build_standard_distributions(
         priors: Dict[str, Any], 
         r_distribution: Type[dist.Distribution],
         inference_method: str
@@ -137,7 +137,7 @@ class DistributionBuilder:
         return distributions
     
     @staticmethod
-    def _build_mean_variance_distributions(
+    def _build_linked_distributions(
         priors: Dict[str, Any], 
         mu_distribution: Type[dist.Distribution],
         inference_method: str
@@ -166,7 +166,7 @@ class DistributionBuilder:
         return distributions
     
     @staticmethod
-    def _build_beta_prime_distributions(
+    def _build_odds_ratio_distributions(
         priors: Dict[str, Any], 
         mu_distribution: Type[dist.Distribution],
         inference_method: str
@@ -262,7 +262,7 @@ class DistributionBuilder:
                 p_capture_prior[0], p_capture_prior[1]
             )
             distributions["p_capture_param_prior"] = p_capture_prior
-        elif parameterization in ["mean_field", "mean_variance"]:
+        elif parameterization in ["standard", "linked"]:
             # p_capture ~ Beta for constrained
             p_capture_prior = priors["p_capture_prior"]
             distributions["p_capture_distribution_model"] = dist.Beta(
@@ -274,7 +274,7 @@ class DistributionBuilder:
                 )
                 distributions["p_capture_param_guide"] = p_capture_prior
             distributions["p_capture_param_prior"] = p_capture_prior
-        elif parameterization == "beta_prime":
+        elif parameterization == "odds_ratio":
             # phi_capture ~ BetaPrime for beta-prime parameterization
             phi_capture_prior = priors["phi_capture_prior"]
             distributions["phi_capture_distribution_model"] = BetaPrime(
@@ -392,7 +392,7 @@ def get_supported_distributions() -> Dict[str, Dict[str, Type[dist.Distribution]
             "normal": dist.Normal  # For unconstrained (logit-transformed)
         },
         "phi_parameter": {
-            "beta_prime": BetaPrime,
+            "odds_ratio": BetaPrime,
             "gamma": dist.Gamma,
             "lognormal": dist.LogNormal
         }
