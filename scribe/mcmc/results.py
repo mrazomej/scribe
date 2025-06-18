@@ -11,8 +11,8 @@ from jax import random, jit, vmap
 import pandas as pd
 from numpyro.infer import MCMC
 
-from .sampling import generate_predictive_samples
-from .model_config import UnconstrainedModelConfig, ConstrainedModelConfig
+from ..sampling import generate_predictive_samples
+from ..models.model_config import ModelConfig
 
 # ------------------------------------------------------------------------------
 # MCMC results class
@@ -59,7 +59,7 @@ class ScribeMCMCResults(MCMC):
         n_cells: int,
         n_genes: int,
         model_type: str,
-        model_config: Union[UnconstrainedModelConfig, ConstrainedModelConfig],
+        model_config: ModelConfig,
         prior_params: Dict[str, Any],
         obs: Optional[pd.DataFrame] = None,
         var: Optional[pd.DataFrame] = None,

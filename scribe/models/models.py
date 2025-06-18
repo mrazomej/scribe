@@ -13,9 +13,9 @@ from numpyro.distributions import constraints
 from typing import Callable, Dict, Tuple, Optional
 
 # Import model config
-from .model_config import ConstrainedModelConfig
+from .model_config import ModelConfig
 # Import custom distributions
-from .stats import BetaPrime
+from ..stats import BetaPrime
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model

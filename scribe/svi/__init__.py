@@ -5,16 +5,14 @@ data analysis.
 This module implements SVI inference for SCRIBE models using Numpyro's SVI.
 """
 
-from .svi import run_scribe, create_svi_instance, run_inference
 from .distribution_builder import SVIDistributionBuilder
 from .inference_engine import SVIInferenceEngine  
 from .results_factory import SVIResultsFactory
+from .results import ScribeSVIResults
 
 __all__ = [
-    "run_scribe",
-    "create_svi_instance", 
-    "run_inference",
     "SVIDistributionBuilder",
     "SVIInferenceEngine",
     "SVIResultsFactory",
+    "ScribeSVIResults",
 ] 

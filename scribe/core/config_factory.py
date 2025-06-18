@@ -8,7 +8,7 @@ parameterizations and inference methods.
 from typing import Dict, Optional, Any
 import jax.numpy as jnp
 import numpyro.distributions as dist
-from ..model_config import ModelConfig
+from ..models.model_config import ModelConfig
 from ..stats import BetaPrime
 
 
