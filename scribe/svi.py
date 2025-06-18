@@ -547,6 +547,12 @@ def run_scribe(
     else:
         raise ValueError(f"Unsupported parameterization: {parameterization}")
 
+    if model_type == "zinb" or model_type == "zinbvcp":
+        prior_params["gate_prior"] = gate_prior
+
+    if model_type == "nbvcp" or model_type == "zinbvcp":
+        prior_params["p_capture_prior"] = p_capture_prior
+
     # --------------------------------------------------------------------------
     # Create results object
     # --------------------------------------------------------------------------
