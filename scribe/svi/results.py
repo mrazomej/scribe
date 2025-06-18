@@ -67,7 +67,7 @@ class ScribeSVIResults:
         Number of genes in the dataset
     model_type : str
         Type of model used for inference
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object specifying model architecture and priors
     prior_params : Dict[str, Any]
         Dictionary of prior parameter values used during inference
@@ -1432,7 +1432,7 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ConstrainedModelConfig
+        # Get r distribution from ModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding Hellinger distance function
         if r_distribution == dist.LogNormal:
@@ -1515,7 +1515,7 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ConstrainedModelConfig
+        # Get r distribution from ModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         # Define corresponding KL divergence function
         if r_distribution == dist.LogNormal:
@@ -1605,7 +1605,7 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ConstrainedModelConfig
+        # Get r distribution from ModelConfig
         r_distribution = type(self.model_config.r_distribution_guide)
         
         # Define corresponding JS divergence function based on distribution type

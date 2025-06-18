@@ -10,7 +10,7 @@ from numpyro.infer import NUTS
 from scribe.models import nbdm_model, nbdm_log_likelihood
 from scribe.mcmc import run_scribe, create_mcmc_instance
 from scribe.sampling import generate_predictive_samples
-from scribe.model_config import UnconstrainedModelConfig
+from scribe.model_config import ModelConfig
 from scribe.model_registry import get_unconstrained_model, get_log_likelihood_fn
 from scribe.results_mcmc import ScribeMCMCResults
 
@@ -86,7 +86,7 @@ def test_inference_run(small_dataset, rng_key):
     assert results.n_cells == n_cells
     assert results.n_genes == n_genes
     assert results.model_type == "nbdm"
-    assert isinstance(results.model_config, UnconstrainedModelConfig)
+    assert isinstance(results.model_config, ModelConfig)
     assert isinstance(results, ScribeMCMCResults)
     
     # Check that samples were generated

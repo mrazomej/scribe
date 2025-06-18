@@ -7,7 +7,7 @@ This module handles the packaging of SVI results into ScribeSVIResults objects.
 from typing import Optional, Dict, Any
 import jax.numpy as jnp
 from ..results_svi import ScribeSVIResults
-from ..model_config import ConstrainedModelConfig
+from ..model_config import ModelConfig
 
 
 class SVIResultsFactory:
@@ -16,7 +16,7 @@ class SVIResultsFactory:
     @staticmethod
     def create_results(
         svi_results: Any,
-        model_config: ConstrainedModelConfig,
+        model_config: ModelConfig,
         adata: Optional["AnnData"],
         count_data: jnp.ndarray,
         n_cells: int,
@@ -32,7 +32,7 @@ class SVIResultsFactory:
         ----------
         svi_results : Any
             Raw SVI results from numpyro
-        model_config : ConstrainedModelConfig
+        model_config : ModelConfig
             Model configuration object
         adata : Optional[AnnData]
             Original AnnData object (if provided)

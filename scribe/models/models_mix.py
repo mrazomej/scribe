@@ -9,7 +9,7 @@ import numpyro.distributions as dist
 from numpyro.distributions import constraints
 
 # Import model config
-from .model_config import ConstrainedModelConfig
+from .model_config import ModelConfig
 
 # Import typing
 from typing import Callable, Dict, Tuple, Optional, Union
@@ -21,7 +21,7 @@ from typing import Callable, Dict, Tuple, Optional, Union
 def nbdm_mixture_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -41,7 +41,7 @@ def nbdm_mixture_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Model configuration object containing distribution and parameter settings
         - For default parameterization:
             - mixing_distribution_model: Distribution for mixture weights
@@ -176,7 +176,7 @@ def nbdm_mixture_model(
 def nbdm_mixture_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -213,7 +213,7 @@ def nbdm_mixture_guide(
 def nbdm_mixture_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -243,7 +243,7 @@ def nbdm_mixture_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object specifying the model structure and distributions
     counts : array_like, optional
         Observed counts matrix of shape (n_cells, n_genes)
@@ -325,7 +325,7 @@ def nbdm_mixture_guide_mean_field(
 def nbdm_mixture_guide_mean_variance(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -357,7 +357,7 @@ def nbdm_mixture_guide_mean_variance(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters: - mixing_distribution_guide: Guide distribution for mixture
         weights - p_distribution_guide: Guide distribution for success
@@ -430,7 +430,7 @@ def nbdm_mixture_guide_mean_variance(
 def nbdm_mixture_guide_beta_prime(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -461,7 +461,7 @@ def nbdm_mixture_guide_beta_prime(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model parameters:
         - mixing_distribution_guide: Guide distribution for mixture weights
         - phi_distribution_guide: Guide distribution for φ (BetaPrime
@@ -537,7 +537,7 @@ def nbdm_mixture_guide_beta_prime(
 def zinb_mixture_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -558,7 +558,7 @@ def zinb_mixture_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object for model distributions containing:
         - For default parameterization:
             - mixing_distribution_model: Distribution for mixture weights
@@ -684,7 +684,7 @@ def zinb_mixture_model(
 def zinb_mixture_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -721,7 +721,7 @@ def zinb_mixture_guide(
 def zinb_mixture_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -753,7 +753,7 @@ def zinb_mixture_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing the variational distribution
         specifications:
             - mixing_distribution_guide: Distribution for mixture weights
@@ -861,7 +861,7 @@ def zinb_mixture_guide_mean_field(
 def zinb_mixture_guide_mean_variance(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -892,7 +892,7 @@ def zinb_mixture_guide_mean_variance(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters:
         - mixing_distribution_guide: Guide distribution for mixture weights
@@ -1019,7 +1019,7 @@ def zinb_mixture_guide_mean_variance(
 def zinb_mixture_guide_beta_prime(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1054,7 +1054,7 @@ def zinb_mixture_guide_beta_prime(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model parameters:
         - mixing_distribution_guide: Guide distribution for mixture weights
         - phi_distribution_guide: Guide distribution for φ (BetaPrime
@@ -1220,7 +1220,7 @@ def zinb_mixture_guide_beta_prime(
 def nbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1245,7 +1245,7 @@ def nbvcp_mixture_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object for model distributions containing:
         - For default parameterization:
             - mixing_distribution_model: Distribution for mixture weights
@@ -1485,7 +1485,7 @@ def nbvcp_mixture_model(
 def nbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1524,7 +1524,7 @@ def nbvcp_mixture_guide(
 def nbvcp_mixture_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1552,7 +1552,7 @@ def nbvcp_mixture_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing the variational distribution
         specifications:
             - mixing_distribution_guide: Distribution for mixture weights
@@ -1681,7 +1681,7 @@ def nbvcp_mixture_guide_mean_field(
 def nbvcp_mixture_guide_mean_variance(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1710,7 +1710,7 @@ def nbvcp_mixture_guide_mean_variance(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters: - mixing_distribution_guide: Guide distribution for mixture
         weights - p_distribution_guide: Guide distribution for success
@@ -1823,7 +1823,7 @@ def nbvcp_mixture_guide_mean_variance(
 def nbvcp_mixture_guide_beta_prime(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1854,7 +1854,7 @@ def nbvcp_mixture_guide_beta_prime(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters: - mixing_distribution_guide: Guide distribution for mixture
         weights - phi_distribution_guide: Guide distribution for φ (BetaPrime
@@ -2840,7 +2840,7 @@ def zinbvcp_mixture_log_likelihood(
 def zinbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -2860,7 +2860,7 @@ def zinbvcp_mixture_model(
         Number of cells in the dataset
     n_genes : int 
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object for model distributions containing:
         - For default parameterization:
             - mixing_distribution_model: Distribution for mixture weights
@@ -3121,7 +3121,7 @@ def zinbvcp_mixture_model(
 def zinbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -3158,7 +3158,7 @@ def zinbvcp_mixture_guide(
 def zinbvcp_mixture_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -3188,7 +3188,7 @@ def zinbvcp_mixture_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing the variational distribution
         specifications:
             - mixing_distribution_guide: Distribution for mixture weights
