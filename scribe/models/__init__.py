@@ -10,10 +10,8 @@ from .model_config import ModelConfig
 # Model registry
 from .model_registry import (
     get_model_and_guide,
-    get_unconstrained_model,
     get_log_likelihood_fn,
-    get_default_priors,
-    get_model_fn
+    get_default_priors
 )
 
 # Model functions - import the main ones that are commonly used
@@ -45,10 +43,8 @@ __all__ = [
     
     # Registry functions
     "get_model_and_guide",
-    "get_unconstrained_model", 
     "get_log_likelihood_fn",
     "get_default_priors",
-    "get_model_fn",
     
     # Individual model functions
     "nbdm_model",

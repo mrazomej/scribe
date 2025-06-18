@@ -48,6 +48,7 @@ def run_scribe(
     n_samples: int = 2_000,
     n_warmup: int = 1_000,
     n_chains: int = 1,
+    mcmc_kwargs: Optional[Dict[str, Any]] = None,
 
     # Distribution configuration
     r_distribution: Optional[Type[dist.Distribution]] = None,
@@ -133,6 +134,8 @@ def run_scribe(
         Number of warmup samples
     n_chains : int, default=1
         Number of parallel chains
+    mcmc_kwargs : Optional[Dict[str, Any]], default=None
+        Keyword arguments for the MCMC kernel (e.g., target_accept_prob, max_tree_depth)
         
     Distribution Configuration:
     --------------------------
@@ -291,7 +294,8 @@ def run_scribe(
             n_warmup=n_warmup,
             n_chains=n_chains,
             seed=seed,
-            final_priors=final_priors
+            final_priors=final_priors,
+            mcmc_kwargs=mcmc_kwargs
         )
     else:
         raise ValueError(f"Unknown inference method: {inference_method}")
@@ -366,7 +370,8 @@ def _run_mcmc_inference(
     n_warmup: int,
     n_chains: int,
     seed: int,
-    final_priors: Dict[str, Any]
+    final_priors: Dict[str, Any],
+    mcmc_kwargs: Optional[Dict[str, Any]] = None
 ) -> Any:
     """Execute MCMC inference with unified configuration."""
     # Run inference (now works with any parameterization!)
@@ -378,7 +383,8 @@ def _run_mcmc_inference(
         n_samples=n_samples,
         n_warmup=n_warmup,
         n_chains=n_chains,
-        seed=seed
+        seed=seed,
+        mcmc_kwargs=mcmc_kwargs
     )
     
     # Package results
