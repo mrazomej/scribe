@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from jax import random
 import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
-from ..model_registry import get_model_and_guide
+from ..models.model_registry import get_model_and_guide
 from ..model_config import ModelConfig
 
 

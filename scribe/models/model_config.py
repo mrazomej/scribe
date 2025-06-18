@@ -173,11 +173,18 @@ class ModelConfig:
                     self.mixing_logits_unconstrained_loc = 0.0
                     self.mixing_logits_unconstrained_scale = 1.0
             else:
-                if (self.mixing_distribution_model is None or 
-                    self.mixing_distribution_guide is None):
-                    raise ValueError(
-                        "Mixture models require mixing distributions"
-                    )
+                # For constrained parameterizations, check based on inference method
+                if self.inference_method == "svi":
+                    if (self.mixing_distribution_model is None or 
+                        self.mixing_distribution_guide is None):
+                        raise ValueError(
+                            "Mixture models with SVI require mixing distributions"
+                        )
+                else:  # MCMC
+                    if self.mixing_distribution_model is None:
+                        raise ValueError(
+                            "Mixture models with MCMC require mixing distribution model"
+                        )
         else:
             if self.n_components is not None:
                 raise ValueError(
@@ -195,9 +202,14 @@ class ModelConfig:
                     self.gate_unconstrained_loc = 0.0
                     self.gate_unconstrained_scale = 1.0
             else:
-                if (self.gate_distribution_model is None or 
-                    self.gate_distribution_guide is None):
-                    raise ValueError("ZINB models require gate distributions")
+                # For constrained parameterizations, check based on inference method
+                if self.inference_method == "svi":
+                    if (self.gate_distribution_model is None or 
+                        self.gate_distribution_guide is None):
+                        raise ValueError("ZINB models with SVI require gate distributions")
+                else:  # MCMC
+                    if self.gate_distribution_model is None:
+                        raise ValueError("ZINB models with MCMC require gate distribution model")
         
         # Variable capture validation
         if self.uses_variable_capture():
@@ -208,18 +220,33 @@ class ModelConfig:
                     self.p_capture_unconstrained_loc = 0.0
                     self.p_capture_unconstrained_scale = 1.0
             elif self.parameterization == "odds_ratio":
-                if (self.phi_capture_distribution_model is None or 
-                    self.phi_capture_distribution_guide is None):
-                    raise ValueError(
-                        "VCP models with odds_ratio require "
-                        "phi_capture distributions"
-                    )
+                # For odds_ratio parameterization, check based on inference method
+                if self.inference_method == "svi":
+                    if (self.phi_capture_distribution_model is None or 
+                        self.phi_capture_distribution_guide is None):
+                        raise ValueError(
+                            "VCP models with odds_ratio and SVI require "
+                            "phi_capture distributions"
+                        )
+                else:  # MCMC
+                    if self.phi_capture_distribution_model is None:
+                        raise ValueError(
+                            "VCP models with odds_ratio and MCMC require "
+                            "phi_capture distribution model"
+                        )
             else:
-                if (self.p_capture_distribution_model is None or 
-                    self.p_capture_distribution_guide is None):
-                    raise ValueError(
-                        "VCP models require capture probability distributions"
-                    )
+                # For other constrained parameterizations, check based on inference method
+                if self.inference_method == "svi":
+                    if (self.p_capture_distribution_model is None or 
+                        self.p_capture_distribution_guide is None):
+                        raise ValueError(
+                            "VCP models with SVI require capture probability distributions"
+                        )
+                else:  # MCMC
+                    if self.p_capture_distribution_model is None:
+                        raise ValueError(
+                            "VCP models with MCMC require capture probability distribution model"
+                        )
     
     def _validate_parameterization_specific_parameters(self):
         """Validate parameters specific to each parameterization."""
