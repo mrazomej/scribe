@@ -44,6 +44,12 @@ import scribe
 # Define model type
 model_type = "nbdm_mix"
 
+# Define parameterization
+parameterization = "standard"
+
+# Define number of components
+n_components = 2
+
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
 # Define output directory
@@ -83,14 +89,16 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_constrained_{model_type}_results_" \
+        f"mcmc_{parameterization.replace('_', '-')}_" \
+        f"{model_type.replace('_', '-')}_" \
+        f"{n_components}components_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
         f"{n_mcmc_samples}samples.pkl"
 
-# Define kernel kwargs
-kernel_kwargs = {
+# Define MCMC kernel kwargs
+mcmc_kwargs = {
     "target_accept_prob": 0.85,
     "max_tree_depth": (10, 10),
     "step_size": jnp.array(1.0, dtype=jnp.float64),
@@ -103,14 +111,15 @@ kernel_kwargs = {
 
 if not os.path.exists(file_name):
     # Run MCMC sampling
-    mcmc_results = scribe.mcmc.run_scribe(
+    mcmc_results = scribe.run_scribe(
+        inference_method="mcmc",
         counts=data,
-        unconstrained_model=False,
+        parameterization=parameterization,
         mixture_model=True,
-        n_components=2,
-        num_warmup=n_mcmc_burnin,
-        num_samples=n_mcmc_samples,
-        kernel_kwargs=kernel_kwargs,
+        n_components=n_components,
+        n_samples=n_mcmc_samples,
+        n_warmup=n_mcmc_burnin,
+        mcmc_kwargs=mcmc_kwargs,
     )
     # Save MCMC results
     with open(file_name, "wb") as f:

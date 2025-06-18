@@ -31,6 +31,12 @@ colors = scribe.viz.colors()
 # Define model type
 model_type = "nbdm_mix"
 
+# Define parameterization
+parameterization = "standard"
+
+# Define number of components
+n_components = 2
+
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
 
@@ -68,7 +74,9 @@ n_mcmc_samples = 5_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_constrained_{model_type}_results_" \
+        f"mcmc_{parameterization.replace('_', '-')}_" \
+        f"{model_type.replace('_', '-')}_" \
+        f"{n_components}components_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
@@ -106,7 +114,11 @@ az.plot_trace(
 plt.tight_layout()
 
 # Save figure
-fig.savefig(f"{FIG_DIR}/mcmc_constrained_trace.png", bbox_inches="tight")
+fig.savefig(
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}_trace.png", 
+    bbox_inches="tight"
+)
 
 # %% ---------------------------------------------------------------------------
 
@@ -125,7 +137,11 @@ plt.tight_layout()
 
 # Get the current figure and save it
 fig = plt.gcf()
-fig.savefig(f"{FIG_DIR}/mcmc_constrained_pairplot.png", bbox_inches="tight")
+fig.savefig(
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}_pairplot.png", 
+    bbox_inches="tight"
+)
 
 
 # %% ---------------------------------------------------------------------------
@@ -201,7 +217,8 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/mcmc_constrained_ppc.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}_ppc.png", 
     bbox_inches="tight"
 )
 
@@ -254,7 +271,7 @@ for i, ax in enumerate(axes):
     # Plot ECDF of the real data as stairs
     ax.stairs(
         ecdf_values,
-        x_edges,  # Use the same extended edges
+        x_edges + 1,  # Use the same extended edges
         label='data',
         color='black',
         linewidth=1.5
@@ -279,7 +296,8 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/mcmc_constrained_ppc_ecdf.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}_ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
