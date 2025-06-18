@@ -29,10 +29,13 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define model type
-model_type = "nbvcp"
+model_type = "nbvcp_mix"
 
-# Define parameterization
-parameterization = "beta_prime"
+# Define parameterization type
+parameterization = "standard"
+
+# Define number of components
+n_components = 2
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -64,47 +67,79 @@ n_genes = data.shape[1]
 # Setup the PRNG key
 rng_key = random.PRNGKey(42)  # Set random seed
 
-# Define number of steps
-n_steps = 50_000
+# Define MCMC burn-in samples
+n_mcmc_burnin = 1_000
+# Define MCMC samples
+n_mcmc_samples = 5_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization}_{model_type}_results_" \
+        f"mcmc_{parameterization.replace('_', '-')}_" \
+        f"{model_type.replace('_', '-')}_" \
+        f"{n_components}components_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
-        f"{n_steps}steps.pkl"
+        f"{n_mcmc_burnin}burnin_" \
+        f"{n_mcmc_samples}samples.pkl"
 
 # Load MCMC results
 with open(file_name, "rb") as f:
-    svi_results = pickle.load(f)
+    mcmc_results = pickle.load(f)
 
 # %% ---------------------------------------------------------------------------
 
-print("Plotting loss...")
+# Get ppc_samples
+mcmc_results.get_ppc_samples()
+
+
+# %% ---------------------------------------------------------------------------
+
+# Build Arviz object
+mcmc_az = az.from_numpyro(
+    mcmc_results,
+)
+# %% ---------------------------------------------------------------------------
+
 # Initialize figure
-fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
+fig, ax = plt.subplots(4, 2, figsize=(12, 12))
 
-# Plot loss history
-ax.plot(svi_results.loss_history)
 
-# Set y-axis to log scale
-ax.set_yscale('log')
+# Plot trace
+az.plot_trace(
+    mcmc_az,
+    var_names=["p", "r", "p_capture", "mixing_weights"],
+    axes=ax,
+)
 
-# Set axis labels
-ax.set_xlabel('step')
-ax.set_ylabel('loss')
+plt.tight_layout()
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_loss.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_trace.png",
     bbox_inches="tight"
 )
 
 # %% ---------------------------------------------------------------------------
 
-print("Generating predictive samples...")
-# Generate predictive samples
-svi_results.get_ppc_samples(n_samples=2_500)
+# Initialize figure
+# fig, ax = plt.subplots(2, 2, figsize=(12, 6))
+
+# Plot pair
+az.plot_pair(
+    mcmc_az,
+    var_names=["p", "r"],
+    divergences=True,
+    textsize=25,
+)
+
+plt.tight_layout()
+
+# Save figure
+fig.savefig(
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_pairplot.png",
+    bbox_inches="tight"
+)
+
 
 # %% ---------------------------------------------------------------------------
 
@@ -125,7 +160,7 @@ for i, ax in enumerate(axes):
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        svi_results.predictive_samples[:, :, i],
+        mcmc_results.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
         max_bin=true_counts.max()
     )
@@ -179,7 +214,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_ppc.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_ppc.png", 
     bbox_inches="tight"
 )
 
@@ -198,13 +233,13 @@ for i, ax in enumerate(axes):
     print(f"Plotting gene {i} PPC...")
 
     # Extract true counts for this gene from the dataframe
-    true_counts = df.iloc[:, i].values
+    true_counts = df.iloc[:, i].values + 1
     # Define max bin
     max_bin = true_counts.max()
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_ecdf_credible_regions(
-        svi_results.predictive_samples[:, :, i],
+        mcmc_results.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
         max_bin=max_bin
     )
@@ -232,7 +267,7 @@ for i, ax in enumerate(axes):
     # Plot ECDF of the real data as stairs
     ax.stairs(
         ecdf_values,
-        x_edges + 1,  # Use the same extended edges
+        x_edges,  # Use the same extended edges
         label='data',
         color='black',
         linewidth=1.5
@@ -257,7 +292,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_ppc_ecdf.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
