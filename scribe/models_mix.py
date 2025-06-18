@@ -529,9 +529,20 @@ def zinb_mixture_model(
         Number of genes in the dataset
     model_config : ConstrainedModelConfig
         Configuration object for model distributions containing:
+        - For default parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - p_distribution_model: Distribution for success probability p
             - r_distribution_model: Distribution for dispersion parameters r
+            - gate_distribution_model: Distribution for dropout probabilities
+        - For "mean_variance" parameterization:
+            - mixing_distribution_model: Distribution for mixture weights
+            - p_distribution_model: Distribution for success probability p
+            - mu_distribution_model: Distribution for gene means
+            - gate_distribution_model: Distribution for dropout probabilities
+        - For "beta_prime" parameterization:
+            - mixing_distribution_model: Distribution for mixture weights
+            - phi_distribution_model: Distribution for phi parameter
+            - mu_distribution_model: Distribution for gene means
             - gate_distribution_model: Distribution for dropout probabilities
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). If None, generates
@@ -565,14 +576,38 @@ def zinb_mixture_model(
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
-    # Define the prior on the p parameters - one for each component
-    p = numpyro.sample("p", model_config.p_distribution_model)
+    # Check if we are using the beta-prime parameterization
+    if model_config.parameterization == "beta_prime":
+        # Sample phi
+        phi = numpyro.sample("phi", model_config.phi_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_components, n_genes])
+        )
+        # Compute p
+        p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+        # Compute r
+        r = numpyro.deterministic("r", mu * phi)
+    elif model_config.parameterization == "mean_variance":
+        # Sample p
+        p = numpyro.sample("p", model_config.p_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_components, n_genes])
+        )
+        # Compute r
+        r = numpyro.deterministic("r", mu * p / (1 - p))
+    else:
+        # Define the prior on the p parameters - one for each component
+        p = numpyro.sample("p", model_config.p_distribution_model)
 
-    # Define the prior on the r parameters - one for each gene and component
-    r = numpyro.sample(
-        "r",
-        model_config.r_distribution_model.expand([n_components, n_genes])
-    )
+        # Define the prior on the r parameters - one for each gene and component
+        r = numpyro.sample(
+            "r",
+            model_config.r_distribution_model.expand([n_components, n_genes])
+        )
 
     # Define the prior on the gate parameters - one for each gene and component
     gate = numpyro.sample(
@@ -623,10 +658,63 @@ def zinb_mixture_guide(
     batch_size=None,
 ):
     """
-    Define the variational distribution for stochastic variational inference.
+    Wrapper for ZINB mixture variational guides with different parameterizations.
     
-    This guide defines the variational distributions for the ZINB mixture model
-    parameters using the configuration specified in model_config.
+    Parameters
+    ----------
+    parameterization : str, default="mean_field"
+        Choice of guide parameterization:
+        - "mean_field": Independent r and p (original)
+        - "mean_variance": Correlated r and p via mean-variance relationship
+        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+    """
+    if model_config.parameterization == "mean_field":
+        return zinb_mixture_guide_mean_field(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    elif model_config.parameterization == "mean_variance":
+        return zinb_mixture_guide_mean_variance(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    elif model_config.parameterization == "beta_prime":
+        return zinb_mixture_guide_beta_prime(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    else:
+        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
+
+# ------------------------------------------------------------------------------
+# Mean-Field Parameterized Guide for ZINB Mixture Model
+# ------------------------------------------------------------------------------
+
+def zinb_mixture_guide_mean_field(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the ZINB mixture model.
+
+    This guide implements a mean-field approximation where the variational
+    distribution factorizes into independent distributions for each parameter.
+    Specifically:
+        - Mixture weights ~ Dirichlet(α_mixing)
+        - A shared success probability p ~ Beta(α_p, β_p) across all components
+        - Component and gene-specific dispersion parameters r_{k,g} ~ 
+          Gamma(α_r, β_r) for each component k and gene g
+        - Component and gene-specific dropout probabilities gate_{k,g} ~ 
+          Beta(α_gate, β_gate) for each component k and gene g
+
+    The guide samples from these distributions to approximate the true
+    posterior. In the mean-field approximation, all parameters are assumed to be
+    independent, so their joint distribution factorizes:
+
+        q(mixing_weights, p, r, gate) = q(mixing_weights) * q(p) * q(r) * q(gate)
+
+    This independence assumption means the guide cannot capture correlations
+    between parameters that may exist in the true posterior.
     
     Parameters
     ----------
@@ -720,6 +808,255 @@ def zinb_mixture_guide(
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    numpyro.sample(
+        "gate", 
+        model_config.gate_distribution_guide.__class__(**gate_params)
+    )
+
+# ------------------------------------------------------------------------------
+# Mean-Variance Parameterized Guide for ZINB Mixture Model
+# ------------------------------------------------------------------------------
+
+def zinb_mixture_guide_mean_variance(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-variance parameterized variational guide for the ZINB mixture model.
+    
+    This guide implements a mean-variance parameterization that captures the
+    correlation between the success probability p and dispersion parameters r
+    through gene-specific means μ:
+        - Mixture weights ~ Dirichlet(α_mixing)
+        - A shared success probability p ~ Beta(α_p, β_p) across all components
+        - Component and gene-specific means μ_{k,g} ~ LogNormal(μ_μ, σ_μ) for
+          each component k and gene g
+        - Component and gene-specific dropout probabilities gate_{k,g} ~ Beta(α_gate, β_gate) for each component k and gene g
+        - Deterministic relationship r_{k,g} = μ_{k,g} * (1 - p) / p
+    
+    The guide samples from these distributions to approximate the true
+    posterior. The mean-variance parameterization captures the natural
+    relationship between means and variances in count data:
+    
+        q(mixing_weights, p, μ, gate, r) = q(mixing_weights) * q(p) * q(μ) * q(gate) * δ(r - μ * (1-p)/p)
+    
+    where δ(·) is the Dirac delta function enforcing the deterministic relationship.
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing guide distributions for model
+        parameters:
+        - mixing_distribution_guide: Guide distribution for mixture weights
+        - p_distribution_guide: Guide distribution for success probability p
+        - mu_distribution_guide: Guide distribution for gene means μ
+        - gate_distribution_guide: Guide distribution for dropout probabilities
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+    """
+    # Add checks for required distributions
+    if model_config.mixing_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'mixing_distribution_guide'.")
+    if model_config.p_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+    if model_config.gate_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'gate_distribution_guide'.")
+
+    # Extract number of components
+    n_components = model_config.n_components
+
+    # Define mixing distribution parameters
+    mixing_values = model_config.mixing_distribution_guide.get_args()
+    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
+    mixing_params = {}
+    for param_name, constraint in mixing_constraints.items():
+        mixing_params[param_name] = numpyro.param(
+            f"mixing_{param_name}",
+            mixing_values[param_name],
+            constraint=constraint
+        )
+
+    # Define p distribution parameters
+    p_values = model_config.p_distribution_guide.get_args()
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    p_params = {}
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
+
+    # Define mu distribution parameters
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones((n_components, n_genes)) * mu_values[param_name],
+            constraint=constraint
+        )
+
+    # Define gate distribution parameters
+    gate_values = model_config.gate_distribution_guide.get_args()
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    gate_params = {}
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones((n_components, n_genes)) * gate_values[param_name],
+            constraint=constraint
+        )
+
+    # Sample from variational distributions
+    numpyro.sample(
+        "mixing_weights", 
+        model_config.mixing_distribution_guide.__class__(**mixing_params)
+    )
+    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
+    numpyro.sample(
+        "mu", 
+        model_config.mu_distribution_guide.__class__(**mu_params)
+    )
+    numpyro.sample(
+        "gate", 
+        model_config.gate_distribution_guide.__class__(**gate_params)
+    )
+
+# ------------------------------------------------------------------------------
+# Beta-Prime Parameterized Guide for ZINB Mixture Model
+# ------------------------------------------------------------------------------
+
+def zinb_mixture_guide_beta_prime(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Beta-Prime reparameterized variational guide for the ZINB mixture model.
+    
+    This guide implements a Beta-Prime parameterization that captures the
+    correlation between the success probability p and dispersion parameters r
+    through gene-specific means μ and a shared parameter φ:
+        - Mixture weights ~ Dirichlet(α_mixing)
+        - A shared parameter φ ~ BetaPrime(α_φ, β_φ) across all components
+        - Component and gene-specific means μ_{k,g} ~ LogNormal(μ_μ, σ_μ) for
+          each component k and gene g
+        - Component and gene-specific dropout probabilities gate_{k,g} ~ Beta(α_gate, β_gate) for each component k and gene g
+        - Deterministic relationships:
+            p = φ / (1 + φ)
+            r_{k,g} = μ_{k,g} / φ
+    
+    The guide samples from these distributions to approximate the true
+    posterior. The Beta-Prime parameterization provides a natural way to model
+    the relationship between p and r:
+    
+        q(mixing_weights, φ, μ, gate, p, r) = q(mixing_weights) * q(φ) * q(μ) * q(gate) * δ(p - φ/(1+φ)) * δ(r - μ/φ)
+    
+    where δ(·) is the Dirac delta function enforcing the deterministic relationships.
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing guide distributions for model parameters:
+        - mixing_distribution_guide: Guide distribution for mixture weights
+        - phi_distribution_guide: Guide distribution for φ (BetaPrime
+        distribution)
+        - mu_distribution_guide: Guide distribution for gene means μ
+        - gate_distribution_guide: Guide distribution for dropout probabilities
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+    """
+    # Add checks for required distributions
+    if model_config.mixing_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'mixing_distribution_guide'.")
+    if model_config.phi_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+    if model_config.gate_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'gate_distribution_guide'.")
+
+    # Extract number of components
+    n_components = model_config.n_components
+
+    # Define mixing distribution parameters
+    mixing_values = model_config.mixing_distribution_guide.get_args()
+    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
+    mixing_params = {}
+    for param_name, constraint in mixing_constraints.items():
+        mixing_params[param_name] = numpyro.param(
+            f"mixing_{param_name}",
+            mixing_values[param_name],
+            constraint=constraint
+        )
+
+    # Define phi distribution parameters
+    phi_values = model_config.phi_distribution_guide.get_args()
+    phi_constraints = model_config.phi_distribution_guide.arg_constraints
+    phi_params = {}
+    for param_name, constraint in phi_constraints.items():
+        phi_params[param_name] = numpyro.param(
+            f"phi_{param_name}",
+            phi_values[param_name],
+            constraint=constraint
+        )
+
+    # Define mu distribution parameters
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones((n_components, n_genes)) * mu_values[param_name],
+            constraint=constraint
+        )
+
+    # Define gate distribution parameters
+    gate_values = model_config.gate_distribution_guide.get_args()
+    gate_constraints = model_config.gate_distribution_guide.arg_constraints
+    gate_params = {}
+    for param_name, constraint in gate_constraints.items():
+        gate_params[param_name] = numpyro.param(
+            f"gate_{param_name}",
+            jnp.ones((n_components, n_genes)) * gate_values[param_name],
+            constraint=constraint
+        )
+
+    # Sample from variational distributions
+    numpyro.sample(
+        "mixing_weights", 
+        model_config.mixing_distribution_guide.__class__(**mixing_params)
+    )
+    numpyro.sample(
+        "phi", 
+        model_config.phi_distribution_guide.__class__(**phi_params)
+    )
+    numpyro.sample(
+        "mu", 
+        model_config.mu_distribution_guide.__class__(**mu_params)
+    )
     numpyro.sample(
         "gate", 
         model_config.gate_distribution_guide.__class__(**gate_params)

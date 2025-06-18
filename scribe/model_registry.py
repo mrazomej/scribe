@@ -130,11 +130,19 @@ def get_model_and_guide(
 
     # Handle Zero-Inflated Negative Binomial Mixture Model
     elif model_type == "zinb_mix":
-        # Import model and guide functions locally to avoid circular imports
-        from .models_mix import zinb_mixture_model, zinb_mixture_guide
-        if parameterization != "mean_field":
-            raise ValueError(f"Guide type '{parameterization}' not yet supported for model '{model_type}'")
-        return zinb_mixture_model, zinb_mixture_guide
+        # Import model function
+        from .models_mix import zinb_mixture_model
+        
+        # Select guide based on guide_type
+        if parameterization == "mean_field":
+            from .models_mix import zinb_mixture_guide
+            return zinb_mixture_model, zinb_mixture_guide
+        elif parameterization == "mean_variance":
+            from .models_mix import zinb_mixture_guide_mean_variance
+            return zinb_mixture_model, zinb_mixture_guide_mean_variance
+        elif parameterization == "beta_prime":
+            from .models_mix import zinb_mixture_guide_beta_prime
+            return zinb_mixture_model, zinb_mixture_guide_beta_prime
     
     # Handle Negative Binomial-Variable Capture Probability Mixture Model
     elif model_type == "nbvcp_mix":
