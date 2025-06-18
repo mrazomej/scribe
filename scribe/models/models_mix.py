@@ -83,8 +83,7 @@ def nbdm_mixture_model(
     ):
         raise ValueError("Model with selected parameterization requires 'p_distribution_model'.")
     if model_config.r_distribution_model is None and (
-        model_config.parameterization == "standard" or
-        model_config.parameterization == "linked"
+        model_config.parameterization == "standard"
     ):
         raise ValueError("Model with selected parameterization requires 'r_distribution_model'.")
     if model_config.phi_distribution_model is None and (
