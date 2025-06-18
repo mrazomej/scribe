@@ -31,8 +31,8 @@ colors = scribe.viz.colors()
 # Define model type
 model_type = "zinb"
 
-# Define prior distribution
-r_dist = "gamma"
+# Define parameterization
+parameterization = "beta_prime"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -65,11 +65,11 @@ n_genes = data.shape[1]
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define number of steps
-n_steps = 25_000
+n_steps = 50_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{r_dist}_{model_type}_results_" \
+        f"svi_{parameterization}_{model_type}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"
@@ -87,13 +87,16 @@ fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
 # Plot loss history
 ax.plot(svi_results.loss_history)
 
+# Set y-axis to log scale
+ax.set_yscale('log')
+
 # Set axis labels
 ax.set_xlabel('step')
 ax.set_ylabel('loss')
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_gamma_loss.pdf", 
+    f"{FIG_DIR}/svi_{parameterization}_loss.png", 
     bbox_inches="tight"
 )
 
@@ -101,7 +104,7 @@ fig.savefig(
 
 print("Generating predictive samples...")
 # Generate predictive samples
-svi_results.get_ppc_samples(n_samples=1_000)
+svi_results.get_ppc_samples(n_samples=2_500)
 
 # %% ---------------------------------------------------------------------------
 
@@ -176,7 +179,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_gamma_ppc.png", 
+    f"{FIG_DIR}/svi_{parameterization}_ppc.png", 
     bbox_inches="tight"
 )
 
@@ -229,7 +232,7 @@ for i, ax in enumerate(axes):
     # Plot ECDF of the real data as stairs
     ax.stairs(
         ecdf_values,
-        x_edges,  # Use the same extended edges
+        x_edges + 1,  # Use the same extended edges
         label='data',
         color='black',
         linewidth=1.5
@@ -254,7 +257,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_gamma_ppc_ecdf.png", 
+    f"{FIG_DIR}/svi_{parameterization}_ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
