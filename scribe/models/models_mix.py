@@ -478,8 +478,6 @@ def nbdm_mixture_guide_odds_ratio(
         raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.phi_capture_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components
