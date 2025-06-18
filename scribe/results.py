@@ -29,7 +29,7 @@ from .stats import (
     jensen_shannon_gamma,
     jensen_shannon_lognormal
 )
-from .model_config import ModelConfig
+from .models.model_config import ModelConfig
 from .utils import numpyro_to_scipy
 
 from .cell_assignment import (
@@ -707,7 +707,7 @@ class ScribeResults:
 
     def _model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the model and guide functions based on model type."""
-        from .model_registry import get_model_and_guide
+        from .models.model_registry import get_model_and_guide
         return get_model_and_guide(self.model_type)
 
     # --------------------------------------------------------------------------
@@ -716,7 +716,7 @@ class ScribeResults:
 
     def _log_likelihood_fn(self) -> Callable:
         """Get the log likelihood function for this model type."""
-        from .model_registry import get_log_likelihood_fn
+        from .models.model_registry import get_log_likelihood_fn
         return get_log_likelihood_fn(self.model_type)
 
     # --------------------------------------------------------------------------

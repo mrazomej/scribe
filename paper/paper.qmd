@@ -1,0 +1,40 @@
+::: {.abstract}
+
+::: {.content-visible when-format="html"}
+<div class="block-title">Abstract</div>
+:::
+
+TBD
+
+:::
+::: {.maintext}
+
+# Introduction
+
+<!-- {{< include _00intro.qmd >}} -->
+
+# Results
+
+# Discussion
+
+<!-- {{< include _discussion.qmd >}} -->
+
+# Data and code availability {.unnumbered}
+
+All data and custom scripts were collected and stored using Git version control.
+Code for raw data processing, theoretical analysis, and figure generation is
+available on the [GitHub
+repository](https://github.com/mrazomej/scribe)
+
+# Acknowledgements {.unnumbered}
+
+<!-- {{< include _acknowledgements.qmd >}} -->
+:::
+
+::: {.content-visible when-format="pdf"}
+::: {.sitext}
+# Supplementary Materials {.unnumbered}
+<!-- Dirichlet Multinomial model derivation -->
+{{< include _dirichlet_multinomial.qmd >}}
+:::
+:::

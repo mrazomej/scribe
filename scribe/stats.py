@@ -16,6 +16,10 @@ from numpyro.distributions import Dirichlet
 # Import scipy.special functions
 from jax.scipy.special import gammaln, digamma
 
+# Import numpyro distributions
+from numpyro.distributions import constraints, Distribution, Gamma
+from numpyro.distributions.util import promote_shapes, validate_sample
+
 # ------------------------------------------------------------------------------
 # Histogram functions
 # ------------------------------------------------------------------------------
@@ -1215,3 +1219,83 @@ def get_distribution_mode(dist_obj):
             raise ValueError(
                 f"Cannot compute mode for distribution type {dist_type}"
             )
+
+# ------------------------------------------------------------------------------
+# Beta Prime Distribution
+# ------------------------------------------------------------------------------
+
+class BetaPrime(Distribution):
+    """
+    Beta Prime distribution.
+
+    The Beta Prime distribution is the distribution of the ratio of two
+    independent random variables with Gamma distributions. If X ~ Gamma(α, 1) and
+    Y ~ Gamma(β, 1), then X/Y ~ BetaPrime(α, β).
+
+    The probability density function is given by:
+        f(x; α, β) = x^(α-1) * (1+x)^(-α-β) / B(α, β)
+    where B(α, β) is the Beta function.
+
+    Parameters
+    ----------
+    concentration1 : jnp.ndarray
+        First shape parameter (α).
+    concentration0 : jnp.ndarray
+        Second shape parameter (β).
+    """
+    arg_constraints = {
+        'concentration1': constraints.positive,
+        'concentration0': constraints.positive
+    }
+    support = constraints.positive
+    has_rsample = False
+
+    def __init__(self, concentration1, concentration0, validate_args=None):
+        c1 = jnp.asarray(concentration1, dtype=jnp.float32)
+        c0 = jnp.asarray(concentration0, dtype=jnp.float32)
+        self.concentration1, self.concentration0 = promote_shapes(
+            c1, c0
+        )
+        super().__init__(
+            batch_shape=self.concentration1.shape,
+            event_shape=(),
+            validate_args=validate_args,
+        )
+
+    def sample(self, key, sample_shape=()):
+        key1, key2 = random.split(key)
+        gamma1 = Gamma(self.concentration1, 1.0).sample(key1, sample_shape)
+        gamma2 = Gamma(self.concentration0, 1.0).sample(key2, sample_shape)
+        return gamma1 / gamma2
+
+    @validate_sample
+    def log_prob(self, value):
+        log_numerator = (
+            jnp.log(value) * (self.concentration1 - 1)
+            - jnp.log(1 + value) * (self.concentration1 + self.concentration0)
+        )
+        log_denominator = (
+            gammaln(self.concentration1)
+            + gammaln(self.concentration0)
+            - gammaln(self.concentration1 + self.concentration0)
+        )
+        return log_numerator - log_denominator
+
+    @property
+    def mean(self):
+        # Mean is defined for concentration0 > 1
+        return jnp.where(
+            self.concentration0 > 1,
+            self.concentration1 / (self.concentration0 - 1),
+            jnp.inf,
+        )
+
+    @property
+    def variance(self):
+        # Variance is defined for concentration0 > 2
+        return jnp.where(
+            self.concentration0 > 2,
+            (self.concentration1 * (self.concentration1 + self.concentration0 - 1))
+            / ((self.concentration0 - 1)**2 * (self.concentration0 - 2)),
+            jnp.inf,
+        )

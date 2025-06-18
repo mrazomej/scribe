@@ -1,0 +1,147 @@
+project:
+  type: website
+  output-dir: _output
+  resources:
+    - paper.pdf
+  render:
+    - paper.qmd
+    - supplementary.qmd
+    # - code.qmd
+    # - code/metropolis_hastings_evolution.qmd
+    # - code/evolutionary_dynamics.qmd
+    # - code/rhvae_sim.qmd
+    # - code/iwasawa_bayesian_inference.qmd
+    # - code/metropolis_kimura_evolution.qmd
+
+# Title
+title: "SCRIBE: Single-Cell RNA-seq Inference"
+
+# Authors
+author:
+  - name: Manuel Razo-Mejia
+    orcid: 0000-0002-9510-0527
+    affiliations: 
+      - ref: stanfordbio
+  - name: Madhav Mani
+    orcid: 0000-0002-5812-4167
+    email: madhav.mani@gmail.com
+    affiliations: 
+      - ref: nwqbio
+      - ref: nweng
+    corresponding: true
+  - name: Dmitri A. Petrov
+    orcid: 0000-0002-3664-9130
+    email: dpetrov@stanford.edu
+    affiliations:
+      - ref: stanfordbio
+      - ref: stanfordcancer
+      - ref: czb
+    corresponding: true
+
+# Author affiliations
+affiliations:
+  - id: stanfordbio
+    number: 1
+    name: Department of Biology, Stanford University
+    city: Stanford
+    state: California
+    country: United States of America
+  - id: stanfordcancer
+    number: 4
+    name: Stanford Cancer Institute, Stanford University School of Medicine
+    city: Stanford
+    state: California
+    country: United States of America
+  - id: nwqbio
+    number: 2
+    name: NSF-Simons Center for Quantitative Biology, Northwestern University
+    city: Chicago
+    state: Illinois
+    country: United States of America
+  - id: nweng
+    number: 3
+    name: Department of Engineering Sciences and Applied Mathematics, Northwestern University
+    city: Chicago
+    state: Illinois
+    country: United States of America
+  - id: czb
+    number: 5
+    name: Chan Zuckerberg Biohub
+    city: San Francisco
+    state: California
+    country: United States of America
+    
+# Keywords
+keywords:
+  - single-cell RNA-seq
+  - variational inference
+  - Bayesian inference
+  - Markov chain Monte Carlo
+
+# Abstract
+
+
+bibliography: references.bib
+
+website:
+  page-navigation: true
+  navbar:
+    left:
+      - text: "Main Text"
+        file: paper.qmd
+      - text: "Supplementary Material"
+        file: supplementary.qmd
+      # - text: "Code"
+      #   menu:
+      #     - text: "Overview"
+      #       file: code.qmd
+      #     - text: "Metropolis-Hastings Evolution"
+      #       file: code/metropolis_hastings_evolution.qmd
+      #     - text: "Evolutionary Dynamics Simulation"
+      #       file: code/evolutionary_dynamics.qmd
+      #     - text: "RHVAE training on Simulated Data"
+      #       file: code/rhvae_sim.qmd
+      #     - text: "Bayesian Inference of $IC_{50}$ Values"
+      #       file: code/iwasawa_bayesian_inference.qmd
+      #     - text: "Metropolis-Kimura Evolution"
+      #       file: code/metropolis_kimura_evolution.qmd
+    right:
+      - icon: github
+        href: https://github.com/mrazomej/scribe
+      - icon: twitter-x
+        href: https://twitter.com/mrazomej
+  sidebar:
+    - title: "Code"
+      style: "docked"
+      contents:
+        - code.qmd
+        - section: "Notebooks"
+          contents:
+            # - code/metropolis_hastings_evolution.qmd
+            # - code/evolutionary_dynamics.qmd
+            # - code/rhvae_sim.qmd
+            # - code/iwasawa_bayesian_inference.qmd
+            # - code/metropolis_kimura_evolution.qmd
+format:
+  html:
+    theme: cosmo
+    default-image-extension: png
+    toc: true
+    filters:
+      - maintext-filter.lua
+      - sitext-filter.lua
+  pdf: 
+    documentclass: scrartcl
+    numbersections: true
+    template: template.tex
+    cite-method: biblatex
+    default-image-extension: pdf
+    include-in-header:
+      - file: _preamble.tex
+    biblio-style: vancouver
+    keep-tex: true
+    filters:
+      - abstract-filter.lua
+      - color-text-span.lua
+      - maintext-filter.lua
+      - sitext-refsection.lua
