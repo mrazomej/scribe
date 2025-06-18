@@ -5,18 +5,25 @@ based on the model type.
 """
 
 # Import necessary modules
-from typing import Callable, Tuple, Dict
+from typing import Callable, Tuple, Dict, Optional
 
 # ------------------------------------------------------------------------------
 # Model registry
 # ------------------------------------------------------------------------------
 
-def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
+def get_model_and_guide(
+    model_type: str, parameterization: str = "standard"
+) -> Tuple[Callable, Optional[Callable]]:
     """
-    Get model and guide functions for a specified model type.
+    Get model and guide functions for a specified model type and
+    parameterization. If parameterization is 'unconstrained', returns the
+    unconstrained model and None for the guide.
 
     This function returns the appropriate model and guide functions based on the
-    requested model type. Currently supports:
+    requested model type. The guide functions are wrapper functions that handle
+    parameterization routing internally based on model_config.parameterization.
+
+    Currently supports:
         - "nbdm": Negative Binomial-Dirichlet Multinomial model
         - "zinb": Zero-Inflated Negative Binomial model
         - "nbvcp": Negative Binomial with variable mRNA capture probability
@@ -35,143 +42,94 @@ def get_model_and_guide(model_type: str) -> Tuple[Callable, Callable]:
         The type of model to retrieve functions for. Must be one of ["nbdm",
         "zinb", "nbvcp", "zinbvcp", "nbdm_mix", "zinb_mix", "nbvcp_mix",
         "zinbvcp_mix"].
+    parameterization : str, default="standard"
+        The type of parameterization to use:
+            - "standard": Independent parameters (original)
+            - "linked": Correlated r-p parameters via mean-variance
+              parameterization
+            - "odds_ratio": Correlated r-p parameters via beta-prime
+              parameterization
+            - "unconstrained": Use the unconstrained model
+        Note: For constrained models, parameterization is handled by the guide
+        wrapper functions based on model_config.parameterization.
 
     Returns
     -------
-    Tuple[Callable, Callable]
+    Tuple[Callable, Optional[Callable]]
         A tuple containing (model_function, guide_function) for the requested
-        model type.
+        model type. If parameterization is 'unconstrained', the guide_function
+        is None. Otherwise, guide_function is a wrapper that routes to the
+        appropriate parameterized guide based on model_config.parameterization.
 
     Raises
     ------
     ValueError
-        If an unsupported model type is provided.
+        If an unsupported model type or parameterization is provided.
     """
-    # Handle Negative Binomial-Dirichlet Multinomial model
+    if parameterization == "unconstrained":
+        # Unconstrained models
+        if model_type == "nbdm":
+            from .models_unconstrained import nbdm_model_unconstrained
+            return nbdm_model_unconstrained, None
+        elif model_type == "zinb":
+            from .models_unconstrained import zinb_model_unconstrained
+            return zinb_model_unconstrained, None
+        elif model_type == "nbvcp":
+            from .models_unconstrained import nbvcp_model_unconstrained
+            return nbvcp_model_unconstrained, None
+        elif model_type == "zinbvcp":
+            from .models_unconstrained import zinbvcp_model_unconstrained
+            return zinbvcp_model_unconstrained, None
+        elif model_type == "nbdm_mix":
+            from .models_unconstrained_mix import nbdm_mixture_model_unconstrained
+            return nbdm_mixture_model_unconstrained, None
+        elif model_type == "zinb_mix":
+            from .models_unconstrained_mix import zinb_mixture_model_unconstrained
+            return zinb_mixture_model_unconstrained, None
+        elif model_type == "nbvcp_mix":
+            from .models_unconstrained_mix import nbvcp_mixture_model_unconstrained
+            return nbvcp_mixture_model_unconstrained, None
+        elif model_type == "zinbvcp_mix":
+            from .models_unconstrained_mix import zinbvcp_mixture_model_unconstrained
+            return zinbvcp_mixture_model_unconstrained, None
+        else:
+            raise ValueError(f"Unknown model type for unconstrained parameterization: {model_type}")
+
+    # Validate parameterization for constrained models
+    valid_parameterizations = ["standard", "linked", "odds_ratio"]
+    if parameterization not in valid_parameterizations:
+        raise ValueError(
+            f"Unknown parameterization: {parameterization}. "
+            f"Must be one of {valid_parameterizations} or 'unconstrained'"
+        )
+    
+    # Handle constrained models - use wrapper functions that handle parameterization internally
     if model_type == "nbdm":
-        # Import model and guide functions locally to avoid circular imports
         from .models import nbdm_model, nbdm_guide
         return nbdm_model, nbdm_guide
-    
-    # Handle Zero-Inflated Negative Binomial model
     elif model_type == "zinb":
-        # Import model and guide functions locally to avoid circular imports
         from .models import zinb_model, zinb_guide
         return zinb_model, zinb_guide
-    
-    # Handle Negative Binomial with variable mRNA capture probability model
     elif model_type == "nbvcp":
-        # Import model and guide functions locally to avoid circular imports
         from .models import nbvcp_model, nbvcp_guide
         return nbvcp_model, nbvcp_guide
-    
-    # Handle Zero-Inflated Negative Binomial with variable capture probability
     elif model_type == "zinbvcp":
-        # Import model and guide functions locally to avoid circular imports
         from .models import zinbvcp_model, zinbvcp_guide
         return zinbvcp_model, zinbvcp_guide
-    
-    # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
     elif model_type == "nbdm_mix":
-        # Import model and guide functions locally to avoid circular imports
         from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
         return nbdm_mixture_model, nbdm_mixture_guide
-
-    # Handle Zero-Inflated Negative Binomial Mixture Model
     elif model_type == "zinb_mix":
-        # Import model and guide functions locally to avoid circular imports
         from .models_mix import zinb_mixture_model, zinb_mixture_guide
         return zinb_mixture_model, zinb_mixture_guide
-    
-    # Handle Negative Binomial-Variable Capture Probability Mixture Model
     elif model_type == "nbvcp_mix":
-        # Import model and guide functions locally to avoid circular imports
         from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
         return nbvcp_mixture_model, nbvcp_mixture_guide
-    
-    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability
-    # Mixture Model
     elif model_type == "zinbvcp_mix":
-        # Import model and guide functions locally to avoid circular imports
         from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
         return zinbvcp_mixture_model, zinbvcp_mixture_guide
-    
-    # Raise error for unsupported model types
     else:
         raise ValueError(f"Unknown model type: {model_type}")
-
-# ------------------------------------------------------------------------------
-# Unconstrained model registry
-# ------------------------------------------------------------------------------
-
-def get_unconstrained_model(model_type: str) -> Callable:
-    """
-    Get the unconstrained version of the specified model type.
-
-    Parameters
-    ----------
-    model_type : str
-        Type of model to use. Must be one of:
-            - "nbdm": Negative Binomial model
-            - "zinb": Zero-Inflated Negative Binomial model
-            - "nbvcp": Negative Binomial with variable capture probability
-            - "zinbvcp": Zero-Inflated Negative Binomial with variable capture
-              probability
-            - Mixture variants with "_mix" suffix (e.g. "nbdm_mix")
-
-    Returns
-    -------
-    Callable
-        The unconstrained version of the specified model function.
-
-    Raises
-    ------
-    ValueError
-        If an unsupported model type is specified.
-    """
-    # Handle Negative Binomial-Dirichlet Multinomial model
-    if model_type == "nbdm":
-        from .models_unconstrained import nbdm_model_unconstrained
-        return nbdm_model_unconstrained
-    
-    # Handle Zero-Inflated Negative Binomial model
-    elif model_type == "zinb":
-        from .models_unconstrained import zinb_model_unconstrained
-        return zinb_model_unconstrained
-    
-    # Handle Negative Binomial with variable capture probability model
-    elif model_type == "nbvcp":
-        from .models_unconstrained import nbvcp_model_unconstrained
-        return nbvcp_model_unconstrained
-    
-    # Handle Zero-Inflated Negative Binomial with variable capture probability
-    elif model_type == "zinbvcp":
-        from .models_unconstrained import zinbvcp_model_unconstrained
-        return zinbvcp_model_unconstrained
-    
-    # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
-    elif model_type == "nbdm_mix":
-        from .models_unconstrained_mix import nbdm_mixture_model_unconstrained
-        return nbdm_mixture_model_unconstrained
-    
-    # Handle Zero-Inflated Negative Binomial Mixture Model
-    elif model_type == "zinb_mix":
-        from .models_unconstrained_mix import zinb_mixture_model_unconstrained
-        return zinb_mixture_model_unconstrained
-    
-    # Handle Negative Binomial-Variable Capture Probability Mixture Model
-    elif model_type == "nbvcp_mix":
-        from .models_unconstrained_mix import nbvcp_mixture_model_unconstrained
-        return nbvcp_mixture_model_unconstrained
-    
-    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability Mixture Model
-    elif model_type == "zinbvcp_mix":
-        from .models_unconstrained_mix import zinbvcp_mixture_model_unconstrained
-        return zinbvcp_mixture_model_unconstrained
-    
-    # Raise error for unsupported model types
-    else:
-        raise ValueError(f"Unknown model type for unconstrained parameterization: {model_type}")
 
 # ------------------------------------------------------------------------------
 # Model log likelihood functions
@@ -265,89 +223,63 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
     """
     if model_type == "nbdm":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1)
         }
     elif model_type == "zinb":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'gate_prior': (0, 1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbvcp":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0)
         }
     elif model_type == "zinbvcp":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1),
-            'gate_prior': (0, 1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbdm_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1)
         }
     elif model_type == "zinb_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'gate_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbvcp_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0)
         }
     elif model_type == "zinbvcp_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1),
-            'gate_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbdm_log_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (0.0, 1.0)
         }
     else:
         prior_params = {}  # Empty dict for custom models if none provided
 
     return prior_params
-
-# ------------------------------------------------------------------------------
-# General model function getter
-# ------------------------------------------------------------------------------
-
-def get_model_fn(model_type: str, unconstrained: bool = True) -> Callable:
-    """
-    Get the model function for a specified model type and parameterization.
-    
-    Parameters
-    ----------
-    model_type : str
-        Type of model to use
-    unconstrained : bool, default=True
-        Whether to use unconstrained parameterization
-        
-    Returns
-    -------
-    Callable
-        The model function
-    """
-    if unconstrained:
-        return get_unconstrained_model(model_type)
-    else:
-        model_fn, _ = get_model_and_guide(model_type)
-        return model_fn

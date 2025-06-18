@@ -1,33 +1,295 @@
 """
-Distribution configurations for SCRIBE.
+Unified model configuration for SCRIBE.
+
+This module provides a single ModelConfig class that handles all parameterizations
+(standard, linked, odds_ratio, unconstrained) uniformly.
 """
 
 from typing import Dict, Any, List, Tuple, Optional, Union
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
 import jax.numpy as jnp
 import numpyro.distributions as dist
 
-# -----------------------------------------------------------------------------
-# Abstract Base Class
-# -----------------------------------------------------------------------------
 
 @dataclass
-class AbstractModelConfig(ABC):
+class ModelConfig:
     """
-    Abstract base class for SCRIBE model configurations.
+    Unified configuration class for all SCRIBE model parameterizations.
     
-    This class defines the common interface and shared attributes for both
-    constrained and unconstrained model configurations.
+    This class handles all parameterizations uniformly:
+    - standard: Beta/Gamma distributions for p/r parameters
+    - linked: Beta/LogNormal for p/mu parameters  
+    - odds_ratio: BetaPrime/LogNormal for phi/mu parameters
+    - unconstrained: Normal distributions on transformed parameters
+    
+    The parameterization determines which parameters are used and how they're
+    interpreted by the model and guide functions.
+    
+    Parameters
+    ----------
+    base_model : str
+        Name of the base model (e.g., "nbdm", "zinb", "nbvcp", "zinbvcp")
+        Can include "_mix" suffix for mixture models
+    parameterization : str
+        Parameterization type: 
+            - "standard"
+            - "linked"
+            - "odds_ratio"
+            - "unconstrained"
+    n_components : Optional[int], default=None
+        Number of mixture components for mixture models
+    inference_method : str, default="svi"
+        Inference method: 
+            - "svi"
+            - "mcmc"
+        
+    Parameter Distributions:
+    -----------------------
+    Each parameter can have model and guide distributions specified.
+    The interpretation depends on the parameterization:
+    
+    For constrained parameterizations (standard, linked, odds_ratio):
+    - Distributions are in natural parameter space
+    - Used directly in model/guide functions
+    
+    For unconstrained parameterization:
+    - Distributions are Normal on transformed parameters
+    - Parameters are transformed back to natural space in model
     """
-    # Common attributes for all model types
+    
+    # Core configuration
     base_model: str
+    parameterization: str = "standard"
+    n_components: Optional[int] = None
+    inference_method: str = "svi"
     
-    @abstractmethod
+    # Success probability parameter (p) - used in standard and linked
+    p_distribution_model: Optional[dist.Distribution] = None
+    p_distribution_guide: Optional[dist.Distribution] = None
+    p_param_prior: Optional[tuple] = None
+    p_param_guide: Optional[tuple] = None
+    
+    # Dispersion parameter (r) - used in standard
+    r_distribution_model: Optional[dist.Distribution] = None
+    r_distribution_guide: Optional[dist.Distribution] = None
+    r_param_prior: Optional[tuple] = None
+    r_param_guide: Optional[tuple] = None
+    
+    # Mean parameter (mu) - used in linked and odds_ratio
+    mu_distribution_model: Optional[dist.Distribution] = None
+    mu_distribution_guide: Optional[dist.Distribution] = None
+    mu_param_prior: Optional[tuple] = None
+    mu_param_guide: Optional[tuple] = None
+    
+    # Phi parameter - used in odds_ratio
+    phi_distribution_model: Optional[dist.Distribution] = None
+    phi_distribution_guide: Optional[dist.Distribution] = None
+    phi_param_prior: Optional[tuple] = None
+    phi_param_guide: Optional[tuple] = None
+    
+    # Zero-inflation gate - used in ZINB models
+    gate_distribution_model: Optional[dist.Distribution] = None
+    gate_distribution_guide: Optional[dist.Distribution] = None
+    gate_param_prior: Optional[tuple] = None
+    gate_param_guide: Optional[tuple] = None
+    
+    # Capture probability - used in VCP models
+    p_capture_distribution_model: Optional[dist.Distribution] = None
+    p_capture_distribution_guide: Optional[dist.Distribution] = None
+    p_capture_param_prior: Optional[tuple] = None
+    p_capture_param_guide: Optional[tuple] = None
+    
+    # Capture phi - used in VCP models with odds_ratio
+    phi_capture_distribution_model: Optional[dist.Distribution] = None
+    phi_capture_distribution_guide: Optional[dist.Distribution] = None
+    phi_capture_param_prior: Optional[tuple] = None
+    phi_capture_param_guide: Optional[tuple] = None
+    
+    # Mixture weights - used in mixture models
+    mixing_distribution_model: Optional[dist.Distribution] = None
+    mixing_distribution_guide: Optional[dist.Distribution] = None
+    mixing_param_prior: Optional[tuple] = None
+    mixing_param_guide: Optional[tuple] = None
+    
+    # Unconstrained parameters (used when parameterization="unconstrained")
+    # These are Normal distributions on transformed parameters
+    p_unconstrained_loc: Optional[float] = None
+    p_unconstrained_scale: Optional[float] = None
+    r_unconstrained_loc: Optional[float] = None
+    r_unconstrained_scale: Optional[float] = None
+    gate_unconstrained_loc: Optional[float] = None
+    gate_unconstrained_scale: Optional[float] = None
+    p_capture_unconstrained_loc: Optional[float] = None
+    p_capture_unconstrained_scale: Optional[float] = None
+    mixing_logits_unconstrained_loc: Optional[float] = None
+    mixing_logits_unconstrained_scale: Optional[float] = None
+    
     def validate(self):
         """Validate configuration parameters."""
-        pass
+        self._validate_base_model()
+        self._validate_parameterization()
+        self._validate_mixture_components()
+        self._validate_model_specific_parameters()
+        self._validate_parameterization_specific_parameters()
     
+    def _validate_base_model(self):
+        """Validate base model specification."""
+        valid_base_models = {
+            "nbdm", "zinb", "nbvcp", "zinbvcp",
+            "nbdm_mix", "zinb_mix", "nbvcp_mix", "zinbvcp_mix"
+        }
+        
+        if self.base_model not in valid_base_models:
+            raise ValueError(f"Invalid base_model: {self.base_model}. "
+                           f"Must be one of {valid_base_models}")
+    
+    def _validate_parameterization(self):
+        """Validate parameterization specification."""
+        valid_parameterizations = {
+            "standard", "linked", "odds_ratio", "unconstrained"
+        }
+        
+        if self.parameterization not in valid_parameterizations:
+            raise ValueError(
+                f"Invalid parameterization: {self.parameterization}. "
+                f"Must be one of {valid_parameterizations}"
+            )
+    
+    def _validate_mixture_components(self):
+        """Validate mixture model configuration."""
+        if self.is_mixture_model():
+            if not self.base_model.endswith('_mix'):
+                self.base_model = f"{self.base_model}_mix"
+            
+            if self.n_components is None or self.n_components < 2:
+                raise ValueError("Mixture models require n_components >= 2")
+            
+            # Check for mixing parameters based on parameterization
+            if self.parameterization == "unconstrained":
+                if (self.mixing_logits_unconstrained_loc is None or 
+                    self.mixing_logits_unconstrained_scale is None):
+                    # Set defaults
+                    self.mixing_logits_unconstrained_loc = 0.0
+                    self.mixing_logits_unconstrained_scale = 1.0
+            else:
+                if (self.mixing_distribution_model is None or 
+                    self.mixing_distribution_guide is None):
+                    raise ValueError(
+                        "Mixture models require mixing distributions"
+                    )
+        else:
+            if self.n_components is not None:
+                raise ValueError(
+                    "Non-mixture models should not specify n_components"
+                )
+    
+    def _validate_model_specific_parameters(self):
+        """Validate parameters specific to model variants."""
+        # Zero-inflation validation
+        if self.is_zero_inflated():
+            if self.parameterization == "unconstrained":
+                if (self.gate_unconstrained_loc is None or 
+                    self.gate_unconstrained_scale is None):
+                    # Set defaults
+                    self.gate_unconstrained_loc = 0.0
+                    self.gate_unconstrained_scale = 1.0
+            else:
+                if (self.gate_distribution_model is None or 
+                    self.gate_distribution_guide is None):
+                    raise ValueError("ZINB models require gate distributions")
+        
+        # Variable capture validation
+        if self.uses_variable_capture():
+            if self.parameterization == "unconstrained":
+                if (self.p_capture_unconstrained_loc is None or 
+                    self.p_capture_unconstrained_scale is None):
+                    # Set defaults
+                    self.p_capture_unconstrained_loc = 0.0
+                    self.p_capture_unconstrained_scale = 1.0
+            elif self.parameterization == "odds_ratio":
+                if (self.phi_capture_distribution_model is None or 
+                    self.phi_capture_distribution_guide is None):
+                    raise ValueError(
+                        "VCP models with odds_ratio require "
+                        "phi_capture distributions"
+                    )
+            else:
+                if (self.p_capture_distribution_model is None or 
+                    self.p_capture_distribution_guide is None):
+                    raise ValueError(
+                        "VCP models require capture probability distributions"
+                    )
+    
+    def _validate_parameterization_specific_parameters(self):
+        """Validate parameters specific to each parameterization."""
+        if self.parameterization == "standard":
+            self._validate_standard_parameters()
+        elif self.parameterization == "linked":
+            self._validate_linked_parameters()
+        elif self.parameterization == "odds_ratio":
+            self._validate_odds_ratio_parameters()
+        elif self.parameterization == "unconstrained":
+            self._validate_unconstrained_parameters()
+    
+    def _validate_standard_parameters(self):
+        """Validate standard parameterization parameters."""
+        if self.inference_method == "svi":
+            required_params = [
+                "p_distribution_model", 
+                "p_distribution_guide",
+                "r_distribution_model", 
+                "r_distribution_guide"
+            ]
+            for param in required_params:
+                if getattr(self, param) is None:
+                    raise ValueError(
+                        f"standard parameterization requires {param}"
+                    )
+    
+    def _validate_linked_parameters(self):
+        """Validate linked parameterization parameters."""
+        if self.inference_method == "svi":
+            required_params = [
+                "p_distribution_model", 
+                "p_distribution_guide",
+                "mu_distribution_model", 
+                "mu_distribution_guide"
+            ]
+            for param in required_params:
+                if getattr(self, param) is None:
+                    raise ValueError(
+                        f"linked parameterization requires {param}"
+                    )
+    
+    def _validate_odds_ratio_parameters(self):
+        """Validate odds_ratio parameterization parameters."""
+        if self.inference_method == "svi":
+            required_params = [
+                "phi_distribution_model", 
+                "phi_distribution_guide",
+                "mu_distribution_model", 
+                "mu_distribution_guide"
+            ]
+            for param in required_params:
+                if getattr(self, param) is None:
+                    raise ValueError(
+                        f"odds_ratio parameterization requires {param}"
+                    )
+    
+    def _validate_unconstrained_parameters(self):
+        """Validate unconstrained parameterization parameters."""
+        # Set defaults for unconstrained parameters if not specified
+        if self.p_unconstrained_loc is None:
+            self.p_unconstrained_loc = 0.0
+        if self.p_unconstrained_scale is None:
+            self.p_unconstrained_scale = 1.0
+        if self.r_unconstrained_loc is None:
+            self.r_unconstrained_loc = 0.0
+        if self.r_unconstrained_scale is None:
+            self.r_unconstrained_scale = 1.0
+    
+    # Utility methods
     def is_mixture_model(self) -> bool:
         """Check if this is a mixture model configuration."""
         return self.n_components is not None and self.n_components > 1
@@ -39,229 +301,90 @@ class AbstractModelConfig(ABC):
     def uses_variable_capture(self) -> bool:
         """Check if this model uses variable capture probability."""
         return "vcp" in self.base_model
-
-# -----------------------------------------------------------------------------
-# Constrained Configuration (primarily for SVI)
-# -----------------------------------------------------------------------------
-
-@dataclass
-class ConstrainedModelConfig(AbstractModelConfig):
-    """
-    Configuration class for constrained parameterization used in Stochastic
-    Variational Inference (SVI).
     
-    This class defines the distributions and their parameters for the
-    constrained parameterization of SCRIBE models. The constrained
-    parameterization uses distributions in their natural parameter space:
-        - Beta distributions for probabilities (p, gate, p_capture) in [0,1]
-        - Gamma or LogNormal distributions for dispersion (r) in (0,∞)
-        - Dirichlet distributions for mixture weights on the simplex
+    def is_constrained_parameterization(self) -> bool:
+        """Check if this uses a constrained parameterization."""
+        return self.parameterization in [
+            "standard", "linked", "odds_ratio"
+        ]
     
-    Attributes
-    ----------
-    r_distribution_model : dist.Distribution
-        Distribution object for dispersion parameter r in model (Gamma or
-        LogNormal)
-    r_distribution_guide : dist.Distribution  
-        Distribution object for dispersion parameter r in guide (Gamma or
-        LogNormal)
-    r_param_prior : tuple
-        Parameters for r distribution in model (shape,rate) for Gamma or
-        (mu,sigma) for LogNormal
-    r_param_guide : tuple
-        Parameters for r distribution in guide (shape,rate) for Gamma or
-        (mu,sigma) for LogNormal
+    def is_unconstrained_parameterization(self) -> bool:
+        """Check if this uses unconstrained parameterization."""
+        return self.parameterization == "unconstrained"
+    
+    def get_active_parameters(self) -> List[str]:
+        """
+        Get list of parameters that should be active for this configuration.
+        """
+        params = []
         
-    p_distribution_model : dist.Distribution
-        Beta distribution object for success probability p in model
-    p_distribution_guide : dist.Distribution
-        Beta distribution object for success probability p in guide  
-    p_param_prior : tuple
-        Parameters (alpha,beta) for p Beta distribution in model
-    p_param_guide : tuple
-        Parameters (alpha,beta) for p Beta distribution in guide
+        if self.parameterization == "unconstrained":
+            params.extend(["p_unconstrained", "r_unconstrained"])
+            if self.is_zero_inflated():
+                params.append("gate_unconstrained")
+            if self.uses_variable_capture():
+                params.append("p_capture_unconstrained")
+            if self.is_mixture_model():
+                params.append("mixing_logits_unconstrained")
+        else:
+            if self.parameterization == "standard":
+                params.extend(["p", "r"])
+            elif self.parameterization == "linked":
+                params.extend(["p", "mu"])
+            elif self.parameterization == "odds_ratio":
+                params.extend(["phi", "mu"])
+            
+            if self.is_zero_inflated():
+                params.append("gate")
+            if self.uses_variable_capture():
+                if self.parameterization == "odds_ratio":
+                    params.append("phi_capture")
+                else:
+                    params.append("p_capture")
+            if self.is_mixture_model():
+                params.append("mixing")
         
-    gate_distribution_model : Optional[dist.Distribution]
-        Beta distribution object for dropout gate in zero-inflated models
-    gate_distribution_guide : Optional[dist.Distribution]
-        Beta distribution object for dropout gate in guide
-    gate_param_prior : Optional[tuple]
-        Parameters (alpha,beta) for gate Beta distribution in model
-    gate_param_guide : Optional[tuple]
-        Parameters (alpha,beta) for gate Beta distribution in guide
+        return params
+    
+    def get_parameter_info(self, param_name: str) -> Dict[str, Any]:
+        """Get information about a specific parameter."""
+        info = {
+            "name": param_name,
+            "active": param_name in self.get_active_parameters(),
+            "parameterization": self.parameterization,
+        }
         
-    p_capture_distribution_model : Optional[dist.Distribution]
-        Beta distribution object for capture probability in variable capture
-        models
-    p_capture_distribution_guide : Optional[dist.Distribution]
-        Beta distribution object for capture probability in guide
-    p_capture_param_prior : Optional[tuple]
-        Parameters (alpha,beta) for capture probability Beta distribution in
-        model
-    p_capture_param_guide : Optional[tuple]
-        Parameters (alpha,beta) for capture probability Beta distribution in
-        guide
+        # Add distribution information if available
+        if hasattr(self, f"{param_name}_distribution_model"):
+            info["model_distribution"] = getattr(
+                self, f"{param_name}_distribution_model")
+            info["guide_distribution"] = getattr(
+                self, f"{param_name}_distribution_guide")
+            info["prior_params"] = getattr(self, f"{param_name}_param_prior")
+            info["guide_params"] = getattr(self, f"{param_name}_param_guide")
         
-    mixing_distribution_model : Optional[dist.Distribution]
-        Dirichlet distribution object for mixture weights in mixture models
-    mixing_distribution_guide : Optional[dist.Distribution]
-        Dirichlet distribution object for mixture weights in guide
-    mixing_param_prior : Optional[tuple]
-        Concentration parameters for mixing Dirichlet distribution in model
-    mixing_param_guide : Optional[tuple]
-        Concentration parameters for mixing Dirichlet distribution in guide
-    """
-    # Dispersion parameter distributions
-    r_distribution_model: dist.Distribution
-    r_distribution_guide: dist.Distribution
-    r_param_prior: tuple
-    r_param_guide: tuple
+        # Add unconstrained parameter information if applicable
+        if self.parameterization == "unconstrained":
+            if hasattr(self, f"{param_name}_unconstrained_loc"):
+                info["unconstrained_loc"] = getattr(
+                    self, f"{param_name}_unconstrained_loc")
+                info["unconstrained_scale"] = getattr(
+                    self, f"{param_name}_unconstrained_scale")
+        
+        return info
     
-    # Success probability distributions
-    p_distribution_model: dist.Distribution
-    p_distribution_guide: dist.Distribution
-    p_param_prior: tuple
-    p_param_guide: tuple
-    
-    # Optional: Zero-inflation gate distributions
-    gate_distribution_model: Optional[dist.Distribution] = None
-    gate_distribution_guide: Optional[dist.Distribution] = None
-    gate_param_prior: Optional[tuple] = None
-    gate_param_guide: Optional[tuple] = None
-    
-    # Optional: Capture probability distributions
-    p_capture_distribution_model: Optional[dist.Distribution] = None
-    p_capture_distribution_guide: Optional[dist.Distribution] = None
-    p_capture_param_prior: Optional[tuple] = None
-    p_capture_param_guide: Optional[tuple] = None
-    
-    # Optional: Mixture model distributions
-    mixing_distribution_model: Optional[dist.Distribution] = None
-    mixing_distribution_guide: Optional[dist.Distribution] = None
-    mixing_param_prior: Optional[tuple] = None
-    mixing_param_guide: Optional[tuple] = None
-
-    # Number of mixture components
-    n_components: Optional[int] = None
-    
-    def validate(self):
-        """Validate constrained configuration parameters."""
-        # Validate mixture components
+    def summary(self) -> str:
+        """Generate a summary string of the configuration."""
+        lines = [
+            f"ModelConfig Summary:",
+            f"  Base Model: {self.base_model}",
+            f"  Parameterization: {self.parameterization}",
+            f"  Inference Method: {self.inference_method}",
+        ]
+        
         if self.is_mixture_model():
-            if not self.base_model.endswith('_mix'):
-                self.base_model = f"{self.base_model}_mix"
-                
-            if (self.mixing_distribution_model is None or 
-                self.mixing_distribution_guide is None):
-                raise ValueError("Mixture models require mixing distributions")
+            lines.append(f"  Mixture Components: {self.n_components}")
         
-        # Validate zero-inflation parameters
-        if self.is_zero_inflated():
-            if (self.gate_distribution_model is None or 
-                self.gate_distribution_guide is None):
-                raise ValueError("ZINB models require gate distributions")
-        elif (self.gate_distribution_model is not None or 
-              self.gate_distribution_guide is not None):
-            raise ValueError("Non-ZINB models should not have gate distributions")
+        lines.append(f"  Active Parameters: {', '.join(self.get_active_parameters())}")
         
-        # Validate variable capture parameters
-        if self.uses_variable_capture():
-            if (self.p_capture_distribution_model is None or 
-                self.p_capture_distribution_guide is None):
-                raise ValueError("VCP models require capture probability distributions")
-        elif (self.p_capture_distribution_model is not None or 
-              self.p_capture_distribution_guide is not None):
-            raise ValueError("Non-VCP models should not have capture probability distributions")
-
-# -----------------------------------------------------------------------------
-# Unconstrained Configuration (for MCMC)
-# -----------------------------------------------------------------------------
-
-@dataclass
-class UnconstrainedModelConfig(AbstractModelConfig):
-    """
-    Configuration class for unconstrained parameterization used in MCMC.
-    
-    This class handles model parameters represented in unconstrained space (real
-    line) suitable for efficient MCMC sampling. Parameters are transformed from
-    their natural constrained space using:
-        - logit transform for probabilities (p, gate, p_capture) mapping [0,1]
-          to (-∞,∞)
-        - log transform for positive reals (r) mapping (0,∞) to (-∞,∞)
-        - softmax for mixture weights mapping simplex to (-∞,∞)^K
-
-    Attributes
-    ----------
-    p_unconstrained_loc : float, default=0.0
-        Location parameter for logit-normal prior on success probability
-    p_unconstrained_scale : float, default=1.0
-        Scale parameter for logit-normal prior on success probability
-
-    r_unconstrained_loc : float, default=0.0
-        Location parameter for log-normal prior on dispersion
-    r_unconstrained_scale : float, default=1.0
-        Scale parameter for log-normal prior on dispersion
-
-    gate_unconstrained_loc : Optional[float], default=None
-        Location parameter for logit-normal prior on dropout gate
-    gate_unconstrained_scale : Optional[float], default=None
-        Scale parameter for logit-normal prior on dropout gate
-
-    p_capture_unconstrained_loc : Optional[float], default=None
-        Location parameter for logit-normal prior on capture probability
-    p_capture_unconstrained_scale : Optional[float], default=None
-        Scale parameter for logit-normal prior on capture probability
-
-    mixing_logits_unconstrained_loc : Optional[float], default=None
-        Location parameter for normal prior on mixture weights (pre-softmax)
-    mixing_logits_unconstrained_scale : Optional[float], default=None
-        Scale parameter for normal prior on mixture weights (pre-softmax)
-    """
-    # Unconstrained p parameters (logit-normal)
-    p_unconstrained_loc: float = 0.0
-    p_unconstrained_scale: float = 1.0
-    
-    # Unconstrained r parameters (log-normal)
-    r_unconstrained_loc: float = 0.0
-    r_unconstrained_scale: float = 1.0
-    
-    # Optional: Unconstrained gate parameters (logit-normal)
-    gate_unconstrained_loc: Optional[float] = None
-    gate_unconstrained_scale: Optional[float] = None
-    
-    # Optional: Unconstrained p_capture parameters (logit-normal)
-    p_capture_unconstrained_loc: Optional[float] = None
-    p_capture_unconstrained_scale: Optional[float] = None
-    
-    # Optional: Unconstrained mixing parameters (normal with softmax)
-    mixing_logits_unconstrained_loc: Optional[float] = None
-    mixing_logits_unconstrained_scale: Optional[float] = None
-
-    # Number of mixture components
-    n_components: Optional[int] = None
-    
-    def validate(self):
-        """Validate unconstrained configuration parameters."""
-        # Validate mixture components
-        if self.is_mixture_model():
-            if not self.base_model.endswith('_mix'):
-                self.base_model = f"{self.base_model}_mix"
-                
-            if (self.mixing_logits_unconstrained_loc is None or 
-                self.mixing_logits_unconstrained_scale is None):
-                self.mixing_logits_unconstrained_loc = 0.0
-                self.mixing_logits_unconstrained_scale = 1.0
-        
-        # Validate zero-inflation parameters
-        if self.is_zero_inflated():
-            if (self.gate_unconstrained_loc is None or 
-                self.gate_unconstrained_scale is None):
-                self.gate_unconstrained_loc = 0.0
-                self.gate_unconstrained_scale = 1.0
-        
-        # Validate variable capture parameters
-        if self.uses_variable_capture():
-            if (self.p_capture_unconstrained_loc is None or 
-                self.p_capture_unconstrained_scale is None):
-                self.p_capture_unconstrained_loc = 0.0
-                self.p_capture_unconstrained_scale = 1.0
+        return "\n".join(lines) 

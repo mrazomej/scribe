@@ -14,7 +14,7 @@ from numpyro.distributions import constraints
 from typing import Callable, Dict, Tuple, Optional
 
 # Import model config
-from .model_config import UnconstrainedModelConfig
+from .model_config import ModelConfig
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
@@ -23,7 +23,7 @@ from .model_config import UnconstrainedModelConfig
 def nbdm_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -55,7 +55,7 @@ def nbdm_model_unconstrained(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for model
         parameters: 
             - p_unconstrained_loc: Location for p_unconstrained distribution
@@ -135,7 +135,7 @@ def nbdm_model_unconstrained(
 def zinb_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -160,7 +160,7 @@ def zinb_model_unconstrained(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for model
         parameters: 
             - p_unconstrained_loc: Location for p_unconstrained distribution
@@ -264,7 +264,7 @@ def zinb_model_unconstrained(
 def nbvcp_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -290,7 +290,7 @@ def nbvcp_model_unconstrained(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for model
         parameters:
             - p_unconstrained_loc: Location for p_unconstrained distribution
@@ -464,7 +464,7 @@ def nbvcp_model_unconstrained(
 def zinbvcp_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -493,7 +493,7 @@ def zinbvcp_model_unconstrained(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for model
         parameters:
             - p_unconstrained_loc: Location for p_unconstrained distribution

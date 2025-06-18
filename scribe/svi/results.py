@@ -15,11 +15,11 @@ from jax import random, jit, vmap
 import numpy as np
 import scipy.stats as stats
 
-from .sampling import (
+from ..sampling import (
     sample_variational_posterior, 
     generate_predictive_samples, 
 )
-from .stats import (
+from ..stats import (
     fit_dirichlet_minka, 
     get_distribution_mode,
     hellinger_gamma,
@@ -29,12 +29,17 @@ from .stats import (
     jensen_shannon_gamma,
     jensen_shannon_lognormal
 )
-from .model_config import ConstrainedModelConfig
-from .utils import numpyro_to_scipy
+from ..models.model_config import ModelConfig
+from ..utils import numpyro_to_scipy
 
-from .cell_assignment import (
+from ..cell_assignment import (
     temperature_scaling
 )
+
+try:
+    from anndata import AnnData
+except ImportError:
+    AnnData = None
 
 # ------------------------------------------------------------------------------
 # Base class for inference results
@@ -62,7 +67,7 @@ class ScribeSVIResults:
         Number of genes in the dataset
     model_type : str
         Type of model used for inference
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object specifying model architecture and priors
     prior_params : Dict[str, Any]
         Dictionary of prior parameter values used during inference
@@ -89,7 +94,7 @@ class ScribeSVIResults:
     n_cells: int
     n_genes: int
     model_type: str
-    model_config: ConstrainedModelConfig
+    model_config: ModelConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
@@ -148,10 +153,19 @@ class ScribeSVIResults:
                 self.model_config.gate_distribution_guide is not None):
                 raise ValueError("Non-ZINB models should not have gate distributions")
                 
-        if "vcp" in self.model_type:
+        if "vcp" in self.model_type and (
+            self.model_config.parameterization == "standard" or 
+            self.model_config.parameterization == "linked"
+        ):
             if (self.model_config.p_capture_distribution_model is None or
                 self.model_config.p_capture_distribution_guide is None):
                 raise ValueError("VCP models require capture probability distributions")
+        elif "vcp" in self.model_type and (
+            self.model_config.parameterization == "odds_ratio"
+        ):
+            if (self.model_config.phi_capture_distribution_model is None or
+                self.model_config.phi_capture_distribution_guide is None):
+                raise ValueError("VCP models with beta-prime parameterization require capture odds ratio distributions")
         else:
             if (self.model_config.p_capture_distribution_model is not None or
                 self.model_config.p_capture_distribution_guide is not None):
@@ -166,10 +180,10 @@ class ScribeSVIResults:
     @classmethod
     def from_anndata(
         cls,
-        adata: "AnnData",
+        adata: Any,
         params: Dict,
         loss_history: jnp.ndarray,
-        model_config: ConstrainedModelConfig,
+        model_config: ModelConfig,
         **kwargs
     ):
         """Create ScribeSVIResults from AnnData object."""
@@ -317,20 +331,26 @@ class ScribeSVIResults:
         # Add mixing weights if mixture model
         if self.model_config.n_components is not None:
             # Extract mixing weights
-            mixing_param_key = "mixing_concentration"
-            if mixing_param_key in self.params:
-                mixing_params = self.params[mixing_param_key]
-                
-                if backend == "scipy":
-                    distributions['mixing_weights'] = numpyro_to_scipy(
-                        self.model_config.mixing_distribution_guide.__class__(
+            mixing_params = self.params.get(f"mixing_concentration", None)
+            if backend == "scipy":
+                if self.model_config.mixing_distribution_guide is not None and mixing_params is not None:
+                    # Only pass 'concentration' if the constructor supports it
+                    try:
+                        distributions['mixing_weights'] = numpyro_to_scipy(
+                            self.model_config.mixing_distribution_guide.__class__(
+                                concentration=mixing_params
+                            )
+                        )
+                    except TypeError:
+                        pass
+            else:
+                if self.model_config.mixing_distribution_guide is not None and mixing_params is not None:
+                    try:
+                        distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
                             concentration=mixing_params
                         )
-                    )
-                else:
-                    distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
-                        concentration=mixing_params
-                    )
+                    except TypeError:
+                        pass
         
         return distributions
 
@@ -395,151 +415,89 @@ class ScribeSVIResults:
     # Indexing by genes
     # --------------------------------------------------------------------------
 
+    @staticmethod
+    def _subset_gene_params(params, param_prefixes, index, n_components=None):
+        """
+        Utility to subset all gene-specific parameters in params dict.
+        param_prefixes: list of parameter name prefixes (e.g., ["r_", "mu_",
+        "gate_"]) index: boolean or integer index for genes n_components: if not
+        None, keep component dimension
+        """
+        new_params = dict(params)
+        for prefix, arg_constraints in param_prefixes:
+            if arg_constraints is None:
+                continue
+            for param_name in arg_constraints:
+                key = f"{prefix}{param_name}"
+                if key in params:
+                    if n_components is not None:
+                        new_params[key] = params[key][..., index]
+                    else:
+                        new_params[key] = params[key][index]
+        return new_params
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create a new parameter dictionary for the given index.
         """
-        new_params = dict(params)
-        
-        # Handle mean parameters (NB2 parameterization, always gene-specific)
-        if (self.model_config.mean_distribution_guide is not None and 
-            hasattr(self.model_config.mean_distribution_guide, 'arg_constraints')):
-            mean_param_names = list(self.model_config.mean_distribution_guide.arg_constraints.keys())
-            for param_name in mean_param_names:
-                param_key = f"mean_{param_name}"
-                if param_key in params:
-                    if self.n_components is not None:
-                        # Keep component dimension but subset gene dimension
-                        new_params[param_key] = params[param_key][..., index]
-                    else:
-                        # Just subset gene dimension
-                        new_params[param_key] = params[param_key][index]
-        
-        # Handle concentration parameters (NB2 parameterization, always gene-specific)
-        if (self.model_config.concentration_distribution_guide is not None and 
-            hasattr(self.model_config.concentration_distribution_guide, 'arg_constraints')):
-            concentration_param_names = list(self.model_config.concentration_distribution_guide.arg_constraints.keys())
-            for param_name in concentration_param_names:
-                param_key = f"concentration_{param_name}"
-                if param_key in params:
-                    if self.n_components is not None:
-                        # Keep component dimension but subset gene dimension
-                        new_params[param_key] = params[param_key][..., index]
-                    else:
-                        # Just subset gene dimension
-                        new_params[param_key] = params[param_key][index]
-        
-        # Handle legacy r parameters (backward compatibility, always gene-specific)
-        if (self.model_config.r_distribution_guide is not None and 
-            hasattr(self.model_config.r_distribution_guide, 'arg_constraints')):
-            r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
-            for param_name in r_param_names:
-                param_key = f"r_{param_name}"
-                if param_key in params:
-                    if self.n_components is not None:
-                        # Keep component dimension but subset gene dimension
-                        new_params[param_key] = params[param_key][..., index]
-                    else:
-                        # Just subset gene dimension
-                        new_params[param_key] = params[param_key][index]
-        
-        # Handle gate parameters if present (gene-specific)
-        if (self.model_config.gate_distribution_guide is not None and 
-            hasattr(self.model_config.gate_distribution_guide, 'arg_constraints')):
-            gate_param_names = list(self.model_config.gate_distribution_guide.arg_constraints.keys())
-            for param_name in gate_param_names:
-                param_key = f"gate_{param_name}"
-                if param_key in params:
-                    if self.n_components is not None:
-                        # Keep component dimension but subset gene dimension
-                        new_params[param_key] = params[param_key][..., index]
-                    else:
-                        # Just subset gene dimension
-                        new_params[param_key] = params[param_key][index]
-        
-        return new_params
+        # Build list of (prefix, arg_constraints) for all gene-specific params
+        param_prefixes = []
+        # r
+        r_dist_guide = getattr(self.model_config, "r_distribution_guide", None)
+        param_prefixes.append(
+            ("r_", getattr(r_dist_guide, "arg_constraints", None))
+        )
+        # mu (if present)
+        mu_dist_guide = getattr(
+            self.model_config, "mu_distribution_guide", None
+        )
+        if mu_dist_guide is not None:
+            param_prefixes.append(
+                ("mu_", getattr(mu_dist_guide, "arg_constraints", None))
+            )
+        # gate (if present)
+        gate_dist_guide = getattr(
+            self.model_config, "gate_distribution_guide", None
+        )
+        if gate_dist_guide is not None:
+            param_prefixes.append(
+                ("gate_", getattr(gate_dist_guide, "arg_constraints", None))
+            )
+        # (extend here for other gene-specific params if needed)
+        return self._subset_gene_params(
+            params, 
+            param_prefixes, 
+            index, 
+            n_components=self.n_components
+        )
 
     # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
         Create a new posterior samples dictionary for the given index.
-        
-        Parameters
-        ----------
-        samples : Dict
-            Dictionary of samples from the posterior distribution, where each
-            key represents a parameter type ('r', 'p', 'gate', etc.) and values
-            are arrays of samples
-        index : array-like
-            Boolean or integer index specifying which genes to keep
-            
-        Returns
-        -------
-        Dict
-            New dictionary containing posterior samples for the selected genes
         """
         if samples is None:
             return None
-            
-        new_posterior_samples = {}
-        
-        # Handle gene-specific parameters
-        
-        # mean samples (NB2 parameterization, always gene-specific)
-        if 'mean' in samples:
-            if self.n_components is not None:
-                # Shape: (n_samples, n_components, n_genes)
-                new_posterior_samples['mean'] = samples['mean'][..., index]
-            else:
-                # Shape: (n_samples, n_genes)
-                new_posterior_samples['mean'] = samples['mean'][..., index]
-        
-        # concentration samples (NB2 parameterization, always gene-specific)
-        if 'concentration' in samples:
-            if self.n_components is not None:
-                # Shape: (n_samples, n_components, n_genes)
-                new_posterior_samples['concentration'] = samples['concentration'][..., index]
-            else:
-                # Shape: (n_samples, n_genes)
-                new_posterior_samples['concentration'] = samples['concentration'][..., index]
-        
-        # r samples (legacy, always gene-specific)
+        # List of gene-specific keys to subset
+        gene_keys = []
+        # r
         if 'r' in samples:
-            if self.n_components is not None:
-                # Shape: (n_samples, n_components, n_genes)
-                new_posterior_samples['r'] = samples['r'][..., index]
-            else:
-                # Shape: (n_samples, n_genes)
-                new_posterior_samples['r'] = samples['r'][..., index]
-        
-        # gate samples (gene-specific if present)
+            gene_keys.append('r')
+        # mu
+        if 'mu' in samples:
+            gene_keys.append('mu')
+        # gate
         if 'gate' in samples:
+            gene_keys.append('gate')
+        # (extend here for other gene-specific keys if needed)
+        new_samples = dict(samples)
+        for key in gene_keys:
             if self.n_components is not None:
-                # Shape: (n_samples, n_components, n_genes)
-                new_posterior_samples['gate'] = samples['gate'][..., index]
+                new_samples[key] = samples[key][..., index]
             else:
-                # Shape: (n_samples, n_genes)
-                new_posterior_samples['gate'] = samples['gate'][..., index]
-        
-        # Copy non-gene-specific parameters as is
-        
-        # p samples (global)
-        if 'p' in samples:
-            # Shape: (n_samples,) or (n_samples, n_components)
-            new_posterior_samples['p'] = samples['p']
-        
-        # p_capture samples (cell-specific)
-        if 'p_capture' in samples:
-            # Shape: (n_samples, n_cells)
-            new_posterior_samples['p_capture'] = samples['p_capture']
-        
-        # mixing weights if present
-        if 'mixing_weights' in samples:
-            # Shape: (n_samples, n_components)
-            new_posterior_samples['mixing_weights'] = samples['mixing_weights']
-
-        return new_posterior_samples
+                new_samples[key] = samples[key][..., index]
+        return new_samples
 
     # --------------------------------------------------------------------------
 
@@ -854,8 +812,21 @@ class ScribeSVIResults:
 
     def _model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the model and guide functions based on model type."""
-        from .model_registry import get_model_and_guide
-        return get_model_and_guide(self.model_type)
+        from ..models.model_registry import get_model_and_guide
+        parameterization = self.model_config.parameterization or ""
+        return get_model_and_guide(
+            self.model_type, 
+            parameterization
+        )
+
+    
+    # --------------------------------------------------------------------------
+    # Get parameterization
+    # --------------------------------------------------------------------------
+
+    def _parameterization(self) -> str:
+        """Get the parameterization type."""
+        return self.model_config.parameterization or ""
 
     # --------------------------------------------------------------------------
     # Get log likelihood function
@@ -863,7 +834,7 @@ class ScribeSVIResults:
 
     def _log_likelihood_fn(self) -> Callable:
         """Get the log likelihood function for this model type."""
-        from .model_registry import get_log_likelihood_fn
+        from ..models.model_registry import get_log_likelihood_fn
         return get_log_likelihood_fn(self.model_type)
 
     # --------------------------------------------------------------------------
@@ -1557,20 +1528,18 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get concentration distribution from ConstrainedModelConfig (NB2 parameterization)
-        if (self.model_config.concentration_distribution_guide is not None and 
-            hasattr(self.model_config.concentration_distribution_guide, '__class__')):
-            concentration_distribution = type(self.model_config.concentration_distribution_guide)
-            # Define corresponding Hellinger distance function
-            if concentration_distribution == dist.LogNormal:
-                hellinger_distance_fn = hellinger_lognormal
-            elif concentration_distribution == dist.Gamma:
-                hellinger_distance_fn = hellinger_gamma
-            else:
-                raise ValueError(
-                    f"Unsupported distribution type: {concentration_distribution}. "
-                    "Must be 'lognormal' or 'gamma'."
-                )
+        # Get r distribution from ModelConfig
+        r_distribution = type(self.model_config.r_distribution_guide)
+        # Define corresponding Hellinger distance function
+        if r_distribution == dist.LogNormal:
+            hellinger_distance_fn = hellinger_lognormal
+        elif r_distribution == dist.Gamma:
+            hellinger_distance_fn = hellinger_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
 
             # Extract parameters from concentration distribution based on distribution type
             if concentration_distribution == dist.LogNormal:
@@ -1667,20 +1636,18 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get concentration distribution from ConstrainedModelConfig (NB2 parameterization)
-        if (self.model_config.concentration_distribution_guide is not None and 
-            hasattr(self.model_config.concentration_distribution_guide, '__class__')):
-            concentration_distribution = type(self.model_config.concentration_distribution_guide)
-            # Define corresponding KL divergence function
-            if concentration_distribution == dist.LogNormal:
-                kl_divergence_fn = kl_lognormal
-            elif concentration_distribution == dist.Gamma:
-                kl_divergence_fn = kl_gamma
-            else:
-                raise ValueError(
-                    f"Unsupported distribution type: {concentration_distribution}. "
-                    "Must be 'lognormal' or 'gamma'."
-                )
+        # Get r distribution from ModelConfig
+        r_distribution = type(self.model_config.r_distribution_guide)
+        # Define corresponding KL divergence function
+        if r_distribution == dist.LogNormal:
+            kl_divergence_fn = kl_lognormal
+        elif r_distribution == dist.Gamma:
+            kl_divergence_fn = kl_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
 
             # Extract parameters from concentration distribution based on distribution type
             if concentration_distribution == dist.LogNormal:
@@ -1784,20 +1751,19 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get concentration distribution from ConstrainedModelConfig (NB2 parameterization)
-        if (self.model_config.concentration_distribution_guide is not None and 
-            hasattr(self.model_config.concentration_distribution_guide, '__class__')):
-            concentration_distribution = type(self.model_config.concentration_distribution_guide)
-            # Define corresponding JS divergence function based on distribution type
-            if concentration_distribution == dist.LogNormal:
-                js_divergence_fn = jensen_shannon_lognormal
-            elif concentration_distribution == dist.Gamma:
-                js_divergence_fn = jensen_shannon_gamma
-            else:
-                raise ValueError(
-                    f"Unsupported distribution type: {concentration_distribution}. "
-                    "Must be 'lognormal' or 'gamma'."
-                )
+        # Get r distribution from ModelConfig
+        r_distribution = type(self.model_config.r_distribution_guide)
+        
+        # Define corresponding JS divergence function based on distribution type
+        if r_distribution == dist.LogNormal:
+            js_divergence_fn = jensen_shannon_lognormal
+        elif r_distribution == dist.Gamma:
+            js_divergence_fn = jensen_shannon_gamma
+        else:
+            raise ValueError(
+                f"Unsupported distribution type: {r_distribution}. "
+                "Must be 'lognormal' or 'gamma'."
+            )
 
             # Extract parameters from concentration distribution based on distribution type
             if concentration_distribution == dist.LogNormal:
