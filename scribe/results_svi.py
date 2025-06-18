@@ -36,6 +36,11 @@ from .cell_assignment import (
     temperature_scaling
 )
 
+try:
+    from anndata import AnnData
+except ImportError:
+    AnnData = None
+
 # ------------------------------------------------------------------------------
 # Base class for inference results
 # ------------------------------------------------------------------------------
@@ -175,7 +180,7 @@ class ScribeSVIResults:
     @classmethod
     def from_anndata(
         cls,
-        adata: "AnnData",
+        adata: Any,
         params: Dict,
         loss_history: jnp.ndarray,
         model_config: ConstrainedModelConfig,
@@ -274,18 +279,26 @@ class ScribeSVIResults:
         # Add mixing weights if mixture model
         if self.model_config.n_components is not None:
             # Extract mixing weights
-            mixing_params = self.params[f"mixing_concentration"]
-            
+            mixing_params = self.params.get(f"mixing_concentration", None)
             if backend == "scipy":
-                distributions['mixing_weights'] = numpyro_to_scipy(
-                    self.model_config.mixing_distribution_guide.__class__(
-                        concentration=mixing_params
-                    )
-                )
+                if self.model_config.mixing_distribution_guide is not None and mixing_params is not None:
+                    # Only pass 'concentration' if the constructor supports it
+                    try:
+                        distributions['mixing_weights'] = numpyro_to_scipy(
+                            self.model_config.mixing_distribution_guide.__class__(
+                                concentration=mixing_params
+                            )
+                        )
+                    except TypeError:
+                        pass
             else:
-                distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
-                    concentration=mixing_params
-                )
+                if self.model_config.mixing_distribution_guide is not None and mixing_params is not None:
+                    try:
+                        distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
+                            concentration=mixing_params
+                        )
+                    except TypeError:
+                        pass
         
         return distributions
 
@@ -350,102 +363,89 @@ class ScribeSVIResults:
     # Indexing by genes
     # --------------------------------------------------------------------------
 
+    @staticmethod
+    def _subset_gene_params(params, param_prefixes, index, n_components=None):
+        """
+        Utility to subset all gene-specific parameters in params dict.
+        param_prefixes: list of parameter name prefixes (e.g., ["r_", "mu_",
+        "gate_"]) index: boolean or integer index for genes n_components: if not
+        None, keep component dimension
+        """
+        new_params = dict(params)
+        for prefix, arg_constraints in param_prefixes:
+            if arg_constraints is None:
+                continue
+            for param_name in arg_constraints:
+                key = f"{prefix}{param_name}"
+                if key in params:
+                    if n_components is not None:
+                        new_params[key] = params[key][..., index]
+                    else:
+                        new_params[key] = params[key][index]
+        return new_params
+
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create a new parameter dictionary for the given index.
         """
-        new_params = dict(params)
-        
-        # Handle r parameters (always gene-specific)
-        r_param_names = list(self.model_config.r_distribution_guide.arg_constraints.keys())
-        for param_name in r_param_names:
-            param_key = f"r_{param_name}"
-            if param_key in params:
-                if self.n_components is not None:
-                    # Keep component dimension but subset gene dimension
-                    new_params[param_key] = params[param_key][..., index]
-                else:
-                    # Just subset gene dimension
-                    new_params[param_key] = params[param_key][index]
-        
-        # Handle gate parameters if present (gene-specific)
-        if self.model_config.gate_distribution_guide is not None:
-            gate_param_names = list(self.model_config.gate_distribution_guide.arg_constraints.keys())
-            for param_name in gate_param_names:
-                param_key = f"gate_{param_name}"
-                if param_key in params:
-                    if self.n_components is not None:
-                        # Keep component dimension but subset gene dimension
-                        new_params[param_key] = params[param_key][..., index]
-                    else:
-                        # Just subset gene dimension
-                        new_params[param_key] = params[param_key][index]
-        
-        return new_params
+        # Build list of (prefix, arg_constraints) for all gene-specific params
+        param_prefixes = []
+        # r
+        r_dist_guide = getattr(self.model_config, "r_distribution_guide", None)
+        param_prefixes.append(
+            ("r_", getattr(r_dist_guide, "arg_constraints", None))
+        )
+        # mu (if present)
+        mu_dist_guide = getattr(
+            self.model_config, "mu_distribution_guide", None
+        )
+        if mu_dist_guide is not None:
+            param_prefixes.append(
+                ("mu_", getattr(mu_dist_guide, "arg_constraints", None))
+            )
+        # gate (if present)
+        gate_dist_guide = getattr(
+            self.model_config, "gate_distribution_guide", None
+        )
+        if gate_dist_guide is not None:
+            param_prefixes.append(
+                ("gate_", getattr(gate_dist_guide, "arg_constraints", None))
+            )
+        # (extend here for other gene-specific params if needed)
+        return self._subset_gene_params(
+            params, 
+            param_prefixes, 
+            index, 
+            n_components=self.n_components
+        )
 
     # --------------------------------------------------------------------------
 
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
         Create a new posterior samples dictionary for the given index.
-        
-        Parameters
-        ----------
-        samples : Dict
-            Dictionary of samples from the posterior distribution, where each
-            key represents a parameter type ('r', 'p', 'gate', etc.) and values
-            are arrays of samples
-        index : array-like
-            Boolean or integer index specifying which genes to keep
-            
-        Returns
-        -------
-        Dict
-            New dictionary containing posterior samples for the selected genes
         """
         if samples is None:
             return None
-            
-        new_posterior_samples = {}
-        
-        # Handle gene-specific parameters
-        
-        # r samples (always gene-specific)
+        # List of gene-specific keys to subset
+        gene_keys = []
+        # r
         if 'r' in samples:
-            if self.n_components is not None:
-                # Shape: (n_samples, n_components, n_genes)
-                new_posterior_samples['r'] = samples['r'][..., index]
-            else:
-                # Shape: (n_samples, n_genes)
-                new_posterior_samples['r'] = samples['r'][..., index]
-        
-        # gate samples (gene-specific if present)
+            gene_keys.append('r')
+        # mu
+        if 'mu' in samples:
+            gene_keys.append('mu')
+        # gate
         if 'gate' in samples:
+            gene_keys.append('gate')
+        # (extend here for other gene-specific keys if needed)
+        new_samples = dict(samples)
+        for key in gene_keys:
             if self.n_components is not None:
-                # Shape: (n_samples, n_components, n_genes)
-                new_posterior_samples['gate'] = samples['gate'][..., index]
+                new_samples[key] = samples[key][..., index]
             else:
-                # Shape: (n_samples, n_genes)
-                new_posterior_samples['gate'] = samples['gate'][..., index]
-        
-        # Copy non-gene-specific parameters as is
-        
-        # p samples (global)
-        if 'p' in samples:
-            # Shape: (n_samples,) or (n_samples, n_components)
-            new_posterior_samples['p'] = samples['p']
-        
-        # p_capture samples (cell-specific)
-        if 'p_capture' in samples:
-            # Shape: (n_samples, n_cells)
-            new_posterior_samples['p_capture'] = samples['p_capture']
-        
-        # mixing weights if present
-        if 'mixing_weights' in samples:
-            # Shape: (n_samples, n_components)
-            new_posterior_samples['mixing_weights'] = samples['mixing_weights']
-
-        return new_posterior_samples
+                new_samples[key] = samples[key][..., index]
+        return new_samples
 
     # --------------------------------------------------------------------------
 
@@ -717,9 +717,10 @@ class ScribeSVIResults:
     def _model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the model and guide functions based on model type."""
         from .model_registry import get_model_and_guide
+        parameterization = self.model_config.parameterization or ""
         return get_model_and_guide(
             self.model_type, 
-            self.model_config.parameterization
+            parameterization
         )
 
     
@@ -729,7 +730,7 @@ class ScribeSVIResults:
 
     def _parameterization(self) -> str:
         """Get the parameterization type."""
-        return self.model_config.parameterization
+        return self.model_config.parameterization or ""
 
     # --------------------------------------------------------------------------
     # Get log likelihood function
