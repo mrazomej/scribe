@@ -154,6 +154,13 @@ class ConstrainedModelConfig(AbstractModelConfig):
     p_capture_distribution_guide: Optional[dist.Distribution] = None
     p_capture_param_prior: Optional[tuple] = None
     p_capture_param_guide: Optional[tuple] = None
+
+    # Optional: Capture odds ratio distributions
+    phi_capture_distribution_model: Optional[dist.Distribution] = None
+    phi_capture_distribution_guide: Optional[dist.Distribution] = None
+    phi_capture_param_prior: Optional[tuple] = None
+    phi_capture_param_guide: Optional[tuple] = None
+
     
     # Optional: Mixture model distributions
     mixing_distribution_model: Optional[dist.Distribution] = None

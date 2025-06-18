@@ -98,11 +98,19 @@ def get_model_and_guide(
     
     # Handle Negative Binomial with variable mRNA capture probability model
     elif model_type == "nbvcp":
-        # Import model and guide functions locally to avoid circular imports
-        from .models import nbvcp_model, nbvcp_guide
-        if parameterization != "mean_field":
-            raise ValueError(f"Guide type '{parameterization}' not yet supported for model '{model_type}'")
-        return nbvcp_model, nbvcp_guide
+       # Import model function
+        from .models import nbvcp_model
+        
+        # Select guide based on guide_type
+        if parameterization == "mean_field":
+            from .models import nbvcp_guide
+            return nbvcp_model, nbvcp_guide
+        elif parameterization == "mean_variance":
+            from .models import nbvcp_guide_mean_variance
+            return nbvcp_model, nbvcp_guide_mean_variance
+        elif parameterization == "beta_prime":
+            from .models import nbvcp_guide_beta_prime
+            return nbvcp_model, nbvcp_guide_beta_prime
     
     # Handle Zero-Inflated Negative Binomial with variable capture probability
     elif model_type == "zinbvcp":

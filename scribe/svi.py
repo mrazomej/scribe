@@ -213,6 +213,7 @@ def run_scribe(
     mu_dist: Optional[str] = None,
     mu_prior: Optional[tuple] = None,
     phi_prior: Optional[tuple] = None,
+    phi_capture_prior: Optional[tuple] = None,
     loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
 ) -> ScribeSVIResults:
     """
@@ -375,8 +376,13 @@ def run_scribe(
         p_prior = (1, 1)
     if "zinb" in model_type and gate_prior is None:
         gate_prior = (1, 1)
-    if "vcp" in model_type and p_capture_prior is None:
+    if "vcp" in model_type and p_capture_prior is None and (
+        parameterization == "mean_field" or parameterization == "mean_variance"
+    ):
         p_capture_prior = (1, 1)
+    if ("vcp" in model_type and phi_capture_prior is None and 
+        parameterization == "beta_prime"):
+        phi_capture_prior = (1, 1)
     if "mix" in model_type and mixing_prior is None:
         mixing_prior = jnp.ones(n_components)
     if mu_prior is None and (
@@ -420,7 +426,9 @@ def run_scribe(
     # Configure capture probability distribution if needed
     p_capture_dist_model = None
     p_capture_dist_guide = None
-    if "vcp" in model_type:
+    if "vcp" in model_type and (
+        parameterization == "mean_field" or parameterization == "mean_variance"
+    ):
         p_capture_dist_model = dist.Beta(*p_capture_prior)
         p_capture_dist_guide = p_capture_dist_model
 
@@ -455,6 +463,14 @@ def run_scribe(
     if parameterization == "beta_prime":
         phi_dist_model = BetaPrime(*phi_prior)
         phi_dist_guide = phi_dist_model
+
+    # Configure capture odds ratio distribution if needed
+    phi_capture_dist_model = None
+    phi_capture_dist_guide = None
+    if "vcp" in model_type and parameterization == "beta_prime":
+        phi_capture_dist_model = BetaPrime(*phi_capture_prior)
+        phi_capture_dist_guide = phi_capture_dist_model
+
         
     # Create model_config with all the configurations
     model_config = ConstrainedModelConfig(
@@ -475,6 +491,10 @@ def run_scribe(
         p_capture_distribution_guide=p_capture_dist_guide,
         p_capture_param_prior=p_capture_prior if p_capture_dist_model else None,
         p_capture_param_guide=p_capture_prior if p_capture_dist_model else None,
+        phi_capture_distribution_model=phi_capture_dist_model,
+        phi_capture_distribution_guide=phi_capture_dist_guide,
+        phi_capture_param_prior=phi_capture_prior if phi_capture_dist_model else None,
+        phi_capture_param_guide=phi_capture_prior if phi_capture_dist_model else None,
         n_components=n_components,
         mixing_distribution_model=mixing_dist_model,
         mixing_distribution_guide=mixing_dist_guide,
@@ -545,8 +565,15 @@ def run_scribe(
     if model_type == "zinb" or model_type == "zinbvcp":
         prior_params["gate_prior"] = gate_prior
 
-    if model_type == "nbvcp" or model_type == "zinbvcp":
+    if (model_type == "nbvcp" or model_type == "zinbvcp") and (
+        parameterization == "mean_field" or parameterization == "mean_variance"
+    ):
         prior_params["p_capture_prior"] = p_capture_prior
+
+    if (model_type == "nbvcp" or model_type == "zinbvcp") and (
+        parameterization == "beta_prime"
+    ):
+        prior_params["phi_capture_prior"] = phi_capture_prior
 
     if "mix" in model_type:
         prior_params["mixing_prior"] = mixing_prior
