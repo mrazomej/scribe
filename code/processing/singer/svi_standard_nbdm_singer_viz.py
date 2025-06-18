@@ -69,7 +69,7 @@ n_steps = 50_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization}_{model_type}_results_" \
+        f"svi_{parameterization}_{model_type}_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"

@@ -32,7 +32,7 @@ colors = scribe.viz.colors()
 model_type = "zinb"
 
 # Define parameterization
-parameterization = "beta_prime"
+parameterization = "odds_ratio"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -69,7 +69,7 @@ n_steps = 50_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization}_{model_type}_results_" \
+        f"svi_{parameterization}_{model_type}_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"
