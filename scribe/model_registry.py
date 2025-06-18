@@ -114,11 +114,19 @@ def get_model_and_guide(
     
     # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
     elif model_type == "nbdm_mix":
-        # Import model and guide functions locally to avoid circular imports
-        from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
-        if parameterization != "mean_field":
-            raise ValueError(f"Parameterization '{parameterization}' not yet supported for model '{model_type}'")
-        return nbdm_mixture_model, nbdm_mixture_guide
+        # Import model function
+        from .models_mix import nbdm_mixture_model
+        
+        # Select guide based on guide_type
+        if parameterization == "mean_field":
+            from .models_mix import nbdm_mixture_guide
+            return nbdm_mixture_model, nbdm_mixture_guide
+        elif parameterization == "mean_variance":
+            from .models_mix import nbdm_mixture_guide_mean_variance
+            return nbdm_mixture_model, nbdm_mixture_guide_mean_variance
+        elif parameterization == "beta_prime":
+            from .models_mix import nbdm_mixture_guide_beta_prime
+            return nbdm_mixture_model, nbdm_mixture_guide_beta_prime
 
     # Handle Zero-Inflated Negative Binomial Mixture Model
     elif model_type == "zinb_mix":
