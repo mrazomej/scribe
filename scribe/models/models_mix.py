@@ -329,7 +329,7 @@ def nbdm_mixture_guide_linked(
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the NBDM mixture model.
+    Linked parameterization parameterized variational guide for the NBDM mixture model.
     
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
@@ -369,11 +369,11 @@ def nbdm_mixture_guide_linked(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mixing_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mixing_distribution_guide'.")
     if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components
@@ -473,13 +473,13 @@ def nbdm_mixture_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mixing_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mixing_distribution_guide'.")
     if model_config.phi_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
     if model_config.phi_capture_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_capture_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components
@@ -867,7 +867,7 @@ def zinb_mixture_guide_linked(
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the ZINB mixture model.
+    Linked parameterization parameterized variational guide for the ZINB mixture model.
     
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
@@ -907,13 +907,13 @@ def zinb_mixture_guide_linked(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mixing_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mixing_distribution_guide'.")
     if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'gate_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'gate_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components
@@ -1069,13 +1069,13 @@ def zinb_mixture_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mixing_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mixing_distribution_guide'.")
     if model_config.phi_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'gate_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components
@@ -1687,7 +1687,7 @@ def nbvcp_mixture_guide_linked(
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the Negative Binomial
+    Linked parameterization parameterized variational guide for the Negative Binomial
     mixture model with variable capture probability.
 
     This guide implements a mean-variance parameterization that captures the
@@ -1725,13 +1725,13 @@ def nbvcp_mixture_guide_linked(
     """
     # Check if required distributions are available
     if not hasattr(model_config, 'mixing_distribution_guide') or model_config.mixing_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mixing_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mixing_distribution_guide'.")
     if not hasattr(model_config, 'p_distribution_guide') or model_config.p_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
     if not hasattr(model_config, 'mu_distribution_guide') or model_config.mu_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
     if not hasattr(model_config, 'p_capture_distribution_guide') or model_config.p_capture_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_capture_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_capture_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components
@@ -1869,13 +1869,13 @@ def nbvcp_mixture_guide_odds_ratio(
     """
     # Check if required distributions are available
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mixing_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mixing_distribution_guide'.")
     if model_config.phi_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
     if model_config.phi_capture_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_capture_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components

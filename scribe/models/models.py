@@ -278,7 +278,7 @@ def nbdm_guide_linked(
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the Negative
+    Linked parameterization parameterized variational guide for the Negative
     Binomial-Dirichlet Multinomial (NBDM) model.
     
     This guide implements a mean-variance parameterization that captures the
@@ -332,9 +332,9 @@ def nbdm_guide_linked(
     """
     # Add checks for required distributions
     if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
 
     # Define p parameters
     p_values = model_config.p_distribution_guide.get_args()
@@ -437,9 +437,9 @@ def nbdm_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.phi_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
 
     # Define phi parameters
     phi_values = model_config.phi_distribution_guide.get_args()
@@ -765,7 +765,7 @@ def zinb_guide_linked(
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the Zero-Inflated Negative
+    Linked parameterization parameterized variational guide for the Zero-Inflated Negative
     Binomial (ZINB) model.
     
     This guide implements a mean-variance parameterization that captures the
@@ -809,11 +809,11 @@ def zinb_guide_linked(
     """
     # Add checks for required distributions
     if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'gate_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'gate_distribution_guide'.")
 
     # Define p parameters
     p_values = model_config.p_distribution_guide.get_args()
@@ -926,11 +926,11 @@ def zinb_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.phi_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'gate_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
 
     # Define phi parameters
     phi_values = model_config.phi_distribution_guide.get_args()
@@ -1384,7 +1384,7 @@ def nbvcp_guide_linked(
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the Negative Binomial
+    Linked parameterization parameterized variational guide for the Negative Binomial
     model with variable capture probability.
     
     This guide implements a mean-variance parameterization that captures the
@@ -1411,11 +1411,11 @@ def nbvcp_guide_linked(
     """
     # Add checks for required distributions
     if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
     if model_config.p_capture_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_capture_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_capture_distribution_guide'.")
 
     # Define p parameters
     p_values = model_config.p_distribution_guide.get_args()
@@ -1530,11 +1530,11 @@ def nbvcp_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.phi_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
     if model_config.phi_capture_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_capture_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
 
     # Define phi parameters
     phi_values = model_config.phi_distribution_guide.get_args()
@@ -2058,7 +2058,7 @@ def zinbvcp_guide_linked(
     batch_size=None,
 ):
     """
-    Mean-variance parameterized variational guide for the Zero-Inflated Negative
+    Linked parameterization parameterized variational guide for the Zero-Inflated Negative
     Binomial model with variable capture probability.
 
     This guide implements a mean-variance parameterization where r and p are
@@ -2110,13 +2110,13 @@ def zinbvcp_guide_linked(
     """
     # Add checks for required distributions
     if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'gate_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'gate_distribution_guide'.")
     if model_config.p_capture_distribution_guide is None:
-        raise ValueError("Mean-variance guide requires 'p_capture_distribution_guide'.")
+        raise ValueError("Linked parameterization guide requires 'p_capture_distribution_guide'.")
 
     # Define p parameters
     p_values = model_config.p_distribution_guide.get_args()
@@ -2257,13 +2257,13 @@ def zinbvcp_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.phi_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'gate_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
     if model_config.phi_capture_distribution_guide is None:
-        raise ValueError("Beta prime guide requires 'phi_capture_distribution_guide'.")
+        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
 
     # Define phi parameters
     phi_values = model_config.phi_distribution_guide.get_args()
