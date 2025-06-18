@@ -1015,9 +1015,18 @@ def nbvcp_model(
         Number of genes in the dataset
     model_config : ConstrainedModelConfig
         Configuration object containing prior distributions for model parameters:
-        - p_distribution_model: Prior for success probability p
-        - r_distribution_model: Prior for dispersion parameters r
-        - p_capture_distribution_model: Prior for capture probabilities p_capture
+        - For default parameterization:
+            - p_distribution_model: Prior for success probability p
+            - r_distribution_model: Prior for dispersion parameters r
+            - p_capture_distribution_model: Prior for capture probabilities p_capture
+        - For "mean_variance" parameterization:
+            - p_distribution_model: Prior for success probability p
+            - mu_distribution_model: Prior for gene means
+            - p_capture_distribution_model: Prior for capture probabilities p_capture
+        - For "beta_prime" parameterization:
+            - phi_distribution_model: Prior for phi parameter
+            - phi_capture_distribution_model: Prior for phi_capture parameter
+            - mu_distribution_model: Prior for gene means
     counts : array-like, optional
         Observed counts matrix of shape (n_cells, n_genes). If None, generates
         samples from the prior.
@@ -1038,31 +1047,75 @@ def nbvcp_model(
     Likelihood:
         - counts ~ NegativeBinomial(r, p_hat)
     """
-    # Define global parameters
-    # Sample base success probability
-    p = numpyro.sample("p", model_config.p_distribution_model)
+    # Check if we are using the beta-prime parameterization
+    if model_config.parameterization == "beta_prime":
+        # Sample phi and phi_capture
+        phi = numpyro.sample("phi", model_config.phi_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_genes])
+        )
+        # Compute p
+        p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+        # Compute r
+        r = numpyro.deterministic("r", mu * phi)
+    elif model_config.parameterization == "mean_variance":
+        # Sample p
+        p = numpyro.sample("p", model_config.p_distribution_model)
+        # Sample mu
+        mu = numpyro.sample(
+            "mu", 
+            model_config.mu_distribution_model.expand([n_genes])
+        )
+        # Compute r
+        r = numpyro.deterministic("r", mu * p / (1 - p))
+    else:
+        # Define global parameters
+        # Sample base success probability
+        p = numpyro.sample("p", model_config.p_distribution_model)
 
-    # Sample gene-specific dispersion parameters
-    r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
+        # Sample gene-specific dispersion parameters
+        r = numpyro.sample("r", model_config.r_distribution_model.expand([n_genes]))
 
     # If we have observed data, condition on it
     if counts is not None:
         # If batch size is not provided, use the entire dataset
         if batch_size is None:
             with numpyro.plate("cells", n_cells):
-                # Sample cell-specific capture probabilities
-                p_capture = numpyro.sample(
-                    "p_capture",
-                    model_config.p_capture_distribution_model
-                )
+                # Handle p_capture sampling based on parameterization
+                if model_config.parameterization == "beta_prime":
+                    # Sample phi_capture
+                    phi_capture = numpyro.sample(
+                        "phi_capture",
+                        model_config.phi_capture_distribution_model
+                    )
+                    # Reshape phi_capture for broadcasting
+                    phi_capture_reshaped = phi_capture[:, None]
+                    # Compute p_capture
+                    p_capture = numpyro.deterministic(
+                        "p_capture", 
+                        1.0 / (1.0 + phi_capture_reshaped)
+                    )
+                    # Compute p_hat using the derived formula
+                    p_hat = numpyro.deterministic(
+                        "p_hat",
+                        1.0 / (1 + phi + phi * phi_capture_reshaped)
+                    )
+                else:
+                    # Sample cell-specific capture probabilities
+                    p_capture = numpyro.sample(
+                        "p_capture",
+                        model_config.p_capture_distribution_model
+                    )
 
-                # Reshape p_capture for broadcasting and compute effective
-                # probability given shared p
-                p_capture_reshaped = p_capture[:, None]
-                p_hat = numpyro.deterministic(
-                    "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
-                )
+                    # Reshape p_capture for broadcasting and compute effective
+                    # probability given shared p
+                    p_capture_reshaped = p_capture[:, None]
+                    p_hat = numpyro.deterministic(
+                        "p_hat",
+                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    )
 
                 # Condition on observed counts
                 numpyro.sample(
@@ -1076,6 +1129,68 @@ def nbvcp_model(
                 n_cells,
                 subsample_size=batch_size,
             ) as idx:
+                # Handle p_capture sampling based on parameterization
+                if model_config.parameterization == "beta_prime":
+                    # Sample phi_capture
+                    phi_capture = numpyro.sample(
+                        "phi_capture",
+                        model_config.phi_capture_distribution_model
+                    )
+                    # Reshape phi_capture for broadcasting
+                    phi_capture_reshaped = phi_capture[:, None]
+                    # Compute p_capture
+                    p_capture = numpyro.deterministic(
+                        "p_capture", 
+                        1.0 / (1.0 + phi_capture_reshaped)
+                    )
+                    # Compute p_hat using the derived formula
+                    p_hat = numpyro.deterministic(
+                        "p_hat",
+                        1.0 / (1 + phi + phi * phi_capture_reshaped)
+                    )
+                else:
+                    # Sample cell-specific capture probabilities
+                    p_capture = numpyro.sample(
+                        "p_capture",
+                        model_config.p_capture_distribution_model
+                    )
+
+                    # Reshape p_capture for broadcasting and compute effective probability
+                    p_capture_reshaped = p_capture[:, None]
+                    p_hat = numpyro.deterministic(
+                        "p_hat",
+                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    )
+
+                # Condition on observed counts
+                numpyro.sample(
+                    "counts", 
+                    dist.NegativeBinomialProbs(r, p_hat).to_event(1), 
+                    obs=counts[idx]
+                )
+    else:
+        # Predictive model (no obs)
+        with numpyro.plate("cells", n_cells):
+            # Handle p_capture sampling based on parameterization
+            if model_config.parameterization == "beta_prime":
+                # Sample phi_capture
+                phi_capture = numpyro.sample(
+                    "phi_capture",
+                    model_config.phi_capture_distribution_model
+                )
+                # Reshape phi_capture for broadcasting
+                phi_capture_reshaped = phi_capture[:, None]
+                # Compute p_capture
+                p_capture = numpyro.deterministic(
+                    "p_capture", 
+                    1.0 / (1.0 + phi_capture_reshaped)
+                )
+                # Compute p_hat using the derived formula
+                p_hat = numpyro.deterministic(
+                    "p_hat",
+                    1.0 / (1 + phi + phi * phi_capture_reshaped)
+                )
+            else:
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
                     "p_capture",
@@ -1089,28 +1204,6 @@ def nbvcp_model(
                     p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
-                # Condition on observed counts
-                numpyro.sample(
-                    "counts", 
-                    dist.NegativeBinomialProbs(r, p_hat).to_event(1), 
-                    obs=counts[idx]
-                )
-    else:
-        # Predictive model (no obs)
-        with numpyro.plate("cells", n_cells):
-            # Sample cell-specific capture probabilities
-            p_capture = numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_model
-            )
-
-            # Reshape p_capture for broadcasting and compute effective probability
-            p_capture_reshaped = p_capture[:, None]
-            p_hat = numpyro.deterministic(
-                "p_hat",
-                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
-            )
-
             # Sample counts
             numpyro.sample(
                 "counts",
@@ -1118,8 +1211,7 @@ def nbvcp_model(
             )
 
 # ------------------------------------------------------------------------------
-# Beta-Gamma-Beta Variational Posterior for Negative Binomial with variable
-# capture probability
+# Variational Guide for Negative Binomial with Variable Capture Probability
 # ------------------------------------------------------------------------------
 
 def nbvcp_guide(
@@ -1130,12 +1222,58 @@ def nbvcp_guide(
     batch_size=None,
 ):
     """
-    Variational guide (approximate posterior) for the Negative Binomial model
-    with variable capture probability.
+    Wrapper for NBVCP variational guides with different parameterizations.
+    
+    Parameters
+    ----------
+    parameterization : str, default="mean_field"
+        Choice of guide parameterization:
+        - "mean_field": Independent r and p (original)
+        - "mean_variance": Correlated r and p via mean-variance relationship
+        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+    """
+    if model_config.parameterization == "mean_field":
+        return nbvcp_guide_mean_field(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    elif model_config.parameterization == "mean_variance":
+        return nbvcp_guide_mean_variance(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    elif model_config.parameterization == "beta_prime":
+        return nbvcp_guide_beta_prime(
+            n_cells, n_genes, model_config, counts, batch_size
+        )
+    else:
+        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
 
-    This guide specifies a factorized variational distribution that approximates
-    the true posterior. The variational parameters are initialized using the
-    distributions specified in model_config.
+# ------------------------------------------------------------------------------
+# Mean-Field Parameterized Guide for Negative Binomial with Variable Capture Probability
+# ------------------------------------------------------------------------------
+
+def nbvcp_guide_mean_field(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the Negative Binomial model with variable
+    capture probability.
+
+    This guide implements a mean-field approximation where the variational
+    distribution factorizes into independent distributions for each parameter.
+    Specifically:
+        - A shared success probability p ~ Beta(α_p, β_p) across all genes
+        - Gene-specific dispersion parameters r_g ~ Gamma(α_r, β_r) for each
+          gene g
+        - Cell-specific capture probabilities p_capture_c ~ Beta(α_capture,
+          β_capture) for each cell c
+
+    The guide samples from these distributions to approximate the true
+    posterior. In the mean-field approximation, p, r, and p_capture are assumed
+    to be independent.
 
     Parameters
     ----------
@@ -1232,6 +1370,240 @@ def nbvcp_guide(
             numpyro.sample(
                 "p_capture",
                 model_config.p_capture_distribution_guide.__class__(**batch_params)
+            )
+
+# ------------------------------------------------------------------------------
+# Mean-Variance Parameterized Guide for Negative Binomial with Variable Capture Probability
+# ------------------------------------------------------------------------------
+
+def nbvcp_guide_mean_variance(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-variance parameterized variational guide for the Negative Binomial
+    model with variable capture probability.
+    
+    This guide implements a mean-variance parameterization that captures the
+    correlation between the success probability p and dispersion parameters r
+    through gene-specific means μ:
+        - A shared success probability p ~ Beta(α_p, β_p) across all genes
+        - Gene-specific means μ_g ~ LogNormal(μ_μ, σ_μ) for each gene g
+        - Cell-specific capture probabilities p_capture_c ~ Beta(α_capture,
+          β_capture) for each cell c
+        - Deterministic relationship r_g = μ_g * (1 - p) / p
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing guide distributions for model parameters
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+    """
+    # Add checks for required distributions
+    if model_config.p_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'p_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'mu_distribution_guide'.")
+    if model_config.p_capture_distribution_guide is None:
+        raise ValueError("Mean-variance guide requires 'p_capture_distribution_guide'.")
+
+    # Define p parameters
+    p_values = model_config.p_distribution_guide.get_args()
+    p_constraints = model_config.p_distribution_guide.arg_constraints
+    p_params = {}
+    
+    for param_name, constraint in p_constraints.items():
+        p_params[param_name] = numpyro.param(
+            f"p_{param_name}",
+            p_values[param_name],
+            constraint=constraint
+        )
+    
+    # Define mu parameters
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
+    
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones(n_genes) * mu_values[param_name],
+            constraint=constraint
+        )
+
+    # Sample p from variational distribution
+    numpyro.sample(
+        "p", 
+        model_config.p_distribution_guide.__class__(**p_params)
+    )
+    # Sample mu from variational distribution
+    numpyro.sample(
+        "mu", 
+        model_config.mu_distribution_guide.__class__(**mu_params)
+    )
+
+    # Extract p_capture distribution values
+    p_capture_values = model_config.p_capture_distribution_guide.get_args()
+    # Extract p_capture distribution parameters and constraints
+    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    p_capture_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in p_capture_constraints.items():
+        p_capture_params[param_name] = numpyro.param(
+            f"p_capture_{param_name}",
+            jnp.ones(n_cells) * p_capture_values[param_name],
+            constraint=constraint
+        )
+
+    # Use plate for handling local parameters (p_capture)
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture", 
+                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+            )
+    else:
+        with numpyro.plate(
+            "cells",
+            n_cells,
+            subsample_size=batch_size,
+        ) as idx:
+            # Index the parameters before creating the distribution
+            batch_params = {
+                name: param[idx] for name, param in p_capture_params.items()
+            }
+            numpyro.sample(
+                "p_capture",
+                model_config.p_capture_distribution_guide.__class__(**batch_params)
+            )
+
+# ------------------------------------------------------------------------------
+# Beta-Prime Parameterized Guide for Negative Binomial with Variable Capture Probability
+# ------------------------------------------------------------------------------
+
+def nbvcp_guide_beta_prime(
+    n_cells: int,
+    n_genes: int,
+    model_config: ConstrainedModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Beta-Prime reparameterized variational guide for the Negative Binomial
+    model with variable capture probability.
+    
+    This guide implements a Beta-Prime parameterization that captures the
+    correlation between parameters through shared φ and φ_capture parameters:
+        - A shared parameter φ ~ BetaPrime(α_φ, β_φ) across all genes
+        - Gene-specific means μ_g ~ LogNormal(μ_μ, σ_μ) for each gene g
+        - Cell-specific parameters φ_capture_c ~ BetaPrime(α_φ_capture,
+          β_φ_capture) for each cell c
+        - Deterministic relationships:
+            - p = 1 / (1 + φ)
+            - r_g = μ_g * φ
+            - p_capture_c = 1 / (1 + φ_capture_c)
+            - p_hat = 1 / (1 + φ + φ * φ_capture)
+    
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ConstrainedModelConfig
+        Configuration object containing guide distributions for model parameters
+    counts : array-like, optional
+        Observed counts matrix (kept for API consistency)
+    batch_size : int, optional
+        Mini-batch size (kept for API consistency)
+    """
+    # Add checks for required distributions
+    if model_config.phi_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'phi_distribution_guide'.")
+    if model_config.mu_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'mu_distribution_guide'.")
+    if model_config.phi_capture_distribution_guide is None:
+        raise ValueError("Beta prime guide requires 'phi_capture_distribution_guide'.")
+
+    # Define phi parameters
+    phi_values = model_config.phi_distribution_guide.get_args()
+    phi_constraints = model_config.phi_distribution_guide.arg_constraints
+    phi_params = {}
+    for param_name, constraint in phi_constraints.items():
+        phi_params[param_name] = numpyro.param(
+            f"phi_{param_name}",
+            phi_values[param_name],
+            constraint=constraint
+        )
+
+    # Define mu parameters
+    mu_values = model_config.mu_distribution_guide.get_args()
+    mu_constraints = model_config.mu_distribution_guide.arg_constraints
+    mu_params = {}
+    
+    for param_name, constraint in mu_constraints.items():
+        mu_params[param_name] = numpyro.param(
+            f"mu_{param_name}",
+            jnp.ones(n_genes) * mu_values[param_name],
+            constraint=constraint
+        )
+    
+    # Sample phi from variational distribution
+    numpyro.sample(
+        "phi",
+        model_config.phi_distribution_guide.__class__(**phi_params),
+    )
+    # Sample mu from variational distribution
+    numpyro.sample(
+        "mu",
+        model_config.mu_distribution_guide.__class__(**mu_params),
+    )
+
+    # Extract phi_capture distribution values
+    phi_capture_values = model_config.phi_capture_distribution_guide.get_args()
+    # Extract phi_capture distribution parameters and constraints
+    phi_capture_constraints = model_config.phi_capture_distribution_guide.arg_constraints
+    # Initialize parameters for each constraint in the distribution
+    phi_capture_params = {}
+    # Loop through each constraint in the distribution
+    for param_name, constraint in phi_capture_constraints.items():
+        phi_capture_params[param_name] = numpyro.param(
+            f"phi_capture_{param_name}",
+            jnp.ones(n_cells) * phi_capture_values[param_name],
+            constraint=constraint
+        )
+
+    # Use plate for handling local parameters (phi_capture)
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture", 
+                model_config.phi_capture_distribution_guide.__class__(**phi_capture_params)
+            )
+    else:
+        with numpyro.plate(
+            "cells",
+            n_cells,
+            subsample_size=batch_size,
+        ) as idx:
+            # Index the parameters before creating the distribution
+            batch_params = {
+                name: param[idx] for name, param in phi_capture_params.items()
+            }
+            numpyro.sample(
+                "phi_capture",
+                model_config.phi_capture_distribution_guide.__class__(**batch_params)
             )
 
 # ------------------------------------------------------------------------------
