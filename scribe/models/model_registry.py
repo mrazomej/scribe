@@ -20,7 +20,10 @@ def get_model_and_guide(
     unconstrained model and None for the guide.
 
     This function returns the appropriate model and guide functions based on the
-    requested model type and guide parameterization. Currently supports:
+    requested model type. The guide functions are wrapper functions that handle
+    parameterization routing internally based on model_config.parameterization.
+
+    Currently supports:
         - "nbdm": Negative Binomial-Dirichlet Multinomial model
         - "zinb": Zero-Inflated Negative Binomial model
         - "nbvcp": Negative Binomial with variable mRNA capture probability
@@ -47,18 +50,21 @@ def get_model_and_guide(
             - "odds_ratio": Correlated r-p parameters via beta-prime
               parameterization
             - "unconstrained": Use the unconstrained model
+        Note: For constrained models, parameterization is handled by the guide
+        wrapper functions based on model_config.parameterization.
 
     Returns
     -------
     Tuple[Callable, Optional[Callable]]
         A tuple containing (model_function, guide_function) for the requested
-        model type and guide type. If parameterization is 'unconstrained', the
-        guide_function is None.
+        model type. If parameterization is 'unconstrained', the guide_function
+        is None. Otherwise, guide_function is a wrapper that routes to the
+        appropriate parameterized guide based on model_config.parameterization.
 
     Raises
     ------
     ValueError
-        If an unsupported model type or guide type is provided.
+        If an unsupported model type or parameterization is provided.
     """
     if parameterization == "unconstrained":
         # Unconstrained models
@@ -89,129 +95,39 @@ def get_model_and_guide(
         else:
             raise ValueError(f"Unknown model type for unconstrained parameterization: {model_type}")
 
-    valid_guide_types = ["standard", "linked", "odds_ratio"]
-    if parameterization not in valid_guide_types:
+    # Validate parameterization for constrained models
+    valid_parameterizations = ["standard", "linked", "odds_ratio"]
+    if parameterization not in valid_parameterizations:
         raise ValueError(
-            f"Unknown guide type: {parameterization}. "
-            f"Must be one of {valid_guide_types} or 'unconstrained'"
+            f"Unknown parameterization: {parameterization}. "
+            f"Must be one of {valid_parameterizations} or 'unconstrained'"
         )
     
-    # Handle Negative Binomial-Dirichlet Multinomial model
+    # Handle constrained models - use wrapper functions that handle parameterization internally
     if model_type == "nbdm":
-        from .models import nbdm_model
-        
-        # Select guide based on guide_type
-        if parameterization == "standard":
-            from .models import nbdm_guide
-            return nbdm_model, nbdm_guide
-        elif parameterization == "linked":
-            from .models import nbdm_guide_linked
-            return nbdm_model, nbdm_guide_linked
-        elif parameterization == "odds_ratio":
-            from .models import nbdm_guide_odds_ratio
-            return nbdm_model, nbdm_guide_odds_ratio
-    
-    # Handle Zero-Inflated Negative Binomial model
+        from .models import nbdm_model, nbdm_guide
+        return nbdm_model, nbdm_guide
     elif model_type == "zinb":
-        from .models import zinb_model
-        
-        # Select guide based on guide_type
-        if parameterization == "standard":
-            from .models import zinb_guide
-            return zinb_model, zinb_guide
-        elif parameterization == "linked":
-            from .models import zinb_guide_linked
-            return zinb_model, zinb_guide_linked
-        elif parameterization == "odds_ratio":
-            from .models import zinb_guide_odds_ratio
-            return zinb_model, zinb_guide_odds_ratio
-    
-    # Handle Negative Binomial with variable mRNA capture probability model
+        from .models import zinb_model, zinb_guide
+        return zinb_model, zinb_guide
     elif model_type == "nbvcp":
-        from .models import nbvcp_model
-        
-        # Select guide based on guide_type
-        if parameterization == "standard":
-            from .models import nbvcp_guide
-            return nbvcp_model, nbvcp_guide
-        elif parameterization == "linked":
-            from .models import nbvcp_guide_linked
-            return nbvcp_model, nbvcp_guide_linked
-        elif parameterization == "odds_ratio":
-            from .models import nbvcp_guide_odds_ratio
-            return nbvcp_model, nbvcp_guide_odds_ratio
-    
-    # Handle Zero-Inflated Negative Binomial with variable capture probability
+        from .models import nbvcp_model, nbvcp_guide
+        return nbvcp_model, nbvcp_guide
     elif model_type == "zinbvcp":
-        from .models import zinbvcp_model
-        
-        # Select guide based on guide_type
-        if parameterization == "standard":
-            from .models import zinbvcp_guide
-            return zinbvcp_model, zinbvcp_guide
-        elif parameterization == "linked":
-            from .models import zinbvcp_guide_linked
-            return zinbvcp_model, zinbvcp_guide_linked
-        elif parameterization == "odds_ratio":
-            from .models import zinbvcp_guide_odds_ratio
-            return zinbvcp_model, zinbvcp_guide_odds_ratio
-    
-    # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
+        from .models import zinbvcp_model, zinbvcp_guide
+        return zinbvcp_model, zinbvcp_guide
     elif model_type == "nbdm_mix":
-        from .models_mix import nbdm_mixture_model
-        
-        # Select guide based on guide_type
-        if parameterization == "standard":
-            from .models_mix import nbdm_mixture_guide
-            return nbdm_mixture_model, nbdm_mixture_guide
-        elif parameterization == "linked":
-            from .models_mix import nbdm_mixture_guide_linked
-            return nbdm_mixture_model, nbdm_mixture_guide_linked
-        elif parameterization == "odds_ratio":
-            from .models_mix import nbdm_mixture_guide_odds_ratio
-            return nbdm_mixture_model, nbdm_mixture_guide_odds_ratio
-
-    # Handle Zero-Inflated Negative Binomial Mixture Model
+        from .models_mix import nbdm_mixture_model, nbdm_mixture_guide
+        return nbdm_mixture_model, nbdm_mixture_guide
     elif model_type == "zinb_mix":
-        from .models_mix import zinb_mixture_model
-        
-        # Select guide based on guide_type
-        if parameterization == "standard":
-            from .models_mix import zinb_mixture_guide
-            return zinb_mixture_model, zinb_mixture_guide
-        elif parameterization == "linked":
-            from .models_mix import zinb_mixture_guide_linked
-            return zinb_mixture_model, zinb_mixture_guide_linked
-        elif parameterization == "odds_ratio":
-            from .models_mix import zinb_mixture_guide_odds_ratio
-            return zinb_mixture_model, zinb_mixture_guide_odds_ratio
-    
-    # Handle Negative Binomial-Variable Capture Probability Mixture Model
+        from .models_mix import zinb_mixture_model, zinb_mixture_guide
+        return zinb_mixture_model, zinb_mixture_guide
     elif model_type == "nbvcp_mix":
-         # Import model function
-        from .models_mix import nbvcp_mixture_model
-        
-        # Select guide based on guide_type
-        if parameterization == "standard":
-            from .models_mix import nbvcp_mixture_guide
-            return nbvcp_mixture_model, nbvcp_mixture_guide
-        elif parameterization == "linked":
-            from .models_mix import nbvcp_mixture_guide_linked
-            return nbvcp_mixture_model, nbvcp_mixture_guide_linked
-        elif parameterization == "odds_ratio":
-            from .models_mix import nbvcp_mixture_guide_odds_ratio
-            return nbvcp_mixture_model, nbvcp_mixture_guide_odds_ratio
-    
-    # Handle Zero-Inflated Negative Binomial-Variable Capture Probability
-    # Mixture Model
+        from .models_mix import nbvcp_mixture_model, nbvcp_mixture_guide
+        return nbvcp_mixture_model, nbvcp_mixture_guide
     elif model_type == "zinbvcp_mix":
-        # Import model and guide functions locally to avoid circular imports
         from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
-        if parameterization != "standard":
-            raise ValueError(f"Guide type '{parameterization}' not yet supported for model '{model_type}'")
         return zinbvcp_mixture_model, zinbvcp_mixture_guide
-    
-    # Raise error for unsupported model types
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -307,61 +223,61 @@ def get_default_priors(model_type: str) -> Dict[str, Tuple[float, float]]:
     """
     if model_type == "nbdm":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1)
         }
     elif model_type == "zinb":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'gate_prior': (0, 1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbvcp":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0)
         }
     elif model_type == "zinbvcp":
         prior_params = {
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1),
-            'gate_prior': (0, 1)
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbdm_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1)
         }
     elif model_type == "zinb_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'gate_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbvcp_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0)
         }
     elif model_type == "zinbvcp_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (1, 0.1),
-            'p_capture_prior': (0, 1),
-            'gate_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (1.0, 0.1),
+            'p_capture_prior': (0.0, 1.0),
+            'gate_prior': (0.0, 1.0)
         }
     elif model_type == "nbdm_log_mix":
         prior_params = {
-            'mixing_prior': (0, 1),
-            'p_prior': (0, 1),
-            'r_prior': (0, 1)
+            'mixing_prior': (0.0, 1.0),
+            'p_prior': (0.0, 1.0),
+            'r_prior': (0.0, 1.0)
         }
     else:
         prior_params = {}  # Empty dict for custom models if none provided
