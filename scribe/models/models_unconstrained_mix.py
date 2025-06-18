@@ -16,7 +16,7 @@ from numpyro.distributions import constraints # Though not strictly used for unc
 from typing import Callable, Dict, Tuple, Optional
 
 # Import model config
-from .model_config import UnconstrainedModelConfig
+from .model_config import ModelConfig
 
 # ------------------------------------------------------------------------------
 # Negative Binomial Mixture Model - Unconstrained
@@ -25,7 +25,7 @@ from .model_config import UnconstrainedModelConfig
 def nbdm_mixture_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -39,7 +39,7 @@ def nbdm_mixture_model_unconstrained(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for unconstrained
         model parameters. Expected attributes include:
             - n_components: Number of mixture components.
@@ -142,7 +142,7 @@ def nbdm_mixture_model_unconstrained(
 def zinb_mixture_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -152,7 +152,7 @@ def zinb_mixture_model_unconstrained(
 
     Parameters
     ----------
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Expected attributes include those for nbdm_mixture_model_unconstrained plus:
             - gate_unconstrained_loc, gate_unconstrained_scale
 
@@ -253,7 +253,7 @@ def zinb_mixture_model_unconstrained(
 def nbvcp_mixture_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -263,7 +263,7 @@ def nbvcp_mixture_model_unconstrained(
 
     Parameters
     ----------
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Expected attributes include those for nbdm_mixture_model_unconstrained plus:
             - p_capture_unconstrained_loc, p_capture_unconstrained_scale
 
@@ -372,7 +372,7 @@ def nbvcp_mixture_model_unconstrained(
 def zinbvcp_mixture_model_unconstrained(
     n_cells: int,
     n_genes: int,
-    model_config: UnconstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -382,7 +382,7 @@ def zinbvcp_mixture_model_unconstrained(
 
     Parameters
     ----------
-    model_config : UnconstrainedModelConfig
+    model_config : ModelConfig
         Expected attributes include those for nbvcp_mixture_model_unconstrained plus:
             - gate_unconstrained_loc, gate_unconstrained_scale
 

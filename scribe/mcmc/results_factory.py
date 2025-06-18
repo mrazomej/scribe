@@ -7,7 +7,7 @@ This module handles the packaging of MCMC results into ScribeMCMCResults objects
 from typing import Union, Optional, Dict, Any
 import jax.numpy as jnp
 from ..results_mcmc import ScribeMCMCResults
-from ..model_config import ConstrainedModelConfig, UnconstrainedModelConfig
+from ..model_config import ModelConfig
 
 
 class MCMCResultsFactory:
@@ -16,7 +16,7 @@ class MCMCResultsFactory:
     @staticmethod
     def create_results(
         mcmc_results: Any,
-        model_config: Union[ConstrainedModelConfig, UnconstrainedModelConfig],
+        model_config: ModelConfig,
         adata: Optional["AnnData"],
         count_data: jnp.ndarray,
         n_cells: int,
@@ -32,7 +32,7 @@ class MCMCResultsFactory:
         ----------
         mcmc_results : Any
             Raw MCMC results from numpyro
-        model_config : Union[ConstrainedModelConfig, UnconstrainedModelConfig]
+        model_config : ModelConfig
             Model configuration object
         adata : Optional[AnnData]
             Original AnnData object (if provided)

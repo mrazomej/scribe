@@ -13,7 +13,7 @@ from scribe.sampling import (
     generate_predictive_samples,
     generate_ppc_samples
 )
-from scribe.model_config import ConstrainedModelConfig
+from scribe.model_config import ModelConfig
 from scribe.model_registry import get_model_and_guide, get_log_likelihood_fn
 
 # ------------------------------------------------------------------------------
@@ -67,7 +67,7 @@ def test_inference_run(small_dataset, rng_key):
     assert len(results.loss_history) == N_STEPS
     assert results.loss_history[-1] < results.loss_history[0]  # Loss should decrease
     assert results.model_type == "nbvcp"
-    assert isinstance(results.model_config, ConstrainedModelConfig)
+    assert isinstance(results.model_config, ModelConfig)
 
 def test_parameter_ranges(example_nbvcp_results):
     """Test that inferred parameters are in valid ranges."""

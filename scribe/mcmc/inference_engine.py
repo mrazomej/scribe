@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import random
 from numpyro.infer import MCMC, NUTS
 from ..model_registry import get_model_and_guide
-from ..model_config import ConstrainedModelConfig, UnconstrainedModelConfig
+from ..model_config import ConstrainedModelConfig, ModelConfig
 
 
 class MCMCInferenceEngine:
@@ -17,7 +17,7 @@ class MCMCInferenceEngine:
     
     @staticmethod
     def run_inference(
-        model_config: Union[ConstrainedModelConfig, UnconstrainedModelConfig],
+        model_config: Union[ConstrainedModelConfig, ModelConfig],
         count_data: jnp.ndarray,
         n_cells: int,
         n_genes: int,
@@ -31,7 +31,7 @@ class MCMCInferenceEngine:
         
         Parameters
         ----------
-        model_config : Union[ConstrainedModelConfig, UnconstrainedModelConfig]
+        model_config : Union[ConstrainedModelConfig, ModelConfig]
             Model configuration object
         count_data : jnp.ndarray
             Processed count data (cells as rows)
@@ -54,7 +54,7 @@ class MCMCInferenceEngine:
             Results from MCMC run containing samples and diagnostics
         """
         # Determine if this is an unconstrained model
-        is_unconstrained = isinstance(model_config, UnconstrainedModelConfig)
+        is_unconstrained = isinstance(model_config, ModelConfig)
         
         # Get model function (no guide needed for MCMC)
         if is_unconstrained:

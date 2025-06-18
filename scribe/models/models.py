@@ -24,7 +24,7 @@ from ..stats import BetaPrime
 def nbdm_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -49,7 +49,7 @@ def nbdm_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for model
         parameters: 
             - p_distribution_model: Prior for success probability p
@@ -140,7 +140,7 @@ def nbdm_model(
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -177,7 +177,7 @@ def nbdm_guide(
 def nbdm_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -212,7 +212,7 @@ def nbdm_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing: - p_distribution_guide: Guide
         distribution for success probability p
           (Beta distribution with parameters α_p, β_p)
@@ -273,7 +273,7 @@ def nbdm_guide_mean_field(
 def nbdm_guide_mean_variance(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -311,7 +311,7 @@ def nbdm_guide_mean_variance(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing: - p_distribution_guide: Guide
         distribution for success probability p
           (Beta distribution with parameters α_p, β_p)
@@ -376,7 +376,7 @@ def nbdm_guide_mean_variance(
 def nbdm_guide_beta_prime(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -415,7 +415,7 @@ def nbdm_guide_beta_prime(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing: - phi_distribution_guide: Guide
         distribution for φ (BetaPrime
           distribution with parameters α_φ, β_φ)
@@ -482,7 +482,7 @@ def nbdm_guide_beta_prime(
 def zinb_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -500,7 +500,7 @@ def zinb_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object for model distributions containing:
         - For default parameterization:
             - p_distribution_model: Distribution for success probability p
@@ -606,7 +606,7 @@ def zinb_model(
 def zinb_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -643,7 +643,7 @@ def zinb_guide(
 def zinb_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -680,7 +680,7 @@ def zinb_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters: - p_distribution_guide: Guide distribution for success
         probability p - r_distribution_guide: Guide distribution for dispersion
@@ -760,7 +760,7 @@ def zinb_guide_mean_field(
 def zinb_guide_mean_variance(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -796,7 +796,7 @@ def zinb_guide_mean_variance(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters: - p_distribution_guide: Guide distribution for success
         probability p - mu_distribution_guide: Guide distribution for gene means
@@ -874,7 +874,7 @@ def zinb_guide_mean_variance(
 def zinb_guide_beta_prime(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -913,7 +913,7 @@ def zinb_guide_beta_prime(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters: - phi_distribution_guide: Guide distribution for φ
         (BetaPrime distribution) - mu_distribution_guide: Guide distribution for
@@ -989,7 +989,7 @@ def zinb_guide_beta_prime(
 def nbvcp_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1013,7 +1013,7 @@ def nbvcp_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for model parameters:
         - For default parameterization:
             - p_distribution_model: Prior for success probability p
@@ -1217,7 +1217,7 @@ def nbvcp_model(
 def nbvcp_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1254,7 +1254,7 @@ def nbvcp_guide(
 def nbvcp_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1281,7 +1281,7 @@ def nbvcp_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing the variational distribution
         specifications:
             - p_distribution_guide: Distribution for success probability p
@@ -1379,7 +1379,7 @@ def nbvcp_guide_mean_field(
 def nbvcp_guide_mean_variance(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1402,7 +1402,7 @@ def nbvcp_guide_mean_variance(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model parameters
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
@@ -1495,7 +1495,7 @@ def nbvcp_guide_mean_variance(
 def nbvcp_guide_beta_prime(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1521,7 +1521,7 @@ def nbvcp_guide_beta_prime(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model parameters
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
@@ -1613,7 +1613,7 @@ def nbvcp_guide_beta_prime(
 def zinbvcp_model(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1638,7 +1638,7 @@ def zinbvcp_model(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing prior distributions for model
         parameters:
         - For default parameterization:
@@ -1866,7 +1866,7 @@ def zinbvcp_model(
 def zinbvcp_guide(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1903,7 +1903,7 @@ def zinbvcp_guide(
 def zinbvcp_guide_mean_field(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -1932,7 +1932,7 @@ def zinbvcp_guide_mean_field(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing the variational distribution
         specifications:
             - p_distribution_guide: Distribution for success probability p
@@ -2053,7 +2053,7 @@ def zinbvcp_guide_mean_field(
 def zinbvcp_guide_mean_variance(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -2082,7 +2082,7 @@ def zinbvcp_guide_mean_variance(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing the variational distribution
         specifications:
             - p_distribution_guide: Distribution for success probability p
@@ -2214,7 +2214,7 @@ def zinbvcp_guide_mean_variance(
 def zinbvcp_guide_beta_prime(
     n_cells: int,
     n_genes: int,
-    model_config: ConstrainedModelConfig,
+    model_config: ModelConfig,
     counts=None,
     batch_size=None,
 ):
@@ -2243,7 +2243,7 @@ def zinbvcp_guide_beta_prime(
         Number of cells in the dataset
     n_genes : int
         Number of genes in the dataset
-    model_config : ConstrainedModelConfig
+    model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters: - phi_distribution_guide: Guide distribution for φ
         (BetaPrime distribution) - mu_distribution_guide: Guide distribution for

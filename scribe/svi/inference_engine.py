@@ -11,7 +11,7 @@ from jax import random
 import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
 from ..model_registry import get_model_and_guide
-from ..model_config import ConstrainedModelConfig
+from ..model_config import ModelConfig
 
 
 class SVIInferenceEngine:
@@ -19,7 +19,7 @@ class SVIInferenceEngine:
     
     @staticmethod
     def run_inference(
-        model_config: ConstrainedModelConfig,
+        model_config: ModelConfig,
         count_data: jnp.ndarray,
         n_cells: int,
         n_genes: int,
@@ -35,7 +35,7 @@ class SVIInferenceEngine:
         
         Parameters
         ----------
-        model_config : ConstrainedModelConfig
+        model_config : ModelConfig
             Model configuration object
         count_data : jnp.ndarray
             Processed count data (cells as rows)
