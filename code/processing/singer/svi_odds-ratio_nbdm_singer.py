@@ -63,7 +63,7 @@ jax.clear_caches()
 file_name = f"{OUTPUT_DIR}/" \
         f"svi_{parameterization.replace('_', '-')}_" \
         f"{model_type}_" \
-        f"results_" \
+        f"" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"
