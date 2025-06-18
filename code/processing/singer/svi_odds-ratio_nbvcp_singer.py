@@ -1,34 +1,11 @@
 # %% ---------------------------------------------------------------------------
-# Import base libraries
-# Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
+
 import os
-
-# Force JAX to use CPU only
-os.environ['JAX_PLATFORMS'] = 'cpu'
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-os.environ['JAX_PLATFORM_NAME'] = 'cpu'
-
-# Set XLA optimization flags
-os.environ['XLA_FLAGS'] = '--xla_cpu_enable_fast_math --xla_cpu_enable_xprof_traceme'
-
-# Set the fraction of memory JAX is allowed to use (e.g., 90% of available RAM)
-os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
-
-# Preallocate a specific amount of memory (in bytes)
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
-
-# Disable the memory preallocation completely
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-
 import pickle
 import gc
 
 # Import JAX-related libraries
 import jax
-# Enable 64-bit precision
-import numpyro
-numpyro.enable_x64()
 
 from jax import random
 import jax.numpy as jnp
@@ -44,6 +21,9 @@ import scribe
 # Define model type
 model_type = "nbvcp"
 
+# Define parameterization type
+parameterization = "odds_ratio"
+
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
 # Define output directory
@@ -58,7 +38,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 df = pd.read_csv(f"{DATA_DIR}/singer_transcript_counts.csv", comment="#")
 
 # Define data
-data = jnp.array(df.to_numpy()).astype(jnp.float64)
+data = jnp.array(df.to_numpy())
 
 # Define number of cells
 n_cells = data.shape[0]
@@ -70,10 +50,8 @@ n_genes = data.shape[1]
 # Setup the PRNG key
 rng_key = random.PRNGKey(42)  # Set random seed
 
-# Define MCMC burn-in samples
-n_mcmc_burnin = 1_000
-# Define MCMC samples
-n_mcmc_samples = 5_000
+# Define training parameters
+n_steps = 50_000
 
 # %% ---------------------------------------------------------------------------
 
@@ -83,35 +61,23 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_constrained_{model_type}_results_" \
+        f"svi_{parameterization.replace('_', '-')}_" \
+        f"{model_type}_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
-        f"{n_mcmc_burnin}burnin_" \
-        f"{n_mcmc_samples}samples.pkl"
-
-# Define kernel kwargs
-kernel_kwargs = {
-    "target_accept_prob": 0.85,
-    "max_tree_depth": (10, 10),
-    "step_size": jnp.array(1.0, dtype=jnp.float64),
-    "find_heuristic_step_size": False,
-    "dense_mass": False,
-    "adapt_step_size": True, 
-    "adapt_mass_matrix": True,
-    "regularize_mass_matrix": False
-}
+        f"{n_steps}steps.pkl"
 
 if not os.path.exists(file_name):
-    # Run MCMC sampling
-    mcmc_results = scribe.mcmc.run_scribe(
+    # Run SVI
+    svi_results = scribe.run_scribe(
+        inference_method="svi",
         counts=data,
-        unconstrained_model=False,
         variable_capture=True,
-        num_warmup=n_mcmc_burnin,
-        num_samples=n_mcmc_samples,
-        kernel_kwargs=kernel_kwargs,
+        n_steps=n_steps,
+        parameterization=parameterization,
+        phi_prior=(3, 2),
     )
     # Save MCMC results
     with open(file_name, "wb") as f:
-        pickle.dump(mcmc_results, f)
+        pickle.dump(svi_results, f)
 # %% ---------------------------------------------------------------------------

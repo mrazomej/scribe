@@ -19,10 +19,13 @@ import scribe
 
 # %% ---------------------------------------------------------------------------
 # Define model type
-model_type = "nbvcp"
+model_type = "nbvcp_mix"
 
 # Define parameterization type
-parameterization = "beta_prime"
+parameterization = "odds_ratio"
+
+# Define number of components
+n_components = 2
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -61,19 +64,24 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization}_{model_type}_results_" \
+        f"svi_{parameterization.replace('_', '-')}_" \
+        f"{model_type.replace('_', '-')}_" \
+        f"{n_components}components_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"
 
 if not os.path.exists(file_name):
     # Run SVI
-    svi_results = scribe.svi.run_scribe(
+    svi_results = scribe.run_scribe(
+        inference_method="svi",
         counts=data,
+        mixture_model=True,
         variable_capture=True,
         n_steps=n_steps,
         parameterization=parameterization,
         phi_prior=(3, 2),
+        n_components=n_components,
     )
     # Save MCMC results
     with open(file_name, "wb") as f:
