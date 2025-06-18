@@ -6,7 +6,7 @@ This module handles the packaging of SVI results into ScribeSVIResults objects.
 
 from typing import Optional, Dict, Any
 import jax.numpy as jnp
-from ..results_svi import ScribeSVIResults
+from ..svi.results import ScribeSVIResults
 from ..model_config import ModelConfig
 
 

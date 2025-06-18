@@ -6,7 +6,7 @@ This module handles the packaging of MCMC results into ScribeMCMCResults objects
 
 from typing import Union, Optional, Dict, Any
 import jax.numpy as jnp
-from ..results_mcmc import ScribeMCMCResults
+from ..mcmc.results import ScribeMCMCResults
 from ..model_config import ModelConfig
 
 

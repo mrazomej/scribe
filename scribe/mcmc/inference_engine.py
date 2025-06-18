@@ -8,8 +8,8 @@ from typing import Union, Optional
 import jax.numpy as jnp
 from jax import random
 from numpyro.infer import MCMC, NUTS
-from ..model_registry import get_model_and_guide
-from ..model_config import ConstrainedModelConfig, ModelConfig
+from ..models.model_registry import get_model_and_guide
+from ..model_config import ModelConfig
 
 
 class MCMCInferenceEngine:
@@ -17,7 +17,7 @@ class MCMCInferenceEngine:
     
     @staticmethod
     def run_inference(
-        model_config: Union[ConstrainedModelConfig, ModelConfig],
+        model_config: ModelConfig,
         count_data: jnp.ndarray,
         n_cells: int,
         n_genes: int,
@@ -25,13 +25,14 @@ class MCMCInferenceEngine:
         n_warmup: int = 1_000,
         n_chains: int = 1,
         seed: int = 42,
+        mcmc_kwargs: Optional[dict] = None,
     ) -> any:
         """
         Execute MCMC inference using NUTS.
         
         Parameters
         ----------
-        model_config : Union[ConstrainedModelConfig, ModelConfig]
+        model_config : ModelConfig
             Model configuration object
         count_data : jnp.ndarray
             Processed count data (cells as rows)
@@ -47,32 +48,30 @@ class MCMCInferenceEngine:
             Number of parallel chains
         seed : int, default=42
             Random seed for reproducibility
+        mcmc_kwargs : Optional[dict], default=None
+            Keyword arguments for the NUTS kernel (e.g., target_accept_prob, max_tree_depth)
             
         Returns
         -------
         numpyro.infer.mcmc.MCMCResults
             Results from MCMC run containing samples and diagnostics
         """
-        # Determine if this is an unconstrained model
-        is_unconstrained = isinstance(model_config, ModelConfig)
-        
         # Get model function (no guide needed for MCMC)
-        if is_unconstrained:
-            model, _ = get_model_and_guide(
-                model_config.base_model, 
-                parameterization="unconstrained"
-            )
-        else:
-            model, _ = get_model_and_guide(
-                model_config.base_model, 
-                parameterization="constrained"
-            )
+        model, _ = get_model_and_guide(
+            model_config.base_model,
+            parameterization=model_config.parameterization
+        )
         
         # Create NUTS sampler
-        nuts_kernel = NUTS(model)
+        nuts_kernel = NUTS(model, **(mcmc_kwargs or {}))
         
         # Create MCMC instance
-        mcmc = MCMC(nuts_kernel, num_samples=n_samples, num_warmup=n_warmup, num_chains=n_chains)
+        mcmc = MCMC(
+            nuts_kernel, 
+            num_samples=n_samples, 
+            num_warmup=n_warmup, 
+            num_chains=n_chains
+        )
         
         # Create random key
         rng_key = random.PRNGKey(seed)

@@ -332,8 +332,8 @@ class ScribeMCMCResults(MCMC):
 
     def _model(self) -> Callable:
         """Get the model function for this model type."""
-        unconstrained = isinstance(self.model_config, ModelConfig)
-        return _get_model_fn(self.model_type, unconstrained=unconstrained)
+        model = _get_model_fn(self.model_type, self.model_config)
+        return model
 
     
     # --------------------------------------------------------------------------
@@ -755,10 +755,10 @@ class ScribeMCMCResults(MCMC):
 # Shared helper functions for both ScribeMCMCResults and ScribeMCMCSubset
 # ------------------------------------------------------------------------------
 
-def _get_model_fn(model_type: str, unconstrained: bool = True) -> Callable:
-    """Get the model function for this model type."""
-    from .model_registry import get_model_fn
-    return get_model_fn(model_type, unconstrained=unconstrained)
+def _get_model_fn(model_type: str, model_config) -> Callable:
+    """Get the model function for this model type and parameterization."""
+    from scribe.models.model_registry import get_model_and_guide
+    return get_model_and_guide(model_type, model_config.parameterization)[0]
 
 # ------------------------------------------------------------------------------
 
@@ -882,8 +882,7 @@ def _generate_ppc_samples(
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples."""
     # Get the model function
-    unconstrained = isinstance(model_config, ModelConfig)
-    model = _get_model_fn(model_type, unconstrained=unconstrained)
+    model = _get_model_fn(model_type, model_config)
     
     # Prepare base model arguments
     model_args = {
@@ -893,7 +892,7 @@ def _generate_ppc_samples(
     }
     
     # Generate predictive samples
-    from .sampling import generate_predictive_samples
+    from scribe.sampling import generate_predictive_samples
     return generate_predictive_samples(
         model,
         samples,
@@ -915,8 +914,7 @@ def _generate_prior_predictive_samples(
 ) -> jnp.ndarray:
     """Generate prior predictive samples using the model."""
     # Get the model function
-    unconstrained = isinstance(model_config, ModelConfig)
-    model = _get_model_fn(model_type, unconstrained=unconstrained)
+    model = _get_model_fn(model_type, model_config)
     
     # Prepare base model arguments
     model_args = {
@@ -926,7 +924,7 @@ def _generate_prior_predictive_samples(
     }
     
     # Generate prior predictive samples
-    from .sampling import generate_prior_predictive_samples
+    from scribe.sampling import generate_prior_predictive_samples
     return generate_prior_predictive_samples(
         model,
         model_args,
