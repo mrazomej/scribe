@@ -52,7 +52,7 @@ os.makedirs(FIG_DIR, exist_ok=True)
 df = pd.read_csv(f"{DATA_DIR}/singer_transcript_counts.csv", comment="#")
 
 # Define data
-data = jnp.array(df.to_numpy()).astype(jnp.float64)
+data = jnp.array(df.to_numpy())
 
 # Define number of cells
 n_cells = data.shape[0]
@@ -69,7 +69,8 @@ n_steps = 50_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization}_{model_type}_" \
+        f"svi_{parameterization.replace('_', '-')}_" \
+        f"{model_type}_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"

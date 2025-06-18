@@ -38,7 +38,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 df = pd.read_csv(f"{DATA_DIR}/singer_transcript_counts.csv", comment="#")
 
 # Define data
-data = jnp.array(df.to_numpy()).astype(jnp.float64)
+data = jnp.array(df.to_numpy())
 
 # Define number of cells
 n_cells = data.shape[0]
