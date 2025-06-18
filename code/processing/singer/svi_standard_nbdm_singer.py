@@ -19,10 +19,10 @@ import scribe
 
 # %% ---------------------------------------------------------------------------
 # Define model type
-model_type = "nbdm_mix"
+model_type = "nbdm"
 
-# Define prior distribution
-r_dist = "gamma"
+# Define parameterization type
+parameterization = "standard"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -38,7 +38,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 df = pd.read_csv(f"{DATA_DIR}/singer_transcript_counts.csv", comment="#")
 
 # Define data
-data = jnp.array(df.to_numpy()).astype(jnp.float64)
+data = jnp.array(df.to_numpy())
 
 # Define number of cells
 n_cells = data.shape[0]
@@ -51,7 +51,7 @@ n_genes = data.shape[1]
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define training parameters
-n_steps = 25_000
+n_steps = 50_000
 
 # %% ---------------------------------------------------------------------------
 
@@ -61,20 +61,19 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{r_dist}_{model_type}_results_" \
+        f"svi_{parameterization}_{model_type}_results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"
 
 if not os.path.exists(file_name):
     # Run SVI
-    svi_results = scribe.svi.run_scribe(
+    svi_results = scribe.run_scribe(
+        inference_method="svi",
         counts=data,
-        mixture_model=True,
-        n_components=2,
-        mixing_prior=[1.0, 1.0],
-        r_dist=r_dist,
         n_steps=n_steps,
+        parameterization=parameterization,
+        phi_prior=(3, 2),
     )
     # Save MCMC results
     with open(file_name, "wb") as f:

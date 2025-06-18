@@ -29,10 +29,10 @@ colors = scribe.viz.colors()
 # %% ---------------------------------------------------------------------------
 
 # Define model type
-model_type = "nbdm_mix"
+model_type = "nbdm"
 
-# Define prior distribution
-r_dist = "gamma"
+# Define parameterization type
+parameterization = "standard"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -64,44 +64,79 @@ n_genes = data.shape[1]
 # Setup the PRNG key
 rng_key = random.PRNGKey(42)  # Set random seed
 
-# Define number of steps
-n_steps = 25_000
+# Define MCMC burn-in samples
+n_mcmc_burnin = 1_000
+# Define MCMC samples
+n_mcmc_samples = 5_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{r_dist}_{model_type}_results_" \
+        f"mcmc_{parameterization.replace('_', '-')}_" \
+        f"{model_type}_" \
+        f"results_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
-        f"{n_steps}steps.pkl"
+        f"{n_mcmc_burnin}burnin_" \
+        f"{n_mcmc_samples}samples.pkl"
 
 # Load MCMC results
 with open(file_name, "rb") as f:
-    svi_results = pickle.load(f)
+    mcmc_results = pickle.load(f)
 
 # %% ---------------------------------------------------------------------------
 
-print("Plotting loss...")
+# Get ppc_samples
+mcmc_results.get_ppc_samples()
+
+
+# %% ---------------------------------------------------------------------------
+
+# Build Arviz object
+mcmc_az = az.from_numpyro(
+    mcmc_results,
+)
+# %% ---------------------------------------------------------------------------
+
 # Initialize figure
-fig, ax = plt.subplots(1, 1, figsize=(3, 2.5))
+fig, ax = plt.subplots(2, 2, figsize=(12, 6))
 
-# Plot loss history
-ax.plot(svi_results.loss_history)
 
-# Set axis labels
-ax.set_xlabel('step')
-ax.set_ylabel('loss')
+# Plot trace
+az.plot_trace(
+    mcmc_az,
+    var_names=["p", "r"],
+    axes=ax,
+)
+
+plt.tight_layout()
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_gamma_loss.pdf", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type}_trace.png", 
     bbox_inches="tight"
 )
 
 # %% ---------------------------------------------------------------------------
 
-print("Generating predictive samples...")
-# Generate predictive samples
-svi_results.get_ppc_samples(n_samples=1_000)
+# Plot pair
+axes = az.plot_pair(
+    mcmc_az,
+    var_names=["p", "r"],
+    divergences=True,
+    textsize=25,
+)
+
+plt.tight_layout()
+
+# Get the current figure and save it
+fig = plt.gcf()
+fig.savefig(
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type}_pairplot.png", 
+    bbox_inches="tight"
+)
+
 
 # %% ---------------------------------------------------------------------------
 
@@ -122,7 +157,7 @@ for i, ax in enumerate(axes):
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        svi_results.predictive_samples[:, :, i],
+        mcmc_results.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
         max_bin=true_counts.max()
     )
@@ -176,7 +211,8 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_gamma_ppc.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type}_ppc.png", 
     bbox_inches="tight"
 )
 
@@ -201,7 +237,7 @@ for i, ax in enumerate(axes):
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_ecdf_credible_regions(
-        svi_results.predictive_samples[:, :, i],
+        mcmc_results.predictive_samples[:, :, i],
         credible_regions=[95, 68, 50],
         max_bin=max_bin
     )
@@ -254,7 +290,8 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_gamma_ppc_ecdf.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_" \
+    f"{model_type}_ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
