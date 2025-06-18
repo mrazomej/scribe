@@ -347,11 +347,6 @@ def run_scribe(
                 "n_components must be specified and greater than 1 "
                 "when mixture_model=True"
             )
-        # Validate mixing_prior for mixture models
-        if mixing_prior is None:
-            raise ValueError(
-                "mixing_prior must be specified when mixture_model=True"
-            )
         # Add mixture suffix if needed
         model_type = f"{base_model}_mix"
     
@@ -552,6 +547,9 @@ def run_scribe(
 
     if model_type == "nbvcp" or model_type == "zinbvcp":
         prior_params["p_capture_prior"] = p_capture_prior
+
+    if "mix" in model_type:
+        prior_params["mixing_prior"] = mixing_prior
 
     # --------------------------------------------------------------------------
     # Create results object
