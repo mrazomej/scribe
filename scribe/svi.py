@@ -189,7 +189,7 @@ def run_scribe(
     mixture_model: bool = False,
     n_components: Optional[int] = None,
     # Distribution choices
-    r_dist: str = "gamma",
+    r_dist: Optional[str] = None,
     # Prior parameters
     r_prior: Optional[tuple] = None,
     p_prior: Optional[tuple] = None,
@@ -370,23 +370,29 @@ def run_scribe(
         count_data = count_data.T
     
     # Set default priors based on distribution choices
-    if r_prior is None:
-        r_prior = (2, 0.1) if r_dist == "gamma" else (1, 1)
-    if p_prior is None:
+    if r_prior is None and parameterization == "mean_field":
+        r_prior = (1, 1)
+    if p_prior is None and (
+        parameterization == "mean_field" or 
+        parameterization == "mean_variance"
+    ):
         p_prior = (1, 1)
     if "zinb" in model_type and gate_prior is None:
         gate_prior = (1, 1)
     if "vcp" in model_type and p_capture_prior is None and (
-        parameterization == "mean_field" or parameterization == "mean_variance"
+        parameterization == "mean_field" or 
+        parameterization == "mean_variance"
     ):
         p_capture_prior = (1, 1)
-    if ("vcp" in model_type and phi_capture_prior is None and 
-        parameterization == "beta_prime"):
+    if "vcp" in model_type and phi_capture_prior is None and (
+        parameterization == "beta_prime"
+    ):
         phi_capture_prior = (1, 1)
     if "mix" in model_type and mixing_prior is None:
         mixing_prior = jnp.ones(n_components)
     if mu_prior is None and (
-        parameterization == "mean_variance" or parameterization == "beta_prime"
+        parameterization == "mean_variance" or 
+        parameterization == "beta_prime"
     ):
         mu_dist = "lognormal"
         mu_prior = (1, 1)
@@ -398,12 +404,17 @@ def run_scribe(
     
     # Create model config based on model type and specified distributions
 
-    # Set r distribution for model
-    if r_dist == "gamma":
-        r_dist_model = dist.Gamma(*r_prior)
-    elif r_dist == "lognormal":
+    # Set r distribution for model (if needed)
+    r_dist_model = None
+    r_dist_guide = None
+    if r_dist is None and parameterization == "mean_field":
+        r_dist = "lognormal"
         r_dist_model = dist.LogNormal(*r_prior)
-    else:
+    elif r_dist == "gamma" and parameterization == "mean_field":
+        r_dist_model = dist.Gamma(*r_prior)
+    elif r_dist == "lognormal" and parameterization == "mean_field":
+        r_dist_model = dist.LogNormal(*r_prior)
+    elif r_dist is not None and parameterization == "mean_variance":
         raise ValueError(f"Unsupported r_dist: {r_dist}")
 
     # Set r distribution for guide
@@ -412,9 +423,16 @@ def run_scribe(
     else:
         r_dist_guide = r_dist_model
         
-    # Set p distribution for model and guide
-    p_dist_model = dist.Beta(*p_prior)
-    p_dist_guide = dist.Beta(*p_prior)
+    # Set p distribution for model and guide (if needed)
+    p_dist_model = None
+    p_dist_guide = None
+    if p_dist is None and (
+        parameterization == "mean_field" or 
+        parameterization == "mean_variance"
+    ):
+        p_dist = "beta"
+        p_dist_model = dist.Beta(*p_prior)
+        p_dist_guide = p_dist_model
 
     # Configure gate distribution if needed
     gate_dist_model = None
@@ -427,7 +445,8 @@ def run_scribe(
     p_capture_dist_model = None
     p_capture_dist_guide = None
     if "vcp" in model_type and (
-        parameterization == "mean_field" or parameterization == "mean_variance"
+        parameterization == "mean_field" or 
+        parameterization == "mean_variance"
     ):
         p_capture_dist_model = dist.Beta(*p_capture_prior)
         p_capture_dist_guide = p_capture_dist_model
@@ -474,40 +493,50 @@ def run_scribe(
         
     # Create model_config with all the configurations
     model_config = ConstrainedModelConfig(
+        # Base model
         base_model=model_type,
+        # r distribution
         r_distribution_model=r_dist_model,
         r_distribution_guide=r_dist_guide,
         r_param_prior=r_prior,
         r_param_guide=r_prior,
+        # p distribution
         p_distribution_model=p_dist_model,
         p_distribution_guide=p_dist_guide,
         p_param_prior=p_prior,
         p_param_guide=p_prior,
+        # gate distribution
         gate_distribution_model=gate_dist_model,
         gate_distribution_guide=gate_dist_guide,
         gate_param_prior=gate_prior if gate_dist_model else None,
         gate_param_guide=gate_prior if gate_dist_model else None,
+        # p_capture distribution
         p_capture_distribution_model=p_capture_dist_model,
         p_capture_distribution_guide=p_capture_dist_guide,
         p_capture_param_prior=p_capture_prior if p_capture_dist_model else None,
         p_capture_param_guide=p_capture_prior if p_capture_dist_model else None,
-        phi_capture_distribution_model=phi_capture_dist_model,
-        phi_capture_distribution_guide=phi_capture_dist_guide,
-        phi_capture_param_prior=phi_capture_prior if phi_capture_dist_model else None,
-        phi_capture_param_guide=phi_capture_prior if phi_capture_dist_model else None,
+        # mixing distribution
         n_components=n_components,
         mixing_distribution_model=mixing_dist_model,
         mixing_distribution_guide=mixing_dist_guide,
         mixing_param_prior=mixing_prior,
         mixing_param_guide=mixing_prior,
+        # mu distribution
         mu_distribution_model=mu_dist_model,
         mu_param_prior=mu_prior if mu_dist_model else None,
         mu_distribution_guide=mu_dist_guide,
         mu_param_guide=mu_prior if mu_dist_guide else None,
+        # phi distribution
         phi_distribution_model=phi_dist_model,
         phi_param_prior=phi_prior if phi_dist_model else None,
         phi_distribution_guide=phi_dist_guide,
         phi_param_guide=phi_prior if phi_dist_guide else None,
+        # phi_capture distribution
+        phi_capture_distribution_model=phi_capture_dist_model,
+        phi_capture_distribution_guide=phi_capture_dist_guide,
+        phi_capture_param_prior=phi_capture_prior if phi_capture_dist_model else None,
+        phi_capture_param_guide=phi_capture_prior if phi_capture_dist_model else None,
+        # Parameterization
         parameterization=parameterization
     )
     
@@ -566,7 +595,8 @@ def run_scribe(
         prior_params["gate_prior"] = gate_prior
 
     if (model_type == "nbvcp" or model_type == "zinbvcp") and (
-        parameterization == "mean_field" or parameterization == "mean_variance"
+        parameterization == "mean_field" or 
+        parameterization == "mean_variance"
     ):
         prior_params["p_capture_prior"] = p_capture_prior
 
