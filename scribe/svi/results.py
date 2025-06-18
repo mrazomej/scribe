@@ -15,11 +15,11 @@ from jax import random, jit, vmap
 import numpy as np
 import scipy.stats as stats
 
-from .sampling import (
+from ..sampling import (
     sample_variational_posterior, 
     generate_predictive_samples, 
 )
-from .stats import (
+from ..stats import (
     fit_dirichlet_minka, 
     get_distribution_mode,
     hellinger_gamma,
@@ -29,10 +29,10 @@ from .stats import (
     jensen_shannon_gamma,
     jensen_shannon_lognormal
 )
-from .model_config import ConstrainedModelConfig
-from .utils import numpyro_to_scipy
+from ..models.model_config import ModelConfig
+from ..utils import numpyro_to_scipy
 
-from .cell_assignment import (
+from ..cell_assignment import (
     temperature_scaling
 )
 
@@ -94,7 +94,7 @@ class ScribeSVIResults:
     n_cells: int
     n_genes: int
     model_type: str
-    model_config: ConstrainedModelConfig
+    model_config: ModelConfig
     prior_params: Dict[str, Any]
 
     # Standard metadata from AnnData object
@@ -183,7 +183,7 @@ class ScribeSVIResults:
         adata: Any,
         params: Dict,
         loss_history: jnp.ndarray,
-        model_config: ConstrainedModelConfig,
+        model_config: ModelConfig,
         **kwargs
     ):
         """Create ScribeSVIResults from AnnData object."""
@@ -716,7 +716,7 @@ class ScribeSVIResults:
 
     def _model_and_guide(self) -> Tuple[Callable, Callable]:
         """Get the model and guide functions based on model type."""
-        from .model_registry import get_model_and_guide
+        from ..models.model_registry import get_model_and_guide
         parameterization = self.model_config.parameterization or ""
         return get_model_and_guide(
             self.model_type, 
@@ -738,7 +738,7 @@ class ScribeSVIResults:
 
     def _log_likelihood_fn(self) -> Callable:
         """Get the log likelihood function for this model type."""
-        from .model_registry import get_log_likelihood_fn
+        from ..models.model_registry import get_log_likelihood_fn
         return get_log_likelihood_fn(self.model_type)
 
     # --------------------------------------------------------------------------
