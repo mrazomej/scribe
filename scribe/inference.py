@@ -1,18 +1,21 @@
 """
-Unified inference interface for SCRIBE.
+Unified inference interface for SCRIBE with parameterization unification.
 
 This module provides a single entry point for all SCRIBE inference methods,
-including both SVI and MCMC, with a modular architecture.
+treating unconstrained as just another parameterization rather than a separate
+model type.
 """
 
-from typing import Union, Optional, Dict, Any
+from typing import Union, Optional, Dict, Any, Type
 import jax.numpy as jnp
+import numpyro.distributions as dist
 
 # Import shared components
-from .core import InputProcessor, PriorConfigFactory, ModelConfigFactory
+from .core import InputProcessor, PriorConfigFactory
+from .core.config_factory import ModelConfigFactory
 
 # Import inference-specific components
-from .svi import SVIDistributionBuilder, SVIInferenceEngine, SVIResultsFactory
+from .svi import SVIInferenceEngine, SVIResultsFactory
 from .mcmc import MCMCInferenceEngine, MCMCResultsFactory
 
 
@@ -26,12 +29,15 @@ def run_scribe(
     mixture_model: bool = False,
     n_components: Optional[int] = None,
     
+    # Parameterization (now unified!)
+    # "mean_field", "mean_variance", "beta_prime", "unconstrained"
+    parameterization: str = "mean_field",  
+    
     # Data processing parameters  
     cells_axis: int = 0,
     layer: Optional[str] = None,
     
     # SVI-specific parameters
-    parameterization: Optional[str] = "mean_field",
     optimizer: Optional[Any] = None,
     loss: Optional[Any] = None,
     n_steps: int = 100_000,
@@ -39,12 +45,14 @@ def run_scribe(
     stable_update: bool = True,
     
     # MCMC-specific parameters
-    unconstrained_model: Optional[bool] = False,
-    r_dist: Optional[str] = "gamma",
     n_samples: int = 2_000,
     n_warmup: int = 1_000,
     n_chains: int = 1,
-    
+
+    # Distribution configuration
+    r_distribution: Optional[Type[dist.Distribution]] = None,
+    mu_distribution: Optional[Type[dist.Distribution]] = None,
+        
     # Prior configuration
     r_prior: Optional[tuple] = None,
     p_prior: Optional[tuple] = None,
@@ -59,10 +67,16 @@ def run_scribe(
     seed: int = 42,
 ) -> Any:
     """
-    Unified interface for SCRIBE inference.
+    Unified interface for SCRIBE inference with parameterization unification.
     
     This function provides a single entry point for both SVI and MCMC inference
-    methods with a modular, maintainable architecture.
+    methods, treating unconstrained as just another parameterization. This means:
+    
+    - You can run MCMC with any parameterization (mean_field, mean_variance,
+      beta_prime, unconstrained)
+    - You can run SVI with any parameterization (though guides may not exist for
+      all yet)
+    - The interface is completely unified and consistent
     
     Parameters
     ----------
@@ -82,6 +96,15 @@ def run_scribe(
     n_components : Optional[int], default=None
         Number of mixture components (required if mixture_model=True)
         
+    Parameterization:
+    ----------------
+    parameterization : str, default="mean_field"
+        Model parameterization to use:
+        - "mean_field": Beta/Gamma or LogNormal distributions for p/r
+        - "mean_variance": Beta/LogNormal for p/mu parameters
+        - "beta_prime": BetaPrime/LogNormal for phi/mu parameters  
+        - "unconstrained": Normal distributions on transformed parameters
+        
     Data Processing:
     ---------------
     cells_axis : int, default=0
@@ -91,8 +114,6 @@ def run_scribe(
         
     SVI Parameters:
     --------------
-    parameterization : Optional[str], default="mean_field"
-        Parameterization type ("mean_field", "mean_variance", "beta_prime")
     optimizer : Optional[Any], default=None
         Optimizer for variational inference (defaults to Adam)
     loss : Optional[Any], default=None
@@ -106,10 +127,6 @@ def run_scribe(
         
     MCMC Parameters:
     ---------------
-    unconstrained_model : Optional[bool], default=False
-        Whether to use unconstrained parameterization
-    r_dist : Optional[str], default="gamma"
-        Distribution for r parameter ("gamma" or "lognormal")
     n_samples : int, default=2_000
         Number of MCMC samples
     n_warmup : int, default=1_000
@@ -117,10 +134,21 @@ def run_scribe(
     n_chains : int, default=1
         Number of parallel chains
         
+    Distribution Configuration:
+    --------------------------
+    r_distribution : Optional[Type[dist.Distribution]]
+        Distribution for r parameter (when needed)
+    mu_distribution : Optional[Type[dist.Distribution]]
+        Distribution for mu parameter (when needed)
+
     Prior Configuration:
     -------------------
     r_prior, p_prior, gate_prior, p_capture_prior : Optional[tuple]
         Prior parameters as (param1, param2) tuples
+            - For unconstrained: (loc, scale) for Normal distributions on
+              transformed
+            parameters - For constrained: Parameters for respective
+            distributions (Beta, Gamma, etc.)
     mixing_prior : Optional[Any]
         Prior for mixture components (array-like or scalar)
     mu_prior, phi_prior, phi_capture_prior : Optional[tuple]
@@ -140,6 +168,35 @@ def run_scribe(
     ------
     ValueError
         If configuration is invalid or required parameters are missing
+        
+    Examples
+    --------
+    # SVI with mean_field parameterization
+    results = run_scribe(
+        counts, inference_method="svi", parameterization="mean_field")
+    
+    # MCMC with unconstrained parameterization  
+    results = run_scribe(
+        counts, inference_method="mcmc", parameterization="unconstrained")
+    
+    # SVI with beta_prime parameterization for ZINBVCP mixture model
+    results = run_scribe(
+        counts, 
+        inference_method="svi",
+        parameterization="beta_prime",
+        zero_inflated=True,
+        variable_capture=True,
+        mixture_model=True,
+        n_components=3
+    )
+    
+    # MCMC with mean_variance parameterization
+    results = run_scribe(
+        counts,
+        inference_method="mcmc", 
+        parameterization="mean_variance",
+        n_samples=1000
+    )
     """
     # Step 1: Input Processing & Validation
     InputProcessor.validate_model_configuration(
@@ -176,13 +233,14 @@ def run_scribe(
     if phi_capture_prior is not None:
         user_priors["phi_capture_prior"] = phi_capture_prior
     
-    # Create default priors
+    # Create default priors (now handles unconstrained as just another
+    # parameterization)
     default_priors = PriorConfigFactory.create_default_priors(
         model_type=model_type,
         inference_method=inference_method,
-        parameterization=parameterization,
-        unconstrained_model=unconstrained_model,
-        r_dist=r_dist,
+        parameterization=parameterization,  # This now includes "unconstrained"
+        r_distribution=r_distribution,
+        mu_distribution=mu_distribution,
         n_components=n_components
     )
     
@@ -197,70 +255,67 @@ def run_scribe(
         prior_dict=final_priors
     )
     
-    # Step 3: Inference-Specific Execution
+    # Step 3: Create Unified Model Configuration
+    model_config = ModelConfigFactory.create_config(
+        model_type=model_type,
+        parameterization=parameterization,
+        inference_method=inference_method,
+        priors=final_priors,
+        n_components=n_components
+    )
+    
+    # Step 4: Run Inference
     if inference_method == "svi":
         return _run_svi_inference(
-            model_type=model_type,
-            parameterization=parameterization,
-            priors=final_priors,
+            model_config=model_config,
             count_data=count_data,
             adata=adata,
             n_cells=n_cells,
             n_genes=n_genes,
-            n_components=n_components,
             optimizer=optimizer,
             loss=loss,
             n_steps=n_steps,
             batch_size=batch_size,
             stable_update=stable_update,
-            seed=seed
+            seed=seed,
+            final_priors=final_priors
         )
     elif inference_method == "mcmc":
         return _run_mcmc_inference(
-            model_type=model_type,
-            unconstrained_model=unconstrained_model,
-            priors=final_priors,
+            model_config=model_config,
             count_data=count_data,
             adata=adata,
             n_cells=n_cells,
             n_genes=n_genes,
-            n_components=n_components,
             n_samples=n_samples,
             n_warmup=n_warmup,
             n_chains=n_chains,
-            seed=seed
+            seed=seed,
+            final_priors=final_priors
         )
     else:
         raise ValueError(f"Unknown inference method: {inference_method}")
 
 
+# ------------------------------------------------------------------------------
+# SVI Inference
+# ------------------------------------------------------------------------------
+
 def _run_svi_inference(
-    model_type: str,
-    parameterization: str,
-    priors: Dict[str, Any],
+    model_config: "ModelConfig",
     count_data: jnp.ndarray,
     adata: Optional["AnnData"],
     n_cells: int,
     n_genes: int,
-    n_components: Optional[int],
     optimizer: Optional[Any],
     loss: Optional[Any],
     n_steps: int,
     batch_size: Optional[int],
     stable_update: bool,
-    seed: int
+    seed: int,
+    final_priors: Dict[str, Any]
 ) -> Any:
-    """Execute SVI inference."""
-    # Build distributions
-    distributions = SVIDistributionBuilder.build_distributions(
-        model_type, parameterization, priors
-    )
-    
-    # Create model configuration
-    model_config = ModelConfigFactory.create_svi_config(
-        model_type, parameterization, distributions, n_components
-    )
-    
+    """Execute SVI inference with unified configuration."""
     # Set defaults for optimizer and loss if not provided
     if optimizer is None:
         import numpyro.optim
@@ -291,33 +346,30 @@ def _run_svi_inference(
         count_data=count_data,
         n_cells=n_cells,
         n_genes=n_genes,
-        model_type=model_type,
-        n_components=n_components,
-        prior_params=priors
+        model_type=model_config.base_model,
+        n_components=model_config.n_components,
+        prior_params=final_priors
     )
 
 
+# ------------------------------------------------------------------------------
+# MCMC Inference
+# ------------------------------------------------------------------------------
+
 def _run_mcmc_inference(
-    model_type: str,
-    unconstrained_model: bool,
-    priors: Dict[str, Any],
+    model_config: "ModelConfig",
     count_data: jnp.ndarray,
     adata: Optional["AnnData"],
     n_cells: int,
     n_genes: int,
-    n_components: Optional[int],
     n_samples: int,
     n_warmup: int,
     n_chains: int,
-    seed: int
+    seed: int,
+    final_priors: Dict[str, Any]
 ) -> Any:
-    """Execute MCMC inference."""
-    # Create model configuration
-    model_config = ModelConfigFactory.create_mcmc_config(
-        model_type, unconstrained_model, priors, n_components
-    )
-    
-    # Run inference
+    """Execute MCMC inference with unified configuration."""
+    # Run inference (now works with any parameterization!)
     mcmc_results = MCMCInferenceEngine.run_inference(
         model_config=model_config,
         count_data=count_data,
@@ -337,7 +389,7 @@ def _run_mcmc_inference(
         count_data=count_data,
         n_cells=n_cells,
         n_genes=n_genes,
-        model_type=model_type,
-        n_components=n_components,
-        prior_params=priors
+        model_type=model_config.base_model,
+        n_components=model_config.n_components,
+        prior_params=final_priors
     ) 

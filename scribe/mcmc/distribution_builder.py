@@ -1,7 +1,7 @@
 """
-Distribution builder for SVI inference.
+Distribution builder for MCMC inference.
 
-This module creates the appropriate distributions for SVI models and guides
+This module creates the appropriate distributions for MCMC models
 based on the parameterization and prior specifications.
 """
 
@@ -10,8 +10,8 @@ import numpyro.distributions as dist
 from ..core.distribution_builder import DistributionBuilder
 
 
-class SVIDistributionBuilder:
-    """Builds distributions for SVI inference."""
+class MCMCDistributionBuilder:
+    """Builds distributions for MCMC inference."""
     
     @staticmethod
     def build_distributions(
@@ -22,7 +22,7 @@ class SVIDistributionBuilder:
         mu_distribution: Optional[Type[dist.Distribution]] = None
     ) -> Dict[str, Any]:
         """
-        Build all distributions needed for SVI inference.
+        Build all distributions needed for MCMC inference.
         
         Parameters
         ----------
@@ -40,13 +40,13 @@ class SVIDistributionBuilder:
         Returns
         -------
         Dict[str, Any]
-            Dictionary containing all model and guide distributions
+            Dictionary containing all model distributions (no guides for MCMC)
         """
         # Delegate to unified distribution builder
         return DistributionBuilder.build_distributions(
             model_type=model_type,
             parameterization=parameterization,
-            inference_method="svi",
+            inference_method="mcmc",
             priors=priors,
             r_distribution=r_distribution,
             mu_distribution=mu_distribution
