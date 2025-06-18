@@ -926,6 +926,9 @@ class ScribeSVIResults:
                 "No posterior samples found. Call get_posterior_samples() first."
             )
         
+        # Convert posterior samples to canonical form
+        self._convert_to_canonical()
+        
         # Get parameter samples
         parameter_samples = self.posterior_samples
         
@@ -1919,3 +1922,67 @@ class ScribeSVIResults:
         return {
             'probabilities': probabilities
         }
+
+    # --------------------------------------------------------------------------
+    # Parameter conversion method
+    # --------------------------------------------------------------------------
+
+    def _convert_to_canonical(self):
+        """
+        Convert posterior samples to canonical (p, r) form.
+        
+        Returns
+        -------
+        self : ScribeSVIResults
+            Returns self for method chaining
+        """
+        # If no posterior samples, return self
+        if self.posterior_samples is None:
+            return self
+        
+        # Get parameterization and samples
+        parameterization = self.model_config.parameterization
+        samples = self.posterior_samples
+        
+        # Convert parameters to canonical form
+        if parameterization == "odds_ratio":
+            if ('phi' in samples and 'mu' in samples and
+                'p' not in samples and 'r' not in samples):
+                phi = samples['phi']
+                mu = samples['mu']
+                samples['p'] = 1.0 / (1.0 + phi)
+                # Reshape phi to broadcast with mu based on mixture model
+                if self.n_components is not None:
+                    # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                    phi_reshaped = phi[:, None, None]
+                else:
+                    # Non-mixture model: mu has shape (n_samples, n_genes)
+                    phi_reshaped = phi[:, None]
+                samples['r'] = mu * phi_reshaped
+        
+        elif parameterization == "linked":
+            if ('p' in samples and 'mu' in samples and
+                'r' not in samples):
+                p = samples['p']
+                mu = samples['mu']
+                # Reshape p to broadcast with mu based on mixture model
+                if self.n_components is not None:
+                    # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                    p_reshaped = p[:, None, None]
+                else:
+                    # Non-mixture model: mu has shape (n_samples, n_genes)
+                    p_reshaped = p[:, None]
+                samples['r'] = mu * p_reshaped / (1.0 - p_reshaped)
+        
+        elif parameterization == "unconstrained":
+            if ('r_unconstrained' in samples and
+                'r' not in samples):
+                samples['r'] = jnp.exp(samples['r_unconstrained'])
+            if ('p_unconstrained' in samples and
+                'p' not in samples):
+                samples['p'] = jnp.sigmoid(samples['p_unconstrained'])
+            if ('gate_unconstrained' in samples and
+                'gate' not in samples):
+                samples['gate'] = jnp.sigmoid(samples['gate_unconstrained'])
+        
+        return self
