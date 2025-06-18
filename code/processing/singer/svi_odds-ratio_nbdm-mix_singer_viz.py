@@ -32,7 +32,10 @@ colors = scribe.viz.colors()
 model_type = "nbdm_mix"
 
 # Define parameterization
-parameterization = "beta_prime"
+parameterization = "odds_ratio"
+
+# Define number of components
+n_components = 2
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -52,7 +55,7 @@ os.makedirs(FIG_DIR, exist_ok=True)
 df = pd.read_csv(f"{DATA_DIR}/singer_transcript_counts.csv", comment="#")
 
 # Define data
-data = jnp.array(df.to_numpy()).astype(jnp.float64)
+data = jnp.array(df.to_numpy())
 
 # Define number of cells
 n_cells = data.shape[0]
@@ -69,7 +72,9 @@ n_steps = 50_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization}_{model_type.replace('_', '-')}_results_" \
+        f"svi_{parameterization.replace('_', '-')}_" \
+        f"{model_type.replace('_', '-')}_" \
+        f"{n_components}components_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_steps}steps.pkl"
@@ -96,7 +101,10 @@ ax.set_ylabel('loss')
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_loss.png", 
+    f"{FIG_DIR}/svi_{parameterization.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}_" \
+    f"{n_components}components_" \
+    f"loss.png", 
     bbox_inches="tight"
 )
 
@@ -179,7 +187,10 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_ppc.png", 
+    f"{FIG_DIR}/svi_{parameterization.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}_" \
+    f"{n_components}components_" \
+    f"ppc.png", 
     bbox_inches="tight"
 )
 
@@ -257,7 +268,10 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_ppc_ecdf.png", 
+    f"{FIG_DIR}/svi_{parameterization.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}_" \
+    f"{n_components}components_" \
+    f"ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
