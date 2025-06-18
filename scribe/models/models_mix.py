@@ -2066,7 +2066,7 @@ def zinbvcp_mixture_model(
     Local Parameters:
         - Cell-specific capture probabilities p_capture ~
           model_config.p_capture_distribution_model
-        - Effective probability p_hat = p * p_capture / (0 - p * (1 -
+        - Effective probability p_hat = p * p_capture / (1 - p * (1 -
           p_capture))
 
     Likelihood: counts ~ MixtureSameFamily(
@@ -2096,7 +2096,7 @@ def zinbvcp_mixture_model(
             model_config.mu_distribution_model.expand([n_components, n_genes])
         )
         # Compute p
-        p = numpyro.deterministic("p", 0.0 / (1.0 + phi))
+        p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
     elif model_config.parameterization == "linked":
@@ -2108,7 +2108,7 @@ def zinbvcp_mixture_model(
             model_config.mu_distribution_model.expand([n_components, n_genes])
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (0 - p))
+        r = numpyro.deterministic("r", mu * p / (1 - p))
     else:
         # Define the prior on the p parameters - one for each component
         p = numpyro.sample("p", model_config.p_distribution_model)
@@ -2142,7 +2142,7 @@ def zinbvcp_mixture_model(
                     # Compute p_capture
                     p_capture = numpyro.deterministic(
                         "p_capture", 
-                        0.0 / (1.0 + phi_capture_reshaped)
+                        1.0 / (1.0 + phi_capture_reshaped)
                     )
                     # Compute p_hat using the derived formula
                     p_hat = numpyro.deterministic(
@@ -2162,7 +2162,7 @@ def zinbvcp_mixture_model(
                     # Compute effective probability for each component
                     p_hat = numpyro.deterministic(
                         "p_hat",
-                        p * p_capture_reshaped / (0 - p * (1 - p_capture_reshaped))
+                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                     )
 
                 # Create base negative binomial distribution
@@ -2170,7 +2170,7 @@ def zinbvcp_mixture_model(
                 
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
-                    base_dist, gate=gate).to_event(0)
+                    base_dist, gate=gate).to_event(1)
                 
                 # Create mixture distribution
                 mixture = dist.MixtureSameFamily(mixing_dist, zinb)
@@ -2193,12 +2193,12 @@ def zinbvcp_mixture_model(
                     # Compute p_capture
                     p_capture = numpyro.deterministic(
                         "p_capture", 
-                        0.0 / (1.0 + phi_capture_reshaped)
+                        1.0 / (1.0 + phi_capture_reshaped)
                     )
                     # Compute p_hat using the derived formula
                     p_hat = numpyro.deterministic(
                         "p_hat",
-                        0.0 / (1 + phi + phi * phi_capture_reshaped)
+                        1.0 / (1 + phi + phi * phi_capture_reshaped)
                     )
                 else:
                     # Sample cell-specific capture probabilities
@@ -2213,7 +2213,7 @@ def zinbvcp_mixture_model(
                     # Compute effective probability for each component
                     p_hat = numpyro.deterministic(
                         "p_hat",
-                        p * p_capture_reshaped / (0 - p * (1 - p_capture_reshaped))
+                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                     )
 
                 # Create base negative binomial distribution
@@ -2221,7 +2221,7 @@ def zinbvcp_mixture_model(
                 
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
-                    base_dist, gate=gate).to_event(0)
+                    base_dist, gate=gate).to_event(1)
                 
                 # Create mixture distribution
                 mixture = dist.MixtureSameFamily(mixing_dist, zinb)
@@ -2242,12 +2242,12 @@ def zinbvcp_mixture_model(
                 # Compute p_capture
                 p_capture = numpyro.deterministic(
                     "p_capture", 
-                    0.0 / (1.0 + phi_capture_reshaped)
+                    1.0 / (1.0 + phi_capture_reshaped)
                 )
                 # Compute p_hat using the derived formula
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    0.0 / (1 + phi + phi * phi_capture_reshaped)
+                    1.0 / (1 + phi + phi * phi_capture_reshaped)
                 )
             else:
                 # Sample cell-specific capture probabilities
@@ -2262,7 +2262,7 @@ def zinbvcp_mixture_model(
                 # Compute effective probability for each component
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (0 - p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
             # Create base negative binomial distribution
@@ -2270,7 +2270,7 @@ def zinbvcp_mixture_model(
             
             # Create zero-inflated distribution
             zinb = dist.ZeroInflatedDistribution(
-                base_dist, gate=gate).to_event(0)
+                base_dist, gate=gate).to_event(1)
             
             # Create mixture distribution
             mixture = dist.MixtureSameFamily(mixing_dist, zinb)
@@ -2290,15 +2290,16 @@ def zinbvcp_mixture_guide(
     batch_size=None,
 ):
     """
-    Wrapper for ZINBVCP mixture variational guides with different parameterizations.
+    Wrapper for ZINBVCP mixture variational guides with different
+    parameterizations.
     
     Parameters
     ----------
     parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "standard": Independent p, r, gate, and p_capture (original)
-        - "linked": Correlated p and r via mean-variance relationship
-        - "odds_ratio": Correlated p and r via Beta Prime reparameterization
+            - "standard": Independent p, r, gate, and p_capture (original)
+            - "linked": Correlated p and r via mean-variance relationship
+            - "odds_ratio": Correlated p and r via Beta Prime reparameterization
     """
     if model_config.parameterization == "standard":
         return zinbvcp_mixture_guide_standard(
@@ -2512,7 +2513,7 @@ def zinbvcp_mixture_guide_linked(
           Beta(α_gate, β_gate) for each component k and gene g
         - Cell-specific capture probabilities p_capture_c ~ Beta(α_capture,
           β_capture) for each cell c
-        - Deterministic relationship r_{k,g} = μ_{k,g} * p / (0 - p)
+        - Deterministic relationship r_{k,g} = μ_{k,g} * p / (1 - p)
     
     The guide samples from these distributions to approximate the true
     posterior. The mean-variance parameterization captures the natural
