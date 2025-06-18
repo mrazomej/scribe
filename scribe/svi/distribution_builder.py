@@ -29,7 +29,7 @@ class SVIDistributionBuilder:
         model_type : str
             Type of model (e.g., "nbdm", "zinb_mix", etc.)
         parameterization : str
-            Parameterization type ("mean_field", "mean_variance", "beta_prime", "unconstrained")
+            Parameterization type ("standard", "linked", "odds_ratio", "unconstrained")
         priors : Dict[str, Any]
             Dictionary of prior parameters
         r_distribution : Optional[Type[dist.Distribution]]

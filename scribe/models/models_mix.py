@@ -47,11 +47,11 @@ def nbdm_mixture_model(
             - mixing_distribution_model: Distribution for mixture weights
             - p_distribution_model: Distribution for success probability p
             - r_distribution_model: Distribution for dispersion parameters r
-        - For "mean_variance" parameterization:
+        - For "linked" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - p_distribution_model: Distribution for success probability p
             - mu_distribution_model: Distribution for gene means
-        - For "beta_prime" parameterization:
+        - For "odds_ratio" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - phi_distribution_model: Distribution for phi parameter
             - mu_distribution_model: Distribution for gene means
@@ -78,22 +78,22 @@ def nbdm_mixture_model(
     if model_config.mixing_distribution_model is None:
         raise ValueError("Mixture model requires 'mixing_distribution_model'.")
     if model_config.p_distribution_model is None and (
-        model_config.parameterization == "mean_field" or
-        model_config.parameterization == "mean_variance"
+        model_config.parameterization == "standard" or
+        model_config.parameterization == "linked"
     ):
         raise ValueError("Model with selected parameterization requires 'p_distribution_model'.")
     if model_config.r_distribution_model is None and (
-        model_config.parameterization == "mean_field" or
-        model_config.parameterization == "mean_variance"
+        model_config.parameterization == "standard" or
+        model_config.parameterization == "linked"
     ):
         raise ValueError("Model with selected parameterization requires 'r_distribution_model'.")
     if model_config.phi_distribution_model is None and (
-        model_config.parameterization == "beta_prime"
+        model_config.parameterization == "odds_ratio"
     ):
         raise ValueError("Model with selected parameterization requires 'phi_distribution_model'.")
     if model_config.mu_distribution_model is None and (
-        model_config.parameterization == "beta_prime" or
-        model_config.parameterization == "mean_variance"
+        model_config.parameterization == "odds_ratio" or
+        model_config.parameterization == "linked"
     ):
         raise ValueError("Model with selected parameterization requires 'mu_distribution_model'.")
     # Extract number of components
@@ -109,7 +109,7 @@ def nbdm_mixture_model(
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -121,7 +121,7 @@ def nbdm_mixture_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -185,22 +185,22 @@ def nbdm_mixture_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent r and p (original)
-        - "mean_variance": Correlated r and p via mean-variance relationship
-        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+        - "standard": Independent r and p (original)
+        - "linked": Correlated r and p via mean-variance relationship
+        - "odds_ratio": Correlated r and p via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return nbdm_mixture_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return nbdm_mixture_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return nbdm_mixture_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return nbdm_mixture_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return nbdm_mixture_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return nbdm_mixture_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -210,7 +210,7 @@ def nbdm_mixture_guide(
 # Mean-Field Parameterized Guide for NBDM Mixture Model
 # ------------------------------------------------------------------------------
 
-def nbdm_mixture_guide_mean_field(
+def nbdm_mixture_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -322,7 +322,7 @@ def nbdm_mixture_guide_mean_field(
 # Mean-Variance Parameterized Guide for NBDM Mixture Model
 # ------------------------------------------------------------------------------
 
-def nbdm_mixture_guide_mean_variance(
+def nbdm_mixture_guide_linked(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -427,7 +427,7 @@ def nbdm_mixture_guide_mean_variance(
 # Beta-Prime Parameterized Guide for NBDM Mixture Model
 # ------------------------------------------------------------------------------
 
-def nbdm_mixture_guide_beta_prime(
+def nbdm_mixture_guide_odds_ratio(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -565,12 +565,12 @@ def zinb_mixture_model(
             - p_distribution_model: Distribution for success probability p
             - r_distribution_model: Distribution for dispersion parameters r
             - gate_distribution_model: Distribution for dropout probabilities
-        - For "mean_variance" parameterization:
+        - For "linked" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - p_distribution_model: Distribution for success probability p
             - mu_distribution_model: Distribution for gene means
             - gate_distribution_model: Distribution for dropout probabilities
-        - For "beta_prime" parameterization:
+        - For "odds_ratio" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - phi_distribution_model: Distribution for phi parameter
             - mu_distribution_model: Distribution for gene means
@@ -608,7 +608,7 @@ def zinb_mixture_model(
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -620,7 +620,7 @@ def zinb_mixture_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -693,22 +693,22 @@ def zinb_mixture_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent r and p (original)
-        - "mean_variance": Correlated r and p via mean-variance relationship
-        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+        - "standard": Independent r and p (original)
+        - "linked": Correlated r and p via mean-variance relationship
+        - "odds_ratio": Correlated r and p via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return zinb_mixture_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return zinb_mixture_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return zinb_mixture_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return zinb_mixture_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return zinb_mixture_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return zinb_mixture_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -718,7 +718,7 @@ def zinb_mixture_guide(
 # Mean-Field Parameterized Guide for ZINB Mixture Model
 # ------------------------------------------------------------------------------
 
-def zinb_mixture_guide_mean_field(
+def zinb_mixture_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -858,7 +858,7 @@ def zinb_mixture_guide_mean_field(
 # Mean-Variance Parameterized Guide for ZINB Mixture Model
 # ------------------------------------------------------------------------------
 
-def zinb_mixture_guide_mean_variance(
+def zinb_mixture_guide_linked(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1016,7 +1016,7 @@ def zinb_mixture_guide_mean_variance(
 # Beta-Prime Parameterized Guide for ZINB Mixture Model
 # ------------------------------------------------------------------------------
 
-def zinb_mixture_guide_beta_prime(
+def zinb_mixture_guide_odds_ratio(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1253,13 +1253,13 @@ def nbvcp_mixture_model(
             - r_distribution_model: Distribution for dispersion parameters r
             - p_capture_distribution_model: Distribution for capture
               probabilities
-        - For "mean_variance" parameterization:
+        - For "linked" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - p_distribution_model: Distribution for success probability p
             - mu_distribution_model: Distribution for gene means
             - p_capture_distribution_model: Distribution for capture
               probabilities
-        - For "beta_prime" parameterization:
+        - For "odds_ratio" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - phi_distribution_model: Distribution for phi parameter
             - mu_distribution_model: Distribution for gene means
@@ -1302,7 +1302,7 @@ def nbvcp_mixture_model(
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -1314,7 +1314,7 @@ def nbvcp_mixture_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -1340,7 +1340,7 @@ def nbvcp_mixture_model(
         if batch_size is None:
             with numpyro.plate("cells", n_cells):
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -1388,7 +1388,7 @@ def nbvcp_mixture_model(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -1434,7 +1434,7 @@ def nbvcp_mixture_model(
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Handle p_capture sampling based on parameterization
-            if model_config.parameterization == "beta_prime":
+            if model_config.parameterization == "odds_ratio":
                 # Sample phi_capture
                 phi_capture = numpyro.sample(
                     "phi_capture",
@@ -1495,22 +1495,22 @@ def nbvcp_mixture_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent p, r, and p_capture (original)
-        - "mean_variance": Correlated p and r via mean-variance relationship
-        - "beta_prime": Correlated p and r via Beta Prime reparameterization
+        - "standard": Independent p, r, and p_capture (original)
+        - "linked": Correlated p and r via mean-variance relationship
+        - "odds_ratio": Correlated p and r via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return nbvcp_mixture_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return nbvcp_mixture_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return nbvcp_mixture_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return nbvcp_mixture_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return nbvcp_mixture_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return nbvcp_mixture_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -1521,7 +1521,7 @@ def nbvcp_mixture_guide(
 # Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def nbvcp_mixture_guide_mean_field(
+def nbvcp_mixture_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1678,7 +1678,7 @@ def nbvcp_mixture_guide_mean_field(
 # Mean-Variance Parameterized Guide for Negative Binomial Mixture Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def nbvcp_mixture_guide_mean_variance(
+def nbvcp_mixture_guide_linked(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1820,7 +1820,7 @@ def nbvcp_mixture_guide_mean_variance(
 # Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def nbvcp_mixture_guide_beta_prime(
+def nbvcp_mixture_guide_odds_ratio(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -2869,14 +2869,14 @@ def zinbvcp_mixture_model(
             - gate_distribution_model: Distribution for dropout probabilities
             - p_capture_distribution_model: Distribution for capture
               probabilities
-        - For "mean_variance" parameterization:
+        - For "linked" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - p_distribution_model: Distribution for success probability p
             - mu_distribution_model: Distribution for gene means
             - gate_distribution_model: Distribution for dropout probabilities
             - p_capture_distribution_model: Distribution for capture
               probabilities
-        - For "beta_prime" parameterization:
+        - For "odds_ratio" parameterization:
             - mixing_distribution_model: Distribution for mixture weights
             - phi_distribution_model: Distribution for phi parameter
             - mu_distribution_model: Distribution for gene means
@@ -2923,7 +2923,7 @@ def zinbvcp_mixture_model(
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -2935,7 +2935,7 @@ def zinbvcp_mixture_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -2967,7 +2967,7 @@ def zinbvcp_mixture_model(
         if batch_size is None:
             with numpyro.plate("cells", n_cells):
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -3018,7 +3018,7 @@ def zinbvcp_mixture_model(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -3067,7 +3067,7 @@ def zinbvcp_mixture_model(
     else:
         with numpyro.plate("cells", n_cells):
             # Handle p_capture sampling based on parameterization
-            if model_config.parameterization == "beta_prime":
+            if model_config.parameterization == "odds_ratio":
                 # Sample phi_capture
                 phi_capture = numpyro.sample(
                     "phi_capture",
@@ -3130,22 +3130,22 @@ def zinbvcp_mixture_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent p, r, gate, and p_capture (original)
-        - "mean_variance": Correlated p and r via mean-variance relationship
-        - "beta_prime": Correlated p and r via Beta Prime reparameterization
+        - "standard": Independent p, r, gate, and p_capture (original)
+        - "linked": Correlated p and r via mean-variance relationship
+        - "odds_ratio": Correlated p and r via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return zinbvcp_mixture_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return zinbvcp_mixture_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return zinbvcp_mixture_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return zinbvcp_mixture_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return zinbvcp_mixture_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return zinbvcp_mixture_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -3155,7 +3155,7 @@ def zinbvcp_mixture_guide(
 # Mean-Field Parameterized Guide for Zero-Inflated Negative Binomial Mixture Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def zinbvcp_mixture_guide_mean_field(
+def zinbvcp_mixture_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,

@@ -12,7 +12,7 @@ from typing import Callable, Tuple, Dict
 # ------------------------------------------------------------------------------
 
 def get_model_and_guide(
-    model_type: str, parameterization: str = "mean_field"
+    model_type: str, parameterization: str = "standard"
 ) -> Tuple[Callable, Callable]:
     """
     Get model and guide functions for a specified model type and guide type.
@@ -37,12 +37,12 @@ def get_model_and_guide(
         The type of model to retrieve functions for. Must be one of ["nbdm",
         "zinb", "nbvcp", "zinbvcp", "nbdm_mix", "zinb_mix", "nbvcp_mix",
         "zinbvcp_mix"].
-    guide_type : str, default="mean_field"
+    guide_type : str, default="standard"
         The type of variational guide to use:
-            - "mean_field": Independent parameters (original)
-            - "mean_variance": Correlated r-p parameters via mean-variance
+            - "standard": Independent parameters (original)
+            - "linked": Correlated r-p parameters via mean-variance
               parameterization
-            - "beta_prime": Correlated r-p parameters via beta-prime
+            - "odds_ratio": Correlated r-p parameters via beta-prime
               parameterization
 
     Returns
@@ -57,10 +57,10 @@ def get_model_and_guide(
         If an unsupported model type or guide type is provided.
     """
     if parameterization is None:
-        parameterization = "mean_field"
+        parameterization = "standard"
 
     # Validate guide type
-    valid_guide_types = ["mean_field", "mean_variance", "beta_prime"]
+    valid_guide_types = ["standard", "linked", "odds_ratio"]
     if parameterization not in valid_guide_types:
         raise ValueError(f"Unknown guide type: {parameterization}. Must be one of {valid_guide_types}")
     
@@ -70,15 +70,15 @@ def get_model_and_guide(
         from .models import nbdm_model
         
         # Select guide based on guide_type
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             from .models import nbdm_guide
             return nbdm_model, nbdm_guide
-        elif parameterization == "mean_variance":
-            from .models import nbdm_guide_mean_variance
-            return nbdm_model, nbdm_guide_mean_variance
-        elif parameterization == "beta_prime":
-            from .models import nbdm_guide_beta_prime
-            return nbdm_model, nbdm_guide_beta_prime
+        elif parameterization == "linked":
+            from .models import nbdm_guide_linked
+            return nbdm_model, nbdm_guide_linked
+        elif parameterization == "odds_ratio":
+            from .models import nbdm_guide_odds_ratio
+            return nbdm_model, nbdm_guide_odds_ratio
     
     # Handle Zero-Inflated Negative Binomial model
     elif model_type == "zinb":
@@ -86,15 +86,15 @@ def get_model_and_guide(
         from .models import zinb_model
         
         # Select guide based on guide_type
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             from .models import zinb_guide
             return zinb_model, zinb_guide
-        elif parameterization == "mean_variance":
-            from .models import zinb_guide_mean_variance
-            return zinb_model, zinb_guide_mean_variance
-        elif parameterization == "beta_prime":
-            from .models import zinb_guide_beta_prime
-            return zinb_model, zinb_guide_beta_prime
+        elif parameterization == "linked":
+            from .models import zinb_guide_linked
+            return zinb_model, zinb_guide_linked
+        elif parameterization == "odds_ratio":
+            from .models import zinb_guide_odds_ratio
+            return zinb_model, zinb_guide_odds_ratio
     
     # Handle Negative Binomial with variable mRNA capture probability model
     elif model_type == "nbvcp":
@@ -102,15 +102,15 @@ def get_model_and_guide(
         from .models import nbvcp_model
         
         # Select guide based on guide_type
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             from .models import nbvcp_guide
             return nbvcp_model, nbvcp_guide
-        elif parameterization == "mean_variance":
-            from .models import nbvcp_guide_mean_variance
-            return nbvcp_model, nbvcp_guide_mean_variance
-        elif parameterization == "beta_prime":
-            from .models import nbvcp_guide_beta_prime
-            return nbvcp_model, nbvcp_guide_beta_prime
+        elif parameterization == "linked":
+            from .models import nbvcp_guide_linked
+            return nbvcp_model, nbvcp_guide_linked
+        elif parameterization == "odds_ratio":
+            from .models import nbvcp_guide_odds_ratio
+            return nbvcp_model, nbvcp_guide_odds_ratio
     
     # Handle Zero-Inflated Negative Binomial with variable capture probability
     elif model_type == "zinbvcp":
@@ -118,15 +118,15 @@ def get_model_and_guide(
         from .models import zinbvcp_model
         
         # Select guide based on guide_type
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             from .models import zinbvcp_guide
             return zinbvcp_model, zinbvcp_guide
-        elif parameterization == "mean_variance":
-            from .models import zinbvcp_guide_mean_variance
-            return zinbvcp_model, zinbvcp_guide_mean_variance
-        elif parameterization == "beta_prime":
-            from .models import zinbvcp_guide_beta_prime
-            return zinbvcp_model, zinbvcp_guide_beta_prime
+        elif parameterization == "linked":
+            from .models import zinbvcp_guide_linked
+            return zinbvcp_model, zinbvcp_guide_linked
+        elif parameterization == "odds_ratio":
+            from .models import zinbvcp_guide_odds_ratio
+            return zinbvcp_model, zinbvcp_guide_odds_ratio
     
     # Handle Negative Binomial-Dirichlet Multinomial Mixture Model
     elif model_type == "nbdm_mix":
@@ -134,15 +134,15 @@ def get_model_and_guide(
         from .models_mix import nbdm_mixture_model
         
         # Select guide based on guide_type
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             from .models_mix import nbdm_mixture_guide
             return nbdm_mixture_model, nbdm_mixture_guide
-        elif parameterization == "mean_variance":
-            from .models_mix import nbdm_mixture_guide_mean_variance
-            return nbdm_mixture_model, nbdm_mixture_guide_mean_variance
-        elif parameterization == "beta_prime":
-            from .models_mix import nbdm_mixture_guide_beta_prime
-            return nbdm_mixture_model, nbdm_mixture_guide_beta_prime
+        elif parameterization == "linked":
+            from .models_mix import nbdm_mixture_guide_linked
+            return nbdm_mixture_model, nbdm_mixture_guide_linked
+        elif parameterization == "odds_ratio":
+            from .models_mix import nbdm_mixture_guide_odds_ratio
+            return nbdm_mixture_model, nbdm_mixture_guide_odds_ratio
 
     # Handle Zero-Inflated Negative Binomial Mixture Model
     elif model_type == "zinb_mix":
@@ -150,15 +150,15 @@ def get_model_and_guide(
         from .models_mix import zinb_mixture_model
         
         # Select guide based on guide_type
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             from .models_mix import zinb_mixture_guide
             return zinb_mixture_model, zinb_mixture_guide
-        elif parameterization == "mean_variance":
-            from .models_mix import zinb_mixture_guide_mean_variance
-            return zinb_mixture_model, zinb_mixture_guide_mean_variance
-        elif parameterization == "beta_prime":
-            from .models_mix import zinb_mixture_guide_beta_prime
-            return zinb_mixture_model, zinb_mixture_guide_beta_prime
+        elif parameterization == "linked":
+            from .models_mix import zinb_mixture_guide_linked
+            return zinb_mixture_model, zinb_mixture_guide_linked
+        elif parameterization == "odds_ratio":
+            from .models_mix import zinb_mixture_guide_odds_ratio
+            return zinb_mixture_model, zinb_mixture_guide_odds_ratio
     
     # Handle Negative Binomial-Variable Capture Probability Mixture Model
     elif model_type == "nbvcp_mix":
@@ -166,22 +166,22 @@ def get_model_and_guide(
         from .models_mix import nbvcp_mixture_model
         
         # Select guide based on guide_type
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             from .models_mix import nbvcp_mixture_guide
             return nbvcp_mixture_model, nbvcp_mixture_guide
-        elif parameterization == "mean_variance":
-            from .models_mix import nbvcp_mixture_guide_mean_variance
-            return nbvcp_mixture_model, nbvcp_mixture_guide_mean_variance
-        elif parameterization == "beta_prime":
-            from .models_mix import nbvcp_mixture_guide_beta_prime
-            return nbvcp_mixture_model, nbvcp_mixture_guide_beta_prime
+        elif parameterization == "linked":
+            from .models_mix import nbvcp_mixture_guide_linked
+            return nbvcp_mixture_model, nbvcp_mixture_guide_linked
+        elif parameterization == "odds_ratio":
+            from .models_mix import nbvcp_mixture_guide_odds_ratio
+            return nbvcp_mixture_model, nbvcp_mixture_guide_odds_ratio
     
     # Handle Zero-Inflated Negative Binomial-Variable Capture Probability
     # Mixture Model
     elif model_type == "zinbvcp_mix":
         # Import model and guide functions locally to avoid circular imports
         from .models_mix import zinbvcp_mixture_model, zinbvcp_mixture_guide
-        if parameterization != "mean_field":
+        if parameterization != "standard":
             raise ValueError(f"Guide type '{parameterization}' not yet supported for model '{model_type}'")
         return zinbvcp_mixture_model, zinbvcp_mixture_guide
     

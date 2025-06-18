@@ -75,7 +75,7 @@ def nbdm_model(
         - counts[i,j] ~ NegativeBinomialProbs(r[j], p) for each cell i and gene j
     """
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -87,7 +87,7 @@ def nbdm_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -149,22 +149,22 @@ def nbdm_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent r and p (original)
-        - "mean_variance": Correlated r and p via mean-variance relationship
-        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+        - "standard": Independent r and p (original)
+        - "linked": Correlated r and p via mean-variance relationship
+        - "odds_ratio": Correlated r and p via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return nbdm_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return nbdm_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return nbdm_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return nbdm_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return nbdm_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return nbdm_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -174,7 +174,7 @@ def nbdm_guide(
 # Mean-Field Parameterized Guide for Negative Binomial-Dirichlet Multinomial
 # ------------------------------------------------------------------------------
 
-def nbdm_guide_mean_field(
+def nbdm_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -228,9 +228,9 @@ def nbdm_guide_mean_field(
     The mean-field approximation assumes independence between p and r
     parameters, which may not capture important correlations in the true
     posterior. For parameterizations that model these correlations, see:
-        - nbdm_guide_mean_variance: Uses mean-variance relationship where r_g =
+        - nbdm_guide_linked: Uses mean-variance relationship where r_g =
           μ_g * (1 - p) / p for gene-specific means μ_g
-        - nbdm_guide_beta_prime: Uses Beta Prime reparameterization where r_g =
+        - nbdm_guide_odds_ratio: Uses Beta Prime reparameterization where r_g =
           φ_g * (1 - p) / p for gene-specific parameters φ_g
     """
     # Extract p distribution values
@@ -270,7 +270,7 @@ def nbdm_guide_mean_field(
 # Mean-Variance Parameterized Guide for Negative Binomial-Dirichlet Multinomial
 # ------------------------------------------------------------------------------
 
-def nbdm_guide_mean_variance(
+def nbdm_guide_linked(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -326,8 +326,8 @@ def nbdm_guide_mean_variance(
     -----
     The mean-variance parameterization captures the natural relationship between
     means and variances in count data. For alternative parameterizations, see:
-        - nbdm_guide_mean_field: Uses independent distributions for p and r
-        - nbdm_guide_beta_prime: Uses Beta Prime reparameterization where r_g =
+        - nbdm_guide_standard: Uses independent distributions for p and r
+        - nbdm_guide_odds_ratio: Uses Beta Prime reparameterization where r_g =
           φ_g * (1 - p) / p for gene-specific parameters φ_g
     """
     # Add checks for required distributions
@@ -373,7 +373,7 @@ def nbdm_guide_mean_variance(
 # Beta-Prime Parameterized Guide for Negative Binomial-Dirichlet Multinomial
 # ------------------------------------------------------------------------------
 
-def nbdm_guide_beta_prime(
+def nbdm_guide_odds_ratio(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -431,8 +431,8 @@ def nbdm_guide_beta_prime(
     The Beta-Prime parameterization provides a natural way to model the
     relationship between p and r through the shared parameter φ. For alternative
     parameterizations, see:
-        - nbdm_guide_mean_field: Uses independent distributions for p and r
-        - nbdm_guide_mean_variance: Uses mean-variance relationship where r_g =
+        - nbdm_guide_standard: Uses independent distributions for p and r
+        - nbdm_guide_linked: Uses mean-variance relationship where r_g =
           μ_g * (1 - p) / p for gene-specific means μ_g
     """
     # Add checks for required distributions
@@ -506,11 +506,11 @@ def zinb_model(
             - p_distribution_model: Distribution for success probability p
             - r_distribution_model: Distribution for dispersion parameters r
             - gate_distribution_model: Distribution for dropout probabilities
-        - For "mean_variance" parameterization:
+        - For "linked" parameterization:
             - p_distribution_model: Distribution for success probability p
             - mu_distribution_model: Distribution for gene means
             - gate_distribution_model: Distribution for dropout probabilities
-        - For "beta_prime" parameterization:
+        - For "odds_ratio" parameterization:
             - phi_distribution_model: Distribution for phi parameter
             - mu_distribution_model: Distribution for gene means
             - gate_distribution_model: Distribution for dropout probabilities
@@ -533,7 +533,7 @@ def zinb_model(
         - counts ~ ZeroInflatedNegativeBinomial(r, p, gate)
     """
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -545,7 +545,7 @@ def zinb_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -615,22 +615,22 @@ def zinb_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent r and p (original)
-        - "mean_variance": Correlated r and p via mean-variance relationship
-        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+        - "standard": Independent r and p (original)
+        - "linked": Correlated r and p via mean-variance relationship
+        - "odds_ratio": Correlated r and p via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return zinb_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return zinb_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return zinb_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return zinb_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return zinb_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return zinb_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -640,7 +640,7 @@ def zinb_guide(
 # Mean-Field Parameterized Guide for Zero-Inflated Negative Binomial
 # ------------------------------------------------------------------------------
 
-def zinb_guide_mean_field(
+def zinb_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -757,7 +757,7 @@ def zinb_guide_mean_field(
 # Mean-Variance Parameterized Guide for Zero-Inflated Negative Binomial
 # ------------------------------------------------------------------------------
 
-def zinb_guide_mean_variance(
+def zinb_guide_linked(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -871,7 +871,7 @@ def zinb_guide_mean_variance(
 # Beta-Prime Parameterized Guide for Zero-Inflated Negative Binomial
 # ------------------------------------------------------------------------------
 
-def zinb_guide_beta_prime(
+def zinb_guide_odds_ratio(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1019,11 +1019,11 @@ def nbvcp_model(
             - p_distribution_model: Prior for success probability p
             - r_distribution_model: Prior for dispersion parameters r
             - p_capture_distribution_model: Prior for capture probabilities p_capture
-        - For "mean_variance" parameterization:
+        - For "linked" parameterization:
             - p_distribution_model: Prior for success probability p
             - mu_distribution_model: Prior for gene means
             - p_capture_distribution_model: Prior for capture probabilities p_capture
-        - For "beta_prime" parameterization:
+        - For "odds_ratio" parameterization:
             - phi_distribution_model: Prior for phi parameter
             - phi_capture_distribution_model: Prior for phi_capture parameter
             - mu_distribution_model: Prior for gene means
@@ -1048,7 +1048,7 @@ def nbvcp_model(
         - counts ~ NegativeBinomial(r, p_hat)
     """
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi and phi_capture
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -1060,7 +1060,7 @@ def nbvcp_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -1084,7 +1084,7 @@ def nbvcp_model(
         if batch_size is None:
             with numpyro.plate("cells", n_cells):
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -1130,7 +1130,7 @@ def nbvcp_model(
                 subsample_size=batch_size,
             ) as idx:
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -1172,7 +1172,7 @@ def nbvcp_model(
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Handle p_capture sampling based on parameterization
-            if model_config.parameterization == "beta_prime":
+            if model_config.parameterization == "odds_ratio":
                 # Sample phi_capture
                 phi_capture = numpyro.sample(
                     "phi_capture",
@@ -1226,22 +1226,22 @@ def nbvcp_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent r and p (original)
-        - "mean_variance": Correlated r and p via mean-variance relationship
-        - "beta_prime": Correlated r and p via Beta Prime reparameterization
+        - "standard": Independent r and p (original)
+        - "linked": Correlated r and p via mean-variance relationship
+        - "odds_ratio": Correlated r and p via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return nbvcp_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return nbvcp_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return nbvcp_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return nbvcp_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return nbvcp_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return nbvcp_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -1251,7 +1251,7 @@ def nbvcp_guide(
 # Mean-Field Parameterized Guide for Negative Binomial with Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def nbvcp_guide_mean_field(
+def nbvcp_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1376,7 +1376,7 @@ def nbvcp_guide_mean_field(
 # Mean-Variance Parameterized Guide for Negative Binomial with Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def nbvcp_guide_mean_variance(
+def nbvcp_guide_linked(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1492,7 +1492,7 @@ def nbvcp_guide_mean_variance(
 # Beta-Prime Parameterized Guide for Negative Binomial with Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def nbvcp_guide_beta_prime(
+def nbvcp_guide_odds_ratio(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -1646,12 +1646,12 @@ def zinbvcp_model(
             - r_distribution_model: Prior for dispersion parameters r
             - gate_distribution_model: Prior for dropout probabilities
             - p_capture_distribution_model: Prior for capture probabilities
-        - For "mean_variance" parameterization:
+        - For "linked" parameterization:
             - p_distribution_model: Prior for success probability p
             - mu_distribution_model: Prior for gene means
             - gate_distribution_model: Prior for dropout probabilities
             - p_capture_distribution_model: Prior for capture probabilities
-        - For "beta_prime" parameterization:
+        - For "odds_ratio" parameterization:
             - phi_distribution_model: Prior for phi parameter
             - phi_capture_distribution_model: Prior for phi_capture parameter
             - mu_distribution_model: Prior for gene means
@@ -1681,7 +1681,7 @@ def zinbvcp_model(
         - counts ~ ZeroInflatedNegativeBinomial(r, p_hat, gate)
     """
     # Check if we are using the beta-prime parameterization
-    if model_config.parameterization == "beta_prime":
+    if model_config.parameterization == "odds_ratio":
         # Sample phi and phi_capture
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
@@ -1693,7 +1693,7 @@ def zinbvcp_model(
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
         # Compute r
         r = numpyro.deterministic("r", mu * phi)
-    elif model_config.parameterization == "mean_variance":
+    elif model_config.parameterization == "linked":
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
@@ -1723,7 +1723,7 @@ def zinbvcp_model(
         if batch_size is None:
             with numpyro.plate("cells", n_cells):
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -1771,7 +1771,7 @@ def zinbvcp_model(
                 subsample_size=batch_size,
             ) as idx:
                 # Handle p_capture sampling based on parameterization
-                if model_config.parameterization == "beta_prime":
+                if model_config.parameterization == "odds_ratio":
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
@@ -1816,7 +1816,7 @@ def zinbvcp_model(
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Handle p_capture sampling based on parameterization
-            if model_config.parameterization == "beta_prime":
+            if model_config.parameterization == "odds_ratio":
                 # Sample phi_capture
                 phi_capture = numpyro.sample(
                     "phi_capture",
@@ -1875,22 +1875,22 @@ def zinbvcp_guide(
     
     Parameters
     ----------
-    parameterization : str, default="mean_field"
+    parameterization : str, default="standard"
         Choice of guide parameterization:
-        - "mean_field": Independent p, r, gate, and p_capture (original)
-        - "mean_variance": Correlated p and r via mean-variance relationship
-        - "beta_prime": Correlated p and r via Beta Prime reparameterization
+        - "standard": Independent p, r, gate, and p_capture (original)
+        - "linked": Correlated p and r via mean-variance relationship
+        - "odds_ratio": Correlated p and r via Beta Prime reparameterization
     """
-    if model_config.parameterization == "mean_field":
-        return zinbvcp_guide_mean_field(
+    if model_config.parameterization == "standard":
+        return zinbvcp_guide_standard(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "mean_variance":
-        return zinbvcp_guide_mean_variance(
+    elif model_config.parameterization == "linked":
+        return zinbvcp_guide_linked(
             n_cells, n_genes, model_config, counts, batch_size
         )
-    elif model_config.parameterization == "beta_prime":
-        return zinbvcp_guide_beta_prime(
+    elif model_config.parameterization == "odds_ratio":
+        return zinbvcp_guide_odds_ratio(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
@@ -1900,7 +1900,7 @@ def zinbvcp_guide(
 # Mean-Field Parameterized Guide for Zero-Inflated Negative Binomial with Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def zinbvcp_guide_mean_field(
+def zinbvcp_guide_standard(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -2050,7 +2050,7 @@ def zinbvcp_guide_mean_field(
 # Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def zinbvcp_guide_mean_variance(
+def zinbvcp_guide_linked(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
@@ -2211,7 +2211,7 @@ def zinbvcp_guide_mean_variance(
 # Variable Capture Probability
 # ------------------------------------------------------------------------------
 
-def zinbvcp_guide_beta_prime(
+def zinbvcp_guide_odds_ratio(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,

@@ -31,7 +31,7 @@ class PriorConfigFactory:
         inference_method : str
             Inference method ("svi" or "mcmc")
         parameterization : str
-            Parameterization type ("mean_field", "mean_variance", "beta_prime", "unconstrained")
+            Parameterization type ("standard", "linked", "odds_ratio", "unconstrained")
         r_distribution : Optional[Any]
             NumPyro distribution class for r parameter
         mu_distribution : Optional[Any]
@@ -67,7 +67,7 @@ class PriorConfigFactory:
         defaults = {}
         
         # Default priors based on parameterization
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             # Choose r_prior based on distribution type
             if r_distribution is not None:
                 # Try to infer appropriate defaults from distribution name
@@ -82,11 +82,11 @@ class PriorConfigFactory:
                 defaults["r_prior"] = (1, 1)        # Default LogNormal
             defaults["p_prior"] = (1, 1)            # Beta distribution
             
-        elif parameterization == "mean_variance":
+        elif parameterization == "linked":
             defaults["p_prior"] = (1, 1)            # Beta distribution  
             defaults["mu_prior"] = (1, 1)           # LogNormal distribution
             
-        elif parameterization == "beta_prime":
+        elif parameterization == "odds_ratio":
             defaults["phi_prior"] = (1, 1)          # BetaPrime distribution
             defaults["mu_prior"] = (1, 1)           # LogNormal distribution
             
@@ -108,9 +108,9 @@ class PriorConfigFactory:
         if "vcp" in model_type:
             if parameterization == "unconstrained":
                 defaults["p_capture_prior"] = (0, 1)  # Normal on logit(p_capture)
-            elif parameterization in ["mean_field", "mean_variance"]:
+            elif parameterization in ["standard", "linked"]:
                 defaults["p_capture_prior"] = (1, 1)  # Beta distribution
-            elif parameterization == "beta_prime":
+            elif parameterization == "odds_ratio":
                 defaults["phi_capture_prior"] = (1, 1)  # BetaPrime distribution
                 
         if "mix" in model_type and n_components is not None:
@@ -154,11 +154,11 @@ class PriorConfigFactory:
     def _validate_unified_priors(model_type: str, parameterization: str, prior_dict: Dict[str, Any]) -> None:
         """Validate priors for unified parameterization approach."""
         # Check parameterization-specific requirements
-        if parameterization == "mean_field":
+        if parameterization == "standard":
             required_priors = ["p_prior", "r_prior"]
-        elif parameterization == "mean_variance":
+        elif parameterization == "linked":
             required_priors = ["p_prior", "mu_prior"]
-        elif parameterization == "beta_prime":
+        elif parameterization == "odds_ratio":
             required_priors = ["phi_prior", "mu_prior"]
         elif parameterization == "unconstrained":
             required_priors = ["p_prior", "r_prior"]
@@ -171,9 +171,9 @@ class PriorConfigFactory:
         if "vcp" in model_type:
             if parameterization == "unconstrained":
                 required_priors.append("p_capture_prior")
-            elif parameterization in ["mean_field", "mean_variance"]:
+            elif parameterization in ["standard", "linked"]:
                 required_priors.append("p_capture_prior")
-            elif parameterization == "beta_prime":
+            elif parameterization == "odds_ratio":
                 required_priors.append("phi_capture_prior")
         if "mix" in model_type:
             required_priors.append("mixing_prior")
