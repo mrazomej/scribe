@@ -275,3 +275,10 @@ fig.savefig(
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
+
+# Evaluate cell type assignment
+cell_type_assignments = svi_results.cell_type_assignments(
+    counts=data,
+    fit_distribution=True,
+)
+# %% ---------------------------------------------------------------------------
