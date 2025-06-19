@@ -1891,8 +1891,8 @@ def nbvcp_mixture_guide_odds_ratio(
         raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.p_capture_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'p_capture_distribution_guide'.")
+    if model_config.phi_capture_distribution_guide is None:
+        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
 
     # Extract number of components
     n_components = model_config.n_components
@@ -1930,17 +1930,6 @@ def nbvcp_mixture_guide_odds_ratio(
             constraint=constraint
         )
 
-    # Define gate distribution parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
-        )
-
     # Sample from variational distributions
     numpyro.sample(
         "mixing_weights", 
@@ -1953,10 +1942,6 @@ def nbvcp_mixture_guide_odds_ratio(
     numpyro.sample(
         "mu", 
         model_config.mu_distribution_guide.__class__(**mu_params)
-    )
-    numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
     )
 
     # Extract p_capture distribution values
