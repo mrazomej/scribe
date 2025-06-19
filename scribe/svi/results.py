@@ -209,6 +209,10 @@ class ScribeSVIResults:
         """
         Get the variational distributions for all parameters using model config.
         
+        This method handles all parameterizations (standard, linked, odds_ratio, 
+        unconstrained) and returns appropriate distributions based on the 
+        model configuration.
+        
         Parameters
         ----------
         backend : str, default="scipy"
@@ -220,86 +224,304 @@ class ScribeSVIResults:
         -------
         Dict[str, Any]
             Dictionary mapping parameter names to their distributions
+            
+        Raises
+        ------
+        ValueError
+            If backend is not supported or if required distributions are missing
         """
         if backend not in ["scipy", "numpyro"]:
             raise ValueError(f"Invalid backend: {backend}")
-            
+
+        distributions = {}
+        parameterization = self.model_config.parameterization
+
+        # Handle different parameterizations
+        if parameterization == "unconstrained":
+            return self._get_unconstrained_distributions(backend)
+        else:
+            return self._get_constrained_distributions(backend, parameterization)
+
+    def _get_unconstrained_distributions(
+        self, backend: str = "scipy") -> Dict[str, Any]:
+        """
+        Get distributions for unconstrained parameterization.
+        
+        For unconstrained parameterization, all parameters are Normal
+        distributions on transformed spaces (logit for probabilities, log for
+        positive parameters).
+        """
+        import numpyro.distributions as dist
+        
         distributions = {}
         
-        # Handle r distribution
-        r_params = {}
-        for param_name in self.model_config.r_distribution_guide.arg_constraints:
-            r_params[param_name] = self.params[f"r_{param_name}"]
+        # For unconstrained, we create Normal distributions based on loc/scale
+        # params
+        active_params = self.model_config.get_active_parameters()
         
-        if backend == "scipy":
-            distributions['r'] = numpyro_to_scipy(
-                self.model_config.r_distribution_guide.__class__(**r_params)
-            )
-        else:  # numpyro
-            distributions['r'] = self.model_config.r_distribution_guide.__class__(**r_params)
-        
-        # Handle p distribution
-        p_params = {}
-        for param_name in self.model_config.p_distribution_guide.arg_constraints:
-            p_params[param_name] = self.params[f"p_{param_name}"]
-        
-        if backend == "scipy":
-            distributions['p'] = numpyro_to_scipy(
-                self.model_config.p_distribution_guide.__class__(**p_params)
-            )
-        else:  # numpyro
-            distributions['p'] = self.model_config.p_distribution_guide.__class__(**p_params)
-        
-        # Add gate distribution if present
-        if self.model_config.gate_distribution_guide is not None:
-            gate_params = {}
-            for param_name in self.model_config.gate_distribution_guide.arg_constraints:
-                gate_params[param_name] = self.params[f"gate_{param_name}"]
-                
-            if backend == "scipy":
-                distributions['gate'] = numpyro_to_scipy(
-                    self.model_config.gate_distribution_guide.__class__(**gate_params)
-                )
-            else:  # numpyro
-                distributions['gate'] = self.model_config.gate_distribution_guide.__class__(**gate_params)
+        # Core parameters
+        if "p_unconstrained" in active_params:
+            p_loc = getattr(self.model_config, 'p_unconstrained_loc', 0.0)
+            p_scale = getattr(self.model_config, 'p_unconstrained_scale', 1.0)
             
-        # Add p_capture distribution if present
-        if self.model_config.p_capture_distribution_guide is not None:
-            p_capture_params = {}
-            for param_name in self.model_config.p_capture_distribution_guide.arg_constraints:
-                p_capture_params[param_name] = self.params[f"p_capture_{param_name}"]
-                
-            if backend == "scipy":
-                distributions['p_capture'] = numpyro_to_scipy(
-                    self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
-                )
-            else:  # numpyro
-                distributions['p_capture'] = self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
-            
-        # Add mixing weights if mixture model
-        if self.model_config.n_components is not None:
-            # Extract mixing weights
-            mixing_params = self.params.get(f"mixing_concentration", None)
-            if backend == "scipy":
-                if self.model_config.mixing_distribution_guide is not None and mixing_params is not None:
-                    # Only pass 'concentration' if the constructor supports it
-                    try:
-                        distributions['mixing_weights'] = numpyro_to_scipy(
-                            self.model_config.mixing_distribution_guide.__class__(
-                                concentration=mixing_params
-                            )
-                        )
-                    except TypeError:
-                        pass
+            # Extract parameters from results
+            if 'p_unconstrained_loc' in self.params:
+                p_params = {'loc': self.params['p_unconstrained_loc'], 
+                           'scale': self.params['p_unconstrained_scale']}
             else:
-                if self.model_config.mixing_distribution_guide is not None and mixing_params is not None:
-                    try:
-                        distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(
-                            concentration=mixing_params
-                        )
-                    except TypeError:
-                        pass
+                # Fallback to scalar parameters
+                p_params = {'loc': p_loc, 'scale': p_scale}
+            
+            if backend == "scipy":
+                distributions['p_unconstrained'] = numpyro_to_scipy(
+                    dist.Normal(**p_params)
+                )
+            else:
+                distributions['p_unconstrained'] = dist.Normal(**p_params)
         
+        if "r_unconstrained" in active_params:
+            r_loc = getattr(self.model_config, 'r_unconstrained_loc', 0.0)
+            r_scale = getattr(self.model_config, 'r_unconstrained_scale', 1.0)
+            
+            # Extract parameters from results
+            if 'r_unconstrained_loc' in self.params:
+                r_params = {'loc': self.params['r_unconstrained_loc'], 
+                           'scale': self.params['r_unconstrained_scale']}
+            else:
+                # Fallback to scalar parameters
+                r_params = {'loc': r_loc, 'scale': r_scale}
+            
+            if backend == "scipy":
+                distributions['r_unconstrained'] = numpyro_to_scipy(
+                    dist.Normal(**r_params)
+                )
+            else:
+                distributions['r_unconstrained'] = dist.Normal(**r_params)
+        
+        # Optional parameters
+        if "gate_unconstrained" in active_params:
+            gate_loc = getattr(self.model_config, 'gate_unconstrained_loc', 0.0)
+            gate_scale = getattr(
+                self.model_config, 'gate_unconstrained_scale', 1.0)
+            
+            if 'gate_unconstrained_loc' in self.params:
+                gate_params = {'loc': self.params['gate_unconstrained_loc'], 
+                              'scale': self.params['gate_unconstrained_scale']}
+            else:
+                gate_params = {'loc': gate_loc, 'scale': gate_scale}
+            
+            if backend == "scipy":
+                distributions['gate_unconstrained'] = numpyro_to_scipy(
+                    dist.Normal(**gate_params)
+                )
+            else:
+                distributions['gate_unconstrained'] = dist.Normal(**gate_params)
+        
+        if "p_capture_unconstrained" in active_params:
+            p_cap_loc = getattr(
+                self.model_config, 'p_capture_unconstrained_loc', 0.0)
+            p_cap_scale = getattr(
+                self.model_config, 'p_capture_unconstrained_scale', 1.0)
+            
+            if 'p_capture_unconstrained_loc' in self.params:
+                p_cap_params = {
+                    'loc': self.params['p_capture_unconstrained_loc'], 
+                    'scale': self.params['p_capture_unconstrained_scale']
+                }
+            else:
+                p_cap_params = {'loc': p_cap_loc, 'scale': p_cap_scale}
+            
+            if backend == "scipy":
+                distributions['p_capture_unconstrained'] = numpyro_to_scipy(
+                    dist.Normal(**p_cap_params)
+                )
+            else:
+                distributions['p_capture_unconstrained'] = dist.Normal(**p_cap_params)
+        
+        if "mixing_logits_unconstrained" in active_params:
+            mix_loc = getattr(
+                self.model_config, 'mixing_logits_unconstrained_loc', 0.0)
+            mix_scale = getattr(
+                self.model_config, 'mixing_logits_unconstrained_scale', 1.0)
+            
+            if 'mixing_logits_unconstrained_loc' in self.params:
+                mix_params = {
+                    'loc': self.params['mixing_logits_unconstrained_loc'], 
+                    'scale': self.params['mixing_logits_unconstrained_scale']
+                }
+            else:
+                mix_params = {'loc': mix_loc, 'scale': mix_scale}
+            
+            if backend == "scipy":
+                distributions['mixing_logits_unconstrained'] = numpyro_to_scipy(
+                    dist.Normal(**mix_params)
+                )
+            else:
+                distributions['mixing_logits_unconstrained'] = dist.Normal(**mix_params)
+
+        return distributions
+
+    def _get_constrained_distributions(
+        self, backend: str = "scipy", 
+        parameterization: str = "standard") -> Dict[str, Any]:
+        """
+        Get distributions for constrained parameterizations (standard, linked,
+        odds_ratio).
+        
+        For constrained parameterizations, we use the actual distribution types
+        stored in the model config (Beta, Gamma, LogNormal, etc.) with
+        parameters extracted from the SVI results.
+        """
+        distributions = {}
+        active_params = self.model_config.get_active_parameters()
+
+        # Helper function to safely get distribution parameters
+        def _get_distribution_params(param_prefix: str, distribution_guide):
+            """Extract parameters for a distribution from self.params"""
+            if distribution_guide is None:
+                return None
+                
+            params = {}
+            if hasattr(distribution_guide, 'arg_constraints'):
+                for param_name in distribution_guide.arg_constraints:
+                    param_key = f"{param_prefix}_{param_name}"
+                    if param_key in self.params:
+                        params[param_name] = self.params[param_key]
+            return params if params else None
+
+        # Handle core parameters based on parameterization
+        if parameterization == "standard":
+            # p parameter (Beta distribution)
+            if ("p" in active_params and 
+                self.model_config.p_distribution_guide is not None):
+                p_params = _get_distribution_params(
+                    "p", self.model_config.p_distribution_guide)
+                if p_params:
+                    if backend == "scipy":
+                        distributions['p'] = numpyro_to_scipy(
+                            self.model_config.p_distribution_guide.__class__(**p_params)
+                        )
+                    else:
+                        distributions['p'] = self.model_config.p_distribution_guide.__class__(**p_params)
+            
+            # r parameter (Gamma or LogNormal distribution)
+            if ("r" in active_params and 
+                self.model_config.r_distribution_guide is not None):
+                r_params = _get_distribution_params(
+                    "r", self.model_config.r_distribution_guide)
+                if r_params:
+                    if backend == "scipy":
+                        distributions['r'] = numpyro_to_scipy(
+                            self.model_config.r_distribution_guide.__class__(**r_params)
+                        )
+                    else:
+                        distributions['r'] = self.model_config.r_distribution_guide.__class__(**r_params)
+
+        elif parameterization == "linked":
+            # p parameter (Beta distribution)
+            if "p" in active_params and self.model_config.p_distribution_guide is not None:
+                p_params = _get_distribution_params("p", self.model_config.p_distribution_guide)
+                if p_params:
+                    if backend == "scipy":
+                        distributions['p'] = numpyro_to_scipy(
+                            self.model_config.p_distribution_guide.__class__(**p_params)
+                        )
+                    else:
+                        distributions['p'] = self.model_config.p_distribution_guide.__class__(**p_params)
+            
+            # mu parameter (LogNormal distribution)
+            if "mu" in active_params and self.model_config.mu_distribution_guide is not None:
+                mu_params = _get_distribution_params("mu", self.model_config.mu_distribution_guide)
+                if mu_params:
+                    if backend == "scipy":
+                        distributions['mu'] = numpyro_to_scipy(
+                            self.model_config.mu_distribution_guide.__class__(**mu_params)
+                        )
+                    else:
+                        distributions['mu'] = self.model_config.mu_distribution_guide.__class__(**mu_params)
+
+        elif parameterization == "odds_ratio":
+            # phi parameter (BetaPrime distribution)
+            if ("phi" in active_params and 
+                self.model_config.phi_distribution_guide is not None):
+                phi_params = _get_distribution_params(
+                    "phi", self.model_config.phi_distribution_guide)
+                if phi_params:
+                    if backend == "scipy":
+                        distributions['phi'] = numpyro_to_scipy(
+                            self.model_config.phi_distribution_guide.__class__(**phi_params)
+                        )
+                    else:
+                        distributions['phi'] = self.model_config.phi_distribution_guide.__class__(**phi_params)
+            
+            # mu parameter (LogNormal distribution)
+            if ("mu" in active_params and 
+                self.model_config.mu_distribution_guide is not None):
+                mu_params = _get_distribution_params(
+                    "mu", self.model_config.mu_distribution_guide)
+                if mu_params:
+                    if backend == "scipy":
+                        distributions['mu'] = numpyro_to_scipy(
+                            self.model_config.mu_distribution_guide.__class__(**mu_params)
+                        )
+                    else:
+                        distributions['mu'] = self.model_config.mu_distribution_guide.__class__(**mu_params)
+
+        # Handle optional parameters (present in all constrained
+        # parameterizations)
+        
+        # Gate parameter for ZINB models
+        if ("gate" in active_params and 
+            self.model_config.gate_distribution_guide is not None):
+            gate_params = _get_distribution_params(
+                "gate", self.model_config.gate_distribution_guide)
+            if gate_params:
+                if backend == "scipy":
+                    distributions['gate'] = numpyro_to_scipy(
+                        self.model_config.gate_distribution_guide.__class__(**gate_params)
+                    )
+                else:
+                    distributions['gate'] = self.model_config.gate_distribution_guide.__class__(**gate_params)
+        
+        # Capture probability parameter for VCP models
+        if ("p_capture" in active_params and 
+            self.model_config.p_capture_distribution_guide is not None):
+            p_capture_params = _get_distribution_params(
+                "p_capture", self.model_config.p_capture_distribution_guide)
+            if p_capture_params:
+                if backend == "scipy":
+                    distributions['p_capture'] = numpyro_to_scipy(
+                        self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                    )
+                else:
+                    distributions['p_capture'] = self.model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+        
+        # Capture phi parameter for VCP models with odds_ratio parameterization
+        if ("phi_capture" in active_params and 
+            self.model_config.phi_capture_distribution_guide is not None):
+            phi_capture_params = _get_distribution_params(
+                "phi_capture", self.model_config.phi_capture_distribution_guide)
+            if phi_capture_params:
+                if backend == "scipy":
+                    distributions['phi_capture'] = numpyro_to_scipy(
+                        self.model_config.phi_capture_distribution_guide.__class__(**phi_capture_params)
+                    )
+                else:
+                    distributions['phi_capture'] = self.model_config.phi_capture_distribution_guide.__class__(**phi_capture_params)
+        
+        # Mixing weights for mixture models
+        if ("mixing" in active_params and 
+            self.model_config.mixing_distribution_guide is not None):
+            mixing_params = _get_distribution_params(
+                "mixing", self.model_config.mixing_distribution_guide)
+            if mixing_params:
+                if backend == "scipy":
+                    distributions['mixing_weights'] = numpyro_to_scipy(
+                        self.model_config.mixing_distribution_guide.__class__(**mixing_params)
+                    )
+                else:
+                    distributions['mixing_weights'] = self.model_config.mixing_distribution_guide.__class__(**mixing_params)
+
         return distributions
 
     # --------------------------------------------------------------------------
@@ -714,7 +936,7 @@ class ScribeSVIResults:
     # Get model and guide functions
     # --------------------------------------------------------------------------
 
-    def _model_and_guide(self) -> Tuple[Callable, Callable]:
+    def _model_and_guide(self) -> Tuple[Callable, Optional[Callable]]:
         """Get the model and guide functions based on model type."""
         from ..models.model_registry import get_model_and_guide
         parameterization = self.model_config.parameterization or ""
@@ -1065,7 +1287,7 @@ class ScribeSVIResults:
         # If computing by gene and gene_batch_size is provided, use batched computation
         if return_by == 'gene' and gene_batch_size is not None:
             # Determine output shape
-            if is_mixture and split_components:
+            if is_mixture and split_components and self.n_components is not None:
                 result_shape = (self.n_genes, self.n_components)
             else:
                 result_shape = (self.n_genes,)
