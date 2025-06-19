@@ -1953,12 +1953,19 @@ class ScribeSVIResults:
                 samples['p'] = 1.0 / (1.0 + phi)
                 # Reshape phi to broadcast with mu based on mixture model
                 if self.n_components is not None:
-                    # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                    # Mixture model: mu has shape 
+                    # (n_samples, n_components, n_genes)
                     phi_reshaped = phi[:, None, None]
                 else:
                     # Non-mixture model: mu has shape (n_samples, n_genes)
                     phi_reshaped = phi[:, None]
                 samples['r'] = mu * phi_reshaped
+            
+            # Handle VCP capture probability conversion for odds_ratio
+            # parameterization
+            if ('phi_capture' in samples and 'p_capture' not in samples):
+                phi_capture = samples['phi_capture']
+                samples['p_capture'] = 1.0 / (1.0 + phi_capture)
         
         elif parameterization == "linked":
             if ('p' in samples and 'mu' in samples and
@@ -1967,7 +1974,8 @@ class ScribeSVIResults:
                 mu = samples['mu']
                 # Reshape p to broadcast with mu based on mixture model
                 if self.n_components is not None:
-                    # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                    # Mixture model: mu has shape 
+                    # (n_samples, n_components, n_genes)
                     p_reshaped = p[:, None, None]
                 else:
                     # Non-mixture model: mu has shape (n_samples, n_genes)
@@ -1984,5 +1992,11 @@ class ScribeSVIResults:
             if ('gate_unconstrained' in samples and
                 'gate' not in samples):
                 samples['gate'] = jnp.sigmoid(samples['gate_unconstrained'])
+            # Handle VCP capture probability conversion for unconstrained
+            # parameterization
+            if ('p_capture_unconstrained' in samples and
+                'p_capture' not in samples):
+                samples['p_capture'] = jnp.sigmoid(
+                    samples['p_capture_unconstrained'])
         
         return self
