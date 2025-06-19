@@ -9,6 +9,8 @@ from contextlib import contextmanager
 
 import numpyro.distributions as dist
 import scipy.stats as stats
+# Import custom distributions
+from .stats import BetaPrime
 
 # ------------------------------------------------------------------------------
 
@@ -107,5 +109,10 @@ def numpyro_to_scipy(distribution: dist.Distribution) -> stats.rv_continuous:
         return stats.lognorm(scale, loc=0, scale=np.exp(loc))
     elif isinstance(distribution, dist.Dirichlet):
         return stats.dirichlet(distribution.concentration)
+    elif isinstance(distribution, BetaPrime):
+        return stats.betaprime(
+            distribution.concentration1, 
+            distribution.concentration0
+        )
     else:
         raise ValueError(f"Unsupported distribution: {distribution}")
