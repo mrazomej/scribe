@@ -14,6 +14,7 @@ from jax import random, jit, vmap
 
 import numpy as np
 import scipy.stats as stats
+from scipy.special import softmax
 
 from ..sampling import (
     sample_variational_posterior,
@@ -28,6 +29,7 @@ from ..stats import (
     kl_lognormal,
     jensen_shannon_gamma,
     jensen_shannon_lognormal,
+    log_liks_to_probs,
 )
 from ..models.model_config import ModelConfig
 from ..utils import numpyro_to_scipy
@@ -224,7 +226,7 @@ class ScribeSVIResults:
     # Get distributions using configs
     # --------------------------------------------------------------------------
 
-    def get_distributions(self, backend: str = "scipy") -> Dict[str, Any]:
+    def get_distributions(self, backend: str = "numpyro") -> Dict[str, Any]:
         """
         Get the variational distributions for all parameters using model config.
 
@@ -948,41 +950,23 @@ class ScribeSVIResults:
         # Create new params dict with component subset
         new_params = dict(self.params)
 
-        # Handle r parameters (always gene-specific)
-        r_param_names = list(
-            self.model_config.r_distribution_guide.arg_constraints.keys()
-        )
-        # Loop through r parameters
-        for param_name in r_param_names:
-            # Create parameter key
-            param_key = f"r_{param_name}"
-            # Check if parameter is present
-            if param_key in self.params:
-                # Select component dimension
-                new_params[param_key] = self.params[param_key][component_index]
+        # Handle parameters based on parameterization
+        parameterization = self.model_config.parameterization
 
-        # Handle gate parameters if present (gene-specific)
-        if self.model_config.gate_distribution_guide is not None:
-            # Get gate parameter names
-            gate_param_names = list(
-                self.model_config.gate_distribution_guide.arg_constraints.keys()
+        if parameterization == "unconstrained":
+            # Handle unconstrained parameters
+            self._subset_unconstrained_params(new_params, component_index)
+        else:
+            # Handle constrained parameters (standard, linked, odds_ratio)
+            self._subset_constrained_params(
+                new_params, component_index, parameterization
             )
-            # Loop through gate parameters
-            for param_name in gate_param_names:
-                # Create parameter key
-                param_key = f"gate_{param_name}"
-                # Check if parameter is present
-                if param_key in self.params:
-                    # Select component dimension
-                    new_params[param_key] = self.params[param_key][
-                        component_index
-                    ]
 
         # Create new posterior samples if available
         new_posterior_samples = None
         if self.posterior_samples is not None:
             new_posterior_samples = self._subset_posterior_samples_component(
-                self.posterior_samples, component_index
+                self.posterior_samples, component_index, parameterization
             )
 
         # Create new predictive samples if available - this is more complex
@@ -999,8 +983,199 @@ class ScribeSVIResults:
 
     # --------------------------------------------------------------------------
 
+    def _subset_unconstrained_params(
+        self, new_params: Dict, component_index: int
+    ):
+        """Handle subsetting of unconstrained parameters."""
+        # Handle r_unconstrained parameters (component and gene-specific)
+        if "r_unconstrained_loc" in self.params:
+            new_params["r_unconstrained_loc"] = self.params[
+                "r_unconstrained_loc"
+            ][component_index]
+        if "r_unconstrained_scale" in self.params:
+            new_params["r_unconstrained_scale"] = self.params[
+                "r_unconstrained_scale"
+            ][component_index]
+
+        # Handle p_unconstrained parameters (component-specific, not gene-specific)
+        if "p_unconstrained_loc" in self.params:
+            new_params["p_unconstrained_loc"] = self.params[
+                "p_unconstrained_loc"
+            ][component_index]
+        if "p_unconstrained_scale" in self.params:
+            new_params["p_unconstrained_scale"] = self.params[
+                "p_unconstrained_scale"
+            ][component_index]
+
+        # Handle gate_unconstrained parameters (component and gene-specific)
+        if "gate_unconstrained_loc" in self.params:
+            new_params["gate_unconstrained_loc"] = self.params[
+                "gate_unconstrained_loc"
+            ][component_index]
+        if "gate_unconstrained_scale" in self.params:
+            new_params["gate_unconstrained_scale"] = self.params[
+                "gate_unconstrained_scale"
+            ][component_index]
+
+        # Handle p_capture_unconstrained parameters (cell-specific, not
+        # component-specific)
+        # These are copied as-is since they're not component-specific
+        if "p_capture_unconstrained_loc" in self.params:
+            new_params["p_capture_unconstrained_loc"] = self.params[
+                "p_capture_unconstrained_loc"
+            ]
+        if "p_capture_unconstrained_scale" in self.params:
+            new_params["p_capture_unconstrained_scale"] = self.params[
+                "p_capture_unconstrained_scale"
+            ]
+
+        # Handle mixing_logits_unconstrained parameters (component-specific, not
+        # gene-specific)
+        if "mixing_logits_unconstrained_loc" in self.params:
+            new_params["mixing_logits_unconstrained_loc"] = self.params[
+                "mixing_logits_unconstrained_loc"
+            ][component_index]
+        if "mixing_logits_unconstrained_scale" in self.params:
+            new_params["mixing_logits_unconstrained_scale"] = self.params[
+                "mixing_logits_unconstrained_scale"
+            ][component_index]
+
+    # --------------------------------------------------------------------------
+
+    def _subset_constrained_params(
+        self, new_params: Dict, component_index: int, parameterization: str
+    ):
+        """
+        Handle subsetting of constrained parameters based on parameterization.
+        """
+        # Handle r parameters (always gene-specific and component-specific)
+        if self.model_config.r_distribution_guide is not None:
+            r_param_names = list(
+                self.model_config.r_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in r_param_names:
+                param_key = f"r_{param_name}"
+                if param_key in self.params:
+                    param_value = self.params[param_key]
+                    # Check if parameter has component dimension
+                    if param_value.ndim > 1:  # Has component dimension
+                        new_params[param_key] = param_value[component_index]
+                    else:  # Scalar parameter, copy as-is
+                        new_params[param_key] = param_value
+
+        # Handle mu parameters (for linked and odds_ratio parameterizations)
+        if (
+            parameterization in ["linked", "odds_ratio"]
+            and self.model_config.mu_distribution_guide is not None
+        ):
+            mu_param_names = list(
+                self.model_config.mu_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in mu_param_names:
+                param_key = f"mu_{param_name}"
+                if param_key in self.params:
+                    param_value = self.params[param_key]
+                    # Check if parameter has component dimension
+                    if param_value.ndim > 1:  # Has component dimension
+                        new_params[param_key] = param_value[component_index]
+                    else:  # Scalar parameter, copy as-is
+                        new_params[param_key] = param_value
+
+        # Handle phi parameters (for odds_ratio parameterization)
+        if (
+            parameterization == "odds_ratio"
+            and self.model_config.phi_distribution_guide is not None
+        ):
+            phi_param_names = list(
+                self.model_config.phi_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in phi_param_names:
+                param_key = f"phi_{param_name}"
+                if param_key in self.params:
+                    param_value = self.params[param_key]
+                    # Check if parameter has component dimension
+                    if param_value.ndim > 1:  # Has component dimension
+                        new_params[param_key] = param_value[component_index]
+                    else:  # Scalar parameter, copy as-is
+                        new_params[param_key] = param_value
+
+        # Handle p parameters (for standard and linked parameterizations)
+        if (
+            parameterization in ["standard", "linked"]
+            and self.model_config.p_distribution_guide is not None
+        ):
+            p_param_names = list(
+                self.model_config.p_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in p_param_names:
+                param_key = f"p_{param_name}"
+                if param_key in self.params:
+                    param_value = self.params[param_key]
+                    # Check if parameter has component dimension
+                    if param_value.ndim > 1:  # Has component dimension
+                        new_params[param_key] = param_value[component_index]
+                    else:  # Scalar parameter, copy as-is
+                        new_params[param_key] = param_value
+
+        # Handle gate parameters if present (gene-specific and component-specific)
+        if self.model_config.gate_distribution_guide is not None:
+            gate_param_names = list(
+                self.model_config.gate_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in gate_param_names:
+                param_key = f"gate_{param_name}"
+                if param_key in self.params:
+                    param_value = self.params[param_key]
+                    # Check if parameter has component dimension
+                    if param_value.ndim > 1:  # Has component dimension
+                        new_params[param_key] = param_value[component_index]
+                    else:  # Scalar parameter, copy as-is
+                        new_params[param_key] = param_value
+
+        # Handle p_capture parameters (cell-specific, not component-specific)
+        if self.model_config.p_capture_distribution_guide is not None:
+            p_capture_param_names = list(
+                self.model_config.p_capture_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in p_capture_param_names:
+                param_key = f"p_capture_{param_name}"
+                if param_key in self.params:
+                    # These are cell-specific, so copy as-is
+                    new_params[param_key] = self.params[param_key]
+
+        # Handle phi_capture parameters (for odds_ratio parameterization, cell-specific)
+        if (
+            parameterization == "odds_ratio"
+            and self.model_config.phi_capture_distribution_guide is not None
+        ):
+            phi_capture_param_names = list(
+                self.model_config.phi_capture_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in phi_capture_param_names:
+                param_key = f"phi_capture_{param_name}"
+                if param_key in self.params:
+                    # These are cell-specific, so copy as-is
+                    new_params[param_key] = self.params[param_key]
+
+        # Handle mixing weights (component-specific, not gene-specific)
+        if self.model_config.mixing_distribution_guide is not None:
+            mixing_param_names = list(
+                self.model_config.mixing_distribution_guide.arg_constraints.keys()
+            )
+            for param_name in mixing_param_names:
+                param_key = f"mixing_{param_name}"
+                if param_key in self.params:
+                    param_value = self.params[param_key]
+                    # Check if parameter has component dimension
+                    if param_value.ndim > 1:  # Has component dimension
+                        new_params[param_key] = param_value[component_index]
+                    else:  # Scalar parameter, copy as-is
+                        new_params[param_key] = param_value
+
+    # --------------------------------------------------------------------------
+
     def _subset_posterior_samples_component(
-        self, samples: Dict, component_index
+        self, samples: Dict, component_index: int, parameterization: str
     ) -> Dict:
         """
         Create a new posterior samples dictionary for the given component index.
@@ -1010,27 +1185,171 @@ class ScribeSVIResults:
 
         new_posterior_samples = {}
 
-        # Handle r parameters (component and gene-specific)
-        if "r" in samples:
-            # Shape is typically (n_samples, n_components, n_genes)
-            # Select component dimension to get (n_samples, n_genes)
-            new_posterior_samples["r"] = samples["r"][:, component_index, :]
+        if parameterization == "unconstrained":
+            # Handle unconstrained parameters
+            # r_unconstrained parameters (component and gene-specific)
+            if "r_unconstrained_loc" in samples:
+                sample_value = samples["r_unconstrained_loc"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["r_unconstrained_loc"] = sample_value[
+                        :, component_index, :
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["r_unconstrained_loc"] = sample_value
+            if "r_unconstrained_scale" in samples:
+                sample_value = samples["r_unconstrained_scale"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["r_unconstrained_scale"] = (
+                        sample_value[:, component_index, :]
+                    )
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["r_unconstrained_scale"] = (
+                        sample_value
+                    )
 
-        # Handle gate parameters if present (component and gene-specific)
-        if "gate" in samples:
-            # Shape is typically (n_samples, n_components, n_genes)
-            # Select component dimension to get (n_samples, n_genes)
-            new_posterior_samples["gate"] = samples["gate"][
-                :, component_index, :
-            ]
+            # p_unconstrained parameters (component-specific, not gene-specific)
+            if "p_unconstrained_loc" in samples:
+                sample_value = samples["p_unconstrained_loc"]
+                if sample_value.ndim > 1:  # Has component dimension
+                    new_posterior_samples["p_unconstrained_loc"] = sample_value[
+                        :, component_index
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["p_unconstrained_loc"] = sample_value
+            if "p_unconstrained_scale" in samples:
+                sample_value = samples["p_unconstrained_scale"]
+                if sample_value.ndim > 1:  # Has component dimension
+                    new_posterior_samples["p_unconstrained_scale"] = (
+                        sample_value[:, component_index]
+                    )
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["p_unconstrained_scale"] = (
+                        sample_value
+                    )
 
-        # Copy global parameters as is (p, mixing_weights)
-        if "p" in samples:
-            new_posterior_samples["p"] = samples["p"]
+            # gate_unconstrained parameters (component and gene-specific)
+            if "gate_unconstrained_loc" in samples:
+                sample_value = samples["gate_unconstrained_loc"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["gate_unconstrained_loc"] = (
+                        sample_value[:, component_index, :]
+                    )
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["gate_unconstrained_loc"] = (
+                        sample_value
+                    )
+            if "gate_unconstrained_scale" in samples:
+                sample_value = samples["gate_unconstrained_scale"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["gate_unconstrained_scale"] = (
+                        sample_value[:, component_index, :]
+                    )
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["gate_unconstrained_scale"] = (
+                        sample_value
+                    )
 
-        # Handle p_capture parameters (cell-specific)
-        if "p_capture" in samples:
-            new_posterior_samples["p_capture"] = samples["p_capture"]
+            # p_capture_unconstrained parameters (cell-specific, not component-specific)
+            if "p_capture_unconstrained_loc" in samples:
+                new_posterior_samples["p_capture_unconstrained_loc"] = samples[
+                    "p_capture_unconstrained_loc"
+                ]
+            if "p_capture_unconstrained_scale" in samples:
+                new_posterior_samples["p_capture_unconstrained_scale"] = (
+                    samples["p_capture_unconstrained_scale"]
+                )
+
+            # mixing_logits_unconstrained parameters (component-specific, not gene-specific)
+            if "mixing_logits_unconstrained_loc" in samples:
+                sample_value = samples["mixing_logits_unconstrained_loc"]
+                if sample_value.ndim > 1:  # Has component dimension
+                    new_posterior_samples["mixing_logits_unconstrained_loc"] = (
+                        sample_value[:, component_index]
+                    )
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["mixing_logits_unconstrained_loc"] = (
+                        sample_value
+                    )
+            if "mixing_logits_unconstrained_scale" in samples:
+                sample_value = samples["mixing_logits_unconstrained_scale"]
+                if sample_value.ndim > 1:  # Has component dimension
+                    new_posterior_samples[
+                        "mixing_logits_unconstrained_scale"
+                    ] = sample_value[:, component_index]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples[
+                        "mixing_logits_unconstrained_scale"
+                    ] = sample_value
+
+        else:
+            # Handle constrained parameters
+            # r parameters (component and gene-specific)
+            if "r" in samples:
+                sample_value = samples["r"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["r"] = sample_value[
+                        :, component_index, :
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["r"] = sample_value
+
+            # mu parameters (for linked and odds_ratio parameterizations)
+            if "mu" in samples:
+                sample_value = samples["mu"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["mu"] = sample_value[
+                        :, component_index, :
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["mu"] = sample_value
+
+            # phi parameters (for odds_ratio parameterization)
+            if "phi" in samples:
+                sample_value = samples["phi"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["phi"] = sample_value[
+                        :, component_index, :
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["phi"] = sample_value
+
+            # p parameters (for standard and linked parameterizations)
+            if "p" in samples:
+                sample_value = samples["p"]
+                if sample_value.ndim > 1:  # Has component dimension
+                    new_posterior_samples["p"] = sample_value[
+                        :, component_index
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["p"] = sample_value
+
+            # gate parameters if present (component and gene-specific)
+            if "gate" in samples:
+                sample_value = samples["gate"]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples["gate"] = sample_value[
+                        :, component_index, :
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["gate"] = sample_value
+
+            # p_capture parameters (cell-specific, not component-specific)
+            if "p_capture" in samples:
+                new_posterior_samples["p_capture"] = samples["p_capture"]
+
+            # phi_capture parameters (for odds_ratio parameterization, cell-specific)
+            if "phi_capture" in samples:
+                new_posterior_samples["phi_capture"] = samples["phi_capture"]
+
+            # mixing weights (component-specific, not gene-specific)
+            if "mixing_weights" in samples:
+                sample_value = samples["mixing_weights"]
+                if sample_value.ndim > 1:  # Has component dimension
+                    new_posterior_samples["mixing_weights"] = sample_value[
+                        :, component_index
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples["mixing_weights"] = sample_value
 
         return new_posterior_samples
 
@@ -2012,7 +2331,7 @@ class ScribeSVIResults:
     # Cell type assignment method for mixture models
     # --------------------------------------------------------------------------
 
-    def cell_type_assignments(
+    def cell_type_probabilities(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
@@ -2080,6 +2399,13 @@ class ScribeSVIResults:
         ValueError
             - If the model is not a mixture model
             - If posterior samples have not been generated yet
+
+        Note
+        ----
+        Most of the log-likelihood value differences between cell types are
+        extremely large. Thus, the computation usually returns either 0 or 1.
+        This computation is therefore not very useful, but it is included for
+        completeness.
         """
         # Check if this is a mixture model
         if self.n_components is None or self.n_components <= 1:
@@ -2112,11 +2438,8 @@ class ScribeSVIResults:
         if temperature is not None:
             log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
-        # Convert log-likelihoods to probabilities using log-sum-exp for
-        # stability. First compute log(sum(exp(x))) along component axis.
-        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
-        # Then subtract and exponentiate to get probabilities
-        probabilities = jnp.exp(log_liks - log_sum_exp)
+        # Convert log-likelihoods to probabilities using optimized softmax
+        probabilities = log_liks_to_probs(log_liks)
 
         # Get shapes
         n_samples, n_cells, n_components = probabilities.shape
@@ -2158,7 +2481,7 @@ class ScribeSVIResults:
 
     # --------------------------------------------------------------------------
 
-    def cell_type_assignments_map(
+    def cell_type_probabilities_map(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
@@ -2278,11 +2601,7 @@ class ScribeSVIResults:
         if temperature is not None:
             log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
-        # Convert log-likelihoods to probabilities using log-sum-exp for
-        # stability. First compute log(sum(exp(x))) along component axis
-        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
-        # Then subtract and exponentiate to get probabilities
-        probabilities = jnp.exp(log_liks - log_sum_exp)
+        probabilities = log_liks_to_probs(log_liks)
 
         return {"probabilities": probabilities}
 
