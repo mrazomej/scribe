@@ -6,7 +6,7 @@ This module implements SVI inference for SCRIBE models using Numpyro's SVI.
 """
 
 from .distribution_builder import SVIDistributionBuilder
-from .inference_engine import SVIInferenceEngine  
+from .inference_engine import SVIInferenceEngine
 from .results_factory import SVIResultsFactory
 from .results import ScribeSVIResults
 
@@ -15,4 +15,4 @@ __all__ = [
     "SVIInferenceEngine",
     "SVIResultsFactory",
     "ScribeSVIResults",
-] 
+]

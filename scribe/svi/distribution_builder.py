@@ -12,18 +12,18 @@ from ..core.distribution_builder import DistributionBuilder
 
 class SVIDistributionBuilder:
     """Builds distributions for SVI inference."""
-    
+
     @staticmethod
     def build_distributions(
         model_type: str,
         parameterization: str,
         priors: Dict[str, Any],
         r_distribution: Optional[Type[dist.Distribution]] = None,
-        mu_distribution: Optional[Type[dist.Distribution]] = None
+        mu_distribution: Optional[Type[dist.Distribution]] = None,
     ) -> Dict[str, Any]:
         """
         Build all distributions needed for SVI inference.
-        
+
         Parameters
         ----------
         model_type : str
@@ -36,7 +36,7 @@ class SVIDistributionBuilder:
             NumPyro distribution class for r parameter (e.g., dist.Gamma, dist.LogNormal)
         mu_distribution : Optional[Type[dist.Distribution]]
             NumPyro distribution class for mu parameter (e.g., dist.LogNormal, dist.Gamma)
-            
+
         Returns
         -------
         Dict[str, Any]
@@ -49,5 +49,5 @@ class SVIDistributionBuilder:
             inference_method="svi",
             priors=priors,
             r_distribution=r_distribution,
-            mu_distribution=mu_distribution
-        ) 
+            mu_distribution=mu_distribution,
+        )

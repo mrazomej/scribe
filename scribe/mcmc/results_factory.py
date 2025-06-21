@@ -12,7 +12,7 @@ from ..model_config import ModelConfig
 
 class MCMCResultsFactory:
     """Factory for creating MCMC results objects."""
-    
+
     @staticmethod
     def create_results(
         mcmc_results: Any,
@@ -23,11 +23,11 @@ class MCMCResultsFactory:
         n_genes: int,
         model_type: str,
         n_components: Optional[int],
-        prior_params: Dict[str, Any]
+        prior_params: Dict[str, Any],
     ) -> ScribeMCMCResults:
         """
         Package MCMC results into ScribeMCMCResults object.
-        
+
         Parameters
         ----------
         mcmc_results : Any
@@ -48,7 +48,7 @@ class MCMCResultsFactory:
             Number of mixture components
         prior_params : Dict[str, Any]
             Dictionary of prior parameters
-            
+
         Returns
         -------
         ScribeMCMCResults
@@ -73,5 +73,5 @@ class MCMCResultsFactory:
                 n_components=n_components,
                 prior_params=prior_params,
             )
-        
-        return results 
+
+        return results

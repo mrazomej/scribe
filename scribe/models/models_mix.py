@@ -18,6 +18,7 @@ from typing import Callable, Dict, Tuple, Optional, Union
 # Negative Binomial-Dirichlet Multinomial Mixture Model
 # ------------------------------------------------------------------------------
 
+
 def nbdm_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -28,13 +29,13 @@ def nbdm_mixture_model(
     """
     Numpyro mixture model for single-cell RNA sequencing data using Negative
     Binomial distributions with shared p parameter per component.
-    
+
     This model assumes a hierarchical mixture structure where:
         1. Each mixture component has:
            - A shared success probability p across all genes
            - Gene-specific dispersion parameters r
         2. The mixture is handled using Numpyro's MixtureSameFamily
-    
+
     Parameters
     ----------
     n_cells : int
@@ -78,32 +79,39 @@ def nbdm_mixture_model(
     if model_config.mixing_distribution_model is None:
         raise ValueError("Mixture model requires 'mixing_distribution_model'.")
     if model_config.p_distribution_model is None and (
-        model_config.parameterization == "standard" or
-        model_config.parameterization == "linked"
+        model_config.parameterization == "standard"
+        or model_config.parameterization == "linked"
     ):
-        raise ValueError("Model with selected parameterization requires 'p_distribution_model'.")
+        raise ValueError(
+            "Model with selected parameterization requires 'p_distribution_model'."
+        )
     if model_config.r_distribution_model is None and (
         model_config.parameterization == "standard"
     ):
-        raise ValueError("Model with selected parameterization requires 'r_distribution_model'.")
+        raise ValueError(
+            "Model with selected parameterization requires 'r_distribution_model'."
+        )
     if model_config.phi_distribution_model is None and (
         model_config.parameterization == "odds_ratio"
     ):
-        raise ValueError("Model with selected parameterization requires 'phi_distribution_model'.")
+        raise ValueError(
+            "Model with selected parameterization requires 'phi_distribution_model'."
+        )
     if model_config.mu_distribution_model is None and (
-        model_config.parameterization == "odds_ratio" or
-        model_config.parameterization == "linked"
+        model_config.parameterization == "odds_ratio"
+        or model_config.parameterization == "linked"
     ):
-        raise ValueError("Model with selected parameterization requires 'mu_distribution_model'.")
+        raise ValueError(
+            "Model with selected parameterization requires 'mu_distribution_model'."
+        )
     # Extract number of components
     n_components = model_config.n_components
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_model
+        "mixing_weights", model_config.mixing_distribution_model
     )
-    
+
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
@@ -113,8 +121,8 @@ def nbdm_mixture_model(
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute p
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
@@ -125,8 +133,8 @@ def nbdm_mixture_model(
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
         r = numpyro.deterministic("r", mu * p / (1 - p))
@@ -137,12 +145,12 @@ def nbdm_mixture_model(
         # Define the prior on the r parameters - one for each gene and component
         r = numpyro.sample(
             "r",
-            model_config.r_distribution_model.expand([n_components, n_genes])
+            model_config.r_distribution_model.expand([n_components, n_genes]),
         )
 
     # Create base negative binomial distribution
     base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
-    
+
     # Create mixture distribution
     mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
 
@@ -172,6 +180,7 @@ def nbdm_mixture_model(
 # Variational Guide for Negative Binomial-Dirichlet Multinomial Mixture Model
 # ------------------------------------------------------------------------------
 
+
 def nbdm_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -181,7 +190,7 @@ def nbdm_mixture_guide(
 ):
     """
     Wrapper for NBDM mixture variational guides with different parameterizations.
-    
+
     Parameters
     ----------
     parameterization : str, default="standard"
@@ -203,11 +212,15 @@ def nbdm_mixture_guide(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
-        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
+        raise ValueError(
+            f"Unknown parameterization: {model_config.parameterization}"
+        )
+
 
 # ------------------------------------------------------------------------------
 # Mean-Field Parameterized Guide for NBDM Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def nbdm_mixture_guide_standard(
     n_cells: int,
@@ -224,7 +237,7 @@ def nbdm_mixture_guide_standard(
     Specifically:
         - Mixture weights ~ Dirichlet(α_mixing)
         - A shared success probability p ~ Beta(α_p, β_p) across all components
-        - Component and gene-specific dispersion parameters r_{k,g} ~ 
+        - Component and gene-specific dispersion parameters r_{k,g} ~
           Gamma(α_r, β_r) for each component k and gene g
 
     The guide samples from these distributions to approximate the true
@@ -258,7 +271,9 @@ def nbdm_mixture_guide_standard(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Mean-field guide requires 'mixing_distribution_guide'."
+        )
     if model_config.p_distribution_guide is None:
         raise ValueError("Mean-field guide requires 'p_distribution_guide'.")
     if model_config.r_distribution_guide is None:
@@ -278,7 +293,7 @@ def nbdm_mixture_guide_standard(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Extract p distribution values
@@ -290,14 +305,12 @@ def nbdm_mixture_guide_standard(
     # Loop through each constraint in the distribution
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Extract r distribution values
     r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints 
+    # Extract r distribution parameters and constraints
     r_constraints = model_config.r_distribution_guide.arg_constraints
     # Initialize parameters for each constraint in the distribution
     r_params = {}
@@ -306,20 +319,22 @@ def nbdm_mixture_guide_standard(
         r_params[param_name] = numpyro.param(
             f"r_{param_name}",
             jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
 
+
 # ------------------------------------------------------------------------------
 # Mean-Variance Parameterized Guide for NBDM Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def nbdm_mixture_guide_linked(
     n_cells: int,
@@ -330,7 +345,7 @@ def nbdm_mixture_guide_linked(
 ):
     """
     Linked parameterization parameterized variational guide for the NBDM mixture model.
-    
+
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
     through gene-specific means μ:
@@ -339,17 +354,17 @@ def nbdm_mixture_guide_linked(
         - Component and gene-specific means μ_{k,g} ~ LogNormal(μ_μ, σ_μ) for
           each component k and gene g
         - Deterministic relationship r_{k,g} = μ_{k,g} * (1 - p) / p
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The mean-variance parameterization captures the natural
     relationship between means and variances in count data:
-    
+
         q(mixing_weights, p, μ, r) = q(mixing_weights) * q(p) * q(μ) * δ(r - μ *
         (1-p)/p)
-    
+
     where δ(·) is the Dirac delta function enforcing the deterministic
     relationship.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -369,11 +384,17 @@ def nbdm_mixture_guide_linked(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mixing_distribution_guide'."
+        )
     if model_config.p_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'p_distribution_guide'."
+        )
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mu_distribution_guide'."
+        )
 
     # Extract number of components
     n_components = model_config.n_components
@@ -386,7 +407,7 @@ def nbdm_mixture_guide_linked(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define p distribution parameters
@@ -395,9 +416,7 @@ def nbdm_mixture_guide_linked(
     p_params = {}
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -408,23 +427,24 @@ def nbdm_mixture_guide_linked(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
+
 
 # ------------------------------------------------------------------------------
 # Beta-Prime Parameterized Guide for NBDM Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def nbdm_mixture_guide_odds_ratio(
     n_cells: int,
@@ -435,7 +455,7 @@ def nbdm_mixture_guide_odds_ratio(
 ):
     """
     Beta-Prime reparameterized variational guide for the NBDM mixture model.
-    
+
     This guide implements a Beta-Prime parameterization that captures the
     correlation between the success probability p and dispersion parameters r
     through gene-specific means μ and a shared parameter φ:
@@ -445,15 +465,15 @@ def nbdm_mixture_guide_odds_ratio(
         - Deterministic relationships:
             p = φ / (1 + φ)
             r_{k,g} = μ_{k,g} / φ
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The Beta-Prime parameterization provides a natural way to model
     the relationship between p and r:
-    
+
         q(mixing_weights, φ, μ, p, r) = q(mixing_weights) * q(φ) * q(μ) * δ(p - φ/(1+φ)) * δ(r - μ/φ)
-    
+
     where δ(·) is the Dirac delta function enforcing the deterministic relationships.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -473,7 +493,9 @@ def nbdm_mixture_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Odds ratio guide requires 'mixing_distribution_guide'."
+        )
     if model_config.phi_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
@@ -490,7 +512,7 @@ def nbdm_mixture_guide_odds_ratio(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define phi distribution parameters
@@ -499,9 +521,7 @@ def nbdm_mixture_guide_odds_ratio(
     phi_params = {}
     for param_name, constraint in phi_constraints.items():
         phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}",
-            phi_values[param_name],
-            constraint=constraint
+            f"phi_{param_name}", phi_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -512,26 +532,26 @@ def nbdm_mixture_guide_odds_ratio(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample(
-        "phi", 
-        model_config.phi_distribution_guide.__class__(**phi_params)
+        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
     )
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
+
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def zinb_mixture_model(
     n_cells: int,
@@ -543,7 +563,7 @@ def zinb_mixture_model(
     """
     Numpyro mixture model for Zero-Inflated Negative Binomial single-cell RNA
     sequencing data.
-    
+
     This model uses the configuration defined in model_config. It implements a
     mixture of Zero-Inflated Negative Binomial distributions where each
     component has:
@@ -588,9 +608,9 @@ def zinb_mixture_model(
         - Gene-specific dispersion r ~ model_config.r_distribution_model
         - Dropout probabilities gate ~ model_config.gate_distribution_model
 
-    Likelihood: 
+    Likelihood:
         counts ~ MixtureSameFamily(
-            Categorical(mixing_weights), 
+            Categorical(mixing_weights),
             ZeroInflatedNegativeBinomial(r, p, gate)
         )
     """
@@ -599,10 +619,9 @@ def zinb_mixture_model(
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_model
+        "mixing_weights", model_config.mixing_distribution_model
     )
-    
+
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
@@ -612,8 +631,8 @@ def zinb_mixture_model(
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute p
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
@@ -624,8 +643,8 @@ def zinb_mixture_model(
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
         r = numpyro.deterministic("r", mu * p / (1 - p))
@@ -636,21 +655,21 @@ def zinb_mixture_model(
         # Define the prior on the r parameters - one for each gene and component
         r = numpyro.sample(
             "r",
-            model_config.r_distribution_model.expand([n_components, n_genes])
+            model_config.r_distribution_model.expand([n_components, n_genes]),
         )
 
     # Define the prior on the gate parameters - one for each gene and component
     gate = numpyro.sample(
         "gate",
-        model_config.gate_distribution_model.expand([n_components, n_genes])
+        model_config.gate_distribution_model.expand([n_components, n_genes]),
     )
 
     # Create base negative binomial distribution
     base_dist = dist.NegativeBinomialProbs(r, p)
-    
+
     # Create zero-inflated distribution
     zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-    
+
     # Create mixture distribution
     mixture = dist.MixtureSameFamily(mixing_dist, zinb)
 
@@ -680,6 +699,7 @@ def zinb_mixture_model(
 # Variational Guide for Zero-Inflated Negative Binomial Mixture Model
 # ------------------------------------------------------------------------------
 
+
 def zinb_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -689,7 +709,7 @@ def zinb_mixture_guide(
 ):
     """
     Wrapper for ZINB mixture variational guides with different parameterizations.
-    
+
     Parameters
     ----------
     parameterization : str, default="standard"
@@ -711,11 +731,15 @@ def zinb_mixture_guide(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
-        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
+        raise ValueError(
+            f"Unknown parameterization: {model_config.parameterization}"
+        )
+
 
 # ------------------------------------------------------------------------------
 # Mean-Field Parameterized Guide for ZINB Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def zinb_mixture_guide_standard(
     n_cells: int,
@@ -732,9 +756,9 @@ def zinb_mixture_guide_standard(
     Specifically:
         - Mixture weights ~ Dirichlet(α_mixing)
         - A shared success probability p ~ Beta(α_p, β_p) across all components
-        - Component and gene-specific dispersion parameters r_{k,g} ~ 
+        - Component and gene-specific dispersion parameters r_{k,g} ~
           Gamma(α_r, β_r) for each component k and gene g
-        - Component and gene-specific dropout probabilities gate_{k,g} ~ 
+        - Component and gene-specific dropout probabilities gate_{k,g} ~
           Beta(α_gate, β_gate) for each component k and gene g
 
     The guide samples from these distributions to approximate the true
@@ -745,7 +769,7 @@ def zinb_mixture_guide_standard(
 
     This independence assumption means the guide cannot capture correlations
     between parameters that may exist in the true posterior.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -774,7 +798,9 @@ def zinb_mixture_guide_standard(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Mean-field guide requires 'mixing_distribution_guide'."
+        )
     if model_config.p_distribution_guide is None:
         raise ValueError("Mean-field guide requires 'p_distribution_guide'.")
     if model_config.r_distribution_guide is None:
@@ -796,7 +822,7 @@ def zinb_mixture_guide_standard(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Extract p distribution values
@@ -808,14 +834,12 @@ def zinb_mixture_guide_standard(
     # Loop through each constraint in the distribution
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Extract r distribution values
     r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints 
+    # Extract r distribution parameters and constraints
     r_constraints = model_config.r_distribution_guide.arg_constraints
     # Initialize parameters for each constraint in the distribution
     r_params = {}
@@ -824,7 +848,7 @@ def zinb_mixture_guide_standard(
         r_params[param_name] = numpyro.param(
             f"r_{param_name}",
             jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Extract gate distribution values
@@ -838,24 +862,25 @@ def zinb_mixture_guide_standard(
         gate_params[param_name] = numpyro.param(
             f"gate_{param_name}",
             jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
     numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
+        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
     )
+
 
 # ------------------------------------------------------------------------------
 # Mean-Variance Parameterized Guide for ZINB Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def zinb_mixture_guide_linked(
     n_cells: int,
@@ -866,7 +891,7 @@ def zinb_mixture_guide_linked(
 ):
     """
     Linked parameterization parameterized variational guide for the ZINB mixture model.
-    
+
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
     through gene-specific means μ:
@@ -876,15 +901,15 @@ def zinb_mixture_guide_linked(
           each component k and gene g
         - Component and gene-specific dropout probabilities gate_{k,g} ~ Beta(α_gate, β_gate) for each component k and gene g
         - Deterministic relationship r_{k,g} = μ_{k,g} * (1 - p) / p
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The mean-variance parameterization captures the natural
     relationship between means and variances in count data:
-    
+
         q(mixing_weights, p, μ, gate, r) = q(mixing_weights) * q(p) * q(μ) * q(gate) * δ(r - μ * (1-p)/p)
-    
+
     where δ(·) is the Dirac delta function enforcing the deterministic relationship.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -905,13 +930,21 @@ def zinb_mixture_guide_linked(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mixing_distribution_guide'."
+        )
     if model_config.p_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'p_distribution_guide'."
+        )
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mu_distribution_guide'."
+        )
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'gate_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'gate_distribution_guide'."
+        )
 
     # Extract number of components
     n_components = model_config.n_components
@@ -924,7 +957,7 @@ def zinb_mixture_guide_linked(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define p distribution parameters
@@ -933,9 +966,7 @@ def zinb_mixture_guide_linked(
     p_params = {}
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -946,7 +977,7 @@ def zinb_mixture_guide_linked(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define gate distribution parameters
@@ -957,28 +988,28 @@ def zinb_mixture_guide_linked(
         gate_params[param_name] = numpyro.param(
             f"gate_{param_name}",
             jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
     numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
+        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
     )
 
     # Extract p_capture distribution values
     p_capture_values = model_config.p_capture_distribution_guide.get_args()
     # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    p_capture_constraints = (
+        model_config.p_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     p_capture_params = {}
     # Loop through each constraint in the distribution
@@ -986,15 +1017,17 @@ def zinb_mixture_guide_linked(
         p_capture_params[param_name] = numpyro.param(
             f"p_capture_{param_name}",
             jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture", 
-                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                "p_capture",
+                model_config.p_capture_distribution_guide.__class__(
+                    **p_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -1008,12 +1041,16 @@ def zinb_mixture_guide_linked(
             }
             numpyro.sample(
                 "p_capture",
-                model_config.p_capture_distribution_guide.__class__(**batch_params)
+                model_config.p_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # Beta-Prime Parameterized Guide for ZINB Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def zinb_mixture_guide_odds_ratio(
     n_cells: int,
@@ -1024,7 +1061,7 @@ def zinb_mixture_guide_odds_ratio(
 ):
     """
     Beta-Prime reparameterized variational guide for the ZINB mixture model.
-    
+
     This guide implements a Beta-Prime parameterization that captures the
     correlation between the success probability p and dispersion parameters r
     through gene-specific means μ and a shared parameter φ:
@@ -1037,16 +1074,16 @@ def zinb_mixture_guide_odds_ratio(
         - Deterministic relationships:
             p = φ / (1 + φ)
             r_{k,g} = μ_{k,g} / φ
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The Beta-Prime parameterization provides a natural way to model
     the relationship between p and r:
-    
+
         q(mixing_weights, φ, μ, gate, p, r) = q(mixing_weights) * q(φ) * q(μ) * q(gate) * δ(p - φ/(1+φ)) * δ(r - μ/φ)
-    
+
     where δ(·) is the Dirac delta function enforcing the deterministic
     relationships.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -1067,7 +1104,9 @@ def zinb_mixture_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Odds ratio guide requires 'mixing_distribution_guide'."
+        )
     if model_config.phi_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
@@ -1086,7 +1125,7 @@ def zinb_mixture_guide_odds_ratio(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define phi distribution parameters
@@ -1095,9 +1134,7 @@ def zinb_mixture_guide_odds_ratio(
     phi_params = {}
     for param_name, constraint in phi_constraints.items():
         phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}",
-            phi_values[param_name],
-            constraint=constraint
+            f"phi_{param_name}", phi_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -1108,7 +1145,7 @@ def zinb_mixture_guide_odds_ratio(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define gate distribution parameters
@@ -1119,30 +1156,27 @@ def zinb_mixture_guide_odds_ratio(
         gate_params[param_name] = numpyro.param(
             f"gate_{param_name}",
             jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample(
-        "phi", 
-        model_config.phi_distribution_guide.__class__(**phi_params)
+        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
     )
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
     numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
+        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
     )
 
     # Extract r distribution values
     r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints 
+    # Extract r distribution parameters and constraints
     r_constraints = model_config.r_distribution_guide.arg_constraints
     # Initialize parameters for each constraint in the distribution
     r_params = {}
@@ -1151,15 +1185,14 @@ def zinb_mixture_guide_odds_ratio(
         r_params[param_name] = numpyro.param(
             f"r_{param_name}",
             jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (r)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "r", 
-                model_config.r_distribution_guide.__class__(**r_params)
+                "r", model_config.r_distribution_guide.__class__(**r_params)
             )
     else:
         with numpyro.plate(
@@ -1172,14 +1205,15 @@ def zinb_mixture_guide_odds_ratio(
                 name: param[idx] for name, param in r_params.items()
             }
             numpyro.sample(
-                "r", 
-                model_config.r_distribution_guide.__class__(**batch_params)
+                "r", model_config.r_distribution_guide.__class__(**batch_params)
             )
 
     # Extract p_capture distribution values
     p_capture_values = model_config.p_capture_distribution_guide.get_args()
     # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    p_capture_constraints = (
+        model_config.p_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     p_capture_params = {}
     # Loop through each constraint in the distribution
@@ -1187,15 +1221,17 @@ def zinb_mixture_guide_odds_ratio(
         p_capture_params[param_name] = numpyro.param(
             f"p_capture_{param_name}",
             jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture", 
-                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                "p_capture",
+                model_config.p_capture_distribution_guide.__class__(
+                    **p_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -1209,12 +1245,16 @@ def zinb_mixture_guide_odds_ratio(
             }
             numpyro.sample(
                 "p_capture",
-                model_config.p_capture_distribution_guide.__class__(**batch_params)
+                model_config.p_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # Negative Binomial Mixture Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_mixture_model(
     n_cells: int,
@@ -1226,7 +1266,7 @@ def nbvcp_mixture_model(
     """
     Numpyro mixture model for single-cell RNA sequencing data using Negative
     Binomial distributions with variable capture probability.
-    
+
     This model assumes a hierarchical mixture structure where:
         1. Each mixture component has:
             - A shared success probability p across all genes
@@ -1237,7 +1277,7 @@ def nbvcp_mixture_model(
         3. The effective success probability for each gene in each cell is
            computed as p_hat = p * p_capture / (1 - p * (1 - p_capture))
         4. The mixture is handled using Numpyro's MixtureSameFamily
-    
+
     Parameters
     ----------
     n_cells : int
@@ -1293,10 +1333,9 @@ def nbvcp_mixture_model(
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_model
+        "mixing_weights", model_config.mixing_distribution_model
     )
-    
+
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
@@ -1306,8 +1345,8 @@ def nbvcp_mixture_model(
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute p
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
@@ -1318,8 +1357,8 @@ def nbvcp_mixture_model(
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
         r = numpyro.deterministic("r", mu * p / (1 - p))
@@ -1330,7 +1369,7 @@ def nbvcp_mixture_model(
         # Define the prior on the r parameters - one for each gene and component
         r = numpyro.sample(
             "r",
-            model_config.r_distribution_model.expand([n_components, n_genes])
+            model_config.r_distribution_model.expand([n_components, n_genes]),
         )
 
     # If we have observed data, condition on it
@@ -1343,42 +1382,45 @@ def nbvcp_mixture_model(
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
-                        model_config.phi_capture_distribution_model
+                        model_config.phi_capture_distribution_model,
                     )
                     # Reshape phi_capture for broadcasting
-                    phi_capture_reshaped = phi_capture[:, None, None]  # [cells, 1, 1]
+                    phi_capture_reshaped = phi_capture[
+                        :, None, None
+                    ]  # [cells, 1, 1]
                     # Compute p_capture
                     p_capture = numpyro.deterministic(
-                        "p_capture", 
-                        1.0 / (1.0 + phi_capture_reshaped)
+                        "p_capture", 1.0 / (1.0 + phi_capture_reshaped)
                     )
                     # Compute p_hat using the derived formula
                     p_hat = numpyro.deterministic(
-                        "p_hat",
-                        1.0 / (1 + phi + phi * phi_capture_reshaped)
+                        "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
                     )
                 else:
                     # Sample cell-specific capture probabilities
                     p_capture = numpyro.sample(
-                        "p_capture",
-                        model_config.p_capture_distribution_model
+                        "p_capture", model_config.p_capture_distribution_model
                     )
 
                     # Reshape p_capture for broadcasting with components
-                    p_capture_reshaped = p_capture[:, None, None]  # [cells, 1, 1]
-                    
+                    p_capture_reshaped = p_capture[
+                        :, None, None
+                    ]  # [cells, 1, 1]
+
                     # Compute effective probability for each component
                     p_hat = numpyro.deterministic(
                         "p_hat",
-                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                        p
+                        * p_capture_reshaped
+                        / (1 - p * (1 - p_capture_reshaped)),
                     )
 
                 # Create base negative binomial distribution
                 base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
-                
+
                 # Create mixture distribution
                 mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
-                
+
                 # Sample counts from mixture
                 numpyro.sample("counts", mixture, obs=counts)
         else:
@@ -1391,42 +1433,45 @@ def nbvcp_mixture_model(
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
-                        model_config.phi_capture_distribution_model
+                        model_config.phi_capture_distribution_model,
                     )
                     # Reshape phi_capture for broadcasting
-                    phi_capture_reshaped = phi_capture[:, None, None]  # [cells, 1, 1]
+                    phi_capture_reshaped = phi_capture[
+                        :, None, None
+                    ]  # [cells, 1, 1]
                     # Compute p_capture
                     p_capture = numpyro.deterministic(
-                        "p_capture", 
-                        1.0 / (1.0 + phi_capture_reshaped)
+                        "p_capture", 1.0 / (1.0 + phi_capture_reshaped)
                     )
                     # Compute p_hat using the derived formula
                     p_hat = numpyro.deterministic(
-                        "p_hat",
-                        1.0 / (1 + phi + phi * phi_capture_reshaped)
+                        "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
                     )
                 else:
                     # Sample cell-specific capture probabilities
                     p_capture = numpyro.sample(
-                        "p_capture",
-                        model_config.p_capture_distribution_model
+                        "p_capture", model_config.p_capture_distribution_model
                     )
 
                     # Reshape p_capture for broadcasting with components
-                    p_capture_reshaped = p_capture[:, None, None]  # [cells, 1, 1]
-                    
+                    p_capture_reshaped = p_capture[
+                        :, None, None
+                    ]  # [cells, 1, 1]
+
                     # Compute effective probability for each component
                     p_hat = numpyro.deterministic(
                         "p_hat",
-                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                        p
+                        * p_capture_reshaped
+                        / (1 - p * (1 - p_capture_reshaped)),
                     )
 
                 # Create base negative binomial distribution
                 base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
-                
+
                 # Create mixture distribution
                 mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
-                
+
                 # Sample counts from mixture
                 numpyro.sample("counts", mixture, obs=counts[idx])
     else:
@@ -1436,50 +1481,50 @@ def nbvcp_mixture_model(
             if model_config.parameterization == "odds_ratio":
                 # Sample phi_capture
                 phi_capture = numpyro.sample(
-                    "phi_capture",
-                    model_config.phi_capture_distribution_model
+                    "phi_capture", model_config.phi_capture_distribution_model
                 )
                 # Reshape phi_capture for broadcasting
-                phi_capture_reshaped = phi_capture[:, None, None]  # [cells, 1, 1]
+                phi_capture_reshaped = phi_capture[
+                    :, None, None
+                ]  # [cells, 1, 1]
                 # Compute p_capture
                 p_capture = numpyro.deterministic(
-                    "p_capture", 
-                    1.0 / (1.0 + phi_capture_reshaped)
+                    "p_capture", 1.0 / (1.0 + phi_capture_reshaped)
                 )
                 # Compute p_hat using the derived formula
                 p_hat = numpyro.deterministic(
-                    "p_hat",
-                    1.0 / (1 + phi + phi * phi_capture_reshaped)
+                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
                 )
             else:
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
-                    "p_capture",
-                    model_config.p_capture_distribution_model
+                    "p_capture", model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting with components
                 p_capture_reshaped = p_capture[:, None, None]  # [cells, 1, 1]
-                
+
                 # Compute effective probability for each component
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
 
             # Create base negative binomial distribution
             base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
-            
+
             # Create mixture distribution
             mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
-            
+
             # Sample counts from mixture
             numpyro.sample("counts", mixture)
+
 
 # ------------------------------------------------------------------------------
 # Variational Guide for Negative Binomial Mixture Model with Variable Capture
 # Probability
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_mixture_guide(
     n_cells: int,
@@ -1491,7 +1536,7 @@ def nbvcp_mixture_guide(
     """
     Wrapper for NBVCP mixture variational guides with different
     parameterizations.
-    
+
     Parameters
     ----------
     parameterization : str, default="standard"
@@ -1513,12 +1558,16 @@ def nbvcp_mixture_guide(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
-        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
+        raise ValueError(
+            f"Unknown parameterization: {model_config.parameterization}"
+        )
+
 
 # ------------------------------------------------------------------------------
 # Mean-Field Parameterized Guide for Negative Binomial Mixture Model with
 # Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_mixture_guide_standard(
     n_cells: int,
@@ -1576,13 +1625,17 @@ def nbvcp_mixture_guide_standard(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Mean-field guide requires 'mixing_distribution_guide'."
+        )
     if model_config.p_distribution_guide is None:
         raise ValueError("Mean-field guide requires 'p_distribution_guide'.")
     if model_config.r_distribution_guide is None:
         raise ValueError("Mean-field guide requires 'r_distribution_guide'.")
     if model_config.p_capture_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'p_capture_distribution_guide'.")
+        raise ValueError(
+            "Mean-field guide requires 'p_capture_distribution_guide'."
+        )
 
     # Extract number of components
     n_components = model_config.n_components
@@ -1598,7 +1651,7 @@ def nbvcp_mixture_guide_standard(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Extract p distribution values
@@ -1610,14 +1663,12 @@ def nbvcp_mixture_guide_standard(
     # Loop through each constraint in the distribution
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Extract r distribution values
     r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints 
+    # Extract r distribution parameters and constraints
     r_constraints = model_config.r_distribution_guide.arg_constraints
     # Initialize parameters for each constraint in the distribution
     r_params = {}
@@ -1626,13 +1677,13 @@ def nbvcp_mixture_guide_standard(
         r_params[param_name] = numpyro.param(
             f"r_{param_name}",
             jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample global parameters outside the plate
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
@@ -1640,7 +1691,9 @@ def nbvcp_mixture_guide_standard(
     # Extract p_capture distribution values
     p_capture_values = model_config.p_capture_distribution_guide.get_args()
     # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    p_capture_constraints = (
+        model_config.p_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     p_capture_params = {}
     # Loop through each constraint in the distribution
@@ -1648,15 +1701,17 @@ def nbvcp_mixture_guide_standard(
         p_capture_params[param_name] = numpyro.param(
             f"p_capture_{param_name}",
             jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture", 
-                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                "p_capture",
+                model_config.p_capture_distribution_guide.__class__(
+                    **p_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -1670,12 +1725,16 @@ def nbvcp_mixture_guide_standard(
             }
             numpyro.sample(
                 "p_capture",
-                model_config.p_capture_distribution_guide.__class__(**batch_params)
+                model_config.p_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # Mean-Variance Parameterized Guide for Negative Binomial Mixture Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_mixture_guide_linked(
     n_cells: int,
@@ -1698,11 +1757,11 @@ def nbvcp_mixture_guide_linked(
         - Cell-specific capture probabilities p_capture_c ~ Beta(α_capture,
           β_capture) for each cell c
         - Deterministic relationship r_{k,g} = μ_{k,g} * p / (1 - p)
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The mean-variance parameterization captures the natural
     relationship between means and variances in count data.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -1725,15 +1784,25 @@ def nbvcp_mixture_guide_linked(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mixing_distribution_guide'."
+        )
     if model_config.p_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'p_distribution_guide'."
+        )
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mu_distribution_guide'."
+        )
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'gate_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'gate_distribution_guide'."
+        )
     if model_config.p_capture_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'p_capture_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'p_capture_distribution_guide'."
+        )
 
     # Extract number of components
     n_components = model_config.n_components
@@ -1746,7 +1815,7 @@ def nbvcp_mixture_guide_linked(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define p distribution parameters
@@ -1755,9 +1824,7 @@ def nbvcp_mixture_guide_linked(
     p_params = {}
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -1768,7 +1835,7 @@ def nbvcp_mixture_guide_linked(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define gate distribution parameters
@@ -1779,28 +1846,28 @@ def nbvcp_mixture_guide_linked(
         gate_params[param_name] = numpyro.param(
             f"gate_{param_name}",
             jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
     numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
+        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
     )
 
     # Extract p_capture distribution values
     p_capture_values = model_config.p_capture_distribution_guide.get_args()
     # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    p_capture_constraints = (
+        model_config.p_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     p_capture_params = {}
     # Loop through each constraint in the distribution
@@ -1808,15 +1875,17 @@ def nbvcp_mixture_guide_linked(
         p_capture_params[param_name] = numpyro.param(
             f"p_capture_{param_name}",
             jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture", 
-                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                "p_capture",
+                model_config.p_capture_distribution_guide.__class__(
+                    **p_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -1830,13 +1899,17 @@ def nbvcp_mixture_guide_linked(
             }
             numpyro.sample(
                 "p_capture",
-                model_config.p_capture_distribution_guide.__class__(**batch_params)
+                model_config.p_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # Beta-Prime Parameterized Guide for Negative Binomial Mixture Model with
 # Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_mixture_guide_odds_ratio(
     n_cells: int,
@@ -1859,13 +1932,13 @@ def nbvcp_mixture_guide_odds_ratio(
         - Cell-specific capture probabilities p_capture_c ~ Beta(α_capture,
           β_capture) for each cell c
         - Deterministic relationships:
-            p = 1 / (1 + φ) 
+            p = 1 / (1 + φ)
             r_{k,g} = μ_{k,g} * φ
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The Beta-Prime parameterization provides a natural way to model
     the relationship between p and r.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -1886,13 +1959,17 @@ def nbvcp_mixture_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Odds ratio guide requires 'mixing_distribution_guide'."
+        )
     if model_config.phi_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
     if model_config.phi_capture_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
+        raise ValueError(
+            "Odds ratio guide requires 'phi_capture_distribution_guide'."
+        )
 
     # Extract number of components
     n_components = model_config.n_components
@@ -1905,7 +1982,7 @@ def nbvcp_mixture_guide_odds_ratio(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define phi distribution parameters
@@ -1914,9 +1991,7 @@ def nbvcp_mixture_guide_odds_ratio(
     phi_params = {}
     for param_name, constraint in phi_constraints.items():
         phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}",
-            phi_values[param_name],
-            constraint=constraint
+            f"phi_{param_name}", phi_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -1927,27 +2002,27 @@ def nbvcp_mixture_guide_odds_ratio(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample(
-        "phi", 
-        model_config.phi_distribution_guide.__class__(**phi_params)
+        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
     )
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
 
     # Extract p_capture distribution values
     phi_capture_values = model_config.phi_capture_distribution_guide.get_args()
     # Extract p_capture distribution parameters and constraints
-    phi_capture_constraints = model_config.phi_capture_distribution_guide.arg_constraints
+    phi_capture_constraints = (
+        model_config.phi_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     phi_capture_params = {}
     # Loop through each constraint in the distribution
@@ -1955,15 +2030,17 @@ def nbvcp_mixture_guide_odds_ratio(
         phi_capture_params[param_name] = numpyro.param(
             f"phi_capture_{param_name}",
             jnp.ones(n_cells) * phi_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "phi_capture", 
-                model_config.phi_capture_distribution_guide.__class__(**phi_capture_params)
+                "phi_capture",
+                model_config.phi_capture_distribution_guide.__class__(
+                    **phi_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -1977,12 +2054,16 @@ def nbvcp_mixture_guide_odds_ratio(
             }
             numpyro.sample(
                 "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(**batch_params)
+                model_config.phi_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def zinbvcp_mixture_model(
     n_cells: int,
@@ -2005,7 +2086,7 @@ def zinbvcp_mixture_model(
     ----------
     n_cells : int
         Number of cells in the dataset
-    n_genes : int 
+    n_genes : int
         Number of genes in the dataset
     model_config : ModelConfig
         Configuration object for model distributions containing:
@@ -2062,10 +2143,9 @@ def zinbvcp_mixture_model(
 
     # Sample mixing weights from Dirichlet prior
     mixing_probs = numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_model
+        "mixing_weights", model_config.mixing_distribution_model
     )
-    
+
     # Create mixing distribution
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
@@ -2075,8 +2155,8 @@ def zinbvcp_mixture_model(
         phi = numpyro.sample("phi", model_config.phi_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute p
         p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
@@ -2087,8 +2167,8 @@ def zinbvcp_mixture_model(
         p = numpyro.sample("p", model_config.p_distribution_model)
         # Sample mu
         mu = numpyro.sample(
-            "mu", 
-            model_config.mu_distribution_model.expand([n_components, n_genes])
+            "mu",
+            model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
         r = numpyro.deterministic("r", mu * p / (1 - p))
@@ -2099,13 +2179,13 @@ def zinbvcp_mixture_model(
         # Define the prior on the r parameters - one for each gene and component
         r = numpyro.sample(
             "r",
-            model_config.r_distribution_model.expand([n_components, n_genes])
+            model_config.r_distribution_model.expand([n_components, n_genes]),
         )
-    
+
     # Define the prior on the gate parameters - one for each gene
     gate = numpyro.sample(
         "gate",
-        model_config.gate_distribution_model.expand([n_components, n_genes])
+        model_config.gate_distribution_model.expand([n_components, n_genes]),
     )
 
     # If we have observed data, condition on it
@@ -2118,46 +2198,50 @@ def zinbvcp_mixture_model(
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
-                        model_config.phi_capture_distribution_model
+                        model_config.phi_capture_distribution_model,
                     )
                     # Reshape phi_capture for broadcasting
-                    phi_capture_reshaped = phi_capture[:, None, None]  # [cells, 0, 1]
+                    phi_capture_reshaped = phi_capture[
+                        :, None, None
+                    ]  # [cells, 0, 1]
                     # Compute p_capture
                     p_capture = numpyro.deterministic(
-                        "p_capture", 
-                        1.0 / (1.0 + phi_capture_reshaped)
+                        "p_capture", 1.0 / (1.0 + phi_capture_reshaped)
                     )
                     # Compute p_hat using the derived formula
                     p_hat = numpyro.deterministic(
-                        "p_hat",
-                        0.0 / (1 + phi + phi * phi_capture_reshaped)
+                        "p_hat", 0.0 / (1 + phi + phi * phi_capture_reshaped)
                     )
                 else:
                     # Sample cell-specific capture probabilities
                     p_capture = numpyro.sample(
-                        "p_capture",
-                        model_config.p_capture_distribution_model
+                        "p_capture", model_config.p_capture_distribution_model
                     )
 
                     # Reshape p_capture for broadcasting with components
-                    p_capture_reshaped = p_capture[:, None, None]  # [cells, 0, 1]
-                    
+                    p_capture_reshaped = p_capture[
+                        :, None, None
+                    ]  # [cells, 0, 1]
+
                     # Compute effective probability for each component
                     p_hat = numpyro.deterministic(
                         "p_hat",
-                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                        p
+                        * p_capture_reshaped
+                        / (1 - p * (1 - p_capture_reshaped)),
                     )
 
                 # Create base negative binomial distribution
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
-                
+
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
-                    base_dist, gate=gate).to_event(1)
-                
+                    base_dist, gate=gate
+                ).to_event(1)
+
                 # Create mixture distribution
                 mixture = dist.MixtureSameFamily(mixing_dist, zinb)
-                
+
                 # Sample counts from mixture
                 numpyro.sample("counts", mixture, obs=counts)
         else:
@@ -2169,46 +2253,50 @@ def zinbvcp_mixture_model(
                     # Sample phi_capture
                     phi_capture = numpyro.sample(
                         "phi_capture",
-                        model_config.phi_capture_distribution_model
+                        model_config.phi_capture_distribution_model,
                     )
                     # Reshape phi_capture for broadcasting
-                    phi_capture_reshaped = phi_capture[:, None, None]  # [cells, 0, 1]
+                    phi_capture_reshaped = phi_capture[
+                        :, None, None
+                    ]  # [cells, 0, 1]
                     # Compute p_capture
                     p_capture = numpyro.deterministic(
-                        "p_capture", 
-                        1.0 / (1.0 + phi_capture_reshaped)
+                        "p_capture", 1.0 / (1.0 + phi_capture_reshaped)
                     )
                     # Compute p_hat using the derived formula
                     p_hat = numpyro.deterministic(
-                        "p_hat",
-                        1.0 / (1 + phi + phi * phi_capture_reshaped)
+                        "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
                     )
                 else:
                     # Sample cell-specific capture probabilities
                     p_capture = numpyro.sample(
-                        "p_capture",
-                        model_config.p_capture_distribution_model
+                        "p_capture", model_config.p_capture_distribution_model
                     )
 
                     # Reshape p_capture for broadcasting with components
-                    p_capture_reshaped = p_capture[:, None, None]  # [cells, 0, 1]
-                    
+                    p_capture_reshaped = p_capture[
+                        :, None, None
+                    ]  # [cells, 0, 1]
+
                     # Compute effective probability for each component
                     p_hat = numpyro.deterministic(
                         "p_hat",
-                        p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                        p
+                        * p_capture_reshaped
+                        / (1 - p * (1 - p_capture_reshaped)),
                     )
 
                 # Create base negative binomial distribution
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
-                
+
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
-                    base_dist, gate=gate).to_event(1)
-                
+                    base_dist, gate=gate
+                ).to_event(1)
+
                 # Create mixture distribution
                 mixture = dist.MixtureSameFamily(mixing_dist, zinb)
-                
+
                 # Sample counts from mixture
                 numpyro.sample("counts", mixture, obs=counts[idx])
     else:
@@ -2217,53 +2305,54 @@ def zinbvcp_mixture_model(
             if model_config.parameterization == "odds_ratio":
                 # Sample phi_capture
                 phi_capture = numpyro.sample(
-                    "phi_capture",
-                    model_config.phi_capture_distribution_model
+                    "phi_capture", model_config.phi_capture_distribution_model
                 )
                 # Reshape phi_capture for broadcasting
-                phi_capture_reshaped = phi_capture[:, None, None]  # [cells, 0, 1]
+                phi_capture_reshaped = phi_capture[
+                    :, None, None
+                ]  # [cells, 0, 1]
                 # Compute p_capture
                 p_capture = numpyro.deterministic(
-                    "p_capture", 
-                    1.0 / (1.0 + phi_capture_reshaped)
+                    "p_capture", 1.0 / (1.0 + phi_capture_reshaped)
                 )
                 # Compute p_hat using the derived formula
                 p_hat = numpyro.deterministic(
-                    "p_hat",
-                    1.0 / (1 + phi + phi * phi_capture_reshaped)
+                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
                 )
             else:
                 # Sample cell-specific capture probabilities
                 p_capture = numpyro.sample(
-                    "p_capture",
-                    model_config.p_capture_distribution_model
+                    "p_capture", model_config.p_capture_distribution_model
                 )
 
                 # Reshape p_capture for broadcasting with components
                 p_capture_reshaped = p_capture[:, None, None]  # [cells, 0, 1]
-                
+
                 # Compute effective probability for each component
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
 
             # Create base negative binomial distribution
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
-            
+
             # Create zero-inflated distribution
-            zinb = dist.ZeroInflatedDistribution(
-                base_dist, gate=gate).to_event(1)
-            
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
+                1
+            )
+
             # Create mixture distribution
             mixture = dist.MixtureSameFamily(mixing_dist, zinb)
-            
+
             # Sample counts from mixture
             numpyro.sample("counts", mixture)
+
 
 # ------------------------------------------------------------------------------
 # Variational Guide for Zero-Inflated Negative Binomial Mixture Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def zinbvcp_mixture_guide(
     n_cells: int,
@@ -2275,7 +2364,7 @@ def zinbvcp_mixture_guide(
     """
     Wrapper for ZINBVCP mixture variational guides with different
     parameterizations.
-    
+
     Parameters
     ----------
     parameterization : str, default="standard"
@@ -2297,12 +2386,16 @@ def zinbvcp_mixture_guide(
             n_cells, n_genes, model_config, counts, batch_size
         )
     else:
-        raise ValueError(f"Unknown parameterization: {model_config.parameterization}")
+        raise ValueError(
+            f"Unknown parameterization: {model_config.parameterization}"
+        )
+
 
 # ------------------------------------------------------------------------------
 # Mean-Field Parameterized Guide for Zero-Inflated Negative Binomial Mixture
 # Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def zinbvcp_mixture_guide_standard(
     n_cells: int,
@@ -2320,9 +2413,9 @@ def zinbvcp_mixture_guide_standard(
     Specifically:
         - Mixture weights ~ Dirichlet(α_mixing)
         - A shared success probability p ~ Beta(α_p, β_p) across all components
-        - Component and gene-specific dispersion parameters r_{k,g} ~ 
+        - Component and gene-specific dispersion parameters r_{k,g} ~
           Gamma(α_r, β_r) for each component k and gene g
-        - Component and gene-specific dropout probabilities gate_{k,g} ~ 
+        - Component and gene-specific dropout probabilities gate_{k,g} ~
           Beta(α_gate, β_gate) for each component k and gene g
         - Cell-specific capture probabilities p_capture_c ~ Beta(α_capture,
           β_capture) for each cell c
@@ -2376,7 +2469,7 @@ def zinbvcp_mixture_guide_standard(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Extract p distribution values
@@ -2388,14 +2481,12 @@ def zinbvcp_mixture_guide_standard(
     # Loop through each constraint in the distribution
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Extract r distribution values
     r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints 
+    # Extract r distribution parameters and constraints
     r_constraints = model_config.r_distribution_guide.arg_constraints
     # Initialize parameters for each constraint in the distribution
     r_params = {}
@@ -2404,7 +2495,7 @@ def zinbvcp_mixture_guide_standard(
         r_params[param_name] = numpyro.param(
             f"r_{param_name}",
             jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Extract gate distribution values
@@ -2418,25 +2509,26 @@ def zinbvcp_mixture_guide_standard(
         gate_params[param_name] = numpyro.param(
             f"gate_{param_name}",
             jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
-    
+
     # Sample global parameters outside the plate
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
     numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
+        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
     )
 
     # Extract p_capture distribution values
     p_capture_values = model_config.p_capture_distribution_guide.get_args()
     # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    p_capture_constraints = (
+        model_config.p_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     p_capture_params = {}
     # Loop through each constraint in the distribution
@@ -2444,15 +2536,17 @@ def zinbvcp_mixture_guide_standard(
         p_capture_params[param_name] = numpyro.param(
             f"p_capture_{param_name}",
             jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture", 
-                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                "p_capture",
+                model_config.p_capture_distribution_guide.__class__(
+                    **p_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -2466,13 +2560,17 @@ def zinbvcp_mixture_guide_standard(
             }
             numpyro.sample(
                 "p_capture",
-                model_config.p_capture_distribution_guide.__class__(**batch_params)
+                model_config.p_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # Mean-Variance Parameterized Guide for Zero-Inflated Negative Binomial Mixture
 # Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def zinbvcp_mixture_guide_linked(
     n_cells: int,
@@ -2497,11 +2595,11 @@ def zinbvcp_mixture_guide_linked(
         - Cell-specific capture probabilities p_capture_c ~ Beta(α_capture,
           β_capture) for each cell c
         - Deterministic relationship r_{k,g} = μ_{k,g} * p / (1 - p)
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The mean-variance parameterization captures the natural
     relationship between means and variances in count data.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -2524,15 +2622,25 @@ def zinbvcp_mixture_guide_linked(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mixing_distribution_guide'."
+        )
     if model_config.p_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'p_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'p_distribution_guide'."
+        )
     if model_config.mu_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'mu_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'mu_distribution_guide'."
+        )
     if model_config.gate_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'gate_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'gate_distribution_guide'."
+        )
     if model_config.p_capture_distribution_guide is None:
-        raise ValueError("Linked parameterization guide requires 'p_capture_distribution_guide'.")
+        raise ValueError(
+            "Linked parameterization guide requires 'p_capture_distribution_guide'."
+        )
 
     # Extract number of components
     n_components = model_config.n_components
@@ -2545,7 +2653,7 @@ def zinbvcp_mixture_guide_linked(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define p distribution parameters
@@ -2554,9 +2662,7 @@ def zinbvcp_mixture_guide_linked(
     p_params = {}
     for param_name, constraint in p_constraints.items():
         p_params[param_name] = numpyro.param(
-            f"p_{param_name}",
-            p_values[param_name],
-            constraint=constraint
+            f"p_{param_name}", p_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -2567,7 +2673,7 @@ def zinbvcp_mixture_guide_linked(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define gate distribution parameters
@@ -2578,28 +2684,28 @@ def zinbvcp_mixture_guide_linked(
         gate_params[param_name] = numpyro.param(
             f"gate_{param_name}",
             jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
     numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
+        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
     )
 
     # Extract p_capture distribution values
     p_capture_values = model_config.p_capture_distribution_guide.get_args()
     # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = model_config.p_capture_distribution_guide.arg_constraints
+    p_capture_constraints = (
+        model_config.p_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     p_capture_params = {}
     # Loop through each constraint in the distribution
@@ -2607,15 +2713,17 @@ def zinbvcp_mixture_guide_linked(
         p_capture_params[param_name] = numpyro.param(
             f"p_capture_{param_name}",
             jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (p_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "p_capture", 
-                model_config.p_capture_distribution_guide.__class__(**p_capture_params)
+                "p_capture",
+                model_config.p_capture_distribution_guide.__class__(
+                    **p_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -2629,13 +2737,17 @@ def zinbvcp_mixture_guide_linked(
             }
             numpyro.sample(
                 "p_capture",
-                model_config.p_capture_distribution_guide.__class__(**batch_params)
+                model_config.p_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # Beta-Prime Parameterized Guide for Zero-Inflated Negative Binomial Mixture
 # Model with Variable Capture Probability
 # ------------------------------------------------------------------------------
+
 
 def zinbvcp_mixture_guide_odds_ratio(
     n_cells: int,
@@ -2663,11 +2775,11 @@ def zinbvcp_mixture_guide_odds_ratio(
         - Deterministic relationships:
             p = 0 / (1 + φ)
             r_{k,g} = μ_{k,g} * φ
-    
+
     The guide samples from these distributions to approximate the true
     posterior. The Beta-Prime parameterization provides a natural way to model
     the relationship between p and r.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -2690,7 +2802,9 @@ def zinbvcp_mixture_guide_odds_ratio(
     """
     # Add checks for required distributions
     if model_config.mixing_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mixing_distribution_guide'.")
+        raise ValueError(
+            "Odds ratio guide requires 'mixing_distribution_guide'."
+        )
     if model_config.phi_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
     if model_config.mu_distribution_guide is None:
@@ -2698,7 +2812,9 @@ def zinbvcp_mixture_guide_odds_ratio(
     if model_config.gate_distribution_guide is None:
         raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
     if model_config.phi_capture_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_capture_distribution_guide'.")
+        raise ValueError(
+            "Odds ratio guide requires 'phi_capture_distribution_guide'."
+        )
 
     # Extract number of components
     n_components = model_config.n_components
@@ -2711,7 +2827,7 @@ def zinbvcp_mixture_guide_odds_ratio(
         mixing_params[param_name] = numpyro.param(
             f"mixing_{param_name}",
             mixing_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define phi distribution parameters
@@ -2720,9 +2836,7 @@ def zinbvcp_mixture_guide_odds_ratio(
     phi_params = {}
     for param_name, constraint in phi_constraints.items():
         phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}",
-            phi_values[param_name],
-            constraint=constraint
+            f"phi_{param_name}", phi_values[param_name], constraint=constraint
         )
 
     # Define mu distribution parameters
@@ -2733,7 +2847,7 @@ def zinbvcp_mixture_guide_odds_ratio(
         mu_params[param_name] = numpyro.param(
             f"mu_{param_name}",
             jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Define gate distribution parameters
@@ -2744,31 +2858,30 @@ def zinbvcp_mixture_guide_odds_ratio(
         gate_params[param_name] = numpyro.param(
             f"gate_{param_name}",
             jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Sample from variational distributions
     numpyro.sample(
-        "mixing_weights", 
-        model_config.mixing_distribution_guide.__class__(**mixing_params)
+        "mixing_weights",
+        model_config.mixing_distribution_guide.__class__(**mixing_params),
     )
     numpyro.sample(
-        "phi", 
-        model_config.phi_distribution_guide.__class__(**phi_params)
+        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
     )
     numpyro.sample(
-        "mu", 
-        model_config.mu_distribution_guide.__class__(**mu_params)
+        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
     )
     numpyro.sample(
-        "gate", 
-        model_config.gate_distribution_guide.__class__(**gate_params)
+        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
     )
 
     # Extract phi_capture distribution values
     phi_capture_values = model_config.phi_capture_distribution_guide.get_args()
     # Extract phi_capture distribution parameters and constraints
-    phi_capture_constraints = model_config.phi_capture_distribution_guide.arg_constraints
+    phi_capture_constraints = (
+        model_config.phi_capture_distribution_guide.arg_constraints
+    )
     # Initialize parameters for each constraint in the distribution
     phi_capture_params = {}
     # Loop through each constraint in the distribution
@@ -2776,15 +2889,17 @@ def zinbvcp_mixture_guide_odds_ratio(
         phi_capture_params[param_name] = numpyro.param(
             f"phi_capture_{param_name}",
             jnp.ones(n_cells) * phi_capture_values[param_name],
-            constraint=constraint
+            constraint=constraint,
         )
 
     # Use plate for handling local parameters (phi_capture)
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "phi_capture", 
-                model_config.phi_capture_distribution_guide.__class__(**phi_capture_params)
+                "phi_capture",
+                model_config.phi_capture_distribution_guide.__class__(
+                    **phi_capture_params
+                ),
             )
     else:
         with numpyro.plate(
@@ -2798,8 +2913,11 @@ def zinbvcp_mixture_guide_odds_ratio(
             }
             numpyro.sample(
                 "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(**batch_params)
+                model_config.phi_capture_distribution_guide.__class__(
+                    **batch_params
+                ),
             )
+
 
 # ------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------
@@ -2811,21 +2929,22 @@ def zinbvcp_mixture_guide_odds_ratio(
 # Negative Binomial Dirichlet Multinomial Mixture Model
 # ------------------------------------------------------------------------------
 
+
 def nbdm_mixture_log_likelihood(
     counts: jnp.ndarray,
     params: Dict,
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell',
+    return_by: str = "cell",
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
     Compute log likelihood for NBDM mixture model using independent negative
     binomials.
-    
+
     Parameters
     ----------
     counts : jnp.ndarray
@@ -2858,7 +2977,7 @@ def nbdm_mixture_log_likelihood(
             - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
-        
+
     Returns
     -------
     jnp.ndarray
@@ -2876,18 +2995,22 @@ def nbdm_mixture_log_likelihood(
         counts = jnp.array(counts, dtype=dtype)
 
     # Check return_by and weight_type
-    if return_by not in ['cell', 'gene']:
+    if return_by not in ["cell", "gene"]:
         raise ValueError("return_by must be one of ['cell', 'gene']")
-    if weight_type is not None and weight_type not in ['multiplicative', 'additive']:
-        raise ValueError("weight_type must be one of "
-                         "['multiplicative', 'additive']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
 
     # Extract parameters
-    p = jnp.squeeze(params['p']).astype(dtype)
-    r = jnp.squeeze(params['r']).astype(dtype)  # shape (n_components, n_genes)
-    mixing_weights = jnp.squeeze(params['mixing_weights']).astype(dtype)
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
-    
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -2902,14 +3025,14 @@ def nbdm_mixture_log_likelihood(
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
     # p: scalar -> (1, 1, 1) for broadcasting
     # First convert scalar to array, then add dimensions
-    p = jnp.array(p)[None, None, None]  
+    p = jnp.array(p)[None, None, None]
 
     # Create base NB distribution vectorized over cells, components, genes
     nb_dist = dist.NegativeBinomialProbs(r, p)
 
     # Validate and process weights
     if weights is not None:
-        expected_length = n_genes if return_by == 'cell' else n_cells
+        expected_length = n_genes if return_by == "cell" else n_cells
         if len(weights) != expected_length:
             raise ValueError(
                 f"For return_by='{return_by}', weights must be of shape "
@@ -2917,41 +3040,41 @@ def nbdm_mixture_log_likelihood(
             )
         weights = jnp.array(weights, dtype=dtype)
 
-    if return_by == 'cell':
+    if return_by == "cell":
         if batch_size is None:
             # Compute log probs for all cells at once
             # This gives (n_cells, n_components, n_genes)
             gene_log_probs = nb_dist.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-            
+
             # Sum over genes (axis=1) to get (n_cells, n_components)
-            log_probs = (
-                jnp.sum(gene_log_probs, axis=1) + jnp.log(mixing_weights)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
             )
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_cells, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                
+
                 # Compute log probs for batch
                 # Shape: (batch_size, n_components, n_genes)
                 batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
-                
+
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-                
+
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
                 log_probs = log_probs.at[start_idx:end_idx].set(
@@ -2962,13 +3085,13 @@ def nbdm_mixture_log_likelihood(
             # Compute log probs for each gene
             # Shape: (n_cells, n_components, n_genes)
             gene_log_probs = nb_dist.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-            
+
             # Sum over cells and add mixing weights
             # Shape: (n_genes, n_components)
             log_probs = (
@@ -2977,25 +3100,25 @@ def nbdm_mixture_log_likelihood(
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_genes, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                
+
                 # Compute log probs for batch
                 # Shape: (batch_size, n_components, n_genes)
-                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])  
-                
+                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
+
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-                
+
                 # Add weighted log probs for batch
                 log_probs += jnp.sum(batch_log_probs, axis=0)
-            
+
             # Add mixing weights
             log_probs += jnp.log(mixing_weights).T
 
@@ -3004,24 +3127,26 @@ def nbdm_mixture_log_likelihood(
     else:
         return jsp.special.logsumexp(log_probs, axis=1)
 
+
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model
 # ------------------------------------------------------------------------------
+
 
 def zinb_mixture_log_likelihood(
     counts: jnp.ndarray,
     params: Dict,
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell',
+    return_by: str = "cell",
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
     Compute log likelihood for ZINB mixture model.
-    
+
     Parameters
     ----------
     counts : jnp.ndarray
@@ -3053,7 +3178,7 @@ def zinb_mixture_log_likelihood(
             - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
-        
+
     Returns
     -------
     jnp.ndarray
@@ -3069,26 +3194,31 @@ def zinb_mixture_log_likelihood(
         counts = jnp.array(counts, dtype=dtype)
 
     # Check return_by and weight_type
-    if return_by not in ['cell', 'gene']:
+    if return_by not in ["cell", "gene"]:
         raise ValueError("return_by must be one of ['cell', 'gene']")
-    if weight_type is not None and weight_type not in ['multiplicative', 'additive']:
-        raise ValueError("weight_type must be one of "
-                         "['multiplicative', 'additive']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
 
     # Extract parameters
-    p = jnp.squeeze(params['p']).astype(dtype)
-    r = jnp.squeeze(params['r']).astype(dtype)  # shape (n_components, n_genes)
-    gate = jnp.squeeze(params['gate']).astype(dtype)  # shape (n_components, n_genes)
-    mixing_weights = jnp.squeeze(params['mixing_weights']).astype(dtype)
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    gate = jnp.squeeze(params["gate"]).astype(
+        dtype
+    )  # shape (n_components, n_genes)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
-    
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
     else:
         n_genes, n_cells = counts.shape
-        counts = jnp.transpose(counts) # Transpose to make cells rows
-
+        counts = jnp.transpose(counts)  # Transpose to make cells rows
 
     # Expand dimensions for vectorized computation
     # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
@@ -3099,7 +3229,7 @@ def zinb_mixture_log_likelihood(
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
     # p: scalar -> (1, 1, 1) for broadcasting
     # First convert scalar to array, then add dimensions
-    p = jnp.array(p)[None, None, None]  
+    p = jnp.array(p)[None, None, None]
 
     # Create base NB distribution vectorized over cells, genes, components
     # r: (1, n_genes, n_components)
@@ -3113,7 +3243,7 @@ def zinb_mixture_log_likelihood(
 
     # Validate and process weights
     if weights is not None:
-        expected_length = n_genes if return_by == 'cell' else n_cells
+        expected_length = n_genes if return_by == "cell" else n_cells
         if len(weights) != expected_length:
             raise ValueError(
                 f"For return_by='{return_by}', weights must be of shape "
@@ -3121,41 +3251,41 @@ def zinb_mixture_log_likelihood(
             )
         weights = jnp.array(weights, dtype=dtype)
 
-    if return_by == 'cell':
+    if return_by == "cell":
         if batch_size is None:
             # Compute log probs for all cells at once
             # This gives (n_cells, n_components, n_genes)
             gene_log_probs = zinb.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-            
+
             # Sum over genes (axis=1) to get (n_cells, n_components)
-            log_probs = (
-                jnp.sum(gene_log_probs, axis=1) + jnp.log(mixing_weights)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
             )
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_cells, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                
+
                 # Compute log probs for batch
                 batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
-                
+
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-                
+
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
                 log_probs = log_probs.at[start_idx:end_idx].set(
@@ -3165,13 +3295,13 @@ def zinb_mixture_log_likelihood(
         if batch_size is None:
             # Compute log probs for each gene
             gene_log_probs = zinb.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-            
+
             # Sum over cells and add mixing weights
             # Shape: (n_genes, n_components)
             log_probs = (
@@ -3180,51 +3310,53 @@ def zinb_mixture_log_likelihood(
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_genes, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                
+
                 # Compute log probs for batch
                 # Shape: (batch_size, n_components, n_genes)
-                batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])  
-                
+                batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
+
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-                
+
                 # Add weighted log probs for batch
                 log_probs += jnp.sum(batch_log_probs, axis=0)
-            
+
             # Add mixing weights
             log_probs += jnp.log(mixing_weights).T
-            
+
     if split_components:
         return log_probs
     else:
         return jsp.special.logsumexp(log_probs, axis=1)
 
+
 # ------------------------------------------------------------------------------
 # Negative Binomial Mixture Model with Capture Probabilities
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_mixture_log_likelihood(
     counts: jnp.ndarray,
     params: Dict,
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell',
+    return_by: str = "cell",
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
     Compute log likelihood for NBVCP mixture model.
-    
+
     Parameters
     ----------
     counts : jnp.ndarray
@@ -3258,7 +3390,7 @@ def nbvcp_mixture_log_likelihood(
             - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
-        
+
     Returns
     -------
     jnp.ndarray
@@ -3276,25 +3408,31 @@ def nbvcp_mixture_log_likelihood(
         counts = jnp.array(counts, dtype=dtype)
 
     # Check return_by and weight_type
-    if return_by not in ['cell', 'gene']:
+    if return_by not in ["cell", "gene"]:
         raise ValueError("return_by must be one of ['cell', 'gene']")
-    if weight_type is not None and weight_type not in ['multiplicative', 'additive']:
-        raise ValueError("weight_type must be one of "
-                         "['multiplicative', 'additive']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
 
     # Extract parameters
-    p = jnp.squeeze(params['p']).astype(dtype)
-    r = jnp.squeeze(params['r']).astype(dtype)  # shape (n_components, n_genes)
-    p_capture = jnp.squeeze(params['p_capture']).astype(dtype)  # shape (n_cells,)
-    mixing_weights = jnp.squeeze(params['mixing_weights']).astype(dtype)
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    p_capture = jnp.squeeze(params["p_capture"]).astype(
+        dtype
+    )  # shape (n_cells,)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
-    
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
     else:
         n_genes, n_cells = counts.shape
-        counts = jnp.transpose(counts) # Transpose to make cells rows
+        counts = jnp.transpose(counts)  # Transpose to make cells rows
 
     # Expand dimensions for vectorized computation
     # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
@@ -3311,7 +3449,7 @@ def nbvcp_mixture_log_likelihood(
 
     # Validate and process weights
     if weights is not None:
-        expected_length = n_genes if return_by == 'cell' else n_cells
+        expected_length = n_genes if return_by == "cell" else n_cells
         if len(weights) != expected_length:
             raise ValueError(
                 f"For return_by='{return_by}', weights must be of shape "
@@ -3319,7 +3457,7 @@ def nbvcp_mixture_log_likelihood(
             )
         weights = jnp.array(weights, dtype=dtype)
 
-    if return_by == 'cell':
+    if return_by == "cell":
         if batch_size is None:
             # Create base NB distribution vectorized over cells, genes, components
             # r: (1, n_genes, n_components)
@@ -3331,21 +3469,21 @@ def nbvcp_mixture_log_likelihood(
             # Compute log probs for all cells at once
             # This gives (n_cells, n_components, n_genes)
             gene_log_probs = nb_dist.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-            
+
             # Sum over genes (axis=1) to get (n_cells, n_components)
-            log_probs = (
-                jnp.sum(gene_log_probs, axis=1) + jnp.log(mixing_weights)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
             )
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_cells, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 # Get start and end indices for batch
@@ -3357,22 +3495,23 @@ def nbvcp_mixture_log_likelihood(
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
                 nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx])
+                    r, p_hat[start_idx:end_idx]
+                )
                 # Compute log probs for batch
                 batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
-                
+
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-                
+
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
                 log_probs = log_probs.at[start_idx:end_idx].set(
                     jnp.sum(batch_log_probs, axis=1) + jnp.log(mixing_weights)
                 )
-    
+
     else:  # return_by == 'gene'
         if batch_size is None:
             # Create base NB distribution vectorized over cells, genes, components
@@ -3383,13 +3522,13 @@ def nbvcp_mixture_log_likelihood(
             nb_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Compute log probs for each gene
             gene_log_probs = nb_dist.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-            
+
             # Sum over cells and add mixing weights
             # Shape: (n_genes, n_components)
             log_probs = (
@@ -3398,7 +3537,7 @@ def nbvcp_mixture_log_likelihood(
         else:
             # Initialize array for gene-wise sums
             log_probs = jnp.zeros((n_genes, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 # Get start and end indices for batch
@@ -3410,47 +3549,50 @@ def nbvcp_mixture_log_likelihood(
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
                 nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx])
-                
+                    r, p_hat[start_idx:end_idx]
+                )
+
                 # Compute log probs for batch
                 # Shape: (batch_size, n_genes, n_components)
-                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])  
+                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
 
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-                
+
                 # Add weighted log probs for batch
                 log_probs += jnp.sum(batch_log_probs, axis=0)
-            
+
             # Add mixing weights
             log_probs += jnp.log(mixing_weights).T
-            
+
     if split_components:
         return log_probs
     else:
         return jsp.special.logsumexp(log_probs, axis=1)
 
+
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Mixture Model with Capture Probabilities
 # ------------------------------------------------------------------------------
+
 
 def zinbvcp_mixture_log_likelihood(
     counts: jnp.ndarray,
     params: Dict,
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
-    return_by: str = 'cell',
+    return_by: str = "cell",
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
     Compute log likelihood for ZINBVCP mixture model.
-    
+
     Parameters
     ----------
     counts : jnp.ndarray
@@ -3484,7 +3626,7 @@ def zinbvcp_mixture_log_likelihood(
             - 'additive': add weights to log probabilities
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
-        
+
     Returns
     -------
     jnp.ndarray
@@ -3502,27 +3644,34 @@ def zinbvcp_mixture_log_likelihood(
         counts = jnp.array(counts, dtype=dtype)
 
     # Check return_by and weight_type
-    if return_by not in ['cell', 'gene']:
+    if return_by not in ["cell", "gene"]:
         raise ValueError("return_by must be one of ['cell', 'gene']")
-    if weight_type is not None and weight_type not in ['multiplicative', 'additive']:
-        raise ValueError("weight_type must be one of "
-                         "['multiplicative', 'additive']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
 
     # Extract parameters
-    p = jnp.squeeze(params['p']).astype(dtype)
-    r = jnp.squeeze(params['r']).astype(dtype)  # shape (n_components, n_genes)
-    p_capture = jnp.squeeze(params['p_capture']).astype(dtype)  # shape (n_cells,)
-    gate = jnp.squeeze(params['gate']).astype(dtype)  # shape (n_components, n_genes)
-    mixing_weights = jnp.squeeze(params['mixing_weights']).astype(dtype)
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    p_capture = jnp.squeeze(params["p_capture"]).astype(
+        dtype
+    )  # shape (n_cells,)
+    gate = jnp.squeeze(params["gate"]).astype(
+        dtype
+    )  # shape (n_components, n_genes)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
-    
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
     else:
         n_genes, n_cells = counts.shape
         counts = jnp.transpose(counts)  # Transpose to make cells rows
-
 
     # Expand dimensions for vectorized computation
     # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
@@ -3541,7 +3690,7 @@ def zinbvcp_mixture_log_likelihood(
 
     # Validate and process weights
     if weights is not None:
-        expected_length = n_genes if return_by == 'cell' else n_cells
+        expected_length = n_genes if return_by == "cell" else n_cells
         if len(weights) != expected_length:
             raise ValueError(
                 f"For return_by='{return_by}', weights must be of shape "
@@ -3549,34 +3698,34 @@ def zinbvcp_mixture_log_likelihood(
             )
         weights = jnp.array(weights, dtype=dtype)
 
-    if return_by == 'cell':
+    if return_by == "cell":
         if batch_size is None:
             # Create base NB distribution vectorized over cells, genes, components
             # r: (1, n_genes, n_components)
             # p_hat: (n_cells, 1, 1) or scalar
             # counts: (n_cells, n_genes, 1)
-                # This will broadcast to: (n_cells, n_genes, n_components)
+            # This will broadcast to: (n_cells, n_genes, n_components)
             nb_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Create zero-inflated distribution for each component
             zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
             # Compute log probs for all cells at once
             # This gives (n_cells, n_components, n_genes)
             gene_log_probs = zinb.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-            
+
             # Sum over genes (axis=1) to get (n_cells, n_components)
-            log_probs = (
-                jnp.sum(gene_log_probs, axis=1) + jnp.log(mixing_weights)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
             )
         else:
             # Initialize array for results
             log_probs = jnp.zeros((n_cells, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 # Get start and end indices for batch
@@ -3588,45 +3737,45 @@ def zinbvcp_mixture_log_likelihood(
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
                 nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx])
+                    r, p_hat[start_idx:end_idx]
+                )
                 # Create zero-inflated distribution for each component
-                zinb = dist.ZeroInflatedDistribution(
-                    nb_dist, gate=gate)
+                zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
                 # Compute log probs for batch
                 # Shape: (batch_size, n_genes, n_components)
                 batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
-                
+
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
-                
+
                 # Sum over genes (axis=1) to get (n_cells, n_components)
                 # Store log probs for batch
                 log_probs = log_probs.at[start_idx:end_idx].set(
                     jnp.sum(batch_log_probs, axis=1) + jnp.log(mixing_weights)
                 )
-    
+
     else:  # return_by == 'gene'
         if batch_size is None:
             # Create base NB distribution vectorized over cells, genes, components
             # r: (1, n_genes, n_components)
             # p_hat: (n_cells, 1, 1) or scalar
             # counts: (n_cells, n_genes, 1)
-                # This will broadcast to: (n_cells, n_genes, n_components)
+            # This will broadcast to: (n_cells, n_genes, n_components)
             nb_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Create zero-inflated distribution for each component
             zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
             # Compute log probs for each gene
             gene_log_probs = zinb.log_prob(counts)
-            
+
             # Apply weights based on weight_type
-            if weight_type == 'multiplicative':
+            if weight_type == "multiplicative":
                 gene_log_probs *= weights
-            elif weight_type == 'additive':
+            elif weight_type == "additive":
                 gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-            
+
             # Sum over cells and add mixing weights
             # Shape: (n_genes, n_components)
             log_probs = (
@@ -3635,7 +3784,7 @@ def zinbvcp_mixture_log_likelihood(
         else:
             # Initialize array for gene-wise sums
             log_probs = jnp.zeros((n_genes, n_components))
-            
+
             # Process in batches
             for i in range((n_cells + batch_size - 1) // batch_size):
                 # Get start and end indices for batch
@@ -3647,26 +3796,26 @@ def zinbvcp_mixture_log_likelihood(
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
                 nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx])
+                    r, p_hat[start_idx:end_idx]
+                )
                 # Create zero-inflated distribution for each component
-                zinb = dist.ZeroInflatedDistribution(
-                    nb_dist, gate=gate)
+                zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
                 # Compute log probs for batch
                 # Shape: (batch_size, n_genes, n_components)
                 batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
 
                 # Apply weights based on weight_type
-                if weight_type == 'multiplicative':
+                if weight_type == "multiplicative":
                     batch_log_probs *= weights
-                elif weight_type == 'additive':
+                elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
-                
+
                 # Add weighted log probs for batch
                 log_probs += jnp.sum(batch_log_probs, axis=0)
-            
+
             # Add mixing weights
             log_probs += jnp.log(mixing_weights).T
-            
+
     if split_components:
         return log_probs
     else:

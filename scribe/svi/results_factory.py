@@ -12,7 +12,7 @@ from ..model_config import ModelConfig
 
 class SVIResultsFactory:
     """Factory for creating SVI results objects."""
-    
+
     @staticmethod
     def create_results(
         svi_results: Any,
@@ -23,11 +23,11 @@ class SVIResultsFactory:
         n_genes: int,
         model_type: str,
         n_components: Optional[int],
-        prior_params: Dict[str, Any]
+        prior_params: Dict[str, Any],
     ) -> ScribeSVIResults:
         """
         Package SVI results into ScribeSVIResults object.
-        
+
         Parameters
         ----------
         svi_results : Any
@@ -48,7 +48,7 @@ class SVIResultsFactory:
             Number of mixture components
         prior_params : Dict[str, Any]
             Dictionary of prior parameters
-            
+
         Returns
         -------
         ScribeSVIResults
@@ -75,5 +75,5 @@ class SVIResultsFactory:
                 n_components=n_components,
                 prior_params=prior_params,
             )
-        
-        return results 
+
+        return results

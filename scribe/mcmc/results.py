@@ -18,10 +18,11 @@ from ..models.model_config import ModelConfig
 # MCMC results class
 # ------------------------------------------------------------------------------
 
+
 class ScribeMCMCResults(MCMC):
     """
     SCRIBE MCMC results class that extends numpyro.infer.MCMC.
-    
+
     This class inherits all functionality from MCMC while adding SCRIBE-specific
     attributes and methods for analyzing single-cell RNA sequencing data.
 
@@ -52,7 +53,7 @@ class ScribeMCMCResults(MCMC):
     n_components : Optional[int]
         Number of mixture components, if using a mixture model
     """
-    
+
     def __init__(
         self,
         mcmc,  # MCMC instance
@@ -68,11 +69,11 @@ class ScribeMCMCResults(MCMC):
         n_vars: Optional[int] = None,
         predictive_samples: Optional[Dict] = None,
         n_components: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize ScribeMCMCResults from an existing MCMC instance.
-        
+
         Parameters
         ----------
         mcmc : MCMC
@@ -107,30 +108,33 @@ class ScribeMCMCResults(MCMC):
         # existing mcmc instance Instead, we copy the relevant attributes from
         # the mcmc instance
         self.__dict__.update(mcmc.__dict__)
-        
+
         # Set SCRIBE-specific attributes
         self.n_cells = n_cells
         self.n_genes = n_genes
         self.model_type = model_type
         self.model_config = model_config
         self.prior_params = prior_params
-        
+
         # AnnData-related attributes
         self.obs = obs
         self.var = var
         self.uns = uns
         self.n_obs = n_obs
         self.n_vars = n_vars
-        
+
         # Optional attributes
         self.predictive_samples = predictive_samples
         self.prior_predictive_samples = None
-        self.n_components = (n_components if n_components is not None else
-                             model_config.n_components)
+        self.n_components = (
+            n_components
+            if n_components is not None
+            else model_config.n_components
+        )
 
         # Validate configuration
         self._validate_model_config()
-    
+
     @classmethod
     def from_mcmc(
         cls,
@@ -140,11 +144,11 @@ class ScribeMCMCResults(MCMC):
         model_type: str,
         model_config: ModelConfig,
         prior_params: Dict[str, Any],
-        **kwargs
+        **kwargs,
     ):
         """
         Create ScribeMCMCResults from an existing MCMC instance.
-        
+
         Parameters
         ----------
         mcmc : MCMC
@@ -161,7 +165,7 @@ class ScribeMCMCResults(MCMC):
             Dictionary of prior parameter values
         **kwargs
             Additional arguments to pass to ScribeMCMCResults constructor
-            
+
         Returns
         -------
         ScribeMCMCResults
@@ -169,7 +173,7 @@ class ScribeMCMCResults(MCMC):
         """
         # Extract posterior means as point estimates
         samples = mcmc.get_samples()
-        
+
         # Create ScribeMCMCResults instance
         return cls(
             mcmc=mcmc,
@@ -178,9 +182,9 @@ class ScribeMCMCResults(MCMC):
             model_type=model_type,
             model_config=model_config,
             prior_params=prior_params,
-            **kwargs
+            **kwargs,
         )
-    
+
     # --------------------------------------------------------------------------
     # From AnnData
     # --------------------------------------------------------------------------
@@ -193,11 +197,11 @@ class ScribeMCMCResults(MCMC):
         model_type: str,
         model_config: ModelConfig,
         prior_params: Dict[str, Any],
-        **kwargs
+        **kwargs,
     ):
         """
         Create ScribeMCMCResults from MCMC instance and AnnData object.
-        
+
         Parameters
         ----------
         mcmc : MCMC
@@ -212,7 +216,7 @@ class ScribeMCMCResults(MCMC):
             Dictionary of prior parameter values
         **kwargs
             Additional arguments to pass to ScribeMCMCResults constructor
-            
+
         Returns
         -------
         ScribeMCMCResults
@@ -220,8 +224,10 @@ class ScribeMCMCResults(MCMC):
         """
         # Extract posterior means as point estimates
         samples = mcmc.get_samples()
-        params = {param: jnp.mean(values, axis=0) for param, values in samples.items()}
-        
+        params = {
+            param: jnp.mean(values, axis=0) for param, values in samples.items()
+        }
+
         # Create ScribeMCMCResults instance
         return cls(
             mcmc=mcmc,
@@ -236,9 +242,9 @@ class ScribeMCMCResults(MCMC):
             uns=adata.uns.copy(),
             n_obs=adata.n_obs,
             n_vars=adata.n_vars,
-            **kwargs
+            **kwargs,
         )
-    
+
     # --------------------------------------------------------------------------
     # Validation
     # --------------------------------------------------------------------------
@@ -251,10 +257,10 @@ class ScribeMCMCResults(MCMC):
                 f"Model type '{self.model_type}' does not match config "
                 f"base model '{self.model_config.base_model}'"
             )
-        
+
         # Validate n_components consistency
         if self.n_components is not None:
-            if not self.model_type.endswith('_mix'):
+            if not self.model_type.endswith("_mix"):
                 raise ValueError(
                     f"Model type '{self.model_type}' is not a mixture model "
                     f"but n_components={self.n_components} was specified"
@@ -264,68 +270,68 @@ class ScribeMCMCResults(MCMC):
                     f"n_components mismatch: {self.n_components} vs "
                     f"{self.model_config.n_components} in model_config"
                 )
-                
+
     # --------------------------------------------------------------------------
     # SCRIBE-specific methods
     # --------------------------------------------------------------------------
-    
+
     def get_posterior_samples(self):
         """
         Get posterior samples from the MCMC run.
-        
+
         This is a convenience method to match the ScribeResults interface.
-        
+
         Returns
         -------
         Dict
             Dictionary of parameter samples
         """
         return self.get_samples()
-    
+
     # --------------------------------------------------------------------------
 
     def get_posterior_quantiles(self, param, quantiles=(0.025, 0.5, 0.975)):
         """
         Get quantiles for a specific parameter from MCMC samples.
-        
+
         Parameters
         ----------
         param : str
             Parameter name
         quantiles : tuple, default=(0.025, 0.5, 0.975)
             Quantiles to compute
-            
+
         Returns
         -------
         dict
             Dictionary mapping quantiles to values
         """
         return _get_posterior_quantiles(self.get_samples(), param, quantiles)
-    
+
     # --------------------------------------------------------------------------
 
     def get_map(self):
         """
         Get the maximum a posteriori (MAP) estimate from MCMC samples.
-        
+
         For each parameter, this returns the value with the highest
         posterior density.
-        
+
         Returns
         -------
         dict
             Dictionary of MAP estimates for each parameter
         """
         samples = self.get_samples()
-        
+
         # Get extra fields to compute joint log density
         try:
-            potential_energy = self.get_extra_fields()['potential_energy']
+            potential_energy = self.get_extra_fields()["potential_energy"]
             return _get_map_estimate(samples, potential_energy)
         except:
             # Fallback: Use general function without potential energy
             return _get_map_estimate(samples)
-    
+
     # --------------------------------------------------------------------------
     # Get model function
     # --------------------------------------------------------------------------
@@ -335,7 +341,6 @@ class ScribeMCMCResults(MCMC):
         model = _get_model_fn(self.model_type, self.model_config)
         return model
 
-    
     # --------------------------------------------------------------------------
     # Get log likelihood function
     # --------------------------------------------------------------------------
@@ -357,7 +362,7 @@ class ScribeMCMCResults(MCMC):
         """
         Generate posterior predictive check (PPC) samples using posterior
         parameter samples.
-        
+
         This method uses the posterior parameter samples to generate new data
         from the model. These samples can be used to assess model fit and
         perform posterior predictive checks.
@@ -385,13 +390,13 @@ class ScribeMCMCResults(MCMC):
             self.n_genes,
             self.model_config,
             rng_key=rng_key,
-            batch_size=batch_size
+            batch_size=batch_size,
         )
-        
+
         # Store samples if requested
         if store_samples:
             self.predictive_samples = predictive_samples
-            
+
         return predictive_samples
 
     # --------------------------------------------------------------------------
@@ -407,7 +412,7 @@ class ScribeMCMCResults(MCMC):
     ) -> jnp.ndarray:
         """
         Generate prior predictive samples using the model.
-        
+
         This method generates samples from the prior predictive distribution by
         first sampling parameters from the prior distributions and then
         generating data from the model using these parameters. These samples can
@@ -438,24 +443,24 @@ class ScribeMCMCResults(MCMC):
             self.model_config,
             rng_key=rng_key,
             n_samples=n_samples,
-            batch_size=batch_size
+            batch_size=batch_size,
         )
-        
+
         # Store samples if requested
         if store_samples:
             self.prior_predictive_samples = prior_predictive_samples
-            
+
         return prior_predictive_samples
 
     # --------------------------------------------------------------------------
-    # Compute log likelihood methods 
+    # Compute log likelihood methods
     # --------------------------------------------------------------------------
 
     def log_likelihood(
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
-        return_by: str = 'cell',
+        return_by: str = "cell",
         cells_axis: int = 0,
         ignore_nans: bool = False,
         split_components: bool = False,
@@ -465,7 +470,7 @@ class ScribeMCMCResults(MCMC):
     ) -> jnp.ndarray:
         """
         Compute log likelihood of data under posterior samples.
-        
+
         Parameters
         ----------
         counts : jnp.ndarray
@@ -491,7 +496,7 @@ class ScribeMCMCResults(MCMC):
                 - 'additive': add weights to log probabilities
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
-            
+
         Returns
         -------
         jnp.ndarray
@@ -505,7 +510,7 @@ class ScribeMCMCResults(MCMC):
             For mixture models with split_components=True:
                 - 'cell': shape (n_samples, n_cells, n_components)
                 - 'gene': shape (n_samples, n_genes, n_components)
-                
+
         Raises
         ------
         ValueError
@@ -523,9 +528,9 @@ class ScribeMCMCResults(MCMC):
             split_components=split_components,
             weights=weights,
             weight_type=weight_type,
-            dtype=dtype
+            dtype=dtype,
         )
-    
+
     # --------------------------------------------------------------------------
     # Indexing by genes
     # --------------------------------------------------------------------------
@@ -536,14 +541,18 @@ class ScribeMCMCResults(MCMC):
         """
         if samples is None:
             return None
-            
+
         new_posterior_samples = {}
-        
+
         # Handle gene-specific parameters
         for param_name, values in samples.items():
             if param_name in [
-                'r', 'r_unconstrained', 'r_unconstrained__decentered', 
-                'gate', 'gate_unconstrained', 'gate_unconstrained__decentered'
+                "r",
+                "r_unconstrained",
+                "r_unconstrained__decentered",
+                "gate",
+                "gate_unconstrained",
+                "gate_unconstrained__decentered",
             ]:
                 if self.n_components is not None:
                     # Shape: (n_samples, n_components, n_genes)
@@ -560,16 +569,16 @@ class ScribeMCMCResults(MCMC):
     def __getitem__(self, index):
         """
         Enable indexing of ScribeMCMCResults object by genes.
-        
+
         This allows selecting a subset of genes for analysis, e.g.:
         results[0:10]  # Get first 10 genes
         results[gene_indices]  # Get genes by index
-        
+
         Parameters
         ----------
         index : int, slice, or array-like
             Indices of genes to select
-            
+
         Returns
         -------
         ScribeMCMCResults
@@ -580,16 +589,18 @@ class ScribeMCMCResults(MCMC):
             bool_index = jnp.zeros(self.n_genes, dtype=bool)
             bool_index = bool_index.at[index].set(True)
             index = bool_index
-        
+
         # Handle slice indexing
         elif isinstance(index, slice):
             indices = jnp.arange(self.n_genes)[index]
             bool_index = jnp.zeros(self.n_genes, dtype=bool)
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
             index = bool_index
-        
+
         # Handle list/array indexing
-        elif not isinstance(index, (bool, jnp.bool_)) and not isinstance(index[-1], (bool, jnp.bool_)):
+        elif not isinstance(index, (bool, jnp.bool_)) and not isinstance(
+            index[-1], (bool, jnp.bool_)
+        ):
             indices = jnp.array(index)
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
             index = bool_index
@@ -600,16 +611,17 @@ class ScribeMCMCResults(MCMC):
         # Get subset of samples
         samples = self.get_samples()
         new_samples = self._subset_posterior_samples(samples, index)
-            
+
         # Create new instance with subset data
         # We can't use inheritance for the subset since we need to detach from
         # the mcmc instance Instead, create a lightweight version that stores
         # the subset data
         from dataclasses import dataclass
-        
+
         @dataclass
         class ScribeMCMCSubset:
             """Lightweight container for subset of MCMC results."""
+
             samples: Dict
             n_cells: int
             n_genes: int
@@ -634,32 +646,34 @@ class ScribeMCMCResults(MCMC):
                     return self.var.index[index]
                 else:
                     return self.var.index[index]
-            
+
             # ------------------------------------------------------------------
 
             def get_posterior_samples(self):
                 """Get posterior samples."""
                 return self.samples
-            
+
             # ------------------------------------------------------------------
 
-            def get_posterior_quantiles(self, param, quantiles=(0.025, 0.5, 0.975)):
+            def get_posterior_quantiles(
+                self, param, quantiles=(0.025, 0.5, 0.975)
+            ):
                 """Get quantiles for a specific parameter from samples."""
                 return _get_posterior_quantiles(self.samples, param, quantiles)
-            
+
             # ------------------------------------------------------------------
 
             def get_map(self):
                 """Get MAP estimates for parameters."""
                 return _get_map_estimate(self.samples)
-            
+
             # ------------------------------------------------------------------
 
             def log_likelihood(
                 self,
                 counts: jnp.ndarray,
                 batch_size: Optional[int] = None,
-                return_by: str = 'cell',
+                return_by: str = "cell",
                 cells_axis: int = 0,
                 ignore_nans: bool = False,
                 split_components: bool = False,
@@ -680,9 +694,9 @@ class ScribeMCMCResults(MCMC):
                     split_components=split_components,
                     weights=weights,
                     weight_type=weight_type,
-                    dtype=dtype
+                    dtype=dtype,
                 )
-            
+
             # ------------------------------------------------------------------
 
             def get_ppc_samples(
@@ -699,12 +713,12 @@ class ScribeMCMCResults(MCMC):
                     self.n_genes,
                     self.model_config,
                     rng_key=rng_key,
-                    batch_size=batch_size
+                    batch_size=batch_size,
                 )
-                
+
                 if store_samples:
                     self.predictive_samples = predictive_samples
-                    
+
                 return predictive_samples
 
             # ------------------------------------------------------------------
@@ -725,22 +739,22 @@ class ScribeMCMCResults(MCMC):
                     self.model_config,
                     rng_key=rng_key,
                     n_samples=n_samples,
-                    batch_size=batch_size
+                    batch_size=batch_size,
                 )
-                
+
                 # Store samples if requested
                 if store_samples:
                     self.prior_predictive_samples = prior_predictive_samples
-                    
+
                 return prior_predictive_samples
-            
+
         # ----------------------------------------------------------------------
 
         # Create and return the subset
         return ScribeMCMCSubset(
             samples=new_samples,
             n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, 'sum') else len(index)),
+            n_genes=int(index.sum() if hasattr(index, "sum") else len(index)),
             model_type=self.model_type,
             model_config=self.model_config,
             obs=self.obs,
@@ -748,26 +762,34 @@ class ScribeMCMCResults(MCMC):
             uns=self.uns,
             n_obs=self.n_obs,
             n_vars=new_var.shape[0] if new_var is not None else None,
-            n_components=self.n_components
+            n_components=self.n_components,
         )
+
 
 # ------------------------------------------------------------------------------
 # Shared helper functions for both ScribeMCMCResults and ScribeMCMCSubset
 # ------------------------------------------------------------------------------
 
+
 def _get_model_fn(model_type: str, model_config) -> Callable:
     """Get the model function for this model type and parameterization."""
     from scribe.models.model_registry import get_model_and_guide
+
     return get_model_and_guide(model_type, model_config.parameterization)[0]
 
+
 # ------------------------------------------------------------------------------
+
 
 def _get_log_likelihood_fn(model_type: str) -> Callable:
     """Get the log likelihood function for this model type."""
     from .model_registry import get_log_likelihood_fn
+
     return get_log_likelihood_fn(model_type)
 
+
 # ------------------------------------------------------------------------------
+
 
 def _compute_log_likelihood(
     samples: Dict,
@@ -775,7 +797,7 @@ def _compute_log_likelihood(
     model_type: str,
     n_components: Optional[int] = None,
     batch_size: Optional[int] = None,
-    return_by: str = 'cell',
+    return_by: str = "cell",
     cells_axis: int = 0,
     ignore_nans: bool = False,
     split_components: bool = False,
@@ -786,13 +808,13 @@ def _compute_log_likelihood(
     """Compute log likelihood of data under posterior samples."""
     # Get number of samples from first parameter
     n_samples = samples[next(iter(samples))].shape[0]
-    
+
     # Get likelihood function
     likelihood_fn = _get_log_likelihood_fn(model_type)
-    
+
     # Determine if this is a mixture model
     is_mixture = n_components is not None and n_components > 1
-    
+
     # Define function to compute likelihood for a single sample
     @jit
     def compute_sample_lik(i):
@@ -801,65 +823,76 @@ def _compute_log_likelihood(
         # For mixture models we need to pass split_components and weights
         if is_mixture:
             return likelihood_fn(
-                counts, 
-                params_i, 
+                counts,
+                params_i,
                 batch_size=batch_size,
                 cells_axis=cells_axis,
                 return_by=return_by,
                 split_components=split_components,
                 weights=weights,
                 weight_type=weight_type,
-                dtype=dtype
+                dtype=dtype,
             )
         else:
             return likelihood_fn(
-                counts, 
-                params_i, 
+                counts,
+                params_i,
                 batch_size=batch_size,
                 cells_axis=cells_axis,
                 return_by=return_by,
-                dtype=dtype
+                dtype=dtype,
             )
-    
+
     # Use vmap for parallel computation (more memory intensive)
     log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
-    
+
     # Handle NaNs if requested
     if ignore_nans:
         # Check for NaNs appropriately based on dimensions
         if is_mixture and split_components:
             # Handle case with component dimension
             valid_samples = ~jnp.any(
-                jnp.any(jnp.isnan(log_liks), axis=-1), 
-                axis=-1
+                jnp.any(jnp.isnan(log_liks), axis=-1), axis=-1
             )
         else:
             # Standard case
             valid_samples = ~jnp.any(jnp.isnan(log_liks), axis=-1)
-            
+
         # Filter out samples with NaNs
         if jnp.any(~valid_samples):
-            print(f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}")
+            print(
+                f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}"
+            )
             return log_liks[valid_samples]
-    
+
     return log_liks
+
 
 # ------------------------------------------------------------------------------
 
-def _get_posterior_quantiles(samples: Dict, param: str, quantiles=(0.025, 0.5, 0.975)):
+
+def _get_posterior_quantiles(
+    samples: Dict, param: str, quantiles=(0.025, 0.5, 0.975)
+):
     """Get quantiles for a specific parameter from MCMC samples."""
     param_samples = samples[param]
     return {q: jnp.quantile(param_samples, q) for q in quantiles}
 
+
 # ------------------------------------------------------------------------------
 
-def _get_map_estimate(samples: Dict, potential_energy: Optional[jnp.ndarray] = None):
+
+def _get_map_estimate(
+    samples: Dict, potential_energy: Optional[jnp.ndarray] = None
+):
     """Get the maximum a posteriori (MAP) estimate from samples."""
     if potential_energy is not None:
         # Get index of minimum potential energy (maximum log density)
         map_idx = int(jnp.argmin(potential_energy))
         # Extract parameters at this index
-        map_estimate = {param: values[map_idx] for param, values in samples.items()}
+        map_estimate = {
+            param: values[map_idx] for param, values in samples.items()
+        }
         return map_estimate
     else:
         # Fallback: Return posterior mean as a robust estimator
@@ -869,7 +902,9 @@ def _get_map_estimate(samples: Dict, potential_energy: Optional[jnp.ndarray] = N
             map_estimate[param] = jnp.mean(values, axis=0)
         return map_estimate
 
+
 # ------------------------------------------------------------------------------
+
 
 def _generate_ppc_samples(
     samples: Dict,
@@ -883,16 +918,17 @@ def _generate_ppc_samples(
     """Generate predictive samples using posterior parameter samples."""
     # Get the model function
     model = _get_model_fn(model_type, model_config)
-    
+
     # Prepare base model arguments
     model_args = {
-        'n_cells': n_cells,
-        'n_genes': n_genes,
-        'model_config': model_config,
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "model_config": model_config,
     }
-    
+
     # Generate predictive samples
     from scribe.sampling import generate_predictive_samples
+
     return generate_predictive_samples(
         model,
         samples,
@@ -901,7 +937,9 @@ def _generate_ppc_samples(
         batch_size=batch_size,
     )
 
+
 # ------------------------------------------------------------------------------
+
 
 def _generate_prior_predictive_samples(
     model_type: str,
@@ -915,16 +953,17 @@ def _generate_prior_predictive_samples(
     """Generate prior predictive samples using the model."""
     # Get the model function
     model = _get_model_fn(model_type, model_config)
-    
+
     # Prepare base model arguments
     model_args = {
-        'n_cells': n_cells,
-        'n_genes': n_genes,
-        'model_config': model_config,
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "model_config": model_config,
     }
-    
+
     # Generate prior predictive samples
     from scribe.sampling import generate_prior_predictive_samples
+
     return generate_prior_predictive_samples(
         model,
         model_args,

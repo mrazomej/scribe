@@ -5,6 +5,7 @@ Models for single-cell RNA sequencing data with unconstrained parameterization.
 # Import JAX-related libraries
 import jax.numpy as jnp
 import jax.scipy as jsp
+
 # Import Pyro-related libraries
 import numpyro
 import numpyro.distributions as dist
@@ -20,6 +21,7 @@ from .model_config import ModelConfig
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
 
+
 def nbdm_model_unconstrained(
     n_cells: int,
     n_genes: int,
@@ -30,7 +32,7 @@ def nbdm_model_unconstrained(
     """
     Numpyro model for Negative Binomial single-cell RNA sequencing data with
     unconstrained parameterization.
-    
+
     This model assumes that for each cell:
         1. The success probability p is sampled in logit space and transformed
            back
@@ -38,7 +40,7 @@ def nbdm_model_unconstrained(
            and transformed back
         3. The counts follow a Negative Binomial distribution with parameters r
            per gene and shared success probability p
-           
+
     Note: This model is equivalent to the Negative Binomial-Dirichlet
     Multinomial model where:
         1. The total UMI count follows a Negative Binomial distribution with
@@ -48,7 +50,7 @@ def nbdm_model_unconstrained(
     The equivalence comes from the fact that a Dirichlet-Multinomial with a
     Negative Binomial total count is equivalent to independent Negative
     Binomials for each gene.
-    
+
     Parameters
     ----------
     n_cells : int
@@ -57,7 +59,7 @@ def nbdm_model_unconstrained(
         Number of genes in the dataset
     model_config : ModelConfig
         Configuration object containing prior distributions for model
-        parameters: 
+        parameters:
             - p_unconstrained_loc: Location for p_unconstrained distribution
             - p_unconstrained_scale: Scale for p_unconstrained distribution
             - r_unconstrained_loc: Location for r_unconstrained distribution
@@ -82,30 +84,28 @@ def nbdm_model_unconstrained(
     """
     # Sample unconstrained p parameter
     p_unconstrained = numpyro.sample(
-        "p_unconstrained", 
+        "p_unconstrained",
         dist.Normal(
-            model_config.p_unconstrained_loc, 
-            model_config.p_unconstrained_scale
-        )
+            model_config.p_unconstrained_loc, model_config.p_unconstrained_scale
+        ),
     )
 
     # Sample unconstrained r parameter
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", 
+        "r_unconstrained",
         dist.Normal(
-            model_config.r_unconstrained_loc, 
-            model_config.r_unconstrained_scale
-        ).expand([n_genes])
+            model_config.r_unconstrained_loc, model_config.r_unconstrained_scale
+        ).expand([n_genes]),
     )
 
     # Convert to probability space for model
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     # Convert to original space
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
-    
+
     # Define base negative binomial distribution
     base_dist = dist.NegativeBinomialLogits(r, p_unconstrained).to_event(1)
-    
+
     # Model likelihood
     if counts is not None:
         if batch_size is None:
@@ -128,9 +128,11 @@ def nbdm_model_unconstrained(
             # Make the distribution return a vector of length n_genes
             counts = numpyro.sample("counts", base_dist)
 
+
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial Model
 # ------------------------------------------------------------------------------
+
 
 def zinb_model_unconstrained(
     n_cells: int,
@@ -142,7 +144,7 @@ def zinb_model_unconstrained(
     """
     Numpyro model for Zero-Inflated Negative Binomial single-cell RNA sequencing
     data with unconstrained parameterization.
-    
+
     This model assumes that for each cell:
         1. The success probability p is sampled in logit space and transformed
            back
@@ -153,7 +155,7 @@ def zinb_model_unconstrained(
         4. The counts follow a Zero-Inflated Negative Binomial distribution with
            parameters r per gene, shared success probability p, and
            gene-specific dropout rates gate
-    
+
     Parameters
     ----------
     n_cells : int
@@ -162,7 +164,7 @@ def zinb_model_unconstrained(
         Number of genes in the dataset
     model_config : ModelConfig
         Configuration object containing prior distributions for model
-        parameters: 
+        parameters:
             - p_unconstrained_loc: Location for p_unconstrained distribution
             - p_unconstrained_scale: Scale for p_unconstrained distribution
             - r_unconstrained_loc: Location for r_unconstrained distribution
@@ -197,44 +199,42 @@ def zinb_model_unconstrained(
     """
     # Sample unconstrained p parameter
     p_unconstrained = numpyro.sample(
-        "p_unconstrained", 
+        "p_unconstrained",
         dist.Normal(
-            model_config.p_unconstrained_loc, 
-            model_config.p_unconstrained_scale
-        )
+            model_config.p_unconstrained_loc, model_config.p_unconstrained_scale
+        ),
     )
-    
+
     # Sample unconstrained r parameter
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", 
+        "r_unconstrained",
         dist.Normal(
-            model_config.r_unconstrained_loc, 
-            model_config.r_unconstrained_scale
-        ).expand([n_genes])
+            model_config.r_unconstrained_loc, model_config.r_unconstrained_scale
+        ).expand([n_genes]),
     )
-    
+
     # Sample unconstrained gate parameter
     gate_unconstrained = numpyro.sample(
-        "gate_unconstrained", 
+        "gate_unconstrained",
         dist.Normal(
-            model_config.gate_unconstrained_loc, 
-            model_config.gate_unconstrained_scale
-        ).expand([n_genes])
+            model_config.gate_unconstrained_loc,
+            model_config.gate_unconstrained_scale,
+        ).expand([n_genes]),
     )
-    
+
     # Convert to probability space for model
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     # Convert to original space
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
     # Convert to probability space for gate
     gate = numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
-    
+
     # Define base negative binomial distribution
     base_dist = dist.NegativeBinomialLogits(r, p_unconstrained)
-    
+
     # Create zero-inflated distribution
     zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
-    
+
     # Model likelihood
     if counts is not None:
         if batch_size is None:
@@ -257,9 +257,11 @@ def zinb_model_unconstrained(
             # Make the distribution return a vector of length n_genes
             counts = numpyro.sample("counts", zinb)
 
+
 # ------------------------------------------------------------------------------
 # Negative Binomial with Variable Capture Probability (NBVCP) Model
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_model_unconstrained(
     n_cells: int,
@@ -271,7 +273,7 @@ def nbvcp_model_unconstrained(
     """
     Numpyro model for Negative Binomial with Variable Capture Probability
     (NBVCP) using unconstrained parameterization.
-    
+
     This model assumes that for each cell:
         1. The base success probability p is sampled in logit space and
            transformed back
@@ -283,7 +285,7 @@ def nbvcp_model_unconstrained(
            computed from p and p_capture using the composition formula
         5. The counts follow a Negative Binomial distribution with parameters r
            per gene and cell-specific adjusted success probability p_hat
-    
+
     Parameters
     ----------
     n_cells : int
@@ -317,7 +319,7 @@ def nbvcp_model_unconstrained(
           [shape=(n_genes,)]
         - p = sigmoid(p_unconstrained) [shape=(1,)]
         - r = exp(r_unconstrained) [shape=(n_genes,)]
-        
+
     Local Parameters:
         - p_capture_unconstrained ~ Normal(p_capture_unconstrained_loc,
           p_capture_unconstrained_scale) [shape=(n_cells,)]
@@ -331,27 +333,25 @@ def nbvcp_model_unconstrained(
     """
     # Sample unconstrained global p parameter
     p_unconstrained = numpyro.sample(
-        "p_unconstrained", 
+        "p_unconstrained",
         dist.Normal(
-            model_config.p_unconstrained_loc, 
-            model_config.p_unconstrained_scale
-        )
+            model_config.p_unconstrained_loc, model_config.p_unconstrained_scale
+        ),
     )
-    
+
     # Sample unconstrained r parameter
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", 
+        "r_unconstrained",
         dist.Normal(
-            model_config.r_unconstrained_loc, 
-            model_config.r_unconstrained_scale
-        ).expand([n_genes])
+            model_config.r_unconstrained_loc, model_config.r_unconstrained_scale
+        ).expand([n_genes]),
     )
-    
+
     # Convert to probability space for model
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     # Convert to original space
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
-    
+
     # Model likelihood
     if counts is not None:
         if batch_size is None:
@@ -361,31 +361,30 @@ def nbvcp_model_unconstrained(
                     "p_capture_unconstrained",
                     dist.Normal(
                         model_config.p_capture_unconstrained_loc,
-                        model_config.p_capture_unconstrained_scale
-                    )
+                        model_config.p_capture_unconstrained_scale,
+                    ),
                 )
-                
+
                 # Convert to probability space
                 p_capture = numpyro.deterministic(
-                    "p_capture", 
-                    jsp.special.expit(p_capture_unconstrained)
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                
+
                 # Reshape p_capture for broadcasting and compute effective
                 # probability
                 p_capture_reshaped = p_capture[:, None]
-                
+
                 # Compute effective probability (p_hat)
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
-                
+
                 # Likelihood for the counts
                 numpyro.sample(
-                    "counts", 
-                    dist.NegativeBinomialProbs(r, p_hat).to_event(1), 
-                    obs=counts
+                    "counts",
+                    dist.NegativeBinomialProbs(r, p_hat).to_event(1),
+                    obs=counts,
                 )
         else:
             with numpyro.plate(
@@ -398,31 +397,30 @@ def nbvcp_model_unconstrained(
                     "p_capture_unconstrained",
                     dist.Normal(
                         model_config.p_capture_unconstrained_loc,
-                        model_config.p_capture_unconstrained_scale
-                    )
+                        model_config.p_capture_unconstrained_scale,
+                    ),
                 )
-                
+
                 # Convert to probability space
                 p_capture = numpyro.deterministic(
-                    "p_capture", 
-                    jsp.special.expit(p_capture_unconstrained)
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                
+
                 # Reshape p_capture for broadcasting and compute effective
                 # probability
                 p_capture_reshaped = p_capture[:, None]
-                
+
                 # Compute effective probability (p_hat)
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
-                
+
                 # Likelihood for the counts
                 numpyro.sample(
-                    "counts", 
-                    dist.NegativeBinomialProbs(r, p_hat).to_event(1), 
-                    obs=counts[idx]
+                    "counts",
+                    dist.NegativeBinomialProbs(r, p_hat).to_event(1),
+                    obs=counts[idx],
                 )
     else:
         # Predictive model (no obs)
@@ -432,34 +430,34 @@ def nbvcp_model_unconstrained(
                 "p_capture_unconstrained",
                 dist.Normal(
                     model_config.p_capture_unconstrained_loc,
-                    model_config.p_capture_unconstrained_scale
-                )
+                    model_config.p_capture_unconstrained_scale,
+                ),
             )
-            
+
             # Convert to probability space
             p_capture = numpyro.deterministic(
-                "p_capture", 
-                jsp.special.expit(p_capture_unconstrained)
+                "p_capture", jsp.special.expit(p_capture_unconstrained)
             )
-            
+
             # Reshape p_capture for broadcasting and compute effective probability
             p_capture_reshaped = p_capture[:, None]
-            
+
             # Compute effective probability (p_hat)
             p_hat = numpyro.deterministic(
                 "p_hat",
-                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
             )
-            
+
             # Sample counts
             numpyro.sample(
-                "counts", 
-                dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+                "counts", dist.NegativeBinomialProbs(r, p_hat).to_event(1)
             )
+
 
 # ------------------------------------------------------------------------------
 # Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVCP) Model
 # ------------------------------------------------------------------------------
+
 
 def zinbvcp_model_unconstrained(
     n_cells: int,
@@ -471,7 +469,7 @@ def zinbvcp_model_unconstrained(
     """
     Numpyro model for Zero-Inflated Negative Binomial with Variable Capture
     Probability (ZINBVCP) using unconstrained parameterization.
-    
+
     This model assumes that for each cell:
         1. The base success probability p is sampled in logit space and
            transformed back
@@ -486,7 +484,7 @@ def zinbvcp_model_unconstrained(
         6. The counts follow a Zero-Inflated Negative Binomial distribution with
            parameters r per gene, cell-specific adjusted success probability
            p_hat, and gene-specific dropout rates gate
-    
+
     Parameters
     ----------
     n_cells : int
@@ -527,7 +525,7 @@ def zinbvcp_model_unconstrained(
         - p = sigmoid(p_unconstrained) [shape=(1,)]
         - r = exp(r_unconstrained) [shape=(n_genes,)]
         - gate = sigmoid(gate_unconstrained) [shape=(n_genes,)]
-        
+
     Local Parameters:
         - p_capture_unconstrained ~ Normal(p_capture_unconstrained_loc,
           p_capture_unconstrained_scale) [shape=(n_cells,)]
@@ -541,38 +539,36 @@ def zinbvcp_model_unconstrained(
     """
     # Sample unconstrained global p parameter
     p_unconstrained = numpyro.sample(
-        "p_unconstrained", 
+        "p_unconstrained",
         dist.Normal(
-            model_config.p_unconstrained_loc, 
-            model_config.p_unconstrained_scale
-        )
+            model_config.p_unconstrained_loc, model_config.p_unconstrained_scale
+        ),
     )
-    
+
     # Sample unconstrained r parameter
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", 
+        "r_unconstrained",
         dist.Normal(
-            model_config.r_unconstrained_loc, 
-            model_config.r_unconstrained_scale
-        ).expand([n_genes])
+            model_config.r_unconstrained_loc, model_config.r_unconstrained_scale
+        ).expand([n_genes]),
     )
-    
+
     # Sample unconstrained gate parameter
     gate_unconstrained = numpyro.sample(
-        "gate_unconstrained", 
+        "gate_unconstrained",
         dist.Normal(
-            model_config.gate_unconstrained_loc, 
-            model_config.gate_unconstrained_scale
-        ).expand([n_genes])
+            model_config.gate_unconstrained_loc,
+            model_config.gate_unconstrained_scale,
+        ).expand([n_genes]),
     )
-    
+
     # Convert to probability space for model
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     # Convert to original space
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
     # Convert to probability space for gate
     gate = numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
-    
+
     # Model likelihood
     if counts is not None:
         if batch_size is None:
@@ -582,34 +578,34 @@ def zinbvcp_model_unconstrained(
                     "p_capture_unconstrained",
                     dist.Normal(
                         model_config.p_capture_unconstrained_loc,
-                        model_config.p_capture_unconstrained_scale
-                    )
+                        model_config.p_capture_unconstrained_scale,
+                    ),
                 )
-                
+
                 # Convert to probability space
                 p_capture = numpyro.deterministic(
-                    "p_capture", 
-                    jsp.special.expit(p_capture_unconstrained)
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                
+
                 # Reshape p_capture for broadcasting and compute effective
                 # probability
                 p_capture_reshaped = p_capture[:, None]
-                
+
                 # Compute effective probability (p_hat)
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
-                
+
                 # Create base negative binomial distribution with adjusted
                 # probabilities
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
-                
+
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
-                    base_dist, gate=gate).to_event(1)
-                
+                    base_dist, gate=gate
+                ).to_event(1)
+
                 # Likelihood for the counts
                 numpyro.sample("counts", zinb, obs=counts)
         else:
@@ -623,34 +619,34 @@ def zinbvcp_model_unconstrained(
                     "p_capture_unconstrained",
                     dist.Normal(
                         model_config.p_capture_unconstrained_loc,
-                        model_config.p_capture_unconstrained_scale
-                    )
+                        model_config.p_capture_unconstrained_scale,
+                    ),
                 )
-                
+
                 # Convert to probability space
                 p_capture = numpyro.deterministic(
-                    "p_capture", 
-                    jsp.special.expit(p_capture_unconstrained)
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                
+
                 # Reshape p_capture for broadcasting and compute effective
                 # probability
                 p_capture_reshaped = p_capture[:, None]
-                
+
                 # Compute effective probability (p_hat)
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
-                
+
                 # Create base negative binomial distribution with adjusted
                 # probabilities
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
-                
+
                 # Create zero-inflated distribution
                 zinb = dist.ZeroInflatedDistribution(
-                    base_dist, gate=gate).to_event(1)
-                
+                    base_dist, gate=gate
+                ).to_event(1)
+
                 # Likelihood for the counts
                 numpyro.sample("counts", zinb, obs=counts[idx])
     else:
@@ -661,35 +657,33 @@ def zinbvcp_model_unconstrained(
                 "p_capture_unconstrained",
                 dist.Normal(
                     model_config.p_capture_unconstrained_loc,
-                    model_config.p_capture_unconstrained_scale
-                )
+                    model_config.p_capture_unconstrained_scale,
+                ),
             )
-            
+
             # Convert to probability space
             p_capture = numpyro.deterministic(
-                "p_capture", 
-                jsp.special.expit(p_capture_unconstrained)
+                "p_capture", jsp.special.expit(p_capture_unconstrained)
             )
-            
+
             # Reshape p_capture for broadcasting and compute effective
             # probability
             p_capture_reshaped = p_capture[:, None]
-            
+
             # Compute effective probability (p_hat)
             p_hat = numpyro.deterministic(
                 "p_hat",
-                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
             )
-            
+
             # Create base negative binomial distribution with adjusted
             # probabilities
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
-            
+
             # Create zero-inflated distribution
-            zinb = dist.ZeroInflatedDistribution(
-                base_dist, gate=gate).to_event(1)
-            
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
+                1
+            )
+
             # Sample counts
             numpyro.sample("counts", zinb)
-
-
