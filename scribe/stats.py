@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import jax.random as random
 from jax import scipy as jsp
 import jax
+from jax import jit
 from numpyro.distributions import Dirichlet
 
 # Import scipy.special functions
@@ -1156,6 +1157,19 @@ def beta_mode(alpha, beta):
 
 # ------------------------------------------------------------------------------
 
+def betaprime_mode(alpha, beta):
+    """
+    Calculate the mode for a Beta Prime distribution.
+
+    For BetaPrime(α,β) distribution, the mode is:
+        (α-1)/β when α > 1
+        0 when α ≤ 1
+    """
+    return jnp.where(alpha > 1, (alpha - 1) / (beta + 1), 0.0)
+
+
+# ------------------------------------------------------------------------------
+
 
 def gamma_mode(alpha, beta):
     """
@@ -1254,6 +1268,8 @@ def get_distribution_mode(dist_obj):
 
     if dist_type == "Beta":
         return beta_mode(dist_obj.concentration1, dist_obj.concentration0)
+    elif dist_type == "BetaPrime":
+        return betaprime_mode(dist_obj.concentration1, dist_obj.concentration0)
     elif dist_type == "Gamma":
         return gamma_mode(dist_obj.concentration, dist_obj.rate)
     elif dist_type == "LogNormal":
@@ -1350,3 +1366,29 @@ class BetaPrime(Distribution):
             / ((self.concentration0 - 1) ** 2 * (self.concentration0 - 2)),
             jnp.inf,
         )
+
+    @property
+    def mode(self):
+        return jnp.where(
+            self.concentration0 >= 1,
+            (self.concentration1 - 1) / (self.concentration0 + 1),
+            0.0,
+        )
+
+
+# ------------------------------------------------------------------------------
+# JIT-compiled functions
+# ------------------------------------------------------------------------------
+
+
+@jit
+def log_liks_to_probs(log_liks: jnp.ndarray) -> jnp.ndarray:
+    """
+    Convert log-likelihoods to probabilities using optimized softmax.
+
+    Parameters
+    ----------
+    log_liks : jnp.ndarray
+        Log-likelihoods to convert to probabilities.
+    """
+    return jax.nn.softmax(log_liks, axis=-1)
