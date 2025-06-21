@@ -12,6 +12,7 @@ from numpyro.infer import SVI
 # Posterior predictive samples
 # ------------------------------------------------------------------------------
 
+
 def sample_variational_posterior(
     guide: Callable,
     params: Dict,
@@ -21,7 +22,7 @@ def sample_variational_posterior(
 ) -> Dict:
     """
     Sample parameters from the variational posterior distribution.
-    
+
     Parameters
     ----------
     guide : Callable
@@ -36,26 +37,21 @@ def sample_variational_posterior(
         JAX random number generator key
     n_samples : int, optional
         Number of posterior samples to generate (default: 100)
-        
+
     Returns
     -------
     Dict
         Dictionary containing samples from the variational posterior
     """
     # Create predictive object for posterior parameter samples
-    predictive_param = Predictive(
-        guide,
-        params=params,
-        num_samples=n_samples
-    )
-    
+    predictive_param = Predictive(guide, params=params, num_samples=n_samples)
+
     # Sample parameters from the variational posterior
-    return predictive_param(
-        rng_key,
-        **model_args
-    )
+    return predictive_param(rng_key, **model_args)
+
 
 # ------------------------------------------------------------------------------
+
 
 def generate_predictive_samples(
     model: Callable,
@@ -66,7 +62,7 @@ def generate_predictive_samples(
 ) -> jnp.ndarray:
     """
     Generate predictive samples using posterior parameter samples.
-    
+
     Parameters
     ----------
     model : Callable
@@ -81,7 +77,7 @@ def generate_predictive_samples(
         JAX random number generator key
     batch_size : int, optional
         Batch size for generating samples. If None, uses full dataset.
-        
+
     Returns
     -------
     jnp.ndarray
@@ -92,19 +88,19 @@ def generate_predictive_samples(
         model,
         posterior_samples,
         # Take the number of samples from the first parameter
-        num_samples=next(iter(posterior_samples.values())).shape[0]
+        num_samples=next(iter(posterior_samples.values())).shape[0],
     )
-    
+
     # Generate predictive samples
     predictive_samples = predictive(
-        rng_key,
-        **model_args,
-        batch_size=batch_size
+        rng_key, **model_args, batch_size=batch_size
     )
-    
+
     return predictive_samples["counts"]
 
+
 # ------------------------------------------------------------------------------
+
 
 def generate_ppc_samples(
     model: Callable,
@@ -117,7 +113,7 @@ def generate_ppc_samples(
 ) -> Dict:
     """
     Generate posterior predictive check samples.
-    
+
     Parameters
     ----------
     model : Callable
@@ -136,7 +132,7 @@ def generate_ppc_samples(
         Number of posterior samples to generate (default: 100)
     batch_size : int, optional
         Batch size for generating samples. If None, uses full dataset.
-        
+
     Returns
     -------
     Dict
@@ -146,16 +142,12 @@ def generate_ppc_samples(
     """
     # Split RNG key for parameter sampling and predictive sampling
     key_params, key_pred = random.split(rng_key)
-    
+
     # Sample from variational posterior
     posterior_param_samples = sample_variational_posterior(
-        guide,
-        params,
-        model_args,
-        key_params,
-        n_samples
+        guide, params, model_args, key_params, n_samples
     )
-    
+
     # Generate predictive samples
     predictive_samples = generate_predictive_samples(
         model,
@@ -164,13 +156,15 @@ def generate_ppc_samples(
         key_pred,
         batch_size,
     )
-    
+
     return {
-        'parameter_samples': posterior_param_samples,
-        'predictive_samples': predictive_samples
+        "parameter_samples": posterior_param_samples,
+        "predictive_samples": predictive_samples,
     }
 
+
 # ------------------------------------------------------------------------------
+
 
 def generate_prior_predictive_samples(
     model: Callable,
@@ -181,7 +175,7 @@ def generate_prior_predictive_samples(
 ) -> jnp.ndarray:
     """
     Generate prior predictive samples using the model.
-    
+
     Parameters
     ----------
     model : Callable
@@ -196,23 +190,18 @@ def generate_prior_predictive_samples(
         Number of prior predictive samples to generate (default: 100)
     batch_size : int, optional
         Batch size for generating samples. If None, uses full dataset.
-        
+
     Returns
     -------
     jnp.ndarray
         Array of prior predictive samples
     """
     # Create predictive object for generating new data from the prior
-    predictive = Predictive(
-        model,
-        num_samples=n_samples
-    )
-    
+    predictive = Predictive(model, num_samples=n_samples)
+
     # Generate prior predictive samples
     prior_predictive_samples = predictive(
-        rng_key,
-        **model_args,
-        batch_size=batch_size
+        rng_key, **model_args, batch_size=batch_size
     )
-    
+
     return prior_predictive_samples["counts"]

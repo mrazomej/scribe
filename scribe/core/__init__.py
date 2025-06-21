@@ -10,6 +10,6 @@ from .config_factory import ModelConfigFactory
 
 __all__ = [
     "InputProcessor",
-    "PriorConfigFactory", 
+    "PriorConfigFactory",
     "ModelConfigFactory",
-] 
+]

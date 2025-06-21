@@ -12,16 +12,16 @@ import scipy.sparse
 
 class InputProcessor:
     """Handles input processing and validation for SCRIBE inference."""
-    
+
     @staticmethod
     def process_counts_data(
-        counts: Union[jnp.ndarray, "AnnData"], 
-        cells_axis: int = 0, 
-        layer: Optional[str] = None
+        counts: Union[jnp.ndarray, "AnnData"],
+        cells_axis: int = 0,
+        layer: Optional[str] = None,
     ) -> Tuple[jnp.ndarray, Optional["AnnData"], int, int]:
         """
         Process count data from various input formats.
-        
+
         Parameters
         ----------
         counts : Union[jnp.ndarray, AnnData]
@@ -30,7 +30,7 @@ class InputProcessor:
             Axis for cells in count matrix (0=rows, 1=columns)
         layer : Optional[str], default=None
             Layer in AnnData to use for counts. If None, uses .X
-            
+
         Returns
         -------
         Tuple[jnp.ndarray, Optional[AnnData], int, int]
@@ -53,19 +53,19 @@ class InputProcessor:
         else:
             n_genes, n_cells = count_data.shape
             count_data = count_data.T  # Transpose to make cells rows
-            
+
         return count_data, adata, n_cells, n_genes
-    
-    @staticmethod  
+
+    @staticmethod
     def validate_model_configuration(
-        zero_inflated: bool, 
-        variable_capture: bool, 
-        mixture_model: bool, 
-        n_components: Optional[int]
+        zero_inflated: bool,
+        variable_capture: bool,
+        mixture_model: bool,
+        n_components: Optional[int],
     ) -> None:
         """
         Validate model configuration flags.
-        
+
         Parameters
         ----------
         zero_inflated : bool
@@ -76,7 +76,7 @@ class InputProcessor:
             Whether to use mixture model
         n_components : Optional[int]
             Number of mixture components
-            
+
         Raises
         ------
         ValueError
@@ -87,23 +87,21 @@ class InputProcessor:
             raise ValueError(
                 "n_components must be None when mixture_model=False"
             )
-            
+
         if mixture_model:
             if n_components is None or n_components < 2:
                 raise ValueError(
                     "n_components must be specified and greater than 1 "
                     "when mixture_model=True"
                 )
-        
+
     @staticmethod
     def determine_model_type(
-        zero_inflated: bool, 
-        variable_capture: bool, 
-        mixture_model: bool
+        zero_inflated: bool, variable_capture: bool, mixture_model: bool
     ) -> str:
         """
         Convert boolean flags to model type string.
-        
+
         Parameters
         ----------
         zero_inflated : bool
@@ -112,7 +110,7 @@ class InputProcessor:
             Whether to use variable capture probability
         mixture_model : bool
             Whether to use mixture model
-            
+
         Returns
         -------
         str
@@ -127,9 +125,9 @@ class InputProcessor:
                 base_model = "zinbvcp"
             else:
                 base_model = "nbvcp"
-        
+
         # Add mixture suffix if needed
         if mixture_model:
             base_model = f"{base_model}_mix"
-            
-        return base_model 
+
+        return base_model

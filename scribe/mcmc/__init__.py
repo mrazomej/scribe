@@ -13,4 +13,4 @@ __all__ = [
     "MCMCInferenceEngine",
     "MCMCResultsFactory",
     "ScribeMCMCResults",
-] 
+]

@@ -16,14 +16,16 @@ from ..model_config import ModelConfig
 
 class SVIInferenceEngine:
     """Handles SVI inference execution."""
-    
+
     @staticmethod
     def run_inference(
         model_config: ModelConfig,
         count_data: jnp.ndarray,
         n_cells: int,
         n_genes: int,
-        optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(step_size=0.001),
+        optimizer: numpyro.optim.optimizers = numpyro.optim.Adam(
+            step_size=0.001
+        ),
         loss: numpyro.infer.elbo = TraceMeanField_ELBO(),
         n_steps: int = 100_000,
         batch_size: Optional[int] = None,
@@ -32,7 +34,7 @@ class SVIInferenceEngine:
     ) -> Any:
         """
         Execute SVI inference.
-        
+
         Parameters
         ----------
         model_config : ModelConfig
@@ -55,7 +57,7 @@ class SVIInferenceEngine:
             Random seed for reproducibility
         stable_update : bool, default=True
             Whether to use numerically stable parameter updates
-            
+
         Returns
         -------
         numpyro.infer.svi.SVIRunResult
@@ -63,31 +65,28 @@ class SVIInferenceEngine:
         """
         # Get model and guide functions
         model, guide = get_model_and_guide(
-            model_config.base_model, 
-            parameterization=model_config.parameterization
+            model_config.base_model,
+            parameterization=model_config.parameterization,
         )
-        
+
         # Create SVI instance
         svi = SVI(model, guide, optimizer, loss=loss)
-        
+
         # Create random key
         rng_key = random.PRNGKey(seed)
-        
+
         # Prepare model arguments
         model_args = {
-            'n_cells': n_cells,
-            'n_genes': n_genes,
-            'counts': count_data,
-            'batch_size': batch_size,
-            'model_config': model_config
+            "n_cells": n_cells,
+            "n_genes": n_genes,
+            "counts": count_data,
+            "batch_size": batch_size,
+            "model_config": model_config,
         }
-        
+
         # Run inference
         svi_results = svi.run(
-            rng_key,
-            n_steps,
-            stable_update=stable_update,
-            **model_args
+            rng_key, n_steps, stable_update=stable_update, **model_args
         )
-        
-        return svi_results 
+
+        return svi_results
