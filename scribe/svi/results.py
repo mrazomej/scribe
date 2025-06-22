@@ -8,6 +8,7 @@ import warnings
 
 import jax.numpy as jnp
 import jax.scipy as jsp
+import jax.nn
 import pandas as pd
 import numpyro.distributions as dist
 from jax import random, jit, vmap
@@ -664,7 +665,10 @@ class ScribeSVIResults:
     # --------------------------------------------------------------------------
 
     def get_map(
-        self, use_mean: bool = False, verbose: bool = True
+        self,
+        use_mean: bool = False,
+        canonical: bool = True,
+        verbose: bool = True,
     ) -> Dict[str, jnp.ndarray]:
         """
         Get the maximum a posteriori (MAP) estimates from the variational
@@ -674,6 +678,9 @@ class ScribeSVIResults:
         ----------
         use_mean : bool, default=False
             If True, replaces undefined MAP values (NaN) with posterior means
+        canonical : bool, default=True
+            If True, includes canonical parameters (p, r) computed from other parameters
+            for linked, odds_ratio, and unconstrained parameterizations
         verbose : bool, default=True
             If True, prints a warning if NaNs were replaced with means
 
@@ -712,7 +719,135 @@ class ScribeSVIResults:
                     UserWarning,
                 )
 
+        # Compute canonical parameters if requested
+        if canonical:
+            map_estimates = self._compute_canonical_parameters(
+                map_estimates, verbose=verbose
+            )
+
         return map_estimates
+
+    # --------------------------------------------------------------------------
+
+    def _compute_canonical_parameters(
+        self, map_estimates: Dict, verbose: bool = True
+    ) -> Dict:
+        """
+        Compute canonical parameters (p, r) from other parameters for different parameterizations.
+
+        Parameters
+        ----------
+        map_estimates : Dict
+            Dictionary containing MAP estimates
+        verbose : bool, default=True
+            If True, prints information about parameter computation
+
+        Returns
+        -------
+        Dict
+            Updated dictionary with canonical parameters computed
+        """
+        # Make a copy to avoid modifying the original
+        estimates = map_estimates.copy()
+
+        # Handle linked parameterization
+        if "mu" in estimates and "p" in estimates and "r" not in estimates:
+            if verbose:
+                print("Computing r from mu and p for linked parameterization")
+            # r = mu * p / (1 - p)
+            estimates["r"] = (
+                estimates["mu"] * estimates["p"] / (1 - estimates["p"])
+            )
+
+        # Handle odds_ratio parameterization
+        elif "phi" in estimates and "mu" in estimates and "r" not in estimates:
+            if verbose:
+                print(
+                    "Computing r from mu and phi for odds_ratio parameterization"
+                )
+            # r = mu * phi
+            estimates["r"] = estimates["mu"] * estimates["phi"]
+
+            if "p" not in estimates:
+                if verbose:
+                    print(
+                        "Computing p from phi for odds_ratio parameterization"
+                    )
+                # p = 1 / (1 + phi)
+                estimates["p"] = 1.0 / (1.0 + estimates["phi"])
+
+        # Handle unconstrained parameterization
+        elif "p_unconstrained" in estimates and "p" not in estimates:
+            if verbose:
+                print("Computing p from p_unconstrained")
+            # p = sigmoid(p_unconstrained)
+            estimates["p"] = jax.nn.sigmoid(estimates["p_unconstrained"])
+
+        if "r_unconstrained" in estimates and "r" not in estimates:
+            if verbose:
+                print("Computing r from r_unconstrained")
+            # r = exp(r_unconstrained)
+            estimates["r"] = jnp.exp(estimates["r_unconstrained"])
+
+        # Handle other unconstrained parameters
+        if "gate_unconstrained" in estimates and "gate" not in estimates:
+            if verbose:
+                print("Computing gate from gate_unconstrained")
+            # gate = sigmoid(gate_unconstrained)
+            estimates["gate"] = jax.nn.sigmoid(estimates["gate_unconstrained"])
+
+        if (
+            "p_capture_unconstrained" in estimates
+            and "p_capture" not in estimates
+        ):
+            if verbose:
+                print("Computing p_capture from p_capture_unconstrained")
+            # p_capture = sigmoid(p_capture_unconstrained)
+            estimates["p_capture"] = jax.nn.sigmoid(
+                estimates["p_capture_unconstrained"]
+            )
+
+        # Handle NBVCP and ZINBVCP models with odds_ratio parameterization
+        if "phi_capture" in estimates and "p_capture" not in estimates:
+            if verbose:
+                print("Computing p_capture from phi_capture")
+            # p_capture = 1 / (1 + phi_capture)
+            estimates["p_capture"] = 1.0 / (1.0 + estimates["phi_capture"])
+
+        # Compute p_hat for NBVCP and ZINBVCP models if needed
+        if (
+            "p" in estimates
+            and "p_capture" in estimates
+            and "p_hat" not in estimates
+        ):
+            if verbose:
+                print("Computing p_hat from p and p_capture")
+
+            # Reshape p_capture for broadcasting
+            p_capture_reshaped = estimates["p_capture"][:, None]
+
+            # For standard parameterization
+            if "phi" not in estimates:
+                # p_hat = p * p_capture / (1 - p * (1 - p_capture))
+                estimates["p_hat"] = (
+                    estimates["p"]
+                    * p_capture_reshaped
+                    / (1 - estimates["p"] * (1 - p_capture_reshaped))
+                ).flatten()
+            # For odds_ratio parameterization
+            else:
+                # p_hat = 1 / (1 + phi + phi * phi_capture)
+                phi_capture_reshaped = estimates["phi_capture"][:, None]
+                estimates["p_hat"] = (
+                    1.0
+                    / (
+                        1
+                        + estimates["phi"]
+                        + estimates["phi"] * phi_capture_reshaped
+                    ).flatten()
+                )
+
+        return estimates
 
     # --------------------------------------------------------------------------
     # Indexing by genes
@@ -1723,21 +1858,17 @@ class ScribeSVIResults:
         jnp.ndarray
             Array of log likelihoods. Shape depends on model type, return_by and
             split_components parameters.
-            For standard models:
-                - 'cell': shape (n_cells,)
-                - 'gene': shape (n_genes,)
-            For mixture models with split_components=False:
-                - 'cell': shape (n_cells,)
-                - 'gene': shape (n_genes,)
-            For mixture models with split_components=True:
-                - 'cell': shape (n_cells, n_components)
-                - 'gene': shape (n_genes, n_components)
         """
         # Get the log likelihood function
         likelihood_fn = self._log_likelihood_fn()
 
         # Determine if this is a mixture model
         is_mixture = self.n_components is not None and self.n_components > 1
+
+        # Get the MAP estimates with canonical parameters included
+        map_estimates = self.get_map(
+            use_mean=use_mean, canonical=True, verbose=verbose
+        )
 
         # If computing by gene and gene_batch_size is provided, use batched computation
         if return_by == "gene" and gene_batch_size is not None:
@@ -1767,9 +1898,9 @@ class ScribeSVIResults:
 
                 # Get subset of results for these genes
                 results_subset = self[gene_indices]
-                # Get the MAP estimates
-                map_estimates = results_subset.get_map(
-                    use_mean=use_mean, verbose=False
+                # Get the MAP estimates for this subset (with canonical parameters)
+                subset_map_estimates = results_subset.get_map(
+                    use_mean=use_mean, canonical=True, verbose=False
                 )
 
                 # Get subset of counts for these genes
@@ -1790,7 +1921,7 @@ class ScribeSVIResults:
                 if is_mixture:
                     batch_log_liks = likelihood_fn(
                         counts_subset,
-                        map_estimates,
+                        subset_map_estimates,
                         batch_size=batch_size,
                         cells_axis=cells_axis,
                         return_by=return_by,
@@ -1802,7 +1933,7 @@ class ScribeSVIResults:
                 else:
                     batch_log_liks = likelihood_fn(
                         counts_subset,
-                        map_estimates,
+                        subset_map_estimates,
                         batch_size=batch_size,
                         cells_axis=cells_axis,
                         return_by=return_by,
@@ -1817,9 +1948,6 @@ class ScribeSVIResults:
 
         # Standard computation (no gene batching)
         else:
-            # Get the MAP estimates
-            map_estimates = self.get_map(use_mean=use_mean, verbose=verbose)
-
             # Compute log-likelihood for mixture model
             if is_mixture:
                 log_liks = likelihood_fn(
@@ -1963,7 +2091,8 @@ class ScribeSVIResults:
         # Compute log-sum-exp for normalization
         log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
 
-        # Compute probabilities (avoiding log space for final entropy calculation)
+        # Compute probabilities (avoiding log space for final entropy
+        # calculation)
         probs = jnp.exp(log_liks - log_sum_exp)
 
         # Compute entropy: -∑(p_i * log(p_i))
