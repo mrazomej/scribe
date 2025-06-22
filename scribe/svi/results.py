@@ -1978,7 +1978,7 @@ class ScribeSVIResults:
     # Compute entropy of component assignments
     # --------------------------------------------------------------------------
 
-    def assignment_entropy(
+    def mixture_component_entropy(
         self,
         counts: jnp.ndarray,
         return_by: str = "gene",
@@ -1989,18 +1989,22 @@ class ScribeSVIResults:
         dtype: jnp.dtype = jnp.float32,
     ) -> jnp.ndarray:
         """
-        Compute the entropy of component assignment probabilities for mixture
-        models.
+        Compute the entropy of mixture component assignment probabilities.
 
-        This method calculates the entropy of the posterior component assignment
-        probabilities for each cell or gene, providing a measure of assignment
-        uncertainty. Higher entropy values indicate more uncertainty in the
-        component assignments, while lower values indicate more confident
-        assignments.
+        This method calculates the Shannon entropy of the posterior component
+        assignment probabilities for each observation (cell or gene), providing
+        a quantitative measure of assignment uncertainty in mixture models.
+
+        The entropy quantifies how uncertain the model is about which component
+        each observation belongs to:
+            - Low entropy (≈0): High confidence in component assignment
+            - High entropy (≈log(n_components)): High uncertainty in assignment
+            - Maximum entropy: Uniform assignment probabilities across all
+              components
 
         The entropy is calculated as:
             H = -∑(p_i * log(p_i))
-        where p_i are the normalized probabilities for each component.
+        where p_i are the posterior probabilities of assignment to component i.
 
         Parameters
         ----------
@@ -2009,7 +2013,7 @@ class ScribeSVIResults:
             be (n_cells, n_genes) if cells_axis=0, or (n_genes, n_cells) if
             cells_axis=1.
 
-        return_by : str, default='cell'
+        return_by : str, default='gene'
             Specifies how to compute and return the entropy. Must be one of:
                 - 'cell': Compute entropy of component assignments for each cell
                 - 'gene': Compute entropy of component assignments for each gene
@@ -2031,7 +2035,7 @@ class ScribeSVIResults:
             If provided, applies temperature scaling to the log-likelihoods
             before computing entropy. Temperature scaling modifies the sharpness
             of probability distributions by dividing log probabilities by a
-            temperature parameter T:
+            temperature parameter T.
 
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations.
@@ -2056,15 +2060,16 @@ class ScribeSVIResults:
           get_posterior_samples() first if they haven't been generated.
         - The entropy is computed using the full posterior predictive
           distribution, accounting for uncertainty in the model parameters.
-        - Normalization (normalize=True) is recommended when comparing entropy
-          across datasets or between cells/genes with different numbers of
-          observations.
+        - For a mixture with K components, the maximum possible entropy is
+          log(K).
+        - Entropy values can be used to identify observations that are difficult
+          to classify or that may belong to multiple components.
         """
         # Check if this is a mixture model
         if self.n_components is None or self.n_components <= 1:
             raise ValueError(
-                "Component entropy calculation only applies to mixture models "
-                "with multiple components"
+                "Mixture component entropy calculation only applies to mixture " 
+                "models with multiple components"
             )
 
         # Check if posterior samples exist
@@ -2072,6 +2077,11 @@ class ScribeSVIResults:
             raise ValueError(
                 "No posterior samples found. Call get_posterior_samples() first."
             )
+
+        # Convert posterior samples to canonical form
+        self._convert_to_canonical()
+
+        print("Computing log-likelihoods...")
 
         # Compute log-likelihoods for each component
         log_liks = self.log_likelihood(
@@ -2088,12 +2098,12 @@ class ScribeSVIResults:
         if temperature is not None:
             log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
-        # Compute log-sum-exp for normalization
-        log_sum_exp = jsp.special.logsumexp(log_liks, axis=-1, keepdims=True)
+        print("Converting log-likelihoods to probabilities...")
 
-        # Compute probabilities (avoiding log space for final entropy
-        # calculation)
-        probs = jnp.exp(log_liks - log_sum_exp)
+        # Convert log-likelihoods to probabilities
+        probs = log_liks_to_probs(log_liks)
+
+        print("Computing entropy...")
 
         # Compute entropy: -∑(p_i * log(p_i))
         # Add small epsilon to avoid log(0)
