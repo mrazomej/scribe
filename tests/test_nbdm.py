@@ -47,6 +47,9 @@ def pytest_generate_tests(metafunc):
             combinations,
         )
 
+# ------------------------------------------------------------------------------
+# Fixtures
+# ------------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def device_type():
@@ -123,8 +126,9 @@ def nbdm_results(
     return result
 
 
-# ---------------------- Shared Tests ------------------------------------------
-
+# ------------------------------------------------------------------------------
+# Shared Tests 
+# ------------------------------------------------------------------------------
 
 def test_inference_run(nbdm_results):
     assert nbdm_results.n_cells > 0
@@ -132,11 +136,13 @@ def test_inference_run(nbdm_results):
     assert nbdm_results.model_type == "nbdm"
     assert hasattr(nbdm_results, "model_config")
 
+# ------------------------------------------------------------------------------
 
 def test_parameterization_config(nbdm_results, parameterization):
     """Test that the correct parameterization is used."""
     assert nbdm_results.model_config.parameterization == parameterization
 
+# ------------------------------------------------------------------------------
 
 def test_parameter_ranges(nbdm_results, parameterization):
     """Test that parameters have correct ranges and relationships."""
@@ -176,7 +182,9 @@ def test_parameter_ranges(nbdm_results, parameterization):
         # Check that r is computed correctly: r = mu * p / (1 - p)
         if "r" in params:
             r = params["r"]
-            expected_r = mu * p / (1 - p)
+            # p is scalar per sample, mu is gene-specific per sample
+            # Need to broadcast p to match mu's gene dimension
+            expected_r = mu * p[..., None] / (1 - p[..., None])
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
     elif parameterization == "odds_ratio":
@@ -199,18 +207,25 @@ def test_parameter_ranges(nbdm_results, parameterization):
                 params["r"],
             )
             expected_p = 1.0 / (1.0 + phi)
-            expected_r = mu * phi
+            # phi is scalar per sample, mu is gene-specific per sample
+            # Need to broadcast phi to match mu's gene dimension
+            expected_r = mu * phi[..., None]
             assert jnp.allclose(p, expected_p, rtol=1e-5)
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
+# ------------------------------------------------------------------------------
 
 def test_posterior_sampling(nbdm_results, rng_key):
-    # For SVI, must call get_posterior_samples; for MCMC, just call
-    # get_posterior_samples
+    # For SVI, must call get_posterior_samples with parameters; for MCMC, just call
+    # get_posterior_samples without parameters
     if hasattr(nbdm_results, "get_posterior_samples"):
-        samples = nbdm_results.get_posterior_samples(
-            rng_key=rng_key, n_samples=3, store_samples=True
-        )
+        # Check if this is MCMC (inherits from MCMC class) or SVI
+        if hasattr(nbdm_results, "get_samples"):  # MCMC case
+            samples = nbdm_results.get_posterior_samples()
+        else:  # SVI case
+            samples = nbdm_results.get_posterior_samples(
+                rng_key=rng_key, n_samples=3, store_samples=True
+            )
     else:
         samples = nbdm_results.get_posterior_samples()
 
@@ -227,21 +242,30 @@ def test_posterior_sampling(nbdm_results, rng_key):
         assert "phi" in samples and "mu" in samples
         assert samples["mu"].shape[-1] == nbdm_results.n_genes
 
+# ------------------------------------------------------------------------------
 
 def test_predictive_sampling(nbdm_results, rng_key):
     # For SVI, must generate posterior samples first
     if hasattr(nbdm_results, "get_posterior_samples"):
-        nbdm_results.get_posterior_samples(
-            rng_key=rng_key, n_samples=3, store_samples=True
-        )
-        pred = nbdm_results.get_predictive_samples(
-            rng_key=rng_key, store_samples=True
-        )
+        # Check if this is MCMC (inherits from MCMC class) or SVI
+        if hasattr(nbdm_results, "get_samples"):  # MCMC case
+            # MCMC already has samples, no need to generate them
+            pred = nbdm_results.get_ppc_samples(
+                rng_key=rng_key, store_samples=True
+            )
+        else:  # SVI case
+            nbdm_results.get_posterior_samples(
+                rng_key=rng_key, n_samples=3, store_samples=True
+            )
+            pred = nbdm_results.get_predictive_samples(
+                rng_key=rng_key, store_samples=True
+            )
     else:
         pred = nbdm_results.get_ppc_samples(rng_key=rng_key, store_samples=True)
     assert pred.shape[-1] == nbdm_results.n_genes
     assert jnp.all(pred >= 0)
 
+# ------------------------------------------------------------------------------
 
 def test_get_map(nbdm_results):
     map_est = (
@@ -258,6 +282,7 @@ def test_get_map(nbdm_results):
     elif parameterization == "odds_ratio":
         assert "phi" in map_est and "mu" in map_est
 
+# ------------------------------------------------------------------------------
 
 def test_indexing_integer(nbdm_results):
     """Test indexing with an integer."""
@@ -268,6 +293,7 @@ def test_indexing_integer(nbdm_results):
     assert subset.n_genes == 1
     assert subset.n_cells == nbdm_results.n_cells
 
+# ------------------------------------------------------------------------------
 
 def test_indexing_slice(nbdm_results):
     """Test indexing with a slice."""
@@ -280,6 +306,7 @@ def test_indexing_slice(nbdm_results):
     assert subset.n_genes == end_idx
     assert subset.n_cells == nbdm_results.n_cells
 
+# ------------------------------------------------------------------------------
 
 def test_indexing_boolean(nbdm_results):
     """Test indexing with a boolean array."""
@@ -297,18 +324,25 @@ def test_indexing_boolean(nbdm_results):
     assert subset.n_genes == 1
     assert subset.n_cells == nbdm_results.n_cells
 
+# ------------------------------------------------------------------------------
 
 def test_log_likelihood(nbdm_results, small_dataset, rng_key):
     counts, _ = small_dataset
     # For SVI, must generate posterior samples first
     if hasattr(nbdm_results, "get_posterior_samples"):
-        nbdm_results.get_posterior_samples(
-            rng_key=rng_key, n_samples=3, store_samples=True
-        )
+        # Check if this is MCMC (inherits from MCMC class) or SVI
+        if hasattr(nbdm_results, "get_samples"):  # MCMC case
+            # MCMC already has samples, no need to generate them
+            pass
+        else:  # SVI case
+            nbdm_results.get_posterior_samples(
+                rng_key=rng_key, n_samples=3, store_samples=True
+            )
     ll = nbdm_results.log_likelihood(counts, return_by="cell")
     assert ll.shape[0] > 0
     assert jnp.all(jnp.isfinite(ll))
 
+# ------------------------------------------------------------------------------
 
 def test_parameter_relationships(nbdm_results, parameterization):
     """Test that parameter relationships are correctly maintained."""
@@ -324,7 +358,9 @@ def test_parameter_relationships(nbdm_results, parameterization):
         # In linked parameterization, r should be computed as r = mu * p / (1 - p)
         if "p" in params and "mu" in params and "r" in params:
             p, mu, r = params["p"], params["mu"], params["r"]
-            expected_r = mu * p / (1 - p)
+            # p is scalar per sample, mu is gene-specific per sample
+            # Need to broadcast p to match mu's gene dimension
+            expected_r = mu * p[..., None] / (1 - p[..., None])
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
     elif parameterization == "odds_ratio":
@@ -344,13 +380,16 @@ def test_parameter_relationships(nbdm_results, parameterization):
                 params["r"],
             )
             expected_p = 1.0 / (1.0 + phi)
-            expected_r = mu * phi
+            # phi is scalar per sample, mu is gene-specific per sample
+            # Need to broadcast phi to match mu's gene dimension
+            expected_r = mu * phi[..., None]
             assert jnp.allclose(p, expected_p, rtol=1e-5)
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
 
-# ---------------------- SVI-specific Tests ----------------------
-
+# ------------------------------------------------------------------------------
+# SVI-specific Tests 
+# ------------------------------------------------------------------------------
 
 def test_svi_loss_history(nbdm_results, inference_method):
     if inference_method == "svi":
@@ -358,8 +397,9 @@ def test_svi_loss_history(nbdm_results, inference_method):
         assert len(nbdm_results.loss_history) > 0
 
 
-# ---------------------- MCMC-specific Tests ----------------------
-
+# ------------------------------------------------------------------------------
+# MCMC-specific Tests 
+# ------------------------------------------------------------------------------
 
 def test_mcmc_samples_shape(nbdm_results, inference_method):
     if inference_method == "mcmc":
