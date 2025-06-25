@@ -1,0 +1,311 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+## Primer on Variational Inference{#sec-vi_primer}
+
+In this section, we provide a concise introduction to variational inference,
+particularly focusing on stochastic variational inference (SVI) as employed in
+our modeling framework. Recall that Bayesian inference problems involve the
+joint distribution between observed data $\underline{x}$ and unobserved latent
+parameters $\underline{\theta}$. This joint distribution can be expressed as the
+product of the likelihood and the prior distribution,
+
+$$
+\pi(\underline{x}, \underline{\theta}) =
+\pi(\underline{x} \mid \underline{\theta}) \pi(\underline{\theta}).
+$${#eq-vi_joint_dist}
+
+The central goal of Bayesian inference is to compute the posterior distribution
+of latent parameters given the observed data. This computation requires applying
+Bayes' rule to update our prior beliefs about the parameters in light of the
+evidence provided by the data,
+
+$$
+\pi(\underline{\theta} \mid \underline{x}) = 
+\frac{
+        \pi(\underline{x} \mid \underline{\theta})\pi(\underline{\theta})
+    }{
+        \pi(\underline{x})
+    }.
+$${#eq-vi_bayes_theorem}
+
+The primary computational bottleneck in @eq-vi_bayes_theorem stems from
+evaluating the denominator, commonly referred to as the *marginal likelihood*
+or *model evidence*. This term necessitates computing a potentially
+high-dimensional integral,
+
+$$
+\pi(\underline{x}) = 
+\int\cdots\int d^K\underline{\theta}\; \pi(\underline{x}, \underline{\theta}) = 
+\int\cdots\int d^K\underline{\theta}\; 
+\pi(\underline{x} \mid \underline{\theta})
+\pi(\underline{\theta}),
+$${#eq-vi_evidence_int}
+
+where $K$ represents the dimensionality of the parameter vector
+$\underline{\theta}$. The integrals extend over the entire support of
+$\pi(\underline{\theta})$. For most practical applications, this integral lacks
+a closed-form analytical solution and must be approximated numerically.
+
+High-dimensional numerical integration presents substantial computational
+challenges. Traditional quadrature methods suffer from the curse of
+dimensionality: the number of function evaluations required grows exponentially
+with the number of dimensions. To illustrate this difficulty, consider
+integrating a function concentrated in a narrow region of parameter space, as
+depicted conceptually in @fig-SI01. Without prior knowledge of where the
+high-density region lies, numerical methods must evaluate the integrand at
+numerous points throughout the space, most of which contribute negligibly to the
+final integral value.
+
+![**Challenges of high-dimensional numerical integration.**
+Conceptual illustration of the computational burden in naive numerical
+quadrature. The density concentrates in a small region (dark peak), yet
+exhaustive grid-based evaluation requires sampling throughout the entire space,
+with most evaluations contributing little to the integral
+value.](./fig/supplementary/figSI_gaussian_peak.png){#fig-SI01}
+
+While sophisticated sampling methods like Hamiltonian Monte Carlo can exploit
+gradient information to navigate high-dimensional probability landscapes more
+efficiently @betancourt2017, these approaches can become computationally
+prohibitive when dealing with large-scale datasets or complex model
+architectures. This limitation motivates the development of scalable
+approximate inference methods.
+
+Variational inference addresses these computational challenges by reformulating
+the inference problem as an optimization task. Rather than attempting to compute
+the exact posterior distribution $\pi(\underline{\theta} \mid \underline{x})$,
+we introduce a parameterized approximate posterior $q_\phi(\underline{\theta})$
+from a tractable family of distributions. The parameters $\phi$ completely
+specify this approximate distribution. For instance, if we choose the family of
+multivariate normal distributions, then $\phi = (\underline{\mu},
+\underline{\underline{\Sigma}})$, encompassing the mean vector $\underline{\mu}$
+and covariance matrix $\underline{\underline{\Sigma}}$.
+
+The variational objective seeks to identify the member of this family that most
+closely resembles the true posterior. This resemblance is quantified using the
+Kullback-Leibler (KL) divergence, leading to the optimization problem,
+
+$$
+q_\phi^*(\underline{\theta}) =
+\arg\min_\phi D_{KL}\left(
+    q_\phi(\underline{\theta}) \vert\vert 
+    \pi(\underline{\theta} \mid \underline{x})
+\right),
+$${#eq-vi_objective_si}
+
+where $D_{KL}$ denotes the KL divergence. It is worth noting that the KL
+divergence is non-negative,
+
+$$
+D_{KL}\left(
+    q_\phi(\underline{\theta}) \vert\vert 
+    \pi(\underline{\theta} \mid \underline{x})
+\right) \geq 0,
+$${#eq-vi_kl_pos}
+
+a property that proves essential in the subsequent derivation.
+
+Initially, @eq-vi_objective_si appears to exacerbate our computational
+difficulties rather than resolve them. The KL divergence is defined as
+
+$$
+D_{KL}\left(
+    q_\phi(\underline{\theta}) \vert\vert 
+    \pi(\underline{\theta} \mid \underline{x})
+\right) \equiv 
+\int \cdots \int d^K\underline{\theta}\;
+q_\phi(\underline{\theta})
+\ln \frac{
+    q_\phi(\underline{\theta})
+}{
+    \pi(\underline{\theta} \mid \underline{x})
+},
+$${#eq-vi_kl_div}
+
+which explicitly involves the intractable posterior distribution we are trying
+to avoid. However, through algebraic manipulation, we can transform this
+expression into a more computationally tractable form.
+
+Beginning with the logarithmic properties, we can decompose @eq-vi_kl_div as
+
+$$
+D_{KL}\left(
+    q_\phi(\underline{\theta}) \vert\vert 
+    \pi(\underline{\theta} \mid \underline{x})
+\right) = 
+\int d^K\underline{\theta}\; q_\phi(\underline{\theta})
+\ln q_\phi(\underline{\theta}) -
+\int d^K\underline{\theta}\; q_\phi(\underline{\theta})
+\ln \pi(\underline{\theta} \mid \underline{x}),
+$${#eq-vi_step01}
+
+where we use the shorthand $d^K\underline{\theta}$ to represent the
+multi-dimensional differential element. Substituting Bayes' rule from
+@eq-vi_bayes_theorem into the second integral yields
+
+$$
+\begin{aligned}
+D_{KL}\left(
+    q_\phi(\underline{\theta}) \vert\vert 
+    \pi(\underline{\theta} \mid \underline{x})
+\right) &= 
+\int d^K\underline{\theta}\; q_\phi(\underline{\theta})
+\ln q_\phi(\underline{\theta}) \\
+&- \int d^K\underline{\theta}\; q_\phi(\underline{\theta})
+\ln \left( 
+    \frac{
+        \pi(\underline{x} \mid \underline{\theta})\pi(\underline{\theta})
+    }{
+        \pi(\underline{x})
+    }
+\right).
+\end{aligned}
+$${#eq-vi_step02}
+
+Expanding the logarithm of the quotient and rearranging terms leads to
+$$
+\begin{aligned}
+D_{KL}\left(
+    q_\phi(\underline{\theta}) \vert\vert 
+    \pi(\underline{\theta} \mid \underline{x})
+\right) &= 
+\int d^K\underline{\theta}\; q_\phi(\underline{\theta})
+\ln \frac{
+    q_\phi(\underline{\theta})
+    }{
+        \pi(\underline{\theta})
+    } \\
+&-\int d^K\underline{\theta}\; q_\phi(\underline{\theta})
+\ln \pi(\underline{x} \mid \underline{\theta}) \\
+&+ \ln \pi(\underline{x}) 
+\int d^K\underline{\theta}\; q_\phi(\underline{\theta}),
+\end{aligned}
+$${#eq-vi_step04}
+
+where we have factored out $\ln \pi(\underline{x})$ from the final integral
+since it does not depend on $\underline{\theta}$.
+
+Two fundamental properties allow us to simplify this expression further:
+
+1. **Normalization constraint**: Any valid probability distribution must satisfy
+$$
+\int d^K\underline{\theta}\; q_\phi(\underline{\theta}) = 1.
+$${#eq-vi_q_norm}
+
+2. **Expectation representation**: The law of the unconscious statistician
+   states that for any function $f(\underline{\theta})$,
+$$
+\int d^K\underline{\theta}\; q_\phi(\underline{\theta})
+f(\underline{\theta}) = \left\langle 
+    f(\underline{\theta}) 
+\right\rangle_{q_\phi},
+$${#eq-vi_lotus}
+
+where $\left\langle\cdot\right\rangle_{q_\phi}$ denotes expectation with
+respect to the distribution $q_\phi$.
+
+Applying these properties along with the non-negativity of the KL divergence,
+we can rearrange @eq-vi_step04 to obtain
+$$
+\underbrace{
+    \ln \pi(\underline{x})
+}_{\text{log evidence}} \geq
+\underbrace{
+    \left\langle
+        \ln \pi(\underline{x} \mid \underline{\theta})
+    \right\rangle_{q_\phi} -
+    D_{KL}\left( 
+        q_\phi(\underline{\theta}) \vert \vert
+        \pi(\underline{\theta}) 
+    \right)
+}_{\text{ELBO}}.
+$${#eq-vi_elbo}
+
+This inequality defines the **evidence lower bound** (ELBO), a cornerstone
+result in variational inference theory @kingma2014. The significance of this
+result lies in its computational tractability: while the left-hand side (log
+evidence) remains intractable, the right-hand side consists of quantities we can
+readily evaluate and differentiate.
+
+The ELBO comprises two interpretable components: an expected log-likelihood term
+$\left\langle \ln \pi(\underline{x} \mid \underline{\theta})
+\right\rangle_{q_\phi}$ that measures how well the approximate posterior
+explains the observed data, and a KL divergence term
+$D_{KL}(q_\phi(\underline{\theta}) \vert \vert \pi(\underline{\theta}))$ that
+quantifies how much the approximate posterior deviates from the prior.
+Maximizing the ELBO therefore balances data fidelity against prior adherence.
+
+Crucially, since the ELBO provides a lower bound on the log evidence, maximizing
+the ELBO with respect to the variational parameters $\phi$ yields the tightest
+possible bound within the chosen family of approximate distributions. As the
+bound becomes tighter, the approximate posterior $q_\phi(\underline{\theta})$
+approaches the true posterior $\pi(\underline{\theta} \mid \underline{x})$ more
+closely.
+
+### Stochastic Variational Inference
+
+To optimize the ELBO in @eq-vi_elbo, we employ **Stochastic Variational
+Inference** (SVI), a scalable approach that leverages stochastic optimization
+techniques @hoffman2013. Unlike traditional variational methods that process
+entire datasets simultaneously, SVI operates on mini-batches of data, making it
+particularly well-suited for large-scale applications.
+
+The key insight behind SVI is that the expected log-likelihood term in the ELBO
+can be estimated using Monte Carlo sampling. Rather than computing exact
+expectations, we draw samples $\underline{\theta}^{(s)} \sim
+q_\phi(\underline{\theta})$ from our approximate posterior and evaluate
+$$
+\left\langle
+    \ln \pi(\underline{x} \mid \underline{\theta})
+\right\rangle_{q_\phi} \approx 
+\frac{1}{S} \sum_{s=1}^S \ln \pi(\underline{x} \mid \underline{\theta}^{(s)}),
+$${#eq-vi_mc_estimate}
+
+where $S$ represents the number of Monte Carlo samples.
+
+For large datasets, SVI further employs **mini-batch processing** to compute
+stochastic estimates of the ELBO gradient. Instead of processing all data points
+simultaneously, we randomly sample a subset of observations and scale the
+resulting gradient appropriately. This approach dramatically reduces
+computational requirements while maintaining convergence guarantees under
+appropriate conditions.
+
+The SVI algorithm iteratively updates the variational parameters using
+stochastic gradient ascent. At each iteration $t$, we:
+
+1. **Sample mini-batch**: Randomly select a subset of data points
+2. **Sample parameters**: Draw samples from the current approximate posterior
+   $q_{\phi_t}(\underline{\theta})$
+3. **Compute gradients**: Evaluate the stochastic gradient of the ELBO with
+   respect to $\phi$
+4. **Update parameters**: Apply the gradient update with step size $\eta_t$:
+$$
+\phi_{t+1} = \phi_t + \eta_t \nabla_\phi \mathcal{L},
+$${#eq-vi_svi_update}
+
+where $\mathcal{L}$ denotes the ELBO and $\eta_t$ represents the learning rate
+at iteration $t$.
+
+The choice of variational family significantly impacts both the flexibility and
+computational efficiency of SVI. Common choices include:
+
+- **Mean-field approximation**: Assumes independence among parameters,
+  $q_\phi(\underline{\theta}) = \prod_i q_{\phi_i}(\theta_i)$
+- **Structured approximation**: Preserves certain dependence patterns while
+  maintaining computational tractability
+- **Normalizing flows**: Employ invertible transformations to construct more
+  flexible approximate posteriors
+
+The effectiveness of SVI depends critically on the **expressiveness** of the
+chosen variational family and the **optimization landscape** of the ELBO. While
+more flexible families can capture complex posterior dependencies, they may also
+introduce additional optimization challenges and computational overhead.
+
+Through this framework, SVI transforms the intractable integration problem of
+exact Bayesian inference into a tractable stochastic optimization problem,
+enabling scalable approximate inference for complex probabilistic models with
+large datasets.
