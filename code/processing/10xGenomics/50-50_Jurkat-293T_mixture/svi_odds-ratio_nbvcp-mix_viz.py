@@ -8,17 +8,23 @@ import jax
 from jax import random
 import jax.numpy as jnp
 import jax.scipy as jsp
+
 # Import NumPyro related libraries
 import numpyro.distributions as dist
+
 # Import numpy for array manipulation
 import numpy as np
+
 # Import scipy for statistical functions
 import scipy.stats as stats
+
 # Import plotting libraries
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 # Import scribe
 import scribe
+
 # Import scanpy for loading data
 import scanpy as sc
 
@@ -46,16 +52,21 @@ n_components = 2
 batch_size = 1024
 
 # Define data directory
-DATA_DIR = f"{scribe.utils.git_root()}/data/" \
-           f"10xGenomics/50-50_Jurkat-293T_mixture"
+DATA_DIR = (
+    f"{scribe.utils.git_root()}/data/" f"10xGenomics/50-50_Jurkat-293T_mixture"
+)
 
 # Define output directory
-OUTPUT_DIR = f"{scribe.utils.git_root()}/output/" \
-             f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
+OUTPUT_DIR = (
+    f"{scribe.utils.git_root()}/output/"
+    f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
+)
 
 # Define figure directory
-FIG_DIR = f"{scribe.utils.git_root()}/fig/" \
-          f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
+FIG_DIR = (
+    f"{scribe.utils.git_root()}/fig/"
+    f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
+)
 
 # Create figure directory if it doesn't exist
 os.makedirs(FIG_DIR, exist_ok=True)
@@ -76,12 +87,13 @@ print("Loading scribe results...")
 
 svi_results = pickle.load(
     open(
-        f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization.replace('_', '-')}_" \
-        f"{model_type.replace('_', '-')}_" \
-        f"{n_components:02d}components_" \
-        f"{batch_size}batch_" \
-        f"{n_steps}steps.pkl", "rb"
+        f"{OUTPUT_DIR}/"
+        f"svi_{parameterization.replace('_', '-')}_"
+        f"{model_type.replace('_', '-')}_"
+        f"{n_components:02d}components_"
+        f"{batch_size}batch_"
+        f"{n_steps}steps.pkl",
+        "rb",
     )
 )
 
@@ -104,8 +116,8 @@ ax.set_yscale("log")
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_{n_steps}steps_loss.png", 
-    bbox_inches="tight"
+    f"{FIG_DIR}/svi_{parameterization}_{n_steps}steps_loss.png",
+    bbox_inches="tight",
 )
 
 # %% ---------------------------------------------------------------------------
@@ -124,7 +136,7 @@ nonzero_idx = np.where(mean_counts > 0)[0]
 sorted_idx = nonzero_idx[np.argsort(mean_counts[nonzero_idx])]
 
 # Generate evenly spaced indices across the sorted nonzero genes
-spaced_indices = np.linspace(0, len(sorted_idx)-1, num=n_genes, dtype=int)
+spaced_indices = np.linspace(0, len(sorted_idx) - 1, num=n_genes, dtype=int)
 
 # Get the actual gene indices after sorting
 selected_idx = sorted_idx[spaced_indices]
@@ -141,15 +153,15 @@ for i, idx in enumerate(selected_idx):
     sns.ecdfplot(
         data=counts[:, idx],
         ax=ax,
-        color=sns.color_palette('Blues', n_colors=n_genes)[i],
+        color=sns.color_palette("Blues", n_colors=n_genes)[i],
         lw=1.5,
-        label=None
+        label=None,
     )
 
 # Add axis labels and titles
-ax.set_xlabel('UMI count')
-ax.set_xscale('log')
-ax.set_ylabel('ECDF')
+ax.set_xlabel("UMI count")
+ax.set_xscale("log")
+ax.set_ylabel("ECDF")
 
 plt.tight_layout()
 
@@ -199,46 +211,41 @@ for i, ax in enumerate(axes):
 
     # Compute histogram of the real data
     hist_results = np.histogram(
-        true_counts,
-        bins=credible_regions['bin_edges'],
-        density=True
+        true_counts, bins=credible_regions["bin_edges"], density=True
     )
 
     # Get indices where cumsum <= 0.999
     cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
     # If no indices found (all values > 0.999), use first bin
-    max_bin = np.max([
-        cumsum_indices[-1] if len(cumsum_indices) > 0 else 0,
-        10
-    ])
+    max_bin = np.max([cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10])
 
     # Plot credible regions
     scribe.viz.plot_histogram_credible_regions_stairs(
-        ax, 
-        credible_regions,
-        cmap='Blues',
-        alpha=0.5,
-        max_bin=max_bin
+        ax, credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
     )
 
     # Define max_bin for histogram
-    max_bin_hist = max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
+    max_bin_hist = (
+        max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
+    )
     # Plot histogram of the real data as step plot
     ax.step(
         hist_results[1][:max_bin_hist],
         hist_results[0][:max_bin_hist],
-        where='post',
-        label='data',
-        color='black',
+        where="post",
+        label="data",
+        color="black",
     )
 
     # Set axis labels
-    ax.set_xlabel('counts')
-    ax.set_ylabel('frequency')
+    ax.set_xlabel("counts")
+    ax.set_ylabel("frequency")
 
     # Set title
     ax.set_title(
-        f"$\\langle U \\rangle = {np.round(mean_counts[selected_idx[i]], 0).astype(int)}$", fontsize=8)
+        f"$\\langle U \\rangle = {np.round(mean_counts[selected_idx[i]], 0).astype(int)}$",
+        fontsize=8,
+    )
 
 plt.tight_layout()
 
@@ -247,8 +254,8 @@ fig.suptitle("Example PPC", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/svi_{parameterization}_{n_steps}steps_ppc.png", 
-    bbox_inches="tight"
+    f"{FIG_DIR}/svi_{parameterization}_{n_steps}steps_ppc.png",
+    bbox_inches="tight",
 )
 
 # %% ---------------------------------------------------------------------------
@@ -285,8 +292,8 @@ ax.set_xscale("log")
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/kl-divergence-mu_{parameterization}_{n_steps}steps.png", 
-    bbox_inches="tight"
+    f"{FIG_DIR}/kl-divergence-mu_{parameterization}_{n_steps}steps.png",
+    bbox_inches="tight",
 )
 # %% ---------------------------------------------------------------------------
 
@@ -301,9 +308,7 @@ svi_results._convert_to_canonical()
 print("Computing cell type assignments...")
 # Use posterior samples to assign cell types
 cell_types = svi_results.cell_type_assignments(
-    counts=counts,
-    fit_distribution=False,
-    batch_size=128
+    counts=counts, fit_distribution=False, batch_size=128
 )
 
 # %% ---------------------------------------------------------------------------
@@ -312,7 +317,7 @@ gene_entropy = results.compute_component_entropy(
     counts=jnp.array(counts),
     return_by="gene",
     ignore_nans=True,
-    normalize=False
+    normalize=False,
 )
 
 
@@ -323,17 +328,18 @@ gene_log_like = results.compute_log_likelihood(
     counts=jnp.array(counts),
     return_by="gene",
     ignore_nans=True,
-    split_components=True
+    split_components=True,
 )
 
 # %% ---------------------------------------------------------------------------
 
 # Normalize log-likelihood by number of cells
-gene_log_like_norm = gene_log_like # / results.n_cells
+gene_log_like_norm = gene_log_like  # / results.n_cells
 
 # Compute log-sum-exp for each sample
 gene_log_sum_exp = jsp.special.logsumexp(
-    gene_log_like_norm, axis=-1, keepdims=True)
+    gene_log_like_norm, axis=-1, keepdims=True
+)
 
 # Compute log probabilities
 gene_log_probs = gene_log_like_norm - gene_log_sum_exp
@@ -372,9 +378,7 @@ probs = jnp.exp(log_likelihood - log_sum_exp)
 print("Computing cell type assignments...")
 # Use posterior samples to assign cell types
 cell_types = results.compute_cell_type_assignments(
-    counts=jnp.array(counts),
-    ignore_nans=True,
-    weigh_by_entropy=True
+    counts=jnp.array(counts), ignore_nans=True, weigh_by_entropy=True
 )
 
 # %% ---------------------------------------------------------------------------
@@ -415,20 +419,25 @@ dirichlet_samples_second = scribe.stats.sample_dirichlet_from_parameters(
 
 # Fit Dirichlet distribution to samples
 dirichlet_first_fit = scribe.stats.fit_dirichlet_minka(dirichlet_samples_first)
-dirichlet_second_fit = scribe.stats.fit_dirichlet_minka(dirichlet_samples_second)
+dirichlet_second_fit = scribe.stats.fit_dirichlet_minka(
+    dirichlet_samples_second
+)
 
 # %% ---------------------------------------------------------------------------
 
 with jax.experimental.enable_x64():
     # Build Dirichlet distribution from fitted parameters
     dirichlet_first_dist = dist.Dirichlet(
-        jnp.array(dirichlet_first_fit).astype(jnp.float64))
+        jnp.array(dirichlet_first_fit).astype(jnp.float64)
+    )
     dirichlet_second_dist = dist.Dirichlet(
-        jnp.array(dirichlet_second_fit).astype(jnp.float64))
+        jnp.array(dirichlet_second_fit).astype(jnp.float64)
+    )
 
     # Normalize counts by cell
     counts_normalized = jnp.array(
-        (counts + 1) / ((counts + 1).sum(axis=1, keepdims=True)).astype(jnp.float64)
+        (counts + 1)
+        / ((counts + 1).sum(axis=1, keepdims=True)).astype(jnp.float64)
     )
 
     # Evaluate log-likelihood for each sample
@@ -440,9 +449,7 @@ with jax.experimental.enable_x64():
 # Compute log-likelihood for each sample
 with jax.experimental.enable_x64():
     log_likelihood = results.compute_log_likelihood(
-        counts=jnp.array(counts),
-        dtype=jnp.float64,
-        ignore_nans=True
+        counts=jnp.array(counts), dtype=jnp.float64, ignore_nans=True
     )
 
 # %% ---------------------------------------------------------------------------
@@ -450,9 +457,7 @@ with jax.experimental.enable_x64():
 # Compute cell type assignments
 with jax.experimental.enable_x64():
     cell_types = results.compute_cell_type_assignments(
-        counts=jnp.array(counts),
-        dtype=jnp.float64,
-        fit_distribution=False
+        counts=jnp.array(counts), dtype=jnp.float64, fit_distribution=False
     )
 
 # %% ---------------------------------------------------------------------------
