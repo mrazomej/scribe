@@ -11,13 +11,20 @@ import numpyro.distributions as dist
 from numpyro.distributions import constraints
 
 # Import typing
-from typing import Callable, Dict, Tuple, Optional
+from typing import Callable, Dict, Tuple, Optional, List
 
 # Import model config
 from .model_config import ModelConfig
 
 # Import custom distributions
 from ..stats import BetaPrime
+
+# Import model utilities
+from .model_utils import (
+    setup_and_sample_parameter,
+    validate_required_distributions,
+)
+
 
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
@@ -240,36 +247,16 @@ def nbdm_guide_standard(
         - nbdm_guide_odds_ratio: Uses Beta Prime reparameterization where r_g =
           φ_g * (1 - p) / p for gene-specific parameters φ_g
     """
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config, ["p_distribution_guide", "r_distribution_guide"]
+    )
 
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones(n_genes) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution using unpacked parameters
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    # Sample r from variational distribution using unpacked parameters
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r", model_config.r_distribution_guide, (n_genes,)
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -337,45 +324,15 @@ def nbdm_guide_linked(
         - nbdm_guide_odds_ratio: Uses Beta Prime reparameterization where r_g =
           φ_g * (1 - p) / p for gene-specific parameters φ_g
     """
-    # Add checks for required distributions
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config, ["p_distribution_guide", "mu_distribution_guide"]
+    )
 
-    # Define p parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu",
-        model_config.mu_distribution_guide.__class__(**mu_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
     )
 
 
@@ -446,42 +403,15 @@ def nbdm_guide_odds_ratio(
         - nbdm_guide_linked: Uses mean-variance relationship where r_g =
           μ_g * (1 - p) / p for gene-specific means μ_g
     """
-    # Add checks for required distributions
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-
-    # Define phi parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample phi from variational distribution
-    numpyro.sample(
-        "phi",
-        model_config.phi_distribution_guide.__class__(**phi_params),
+    # Validate required distributions
+    validate_required_distributions(
+        model_config, ["phi_distribution_guide", "mu_distribution_guide"]
     )
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu",
-        model_config.mu_distribution_guide.__class__(**mu_params),
+
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
     )
 
 
@@ -714,53 +644,23 @@ def zinb_guide_standard(
         - Gene-specific dropout probabilities gate ~
           model_config.gate_distribution_guide
     """
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "p_distribution_guide",
+            "r_distribution_guide",
+            "gate_distribution_guide",
+        ],
+    )
 
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones(n_genes) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract gate distribution values
-    gate_values = model_config.gate_distribution_guide.get_args()
-    # Extract gate distribution parameters and constraints
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    gate_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones(n_genes) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution using unpacked parameters
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    # Sample r from variational distribution using unpacked parameters
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
-    # Sample gate from variational distribution using unpacked parameters
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r", model_config.r_distribution_guide, (n_genes,)
+    )
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_genes,)
     )
 
 
@@ -819,63 +719,23 @@ def zinb_guide_linked(
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
-    if model_config.gate_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'gate_distribution_guide'."
-        )
-
-    # Define p parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones(n_genes) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "p_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+        ],
     )
-    # Sample gate from variational distribution
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
+    )
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_genes,)
     )
 
 
@@ -937,59 +797,23 @@ def zinb_guide_odds_ratio(
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.gate_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
-
-    # Define phi parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones(n_genes) * gate_values[param_name],
-            constraint=constraint,
-        )
-    # Sample phi from variational distribution
-    numpyro.sample(
-        "phi",
-        model_config.phi_distribution_guide.__class__(**phi_params),
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "phi_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+        ],
     )
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu",
-        model_config.mu_distribution_guide.__class__(**mu_params),
+
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
     )
-    # Sample gate from variational distribution
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_genes,)
     )
 
 
@@ -1014,8 +838,8 @@ def nbvcp_model(
         1. Each gene has a base success probability p and dispersion r
         2. Each cell has a capture probability p_capture
         3. The effective success probability for each gene in each cell is
-           computed as p_hat = p * p_capture / (1 - p * (1 - p_capture)). This comes
-           from the composition of a negative binomial distribution with a
+           computed as p_hat = p * p_capture / (1 - p * (1 - p_capture)). This
+           comes from the composition of a negative binomial distribution with a
            binomial distribution.
         4. Counts are drawn from NB(r, p_hat)
 
@@ -1026,15 +850,17 @@ def nbvcp_model(
     n_genes : int
         Number of genes in the dataset
     model_config : ModelConfig
-        Configuration object containing prior distributions for model parameters:
-        - For default parameterization:
+        Configuration object containing prior distributions for model
+        parameters: - For default parameterization:
             - p_distribution_model: Prior for success probability p
             - r_distribution_model: Prior for dispersion parameters r
-            - p_capture_distribution_model: Prior for capture probabilities p_capture
+            - p_capture_distribution_model: Prior for capture probabilities
+              p_capture
         - For "linked" parameterization:
             - p_distribution_model: Prior for success probability p
             - mu_distribution_model: Prior for gene means
-            - p_capture_distribution_model: Prior for capture probabilities p_capture
+            - p_capture_distribution_model: Prior for capture probabilities
+              p_capture
         - For "odds_ratio" parameterization:
             - phi_distribution_model: Prior for phi parameter
             - phi_capture_distribution_model: Prior for phi_capture parameter
@@ -1053,8 +879,10 @@ def nbvcp_model(
         - Gene-specific dispersion r ~ model_config.r_distribution_model
 
     Local Parameters:
-        - Cell-specific capture probabilities p_capture ~ model_config.p_capture_distribution_model
-        - Effective probability p_hat = p * p_capture / (1 - p * (1 - p_capture))
+        - Cell-specific capture probabilities p_capture ~
+          model_config.p_capture_distribution_model
+        - Effective probability p_hat = p * p_capture / (1 - p * (1 -
+          p_capture))
 
     Likelihood:
         - counts ~ NegativeBinomial(r, p_hat)
@@ -1163,7 +991,8 @@ def nbvcp_model(
                         "p_capture", model_config.p_capture_distribution_model
                     )
 
-                    # Reshape p_capture for broadcasting and compute effective probability
+                    # Reshape p_capture for broadcasting and compute effective
+                    # probability
                     p_capture_reshaped = p_capture[:, None]
                     p_hat = numpyro.deterministic(
                         "p_hat",
@@ -1203,7 +1032,8 @@ def nbvcp_model(
                     "p_capture", model_config.p_capture_distribution_model
                 )
 
-                # Reshape p_capture for broadcasting and compute effective probability
+                # Reshape p_capture for broadcasting and compute effective
+                # probability
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
@@ -1314,78 +1144,28 @@ def nbvcp_guide_standard(
         - Cell-specific capture probability p_capture ~
           model_config.p_capture_distribution_guide
     """
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones(n_genes) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution using unpacked parameters
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    # Sample r from variational distribution using unpacked parameters
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
-
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "p_distribution_guide",
+            "r_distribution_guide", 
+            "p_capture_distribution_guide",
+        ],
     )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
 
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r", model_config.r_distribution_guide, (n_genes,)
+    )
+    setup_and_sample_parameter(
+        "p_capture",
+        model_config.p_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -1426,90 +1206,28 @@ def nbvcp_guide_linked(
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
-    if model_config.p_capture_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_capture_distribution_guide'."
-        )
-
-    # Define p parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "p_distribution_guide",
+            "mu_distribution_guide",
+            "p_capture_distribution_guide",
+        ],
     )
 
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
     )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    setup_and_sample_parameter(
+        "p_capture",
+        model_config.p_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -1553,89 +1271,28 @@ def nbvcp_guide_odds_ratio(
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.phi_capture_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'phi_capture_distribution_guide'."
-        )
-
-    # Define phi parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample phi from variational distribution
-    numpyro.sample(
-        "phi",
-        model_config.phi_distribution_guide.__class__(**phi_params),
-    )
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu",
-        model_config.mu_distribution_guide.__class__(**mu_params),
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "phi_distribution_guide",
+            "mu_distribution_guide",
+            "phi_capture_distribution_guide",
+        ],
     )
 
-    # Extract phi_capture distribution values
-    phi_capture_values = model_config.phi_capture_distribution_guide.get_args()
-    # Extract phi_capture distribution parameters and constraints
-    phi_capture_constraints = (
-        model_config.phi_capture_distribution_guide.arg_constraints
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
     )
-    # Initialize parameters for each constraint in the distribution
-    phi_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in phi_capture_constraints.items():
-        phi_capture_params[param_name] = numpyro.param(
-            f"phi_capture_{param_name}",
-            jnp.ones(n_cells) * phi_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (phi_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **phi_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in phi_capture_params.items()
-            }
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    setup_and_sample_parameter(
+        "phi_capture",
+        model_config.phi_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -1992,96 +1649,32 @@ def zinbvcp_guide_standard(
         - Cell-specific capture probabilities p_capture ~
           model_config.p_capture_distribution_guide
     """
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones(n_genes) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract gate distribution values
-    gate_values = model_config.gate_distribution_guide.get_args()
-    # Extract gate distribution parameters and constraints
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    gate_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones(n_genes) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution using unpacked parameters
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    # Sample r from variational distribution using unpacked parameters
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
-    # Sample gate from variational distribution using unpacked parameters
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "p_distribution_guide",
+            "r_distribution_guide",
+            "gate_distribution_guide",
+            "p_capture_distribution_guide",
+        ],
     )
 
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r", model_config.r_distribution_guide, (n_genes,)
     )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_genes,)
+    )
+    setup_and_sample_parameter(
+        "p_capture",
+        model_config.p_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -2148,110 +1741,32 @@ def zinbvcp_guide_linked(
         - Cell-specific capture probabilities p_capture ~
           model_config.p_capture_distribution_guide
     """
-    # Add checks for required distributions
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
-    if model_config.gate_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'gate_distribution_guide'."
-        )
-    if model_config.p_capture_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_capture_distribution_guide'."
-        )
-
-    # Define p parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones(n_genes) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample p from variational distribution
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
-    )
-    # Sample gate from variational distribution
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "p_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+            "p_capture_distribution_guide",
+        ],
     )
 
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
     )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_genes,)
+    )
+    setup_and_sample_parameter(
+        "p_capture",
+        model_config.p_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -2304,107 +1819,33 @@ def zinbvcp_guide_odds_ratio(
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.gate_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
-    if model_config.phi_capture_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'phi_capture_distribution_guide'."
-        )
-
-    # Define phi parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones(n_genes) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones(n_genes) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample phi from variational distribution
-    numpyro.sample(
-        "phi",
-        model_config.phi_distribution_guide.__class__(**phi_params),
-    )
-    # Sample mu from variational distribution
-    numpyro.sample(
-        "mu",
-        model_config.mu_distribution_guide.__class__(**mu_params),
-    )
-    # Sample gate from variational distribution
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "phi_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+            "phi_capture_distribution_guide",
+        ],
     )
 
-    # Extract phi_capture distribution values
-    phi_capture_values = model_config.phi_capture_distribution_guide.get_args()
-    # Extract phi_capture distribution parameters and constraints
-    phi_capture_constraints = (
-        model_config.phi_capture_distribution_guide.arg_constraints
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_genes,)
     )
-    # Initialize parameters for each constraint in the distribution
-    phi_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in phi_capture_constraints.items():
-        phi_capture_params[param_name] = numpyro.param(
-            f"phi_capture_{param_name}",
-            jnp.ones(n_cells) * phi_capture_values[param_name],
-            constraint=constraint,
-        )
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_genes,)
+    )
+    setup_and_sample_parameter(
+        "phi_capture",
+        model_config.phi_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
-    # Use plate for handling local parameters (phi_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **phi_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in phi_capture_params.items()
-            }
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
 
 
 # ------------------------------------------------------------------------------
