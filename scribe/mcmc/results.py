@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from jax import random, jit, vmap
 import pandas as pd
 from numpyro.infer import MCMC
+import numpy as np
 
 from ..sampling import generate_predictive_samples
 from ..models.model_config import ModelConfig
@@ -584,33 +585,41 @@ class ScribeMCMCResults(MCMC):
         ScribeMCMCResults
             A new ScribeMCMCResults object containing only the selected genes
         """
+        # If index is a boolean mask, use it directly
+        if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
+            bool_index = index
         # Handle integer indexing
-        if isinstance(index, int):
+        elif isinstance(index, int):
+            # Initialize boolean index
             bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            # Set True for the given index
             bool_index = bool_index.at[index].set(True)
-            index = bool_index
-
         # Handle slice indexing
         elif isinstance(index, slice):
+            # Get indices from slice
             indices = jnp.arange(self.n_genes)[index]
+            # Initialize boolean index
             bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            # Set True for the given indices
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
-            index = bool_index
-
         # Handle list/array indexing
         elif not isinstance(index, (bool, jnp.bool_)) and not isinstance(
             index[-1], (bool, jnp.bool_)
         ):
+            # Get indices from list/array
             indices = jnp.array(index)
+            # Initialize boolean index
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
-            index = bool_index
+        else:
+            # Already a boolean index
+            bool_index = index
 
         # Create new metadata if available
-        new_var = self.var.iloc[index] if self.var is not None else None
+        new_var = self.var.iloc[bool_index] if self.var is not None else None
 
         # Get subset of samples
         samples = self.get_samples()
-        new_samples = self._subset_posterior_samples(samples, index)
+        new_samples = self._subset_posterior_samples(samples, bool_index)
 
         # Create new instance with subset data
         # We can't use inheritance for the subset since we need to detach from
@@ -640,12 +649,16 @@ class ScribeMCMCResults(MCMC):
             def __getitem__(self, index):
                 """Support further indexing of subset."""
                 # Convert subset indexing to original indexing
-                if isinstance(index, int):
-                    return self.var.index[index]
-                elif isinstance(index, slice):
-                    return self.var.index[index]
+                if self.var is not None:
+                    if isinstance(index, int):
+                        return self.var.index[index]
+                    elif isinstance(index, slice):
+                        return self.var.index[index]
+                    else:
+                        return self.var.index[index]
                 else:
-                    return self.var.index[index]
+                    # If no var metadata, just return the index
+                    return index
 
             # ------------------------------------------------------------------
 
@@ -754,7 +767,11 @@ class ScribeMCMCResults(MCMC):
         return ScribeMCMCSubset(
             samples=new_samples,
             n_cells=self.n_cells,
-            n_genes=int(index.sum() if hasattr(index, "sum") else len(index)),
+            n_genes=int(
+                bool_index.sum()
+                if hasattr(bool_index, "sum")
+                else len(bool_index)
+            ),
             model_type=self.model_type,
             model_config=self.model_config,
             obs=self.obs,
@@ -783,7 +800,7 @@ def _get_model_fn(model_type: str, model_config) -> Callable:
 
 def _get_log_likelihood_fn(model_type: str) -> Callable:
     """Get the log likelihood function for this model type."""
-    from .model_registry import get_log_likelihood_fn
+    from scribe.models.model_registry import get_log_likelihood_fn
 
     return get_log_likelihood_fn(model_type)
 
