@@ -56,8 +56,8 @@ challenges. Traditional quadrature methods suffer from the curse of
 dimensionality: the number of function evaluations required grows exponentially
 with the number of dimensions. To illustrate this difficulty, consider
 integrating a function concentrated in a narrow region of parameter space, as
-depicted conceptually in @fig-SI01. Without prior knowledge of where the
-high-density region lies, numerical methods must evaluate the integrand at
+depicted conceptually in @fig-SI_gaussian_peak. Without prior knowledge of where
+the high-density region lies, numerical methods must evaluate the integrand at
 numerous points throughout the space, most of which contribute negligibly to the
 final integral value.
 
@@ -66,7 +66,7 @@ Conceptual illustration of the computational burden in naive numerical
 quadrature. The density concentrates in a small region (dark peak), yet
 exhaustive grid-based evaluation requires sampling throughout the entire space,
 with most evaluations contributing little to the integral
-value.](./fig/supplementary/figSI_gaussian_peak.png){#fig-SI01}
+value.](./fig/supplementary/figSI_gaussian_peak){#fig-SI_gaussian_peak}
 
 While sophisticated sampling methods like Hamiltonian Monte Carlo can exploit
 gradient information to navigate high-dimensional probability landscapes more
