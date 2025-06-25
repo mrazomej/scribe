@@ -1,0 +1,14 @@
+::: {.sitext}
+# Supplementary Materials {.unnumbered}
+
+<!-- notes on the Dirichlet Multinomial derivation-->
+{{< include _dirichlet_multinomial.qmd >}}
+
+<!-- notes on variational inference -->
+{{< include _variational_inference_primer.qmd >}}
+
+<!-- notes on the Singer dataset -->
+{{< include _singer_dataset.qmd >}}
+
+
+:::
