@@ -11,6 +11,12 @@ from numpyro.distributions import constraints
 # Import model config
 from .model_config import ModelConfig
 
+# Import model utilities
+from .model_utils import (
+    setup_and_sample_parameter,
+    validate_required_distributions,
+)
+
 # Import typing
 from typing import Callable, Dict, Tuple, Optional, Union
 
@@ -75,35 +81,22 @@ def nbdm_mixture_model(
         Categorical(mixing_weights), NegativeBinomialProbs(r, p)
     )
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_model is None:
-        raise ValueError("Mixture model requires 'mixing_distribution_model'.")
-    if model_config.p_distribution_model is None and (
-        model_config.parameterization == "standard"
-        or model_config.parameterization == "linked"
-    ):
-        raise ValueError(
-            "Model with selected parameterization requires 'p_distribution_model'."
+    # Validate required distributions based on parameterization
+    validate_required_distributions(model_config, ["mixing_distribution_model"])
+
+    if model_config.parameterization == "standard":
+        validate_required_distributions(
+            model_config, ["p_distribution_model", "r_distribution_model"]
         )
-    if model_config.r_distribution_model is None and (
-        model_config.parameterization == "standard"
-    ):
-        raise ValueError(
-            "Model with selected parameterization requires 'r_distribution_model'."
+    elif model_config.parameterization == "linked":
+        validate_required_distributions(
+            model_config, ["p_distribution_model", "mu_distribution_model"]
         )
-    if model_config.phi_distribution_model is None and (
-        model_config.parameterization == "odds_ratio"
-    ):
-        raise ValueError(
-            "Model with selected parameterization requires 'phi_distribution_model'."
+    elif model_config.parameterization == "odds_ratio":
+        validate_required_distributions(
+            model_config, ["phi_distribution_model", "mu_distribution_model"]
         )
-    if model_config.mu_distribution_model is None and (
-        model_config.parameterization == "odds_ratio"
-        or model_config.parameterization == "linked"
-    ):
-        raise ValueError(
-            "Model with selected parameterization requires 'mu_distribution_model'."
-        )
+
     # Extract number of components
     n_components = model_config.n_components
 
@@ -237,8 +230,8 @@ def nbdm_mixture_guide_standard(
     Specifically:
         - Mixture weights ~ Dirichlet(α_mixing)
         - A shared success probability p ~ Beta(α_p, β_p) across all components
-        - Component and gene-specific dispersion parameters r_{k,g} ~
-          Gamma(α_r, β_r) for each component k and gene g
+        - Component and gene-specific dispersion parameters r_{k,g} ~ Gamma(α_r,
+          β_r) for each component k and gene g
 
     The guide samples from these distributions to approximate the true
     posterior. In the mean-field approximation, all parameters are assumed to be
@@ -267,68 +260,30 @@ def nbdm_mixture_guide_standard(
     Variational Parameters:
         - Mixing weights ~ model_config.mixing_distribution_guide
         - Success probability p ~ model_config.p_distribution_guide
-        - Component-specific dispersion r ~ model_config.r_distribution_guide per gene and component
+        - Component-specific dispersion r ~ model_config.r_distribution_guide
+          per gene and component
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Mean-field guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'p_distribution_guide'.")
-    if model_config.r_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'r_distribution_guide'.")
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "r_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Extract mixing distribution values
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    # Extract mixing distribution parameters and constraints
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    mixing_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r", model_config.r_distribution_guide, (n_components, n_genes)
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -344,7 +299,8 @@ def nbdm_mixture_guide_linked(
     batch_size=None,
 ):
     """
-    Linked parameterization parameterized variational guide for the NBDM mixture model.
+    Linked parameterization parameterized variational guide for the NBDM mixture
+    model.
 
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
@@ -382,62 +338,26 @@ def nbdm_mixture_guide_linked(
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "mu_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define p distribution parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_components, n_genes)
     )
 
 
@@ -461,18 +381,20 @@ def nbdm_mixture_guide_odds_ratio(
     through gene-specific means μ and a shared parameter φ:
         - Mixture weights ~ Dirichlet(α_mixing)
         - A shared parameter φ ~ BetaPrime(α_φ, β_φ) across all components
-        - Component and gene-specific means μ_{k,g} ~ LogNormal(μ_μ, σ_μ) for each component k and gene g
+        - Component and gene-specific means μ_{k,g} ~ LogNormal(μ_μ, σ_μ) for
+          each component k and gene g
         - Deterministic relationships:
-            p = φ / (1 + φ)
-            r_{k,g} = μ_{k,g} / φ
+            p = φ / (1 + φ) r_{k,g} = μ_{k,g} / φ
 
     The guide samples from these distributions to approximate the true
     posterior. The Beta-Prime parameterization provides a natural way to model
     the relationship between p and r:
 
-        q(mixing_weights, φ, μ, p, r) = q(mixing_weights) * q(φ) * q(μ) * δ(p - φ/(1+φ)) * δ(r - μ/φ)
+        q(mixing_weights, φ, μ, p, r) = q(mixing_weights) * q(φ) * q(μ) * δ(p -
+        φ/(1+φ)) * δ(r - μ/φ)
 
-    where δ(·) is the Dirac delta function enforcing the deterministic relationships.
+    where δ(·) is the Dirac delta function enforcing the deterministic
+    relationships.
 
     Parameters
     ----------
@@ -481,70 +403,36 @@ def nbdm_mixture_guide_odds_ratio(
     n_genes : int
         Number of genes in the dataset
     model_config : ModelConfig
-        Configuration object containing guide distributions for model parameters:
-        - mixing_distribution_guide: Guide distribution for mixture weights
-        - phi_distribution_guide: Guide distribution for φ (BetaPrime
-        distribution)
-        - mu_distribution_guide: Guide distribution for gene means μ
+        Configuration object containing guide distributions for model
+        parameters: - mixing_distribution_guide: Guide distribution for mixture
+        weights - phi_distribution_guide: Guide distribution for φ (BetaPrime
+        distribution) - mu_distribution_guide: Guide distribution for gene means
+        μ
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "phi_distribution_guide",
+            "mu_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define phi distribution parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample(
-        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
-    )
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_components, n_genes)
     )
 
 
@@ -614,6 +502,23 @@ def zinb_mixture_model(
             ZeroInflatedNegativeBinomial(r, p, gate)
         )
     """
+    # Validate required distributions based on parameterization
+    validate_required_distributions(
+        model_config, ["mixing_distribution_model", "gate_distribution_model"]
+    )
+    if model_config.parameterization == "standard":
+        validate_required_distributions(
+            model_config, ["p_distribution_model", "r_distribution_model"]
+        )
+    elif model_config.parameterization == "linked":
+        validate_required_distributions(
+            model_config, ["p_distribution_model", "mu_distribution_model"]
+        )
+    elif model_config.parameterization == "odds_ratio":
+        validate_required_distributions(
+            model_config, ["phi_distribution_model", "mu_distribution_model"]
+        )
+
     # Extract number of components
     n_components = model_config.n_components
 
@@ -796,84 +701,30 @@ def zinb_mixture_guide_standard(
         - Gene-specific dispersion r ~ model_config.r_distribution_guide
         - Gene-specific dropout gate ~ model_config.gate_distribution_guide
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Mean-field guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'p_distribution_guide'.")
-    if model_config.r_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'r_distribution_guide'.")
-    if model_config.gate_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'gate_distribution_guide'.")
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "r_distribution_guide",
+            "gate_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Extract mixing distribution values
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    # Extract mixing distribution parameters and constraints
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    mixing_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract gate distribution values
-    gate_values = model_config.gate_distribution_guide.get_args()
-    # Extract gate distribution parameters and constraints
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    gate_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r", model_config.r_distribution_guide, (n_components, n_genes)
+    )
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_components, n_genes)
     )
 
 
@@ -890,7 +741,8 @@ def zinb_mixture_guide_linked(
     batch_size=None,
 ):
     """
-    Linked parameterization parameterized variational guide for the ZINB mixture model.
+    Linked parameterization parameterized variational guide for the ZINB mixture
+    model.
 
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
@@ -899,16 +751,19 @@ def zinb_mixture_guide_linked(
         - A shared success probability p ~ Beta(α_p, β_p) across all components
         - Component and gene-specific means μ_{k,g} ~ LogNormal(μ_μ, σ_μ) for
           each component k and gene g
-        - Component and gene-specific dropout probabilities gate_{k,g} ~ Beta(α_gate, β_gate) for each component k and gene g
+        - Component and gene-specific dropout probabilities gate_{k,g} ~
+          Beta(α_gate, β_gate) for each component k and gene g
         - Deterministic relationship r_{k,g} = μ_{k,g} * (1 - p) / p
 
     The guide samples from these distributions to approximate the true
     posterior. The mean-variance parameterization captures the natural
     relationship between means and variances in count data:
 
-        q(mixing_weights, p, μ, gate, r) = q(mixing_weights) * q(p) * q(μ) * q(gate) * δ(r - μ * (1-p)/p)
+        q(mixing_weights, p, μ, gate, r) = q(mixing_weights) * q(p) * q(μ) *
+        q(gate) * δ(r - μ * (1-p)/p)
 
-    where δ(·) is the Dirac delta function enforcing the deterministic relationship.
+    where δ(·) is the Dirac delta function enforcing the deterministic
+    relationship.
 
     Parameters
     ----------
@@ -919,132 +774,41 @@ def zinb_mixture_guide_linked(
     model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters:
-        - mixing_distribution_guide: Guide distribution for mixture weights
-        - p_distribution_guide: Guide distribution for success probability p
-        - mu_distribution_guide: Guide distribution for gene means μ
-        - gate_distribution_guide: Guide distribution for dropout probabilities
+            - mixing_distribution_guide: Guide distribution for mixture weights
+            - p_distribution_guide: Guide distribution for success probability p
+            - mu_distribution_guide: Guide distribution for gene means μ
+            - gate_distribution_guide: Guide distribution for dropout
+              probabilities
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
-    if model_config.gate_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'gate_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define p distribution parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate distribution parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_components, n_genes)
     )
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_components, n_genes)
     )
-
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
-    )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
 
 
 # ------------------------------------------------------------------------------
@@ -1072,14 +836,14 @@ def zinb_mixture_guide_odds_ratio(
         - Component and gene-specific dropout probabilities gate_{k,g} ~
           Beta(α_gate, β_gate) for each component k and gene g
         - Deterministic relationships:
-            p = φ / (1 + φ)
-            r_{k,g} = μ_{k,g} / φ
+            p = φ / (1 + φ) r_{k,g} = μ_{k,g} / φ
 
     The guide samples from these distributions to approximate the true
     posterior. The Beta-Prime parameterization provides a natural way to model
     the relationship between p and r:
 
-        q(mixing_weights, φ, μ, gate, p, r) = q(mixing_weights) * q(φ) * q(μ) * q(gate) * δ(p - φ/(1+φ)) * δ(r - μ/φ)
+        q(mixing_weights, φ, μ, gate, p, r) = q(mixing_weights) * q(φ) * q(μ) *
+        q(gate) * δ(p - φ/(1+φ)) * δ(r - μ/φ)
 
     where δ(·) is the Dirac delta function enforcing the deterministic
     relationships.
@@ -1091,164 +855,44 @@ def zinb_mixture_guide_odds_ratio(
     n_genes : int
         Number of genes in the dataset
     model_config : ModelConfig
-        Configuration object containing guide distributions for model parameters:
-        - mixing_distribution_guide: Guide distribution for mixture weights
-        - phi_distribution_guide: Guide distribution for φ (BetaPrime
-        distribution)
-        - mu_distribution_guide: Guide distribution for gene means μ
-        - gate_distribution_guide: Guide distribution for dropout probabilities
+        Configuration object containing guide distributions for model
+        parameters:
+            - mixing_distribution_guide: Guide distribution for mixture weights
+            - phi_distribution_guide: Guide distribution for φ (BetaPrime
+              distribution)
+            - mu_distribution_guide: Guide distribution for gene means μ
+            - gate_distribution_guide: Guide distribution for dropout
+              probabilities
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.gate_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "phi_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define phi distribution parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate distribution parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample(
-        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_components, n_genes)
     )
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_components, n_genes)
     )
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
-    )
-
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (r)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "r", model_config.r_distribution_guide.__class__(**r_params)
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in r_params.items()
-            }
-            numpyro.sample(
-                "r", model_config.r_distribution_guide.__class__(**batch_params)
-            )
-
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
-    )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
 
 
 # ------------------------------------------------------------------------------
@@ -1328,6 +972,37 @@ def nbvcp_mixture_model(
         Categorical(mixing_weights), NegativeBinomial(r, p_hat)
     )
     """
+    # Validate required distributions based on parameterization
+    validate_required_distributions(model_config, ["mixing_distribution_model"]
+    )
+    if model_config.parameterization == "standard":
+        validate_required_distributions(
+            model_config,
+            [
+                "p_distribution_model",
+                "r_distribution_model",
+                "p_capture_distribution_model",
+            ],
+        )
+    elif model_config.parameterization == "linked":
+        validate_required_distributions(
+            model_config,
+            [
+                "p_distribution_model",
+                "mu_distribution_model",
+                "p_capture_distribution_model",
+            ],
+        )
+    elif model_config.parameterization == "odds_ratio":
+        validate_required_distributions(
+            model_config,
+            [
+                "phi_distribution_model",
+                "mu_distribution_model",
+                "phi_capture_distribution_model",
+            ],
+        )
+
     # Extract number of components
     n_components = model_config.n_components
 
@@ -1623,116 +1298,42 @@ def nbvcp_mixture_guide_standard(
         - Cell-specific capture probabilities p_capture ~
           model_config.p_capture_distribution_guide
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Mean-field guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.p_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'p_distribution_guide'.")
-    if model_config.r_distribution_guide is None:
-        raise ValueError("Mean-field guide requires 'r_distribution_guide'.")
-    if model_config.p_capture_distribution_guide is None:
-        raise ValueError(
-            "Mean-field guide requires 'p_capture_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "r_distribution_guide",
+            "p_capture_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Extract mixing distribution values
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    # Extract mixing distribution parameters and constraints
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    mixing_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample global parameters outside the plate
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
-
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r",
+        model_config.r_distribution_guide,
+        (n_components, n_genes),
     )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    setup_and_sample_parameter(
+        "p_capture",
+        model_config.p_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
 
 # ------------------------------------------------------------------------------
-# Mean-Variance Parameterized Guide for Negative Binomial Mixture Model with Variable Capture Probability
+# Mean-Variance Parameterized Guide for Negative Binomial Mixture Model with
+# Variable Capture Probability
 # ------------------------------------------------------------------------------
 
 
@@ -1744,8 +1345,8 @@ def nbvcp_mixture_guide_linked(
     batch_size=None,
 ):
     """
-    Linked parameterization parameterized variational guide for the Negative Binomial
-    mixture model with variable capture probability.
+    Linked parameterization parameterized variational guide for the Negative
+    Binomial mixture model with variable capture probability.
 
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
@@ -1771,138 +1372,38 @@ def nbvcp_mixture_guide_linked(
     model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters:
-        - mixing_distribution_guide: Guide distribution for mixture weights
-        - p_distribution_guide: Guide distribution for success probability p
-        - mu_distribution_guide: Guide distribution for gene means μ
-        - gate_distribution_guide: Guide distribution for dropout probabilities
-        - p_capture_distribution_guide: Guide distribution for capture
-          probabilities
+            - mixing_distribution_guide: Guide distribution for mixture weights
+            - p_distribution_guide: Guide distribution for success probability p
+            - mu_distribution_guide: Guide distribution for gene means μ
+            - gate_distribution_guide: Guide distribution for dropout
+              probabilities
+            - p_capture_distribution_guide: Guide distribution for capture
+              probabilities
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
-    if model_config.gate_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'gate_distribution_guide'."
-        )
-    if model_config.p_capture_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_capture_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "mu_distribution_guide",
+            "p_capture_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define p distribution parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate distribution parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
-    )
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
-    )
-
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
-    )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter("mu", model_config.mu_distribution_guide)
 
 
 # ------------------------------------------------------------------------------
@@ -1957,107 +1458,33 @@ def nbvcp_mixture_guide_odds_ratio(
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.phi_capture_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'phi_capture_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "phi_distribution_guide",
+            "mu_distribution_guide",
+            "phi_capture_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define phi distribution parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample(
-        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter("mu", model_config.mu_distribution_guide)
+    setup_and_sample_parameter(
+        "phi_capture",
+        model_config.phi_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
     )
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
-    )
-
-    # Extract p_capture distribution values
-    phi_capture_values = model_config.phi_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    phi_capture_constraints = (
-        model_config.phi_capture_distribution_guide.arg_constraints
-    )
-    # Initialize parameters for each constraint in the distribution
-    phi_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in phi_capture_constraints.items():
-        phi_capture_params[param_name] = numpyro.param(
-            f"phi_capture_{param_name}",
-            jnp.ones(n_cells) * phi_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **phi_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in phi_capture_params.items()
-            }
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
 
 
 # ------------------------------------------------------------------------------
@@ -2138,6 +1565,39 @@ def zinbvcp_mixture_model(
         gate)
     )
     """
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        ["mixing_distribution_model", "gate_distribution_model"],
+    )
+    if model_config.parameterization == "standard":
+        validate_required_distributions(
+            model_config,
+            [
+                "p_distribution_model",
+                "r_distribution_model",
+                "p_capture_distribution_model",
+            ],
+        )
+    elif model_config.parameterization == "linked":
+        validate_required_distributions(
+            model_config,
+            [
+                "p_distribution_model",
+                "mu_distribution_model",
+                "p_capture_distribution_model",
+            ],
+        )
+    elif model_config.parameterization == "odds_ratio":
+        validate_required_distributions(
+            model_config,
+            [
+                "phi_distribution_model",
+                "mu_distribution_model",
+                "phi_capture_distribution_model",
+            ],
+        )
+
     # Extract number of components
     n_components = model_config.n_components
 
@@ -2350,7 +1810,8 @@ def zinbvcp_mixture_model(
 
 
 # ------------------------------------------------------------------------------
-# Variational Guide for Zero-Inflated Negative Binomial Mixture Model with Variable Capture Probability
+# Variational Guide for Zero-Inflated Negative Binomial Mixture Model with
+# Variable Capture Probability
 # ------------------------------------------------------------------------------
 
 
@@ -2455,115 +1916,39 @@ def zinbvcp_mixture_guide_standard(
           per gene and component
         - Cell-specific capture probabilities p_capture ~ model_config.p_capture_distribution_guide
     """
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "r_distribution_guide",
+            "gate_distribution_guide",
+            "p_capture_distribution_guide",
+        ],
+    )
+
     # Extract number of components
     n_components = model_config.n_components
 
-    # Extract mixing distribution values
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    # Extract mixing distribution parameters and constraints
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    mixing_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract p distribution values
-    p_values = model_config.p_distribution_guide.get_args()
-    # Extract p distribution parameters and constraints
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    p_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Extract r distribution values
-    r_values = model_config.r_distribution_guide.get_args()
-    # Extract r distribution parameters and constraints
-    r_constraints = model_config.r_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    r_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in r_constraints.items():
-        r_params[param_name] = numpyro.param(
-            f"r_{param_name}",
-            jnp.ones((n_components, n_genes)) * r_values[param_name],
-            constraint=constraint,
-        )
-
-    # Extract gate distribution values
-    gate_values = model_config.gate_distribution_guide.get_args()
-    # Extract gate distribution parameters and constraints
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    # Initialize parameters for each constraint in the distribution
-    gate_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample global parameters outside the plate
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample("r", model_config.r_distribution_guide.__class__(**r_params))
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "r", model_config.r_distribution_guide, (n_components, n_genes)
     )
-
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_components, n_genes)
     )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
+    setup_and_sample_parameter(
+        "p_capture",
+        model_config.p_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -2580,8 +1965,9 @@ def zinbvcp_mixture_guide_linked(
     batch_size=None,
 ):
     """
-    Linked parameterization parameterized variational guide for the Zero-Inflated Negative Binomial
-    mixture model with variable capture probability.
+    Linked parameterization parameterized variational guide for the
+    Zero-Inflated Negative Binomial mixture model with variable capture
+    probability.
 
     This guide implements a mean-variance parameterization that captures the
     correlation between the success probability p and dispersion parameters r
@@ -2609,138 +1995,51 @@ def zinbvcp_mixture_guide_linked(
     model_config : ModelConfig
         Configuration object containing guide distributions for model
         parameters:
-        - mixing_distribution_guide: Guide distribution for mixture weights
-        - p_distribution_guide: Guide distribution for success probability p
-        - mu_distribution_guide: Guide distribution for gene means μ
-        - gate_distribution_guide: Guide distribution for dropout probabilities
-        - p_capture_distribution_guide: Guide distribution for capture
-          probabilities
+            - mixing_distribution_guide: Guide distribution for mixture weights
+            - p_distribution_guide: Guide distribution for success probability p
+            - mu_distribution_guide: Guide distribution for gene means μ
+            - gate_distribution_guide: Guide distribution for dropout
+              probabilities
+            - p_capture_distribution_guide: Guide distribution for capture
+              probabilities
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.p_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_distribution_guide'."
-        )
-    if model_config.mu_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'mu_distribution_guide'."
-        )
-    if model_config.gate_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'gate_distribution_guide'."
-        )
-    if model_config.p_capture_distribution_guide is None:
-        raise ValueError(
-            "Linked parameterization guide requires 'p_capture_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "p_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+            "p_capture_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define p distribution parameters
-    p_values = model_config.p_distribution_guide.get_args()
-    p_constraints = model_config.p_distribution_guide.arg_constraints
-    p_params = {}
-    for param_name, constraint in p_constraints.items():
-        p_params[param_name] = numpyro.param(
-            f"p_{param_name}", p_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate distribution parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample("p", model_config.p_distribution_guide.__class__(**p_params))
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    setup_and_sample_parameter("p", model_config.p_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_components, n_genes)
     )
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_components, n_genes)
     )
-
-    # Extract p_capture distribution values
-    p_capture_values = model_config.p_capture_distribution_guide.get_args()
-    # Extract p_capture distribution parameters and constraints
-    p_capture_constraints = (
-        model_config.p_capture_distribution_guide.arg_constraints
+    setup_and_sample_parameter(
+        "p_capture",
+        model_config.p_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
     )
-    # Initialize parameters for each constraint in the distribution
-    p_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in p_capture_constraints.items():
-        p_capture_params[param_name] = numpyro.param(
-            f"p_capture_{param_name}",
-            jnp.ones(n_cells) * p_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (p_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **p_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in p_capture_params.items()
-            }
-            numpyro.sample(
-                "p_capture",
-                model_config.p_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
 
 
 # ------------------------------------------------------------------------------
@@ -2757,8 +2056,8 @@ def zinbvcp_mixture_guide_odds_ratio(
     batch_size=None,
 ):
     """
-    Beta-Prime reparameterized variational guide for the Zero-Inflated Negative Binomial
-    mixture model with variable capture probability.
+    Beta-Prime reparameterized variational guide for the Zero-Inflated Negative
+    Binomial mixture model with variable capture probability.
 
     This guide implements a Beta-Prime parameterization that captures the
     correlation between the success probability p and dispersion parameters r
@@ -2773,8 +2072,7 @@ def zinbvcp_mixture_guide_odds_ratio(
           β_capture) for each cell c OR phi_capture_c ~ BetaPrime(α_φ_capture,
           β_φ_capture) for odds ratio parameterization
         - Deterministic relationships:
-            p = 0 / (1 + φ)
-            r_{k,g} = μ_{k,g} * φ
+            p = 0 / (1 + φ) r_{k,g} = μ_{k,g} * φ
 
     The guide samples from these distributions to approximate the true
     posterior. The Beta-Prime parameterization provides a natural way to model
@@ -2787,136 +2085,54 @@ def zinbvcp_mixture_guide_odds_ratio(
     n_genes : int
         Number of genes in the dataset
     model_config : ModelConfig
-        Configuration object containing guide distributions for model parameters:
-        - mixing_distribution_guide: Guide distribution for mixture weights
-        - phi_distribution_guide: Guide distribution for φ (BetaPrime
-        distribution)
-        - mu_distribution_guide: Guide distribution for gene means μ
-        - gate_distribution_guide: Guide distribution for dropout probabilities
-        - phi_capture_distribution_guide: Guide distribution for capture
-          probabilities (odds ratio parameterization)
+        Configuration object containing guide distributions for model
+        parameters:
+            - mixing_distribution_guide: Guide distribution for mixture weights
+            - phi_distribution_guide: Guide distribution for φ (BetaPrime
+              distribution)
+            - mu_distribution_guide: Guide distribution for gene means μ
+            - gate_distribution_guide: Guide distribution for dropout
+              probabilities
+            - phi_capture_distribution_guide: Guide distribution for capture
+              probabilities (odds ratio parameterization)
     counts : array-like, optional
         Observed counts matrix (kept for API consistency)
     batch_size : int, optional
         Mini-batch size (kept for API consistency)
     """
-    # Add checks for required distributions
-    if model_config.mixing_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'mixing_distribution_guide'."
-        )
-    if model_config.phi_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'phi_distribution_guide'.")
-    if model_config.mu_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'mu_distribution_guide'.")
-    if model_config.gate_distribution_guide is None:
-        raise ValueError("Odds ratio guide requires 'gate_distribution_guide'.")
-    if model_config.phi_capture_distribution_guide is None:
-        raise ValueError(
-            "Odds ratio guide requires 'phi_capture_distribution_guide'."
-        )
+    # Validate required distributions
+    validate_required_distributions(
+        model_config,
+        [
+            "mixing_distribution_guide",
+            "phi_distribution_guide",
+            "mu_distribution_guide",
+            "gate_distribution_guide",
+            "phi_capture_distribution_guide",
+        ],
+    )
 
     # Extract number of components
     n_components = model_config.n_components
 
-    # Define mixing distribution parameters
-    mixing_values = model_config.mixing_distribution_guide.get_args()
-    mixing_constraints = model_config.mixing_distribution_guide.arg_constraints
-    mixing_params = {}
-    for param_name, constraint in mixing_constraints.items():
-        mixing_params[param_name] = numpyro.param(
-            f"mixing_{param_name}",
-            mixing_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define phi distribution parameters
-    phi_values = model_config.phi_distribution_guide.get_args()
-    phi_constraints = model_config.phi_distribution_guide.arg_constraints
-    phi_params = {}
-    for param_name, constraint in phi_constraints.items():
-        phi_params[param_name] = numpyro.param(
-            f"phi_{param_name}", phi_values[param_name], constraint=constraint
-        )
-
-    # Define mu distribution parameters
-    mu_values = model_config.mu_distribution_guide.get_args()
-    mu_constraints = model_config.mu_distribution_guide.arg_constraints
-    mu_params = {}
-    for param_name, constraint in mu_constraints.items():
-        mu_params[param_name] = numpyro.param(
-            f"mu_{param_name}",
-            jnp.ones((n_components, n_genes)) * mu_values[param_name],
-            constraint=constraint,
-        )
-
-    # Define gate distribution parameters
-    gate_values = model_config.gate_distribution_guide.get_args()
-    gate_constraints = model_config.gate_distribution_guide.arg_constraints
-    gate_params = {}
-    for param_name, constraint in gate_constraints.items():
-        gate_params[param_name] = numpyro.param(
-            f"gate_{param_name}",
-            jnp.ones((n_components, n_genes)) * gate_values[param_name],
-            constraint=constraint,
-        )
-
-    # Sample from variational distributions
-    numpyro.sample(
-        "mixing_weights",
-        model_config.mixing_distribution_guide.__class__(**mixing_params),
+    # Set up and sample parameters using helper functions
+    setup_and_sample_parameter(
+        "mixing_weights", model_config.mixing_distribution_guide
     )
-    numpyro.sample(
-        "phi", model_config.phi_distribution_guide.__class__(**phi_params)
+    setup_and_sample_parameter("phi", model_config.phi_distribution_guide)
+    setup_and_sample_parameter(
+        "mu", model_config.mu_distribution_guide, (n_components, n_genes)
     )
-    numpyro.sample(
-        "mu", model_config.mu_distribution_guide.__class__(**mu_params)
+    setup_and_sample_parameter(
+        "gate", model_config.gate_distribution_guide, (n_components, n_genes)
     )
-    numpyro.sample(
-        "gate", model_config.gate_distribution_guide.__class__(**gate_params)
+    setup_and_sample_parameter(
+        "phi_capture",
+        model_config.phi_capture_distribution_guide,
+        cell_specific=True,
+        n_cells=n_cells,
+        batch_size=batch_size,
     )
-
-    # Extract phi_capture distribution values
-    phi_capture_values = model_config.phi_capture_distribution_guide.get_args()
-    # Extract phi_capture distribution parameters and constraints
-    phi_capture_constraints = (
-        model_config.phi_capture_distribution_guide.arg_constraints
-    )
-    # Initialize parameters for each constraint in the distribution
-    phi_capture_params = {}
-    # Loop through each constraint in the distribution
-    for param_name, constraint in phi_capture_constraints.items():
-        phi_capture_params[param_name] = numpyro.param(
-            f"phi_capture_{param_name}",
-            jnp.ones(n_cells) * phi_capture_values[param_name],
-            constraint=constraint,
-        )
-
-    # Use plate for handling local parameters (phi_capture)
-    if batch_size is None:
-        with numpyro.plate("cells", n_cells):
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **phi_capture_params
-                ),
-            )
-    else:
-        with numpyro.plate(
-            "cells",
-            n_cells,
-            subsample_size=batch_size,
-        ) as idx:
-            # Index the parameters before creating the distribution
-            batch_params = {
-                name: param[idx] for name, param in phi_capture_params.items()
-            }
-            numpyro.sample(
-                "phi_capture",
-                model_config.phi_capture_distribution_guide.__class__(
-                    **batch_params
-                ),
-            )
 
 
 # ------------------------------------------------------------------------------
