@@ -1149,7 +1149,7 @@ def nbvcp_guide_standard(
         model_config,
         [
             "p_distribution_guide",
-            "r_distribution_guide", 
+            "r_distribution_guide",
             "p_capture_distribution_guide",
         ],
     )
@@ -1845,7 +1845,6 @@ def zinbvcp_guide_odds_ratio(
         n_cells=n_cells,
         batch_size=batch_size,
     )
-
 
 
 # ------------------------------------------------------------------------------
