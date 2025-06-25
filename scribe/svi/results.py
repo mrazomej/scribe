@@ -954,15 +954,15 @@ class ScribeSVIResults:
         """
         Enable indexing of ScribeSVIResults object.
         """
+        # If index is a boolean mask, use it directly
+        if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
+            bool_index = index
         # Handle integer indexing
-        if isinstance(index, int):
+        elif isinstance(index, int):
             # Initialize boolean index
             bool_index = jnp.zeros(self.n_genes, dtype=bool)
             # Set True for the given index
             bool_index = bool_index.at[index].set(True)
-            # Set index to boolean index
-            index = bool_index
-
         # Handle slice indexing
         elif isinstance(index, slice):
             # Get indices from slice
@@ -971,43 +971,38 @@ class ScribeSVIResults:
             bool_index = jnp.zeros(self.n_genes, dtype=bool)
             # Set True for the given indices
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
-            # Set index to boolean index
-            index = bool_index
-
-        # Handle list/array indexing
-        elif not isinstance(index, (bool, jnp.bool_)) and not isinstance(
-            index[-1], (bool, jnp.bool_)
+        # Handle list/array indexing (by integer indices)
+        elif isinstance(index, (list, np.ndarray, jnp.ndarray)) and not (
+            isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool
         ):
-            # Get indices from list/array
             indices = jnp.array(index)
-            # Initialize boolean index
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
-            # Set index to boolean index
-            index = bool_index
+        else:
+            raise TypeError(f"Unsupported index type: {type(index)}")
 
         # Create new params dict with subset of parameters
-        new_params = self._subset_params(self.params, index)
+        new_params = self._subset_params(self.params, bool_index)
 
         # Create new metadata if available
-        new_var = self.var.iloc[index] if self.var is not None else None
+        new_var = self.var.iloc[bool_index] if self.var is not None else None
 
         # Create new posterior samples if available
         new_posterior_samples = (
-            self._subset_posterior_samples(self.posterior_samples, index)
+            self._subset_posterior_samples(self.posterior_samples, bool_index)
             if self.posterior_samples is not None
             else None
         )
 
         # Create new predictive samples if available
         new_predictive_samples = (
-            self._subset_predictive_samples(self.predictive_samples, index)
+            self._subset_predictive_samples(self.predictive_samples, bool_index)
             if self.predictive_samples is not None
             else None
         )
 
         # Create new instance with subset data
         return self._create_subset(
-            index=index,
+            index=bool_index,
             new_params=new_params,
             new_var=new_var,
             new_posterior_samples=new_posterior_samples,
@@ -2068,7 +2063,7 @@ class ScribeSVIResults:
         # Check if this is a mixture model
         if self.n_components is None or self.n_components <= 1:
             raise ValueError(
-                "Mixture component entropy calculation only applies to mixture " 
+                "Mixture component entropy calculation only applies to mixture "
                 "models with multiple components"
             )
 
