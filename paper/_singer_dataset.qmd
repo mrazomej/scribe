@@ -1,0 +1,56 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# Simple test dataset
+
+Throughout the following sections, we will exemplify the mathematical and
+practical aspects of the models presented in this paper using a simple test
+dataset from @singer2014. This dataset emerges from a fundamental question in
+stem cell biology: why do genetically identical embryonic stem cells (ESCs)
+express the same genes at vastly different levels?
+
+Singer and colleagues used single-molecule RNA-FISH to peer into individual
+mouse ESCs and count mRNA molecules for key regulators like *Rex1* and *Nanog*
+(core pluripotency factors that maintain stem cell identity), *Rest* (a
+transcriptional repressor), and *Prdm14* (a pluripotency regulator controlling
+DNA methylation). Rather than seeing uniform expression across cells, they
+discovered striking heterogeneity - some cells had high mRNA counts while others
+had low counts for the same genes.
+
+The experimental approach was elegantly direct: fix ESCs in suspension,
+hybridize fluorescent probes to specific mRNAs, image individual cells, and use
+automated analysis to count transcripts. Across ~400 cells per sample and 36
+ESC-related genes, this revealed distinct patterns---*Rex1* and *Nanog* showed
+bimodal distributions suggesting two discrete cellular states, while genes like
+*Prdm14* exhibited "long-tailed" distributions with rare bursts of high
+expression.
+
+This dataset serves as an exceptionally valuable testing ground for our models
+for several reasons. First, it focuses on just four carefully chosen genes
+rather than attempting to measure an entire transcriptome, allowing us to deeply
+understand the behavior of each gene without the complexity of thousands of
+measurements. Second, single-molecule FISH provides vastly more precise
+transcript counts than single-cell RNA-seq---we can trust that a count of 50
+mRNA molecules truly represents 50 molecules, not a noisy estimate influenced by
+capture efficiency, amplification bias, or dropout events. This precision gives
+us a clean "toy dataset" where we can test and clearly explain the fundamental
+ideas behind the mixture models and state detection methods that we later apply
+to noisier, higher-dimensional single-cell RNA-seq data.
+
+@fig-SI_singer_hist and @fig-SI_singer_ecdf show the histograms and ECDFs of the
+mRNA counts for the four genes in the @singer2014 dataset. Since our models work
+directly with the mRNA counts, we do not bin the histograms, but rather plot all
+the possible single counts. The ECDF becomes a useful tool to visualize as the
+histograms have a lot of noise due to the low number of cells.
+
+![**Singer et al. (2014) dataset histograms.** Histograms of the mRNA counts for
+the four genes in the @singer2014 dataset. The histograms are normalized to have
+unit area. ](./fig/supplementary/figSI_singer_hist){#fig-SI_singer_hist}
+
+![**Singer et al. (2014) dataset ECDFs.** Empirical cumulative distribution
+functions of the mRNA counts for the four genes in the @singer2014 dataset. The
+ECDFs are normalized to have unit area. ](./fig/supplementary/figSI_singer_ecdf){#fig-SI_singer_ecdf}
