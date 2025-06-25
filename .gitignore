@@ -111,6 +111,7 @@ data/**
 output/**
 **/output/**
 **/fig/**
+!code/fig/**
 sandbox/**
 paper/**_files/
 paper/**html
