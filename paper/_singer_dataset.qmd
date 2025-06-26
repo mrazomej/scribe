@@ -5,7 +5,7 @@ bibliography: references.bib
 csl: ieee.csl
 ---
 
-# Simple test dataset
+# Simple test dataset {#sec-singer_dataset}
 
 Throughout the following sections, we will exemplify the mathematical and
 practical aspects of the models presented in this paper using a simple test
