@@ -1,0 +1,196 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# SVI inference with standard parameterization {#sec-singer_svi_nbdm}
+
+As described in @sec-vi_primer, stochastic variational inference (SVI)
+transforms the computationally-intensive MCMC sampling into an optimization
+problem. For this, we must define a variational distribution
+$q_\phi(\underline{\theta})$ that approximates the true posterior
+$p(\underline{\theta} \mid \underline{x})$. Recall that, as we derived in
+@sec-dirichlet-multinomial, the parameters we are after are
+
+$$
+\underline{\theta} = \left(p, \underline{r}\right),
+$${#eq-singer_svi_nbdm_theta}
+
+where $p$ is the success probability and $\underline{r}$ is the vector of
+gene-specific parameters. Both parameters are the input of the negative binomial
+distribution, where we assume all genes share the same success probability $p$.
+
+One very reasonable choice for the variational distribution is to assume the
+same functional form as the prior distribution. We say "reasonable," because for
+a set of models---the so-called conjugate models---the posterior distribution
+has the same functional form as the prior distribution. That is not the case for
+our model; nevertheless, this is a good starting point. Thus, we define what we
+call the `standard` parameterization, to be a variational distribution of the
+form
+
+$$
+q_\phi(\underline{\theta}) =  q_\phi(p) \prod_{g=1}^G q_\phi(r_g),
+$${#eq-singer_svi_nbdm_q_phi}
+
+where $\phi$ is the set of variational parameters. Assuming all parameters are
+independent of each other is the so-called **mean-field approximation**. By
+construction, this will ignore the potential correlation between the parameters.
+However, whether that is a good approximation or not is an empirical question.
+
+Since the $p$ parameter is a probability ($p \in [0, 1]$), we can use a Beta
+distribution for both the prior and the variational distribution. The Beta
+distribution is defined by two parameters, $\alpha_p$ and $\beta_p$, which are
+constrained to be positive.
+
+$$
+p \sim \text{Beta}(\alpha_p, \beta_p), \quad \alpha_p > 0, \beta_p > 0.
+$${#eq-singer_svi_nbdm_p_prior}
+
+For the gene-specific parameters, we require a positive real number. A natural
+choice is to use either the Gamma distribution or the LogNormal distribution.
+Empirically, we have found that the LogNormal distribution performs
+better---although `scribe` supports both distributions---so we will go ahead and
+define the variational distribution for each $r_g$ parameter as
+
+$$
+r_g \sim \text{LogNormal}(\mu_g, \sigma_g), \quad \sigma_g > 0.
+$${#eq-singer_svi_nbdm_r_prior}
+
+Thus, with these choices, our `standard` variational distribution takes the form
+
+$$
+q_\phi(\underline{\theta}) = 
+\text{Beta}(\alpha_p, \beta_p) 
+\prod_{g=1}^G \text{LogNormal}(\mu_g, \sigma_g),
+$${#eq-singer_svi_nbdm_q_phi_standard}
+
+where 
+
+$$
+\underline{\phi} = \left(
+    \alpha_p, \beta_p, \underline{\mu}, \underline{\sigma}\right
+),
+$${#eq-singer_svi_nbdm_phi}
+
+becomes the set of parameters to optimize.
+
+## SVI `standard` inference on Singer dataset
+
+Let's go back to the @sec-singer_dataset dataset and run the SVI inference. With
+`scribe`, running SVI instead of MCMC is as straightforward as changing the
+inference method. Thus, after loading the data, we can run the SVI inference as:
+
+```{python}
+# | eval: false
+svi_results = scribe.run_scribe(
+    inference_method="svi",
+    parameterization="standard",
+    counts=data,  # this is the counts matrix
+    n_steps=50_000,  # number of steps
+)
+```
+
+As we did with the MCMC inference, let's evaluate the model fit. One important
+difference with respect to running MCMC is that the results returned by SVI are
+not samples from the posterior distribution, but rather the parameters that
+maximize the variational objective function. However, we simply recover our 
+variational posterior by plugging the resulting parameters into the functional
+form of the variational distribution. `scribe` this and many other operations
+incredibly simple.
+
+@fig-SI_singer_svi_standard_nbdm_posterior shows the posterior distribution for
+the $p$ and the $\underline{r}$ parameters. We can see that the posterior
+distribution for the $p$ parameter is centered around 0.98 as it was with the
+MCMC inference, while the posterior distributions for the $r$ parameters vary
+significantly from each other, again, as we saw with the MCMC inference.
+
+![**Posterior distribution for the $p$ parameter.** The posterior distribution
+for the $p$ parameter is centered around 0.98, while the posterior distributions
+for the $r$ parameters vary significantly from each other.](
+fig/supplementary/figSI_singer_svi_standard_nbdm_posterior){#fig-SI_singer_svi_standard_nbdm_posterior}
+
+What if we want to visualize 2D projections of the posterior distribution? For
+that we can simply generate samples from the resulting variational posterior.
+These samples can be thought of the equivalent of the MCMC output---although we
+should always keep in mind that SVI outputs "approximate analytical posterior
+distributions" since we assume a specific functional form for the variational
+distribution. Again, `scribe` makes this incredibly simple. We can generate
+posterior samples by running:
+
+```{python}
+# | eval: false
+svi_results.get_posterior_samples(n_samples=5_000)
+```
+
+As with the MCMC inference, we can visualize the posterior distribution as a
+corner plot, showing all pairs of parameters.
+@fig-SI_singer_svi_standard_nbdm_corner shows the corner plot for the samples
+out of the variational posterior. The marginal distributions look almost
+undistinguishable from the ones obtained with the MCMC inference. However, the
+correlation between the $p$ parameter and all the $r$ parameters is clearly not
+present. This is by design, since we are assuming independence between the
+parameters. Nevertheless, it is incredibly encouraging to see that the
+variational posterior is able to capture the marginal distributions as well as
+the "golden-standard" MCMC samples.
+
+![**Corner plot for the parameters of the model.** This plot shows the joint
+posterior distribution for all pairs of parameters.](
+fig/supplementary/figSI_singer_svi_standard_nbdm_corner){#fig-SI_singer_svi_standard_nbdm_corner}
+
+## Posterior predictive checks
+
+With these encouraging results, we can visualize the ability of our variational
+approximation to predict the data by generating posterior predictive samples.
+@fig-SI_singer_svi_standard_nbdm_ppc shows the posterior predictive checks for
+all four genes. The black line represents the true data, while the colored bands
+represent the 95%, 68%, and 50% credible regions for the posterior predictive
+checks. We can see that the model is able to capture the data relatively well.
+Although, there might be a little excess of density outside of the data.
+
+![**Posterior predictive checks for the model.** The black line represents the
+true data, while the colored bands represent the 95%, 68%, and 50% credible
+regions for the posterior predictive checks. We can see that the model is able
+to capture the data well, as the credible regions for the posterior predictive
+checks are narrow and centered around the true values.](
+fig/supplementary/figSI_singer_svi_standard_nbdm_ppc){#fig-SI_singer_svi_standard_nbdm_ppc}
+
+To better understand if there is more uncertainty in the model, we can plot the
+ECDF of the posterior predictive checks.
+@fig-SI_singer_svi_standard_nbdm_ppc_ecdf shows the ECDF credible regions for
+the posterior predictive checks. In this visualization, we definitely see that
+the credible regions for all but *Prdm14* are much wider than the ones obtained
+with the MCMC inference.
+
+![**ECDF credible regions for the posterior predictive checks.** These are the
+Bayesian analogues to the frequentist confidence intervals, but with a more
+principled interpretation. It is correct to interpret the, say, 95% credible
+region as the region that contains the true parameter with 95% probability.](
+fig/supplementary/figSI_singer_svi_standard_nbdm_ppc_ecdf){#fig-SI_singer_svi_standard_nbdm_ppc_ecdf}
+
+The question now is: why if the marginal distributions look so similar, the
+posterior predictive checks are so different? The answer is that ignoring the
+correlation between the $p$ and the $\underline{r}$ parameters comes at a cost
+when predicting the data. We saw with MCMC that these parameters are negatively
+correlated, thus, if for one of the samples $p$ comes out to be high, we would
+expect the $r$ parameters to be low. However, with our variational posterior
+defined in @eq-singer_svi_nbdm_q_phi_standard, we cannot capture this
+correlation.
+
+For the purposes of normalizing the dataset, we only need to know the
+$\underline{r}$ parameters. Therefore, we could still use these results to
+compute what fraction of the transcriptome each gene represents. Nevertheless,
+not being able to generate realistic datasets from our variational posterior is
+a significant limitation. In the next section, we will explore a
+reparameterization of the model and the variational distribution that will allow
+us to better capture the data generating process.
+
+## Conclusion
+
+The `standard` parameterization is a good starting point for SVI inference. It
+is simple to implement and it is able to capture the marginal distributions of
+the parameters as well as the "golden-standard" MCMC samples. However, it is not
+able to capture the correlation between the $p$ parameter and the
+$\underline{r}$ parameters. This is a consequence of the mean-field
+approximation, making the posterior predictive checks less reliable.
