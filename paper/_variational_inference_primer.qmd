@@ -5,7 +5,7 @@ bibliography: references.bib
 csl: ieee.csl
 ---
 
-## Primer on Variational Inference{#sec-vi_primer}
+# Primer on Variational Inference{#sec-vi_primer}
 
 In this section, we provide a concise introduction to variational inference,
 particularly focusing on stochastic variational inference (SVI) as employed in
@@ -246,7 +246,7 @@ bound becomes tighter, the approximate posterior $q_\phi(\underline{\theta})$
 approaches the true posterior $\pi(\underline{\theta} \mid \underline{x})$ more
 closely.
 
-### Stochastic Variational Inference
+## Stochastic Variational Inference
 
 To optimize the ELBO in @eq-vi_elbo, we employ **Stochastic Variational
 Inference** (SVI), a scalable approach that leverages stochastic optimization
