@@ -33,6 +33,7 @@ dependencies = [
     "numpyro==0.17.0",
     "blackjax==1.2.5",
     "multipledispatch>=1.0.0",
+    "corner>=2.2.3",
 ]
 
 # Development dependencies
