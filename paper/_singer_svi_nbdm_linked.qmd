@@ -1,0 +1,178 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# SVI inference with linked parameterization {#sec-singer_svi_nbdm_linked}
+
+In @sec-singer_svi_nbdm_standard, we defined the standard parameterization for
+the variational distribution to match that of the prior distribution. Despite
+matching the marginal distributions of MCMC samples, this led to an overestimate
+of the uncertainty when predicting the data because of the lack of correlation
+between the $p$ and $\underline{r}$ parameters.
+
+Ideally, we would like to define a variational distribution that captures the
+correlation between the $p$ and $\underline{r}$ parameters, but still takes
+advantage of the mean-field approximation assumption in which each parameter can
+be independently optimized. Luckily, the negative binomial distribution provides
+exactly the way to reparameterize the model in a way that allows us to capture
+the correlation between the $p$ and $\underline{r}$ parameters. Let 
+
+$$
+u \sim \text{NegativeBinomial}(r, p),
+$${#eq-singer_svi_nbdm_linked_u}
+
+as we assume in our model. We know that the mean of $u$ is given by
+
+$$
+\mu \equiv \left\langle u \right\rangle = r \frac{1 - p}{p}.
+$${#eq-singer_svi_nbdm_linked_mean}
+
+Thus, the mean depends on both $p$ and $r$. We can then define our variational
+posterior in terms of the mean $\mu$ and the success probability $p$, while
+being able to compute the $r$ parameter as
+
+$$
+r = \mu \frac{p}{1 - p}.
+$${#eq-singer_svi_nbdm_linked_r}
+
+Our variational distribution can then be defined as
+
+$$
+q_\phi(\underline{\theta}) =  q_\phi(p) \prod_{g=1}^G q_\phi(\mu_g),
+$${#eq-singer_svi_nbdm_linked_q_phi}
+
+where $\phi$ is again the set of variational parameters to optimize over. This
+seemingly innocuous change has a profound effect on the performance of the
+variational approximation when predicting the data, as we will see next.
+
+The definition of each individual parameter distribution can effectively remain
+the same as in the standard parameterization, i.e., for $p$ we have
+
+$$
+p \sim \text{Beta}(\alpha_p, \beta_p),
+$${#eq-singer_svi_nbdm_linked_p}
+
+and for $\mu_g$ we have
+
+$$
+\mu_g \sim \text{LogNormal}(\hat{\mu}_g, \sigma_g),
+$${#eq-singer_svi_nbdm_linked_mu}
+
+or any other strictly positive distribution.
+
+**Note:** The `scribe` implementation of the linked parameterization defines
+$r$ as
+
+$$
+r = \mu \frac{1 - p}{p}.
+$${#eq-singer_svi_nbdm_linked_r_scribe}
+
+This is equivalent to the definition of $r$ in @eq-singer_svi_nbdm_linked_r,
+since `NumPyro` inverts the role between $p$ and $1 - p$ with respect to our
+definition.
+
+## SVI `linked` inference on Singer dataset
+
+Once again let us return to the @sec-singer_dataset dataset and run the SVI
+inference with this parameterization. With `scribe`, running SVI with this
+parameterization is as straightforward as changing the parameterization
+argument.
+
+```{python}
+# | eval: false
+svi_results = scribe.run_scribe(
+    inference_method="svi",
+    parameterization="linked",
+    counts=data,  # this is the counts matrix
+    n_steps=100_000,  # number of steps
+)
+```
+
+As we did with the standard parameterization, let's evaluate the model fit.
+Recall that SVI returns the optimized parameters, which we can use to compute
+the posterior distribution approximation. In this case, we obtain the parameters
+not for the $r$ distributions, but for the $\mu$ distributions.
+@fig-SI_singer_svi_linked_nbdm_posterior shows the resulting posterior
+distribution for the $p$ and the $\mu$ parameters. We can see that the posterior
+distribution for the $p$ parameter is still centered around 0.98, while the
+posterior distributions for the $\mu$ parameters vary in what visually looks
+like a simple re-scaling of the original $r$ parameters.
+
+Another nice feature from this parameterization is that we can instantly know
+the expected mean expression level for each gene, reading out the posterior
+distribution for the $\mu$ parameters. We can see therefore that the expression
+of these four genes varies between $\sim$ 15 mRNA per cell for *PrDM14* and
+$\sim$ 125 mRNA per cell for *Rex1*.
+
+![**Posterior distribution for the $p$ parameter.** The posterior distribution
+for the $p$ parameter is centered around 0.98, while the posterior distributions
+for the $\mu$ parameters vary significantly from each other.](
+fig/supplementary/figSI_singer_svi_linked_nbdm_posterior){#fig-SI_singer_svi_linked_nbdm_posterior}
+
+As with the standard parameterization, we can visualize the joint posterior
+distribution for all pairs of parameters. @fig-SI_singer_svi_linked_nbdm_corner
+shows the resulting corner plot. This time, the pairs include both
+$\underline{\mu}$ and $\underline{r}$ along the $p$ parameter. Upon close
+comparison, we can see that the marginal distributions for the $p$ and the
+$\underline{r}$ parameters match both the MCMC and the `standard` variational
+posterior. However, when looking at the joint distributions between the $p$
+and the $\underline{r}$ parameters, we can see that the `linked` variational
+posterior is able to capture the expected negative correlation.
+
+Moreover, all of the $\underline{r}$ parameters exhibit a high degree of
+positive correlation between each other. This is an artifact of the definition
+of $r$ in @eq-singer_svi_nbdm_linked_r, where they all share the same $p$
+parameter, which is why we see a high degree of positive correlation.
+
+![**Corner plot for the parameters of the model.** This plot shows the joint
+posterior distribution for all pairs of
+parameters.](fig/supplementary/figSI_singer_svi_linked_nbdm_corner){#fig-SI_singer_svi_linked_nbdm_corner}
+
+## Posterior predictive checks
+
+Lastly, since we are now able to capture the correlation between the $p$ and
+the $\underline{r}$ parameters, we would expect the model to be able to capture
+the data generative process better than the `standard` parameterization.
+@fig-SI_singer_svi_linked_nbdm_ppc shows the posterior predictive checks for all
+four genes. The black line represents the true data, while the colored bands
+represent the 95%, 68%, and 50% credible regions for the posterior predictive
+checks. We can see that the credible regions are significantly narrower than the
+ones obtained with the `standard` parameterization. Moreover, these bands look
+indistinguishable from the ones obtained with the MCMC inference.
+
+![**Posterior predictive checks for the model.** The black line represents the
+true data, while the colored bands represent the 95%, 68%, and 50% credible
+regions for the posterior predictive checks. We can see that the model is able
+to capture the data well, as the credible regions for the posterior predictive
+checks are narrow and centered around the true values.](
+fig/supplementary/figSI_singer_svi_linked_nbdm_ppc){#fig-SI_singer_svi_linked_nbdm_ppc}
+
+This last point is better visualized by looking at the ECDF credible regions for
+the posterior predictive checks. @fig-SI_singer_svi_linked_nbdm_ppc_ecdf shows
+the ECDF credible regions. We can confirm that the credible regions are
+significantly narrower than the ones obtained with the `standard`
+parameterization.
+
+![**ECDF credible regions for the posterior predictive checks.** These are the
+Bayesian analogues to the frequentist confidence intervals, but with a more
+principled interpretation. It is correct to interpret the, say, 95% credible
+region as the region that contains the true parameter with 95% probability.](
+fig/supplementary/figSI_singer_svi_linked_nbdm_ppc_ecdf){#fig-SI_singer_svi_linked_nbdm_ppc_ecdf}
+
+There is a potential caveat to this parameterization not visible for this
+particular dataset. The computation of $r$ in @eq-singer_svi_nbdm_linked_r can
+suffer from numerical instability when $p$ is very close to 0 or 1, making this
+constrained optimization problem potentially problematic. In the next section,
+we will see how to address this issue by yet again reparameterizing the
+variational distribution.
+
+## Conclusion
+
+In this section, we have seen how to reparameterize the model in a way that
+allows us to capture the correlation between the $p$ and $\underline{r}$
+parameters. This leads to a significant improvement in the performance of the
+variational approximation when predicting the data, as we have seen in the
+posterior predictive checks.
