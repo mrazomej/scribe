@@ -1,0 +1,135 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# MCMC inference on the Singer dataset
+
+Our negative binomial-Dirichlet-multinomial model, as derived in
+@sec-dirichlet-multinomial, can be directly sampled using Markov Chain Monte
+Carlo (MCMC). MCMC is considered the golden standard for Bayesian inference, as
+it is a general framework that can be applied to any model. Its limitations come
+when scaling the number of dimensions and the size of the dataset. Although, we
+have demonstrated that `scribe` is capable of handling MCMC sampling for a full
+transcriptome dataset, it requires specialized hardware (we tested it with an
+H100 NVIDIA GPU), making it less accessible to the general user.
+
+Nevertheless, this is not a problem from our toy dataset with only 4 genes. Once
+we load thte data, running the MCMC inference is straightforward:
+
+```{python}
+# | eval: false
+mcmc_results = scribe.run_scribe(
+    inference_method="mcmc",
+    parameterization="standard",
+    counts=data,  # this is the counts matrix
+    n_samples=5_000,  # number of samples
+    n_warmup=1_000,  # number of warmup samples
+)
+```
+
+The results from this MCMC run will serve as the reference for the rest of the
+analysis, where we will compare the performance of our model inferred with MCMC
+versus the performance of our model inferred with variational inference. But,
+before doing that, we will evaluate the model fit. 
+
+@fig-SI_singer_mcmc_standard_nbdm_trace shows the trace plots for the parameters
+of the model. The left column shows the resulting posterior distribution for the
+$p$ parameter (upper left), and the four different $r$ parameters (lower left).
+We can see that the posterior distribution for the $p$ parameter is centered
+around 0.98, while the posterior distributions for the $r$ parameters vary
+significantly from each other. The right column shows the trace plots for the
+parameters. These are simple diagnostic plots that allow us to assess the
+convergence of the MCMC chain. What one looks for is a well-mixed chain, i.e., a
+chain that looks like a "random walk" and that does not show any patterns. This
+is the case for all the parameters, as we can see in the trace plots.
+
+![**Trace plots for the parameters of the model.** The left column shows the
+resulting posterior distribution for the $p$ parameter (upper left), and the
+four different $r$ parameters (lower left). We can see that the posterior
+distribution for the $p$ parameter is centered around 0.98, while the posterior
+distributions for the $r$ parameters vary significantly from each other. The
+lower left plot shows the trace plot for the $r$ parameters, and we can see that
+the chain is well-mixed, as the lines do not show any patterns. The lower right
+plot shows the trace plot for the $p$ parameter, and we can see that the chain
+is well-mixed, as the line does not show any patterns.](
+fig/supplementary/figSI_singer_mcmc_standard_nbdm_trace.png){#fig-SI_singer_mcmc_standard_nbdm_trace}
+
+
+A much more interesting plot for our purposes is the so-called corner plot. This
+plot shows the joint posterior distribution for all pairs of parameters,
+allowing us to assess whether there are any correlations between the parameters.
+@fig-SI_singer_mcmc_standard_nbdm_corner shows the corner plot for the
+parameters of the model. All posterior projections look unimodal, which is a
+good sign for the identifiability of the model. The key observation from this
+plot that will be important for the rest of the analysis is the correlation
+between the $p$ parameter and all the $r$ parameters. The shown negative
+correlation indicates that there is a "trade-off" between the two parameters,
+i.e., when the $p$ parameter is high, the $r$ parameters are low, and vice
+versa.
+
+![**Corner plot for the parameters of the model.** This plot shows the joint
+posterior distribution for all pairs of parameters, allowing us to assess
+whether there are any correlations between the parameters. All posterior
+projections look unimodal. The key observation from this plot that will be
+important for the rest of the analysis is the correlation between the $p$
+parameter and all the $r$ parameters.](
+fig/supplementary/figSI_singer_mcmc_standard_nbdm_corner){#fig-SI_singer_mcmc_standard_nbdm_corner}
+
+## Posterior predictive checks
+
+Finally, to truly assess the performance of the model, we need to perform
+posterior predictive checks. These are a set of diagnostic plots that allow us
+to assess how well the model is able to predict the data. In practice, we
+generate synthetic datasets by running the posterior parameters obtained from
+the MCMC through the likelihood function. Again, this is straightforward to do
+with `scribe`:
+
+```{python}
+# | eval: false
+ppc_samples = mcmc_results.get_ppc_samples()
+```
+
+@fig-SI_singer_mcmc_standard_nbdm_ppc shows the posterior predictive checks for
+all four genes. The black line represents the true data, while the colored bands
+represent the 95%, 68%, and 50% credible regions for the posterior predictive
+checks. These credible regions are the Bayesian analogues to the frequentist
+confidence intervals, but with a more principled interpretation. It is correct
+to interpret the, say, 95% credible region as the region that contains the true
+parameter with 95% probability. We can see that, in general the shaded regions
+cover most of the data. Interestingly, for *Prdm14*, the model overestimates the
+frequenchy of zero counts.
+
+![**Posterior predictive checks for the model.** The black line represents the
+true data, while the colored bands represent the 95%, 68%, and 50% credible
+regions for the posterior predictive checks. We can see that the model is able
+to capture the data well, as the credible regions for the posterior predictive
+checks are narrow and centered around the true values.](
+fig/supplementary/figSI_singer_mcmc_standard_nbdm_ppc){#fig-SI_singer_mcmc_standard_nbdm_ppc}
+
+Another way to visualize the posterior predictive checks is to plot the ECDF.
+@fig-SI_singer_mcmc_standard_nbdm_ppc_ecdf shows the ECDF credible regions for
+the posterior predictive checks. In this visualization, it is easier to see that
+the model is not able to fully capture the data. For example *Rex1* seems to
+present a bimodal distribution, and the *Rest* data shows a more sigmoidal-like
+shape compared to the model's predictions. However, we highlight that the
+apparent mismatch for *Prdm14* is a result of the model's overestimation of zero
+counts, not a complete failure of the model (compare with
+@fig-SI_singer_mcmc_standard_nbdm_ppc).
+
+![**ECDF credible regions for the posterior predictive checks.** These are the
+Bayesian analogues to the frequentist confidence intervals, but with a more
+principled interpretation. It is correct to interpret the, say, 95% credible
+region as the region that contains the true parameter with 95% probability.](
+fig/supplementary/figSI_singer_mcmc_standard_nbdm_ppc_ecdf){#fig-SI_singer_mcmc_standard_nbdm_ppc_ecdf}
+
+## Conclusion
+
+Overall, we can conclude that the simple negative binomial-Dirichlet-multinomial
+model does not fully capture the structure of this simple dataset. Later on, we
+will explore extensions of the original model that will allow us to better
+capture the data generating process. For now, we will take these results as the
+standard to aim for as we implement variational inference approximations that
+allow us to scale the model to the full transcriptome dataset.
