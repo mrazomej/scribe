@@ -259,6 +259,9 @@ for i, ax in enumerate(axes):
     ax.set_xlabel('counts')
     ax.set_ylabel('frequency')
 
+    # Add legend
+    ax.legend()
+
     # Set title with gene name
     ax.set_title(df.columns[i], fontsize=10)
 
