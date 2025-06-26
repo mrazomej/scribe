@@ -34,6 +34,9 @@ dependencies = [
     "blackjax==1.2.5",
     "multipledispatch>=1.0.0",
     "corner>=2.2.3",
+    "nbformat>=5.10.4",
+    "nbclient>=0.10.2",
+    "notebook>=7.4.3",
 ]
 
 # Development dependencies
