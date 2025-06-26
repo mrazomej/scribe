@@ -5,7 +5,7 @@ bibliography: references.bib
 csl: ieee.csl
 ---
 
-# SVI inference with standard parameterization {#sec-singer_svi_nbdm}
+# SVI inference with standard parameterization {#sec-singer_svi_nbdm_standard}
 
 As described in @sec-vi_primer, stochastic variational inference (SVI)
 transforms the computationally-intensive MCMC sampling into an optimization
