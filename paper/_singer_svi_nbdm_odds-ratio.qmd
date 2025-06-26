@@ -1,0 +1,157 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# SVI inference with odds-ratio parameterization {#sec-singer_svi_nbdm_odds-ratio}
+
+In @sec-singer_svi_nbdm_linked, we saw how to reparameterize the model in a way
+that allows us to capture the correlation between the $p$ and $\underline{r}$
+parameters. This leads to a significant improvement in the performance of the
+variational approximation when predicting the data. However, this
+parameterization might not be numerically stable when the success probability
+$p$ is very close to 0 or 1. The problem is that computing $r$ involves the
+ratio of the $p$ parameter,
+
+$$
+r = \mu \frac{p}{1 - p}.
+$${#eq-singer_svi_nbdm_odds-ratio_r}
+
+Luckily for us, we can change the constrained parameterization in a way that
+avoids this issue. The insight comes from the mathematical fact that if we have
+
+$$
+p \sim \text{Beta}(\alpha, \beta), \quad \text{with} \quad \alpha, \beta > 0,
+$${#eq-singer_svi_nbdm_odds-ratio_p}
+
+then it follows that the odds-ratio $\theta \equiv \frac{p}{1 - p}$ is
+distributed as
+
+$$
+\theta \sim \text{BetaPrime}(\alpha, \beta), \quad 
+\text{with} \quad \alpha, \beta > 0.
+$${#eq-singer_svi_nbdm_odds-ratio_theta}
+
+The Beta prime distribution is thus the distribution of the odds-ratio and has
+a closed form expression for the probability density function
+
+$$
+\pi(\theta \mid \alpha, \beta) = 
+\frac{\theta^{\alpha - 1} (1 + \theta)^{-\alpha - \beta}}{B(\alpha, \beta)},
+$${#eq-singer_svi_nbdm_odds-ratio_pi}
+
+where $B(\alpha, \beta)$ is the Beta function. This transformation takes the
+constrained optimization of $p \in [0, 1]$ to an unconstrained optimization of
+$\theta \in [0, \infty)$, making it numerically more stable.
+
+Given this odds-ratio parameter $\theta$, and a given mean expression level
+$\mu_g$, we can compute the $r$ parameter as
+
+$$
+r = \mu_g \theta,
+$${#eq-singer_svi_nbdm_odds-ratio_p}
+
+and the success probability $p$ as
+
+$$
+p = \frac{\theta}{1 + \theta}.
+$${#eq-singer_svi_nbdm_odds-ratio_p}
+
+Therefore, our `odds-ratio` parameterization defines a variational distribution
+of the form
+
+$$
+q_\phi(\theta, \underline{\mu}) =  q_\phi(\theta) \prod_{g=1}^G q_\phi(\mu_g),
+$${#eq-singer_svi_nbdm_odds-ratio_q_phi}
+
+where $\phi$ is again the set of variational parameters to optimize over. Our
+variational distributions for each parameter are then defined as
+
+$$
+\theta \sim \text{BetaPrime}(\alpha_\theta, \beta_\theta),
+$${#eq-singer_svi_nbdm_odds-ratio_q_theta}
+
+and for the mean expression levels as
+
+$$
+\mu_g \sim \text{LogNormal}(\hat{\mu}_g, \sigma_g),
+$${#eq-singer_svi_nbdm_odds-ratio_q_mu}
+
+or any other strictly positive distribution.
+
+## SVI `odds-ratio` inference on Singer dataset
+
+As usual, let us return to the @sec-singer_dataset dataset and run the SVI
+inference with this parameterization. The only change on the code we would need
+to run the inference is to change the parameterization argument.
+
+```{python}
+# | eval: false
+svi_results = scribe.run_scribe(
+    inference_method="svi",
+    parameterization="odds_ratio",
+    counts=data,  # this is the counts matrix
+    n_steps=50_000,  # number of steps
+)
+```
+
+Let's evaluate the model fit. The `odds_ratio` parameterization returns the
+optimized parameters for $\theta$ and $\underline{\mu}$.
+@fig-SI_singer_svi_odds-ratio_nbdm_posterior shows the posterior distribution
+for the $\theta$ parameter. We can see that the posterior distribution is
+centered around 0.02, while the posterior distributions for the $\mu$ parameters
+look exactly as those in the `linked` parameterization, which is what we would
+expect.
+
+![**Posterior distribution for the $\theta$ parameter.** The posterior
+distribution for the $\theta$ parameter is centered around 0.02, while the
+posterior distributions for the $\mu$ parameters vary significantly from each
+other.](fig/supplementary/figSI_singer_svi_odds-ratio_nbdm_posterior){#fig-SI_singer_svi_odds-ratio_nbdm_posterior}
+
+After generating posterior samples, we can plot the 2D projections of the
+posterior, including the $p$ and $\underline{r}$ parameters, computed
+deterministically from the $\theta$ and $\underline{mu}$ samples.
+@fig-SI_singer_svi_odds-ratio_nbdm_corner shows the resulting corner plot. The
+marginal distributions for $p$ and $\underline{r}$ are again effectively
+identical to the previous parameterizations and to the MCMC results. Moreover,
+the joint distributions for $p$ and $\underline{r}$ are again negatively
+correlated. So, everything looks as expected.
+
+![**Corner plot for the parameters of the model.** This plot shows the joint
+posterior distribution for all pairs of
+parameters.](fig/supplementary/figSI_singer_svi_odds-ratio_nbdm_corner){#fig-SI_singer_svi_odds-ratio_nbdm_corner}
+
+## Posterior predictive checks
+
+Finally, for completeness, let us also run the posterior predictive checks for
+this parameterization. @fig-SI_singer_svi_odds-ratio_nbdm_ppc shows the
+posterior predictive checks for all four genes. The black line represents the
+true data, while the colored bands represent the 95%, 68%, and 50% credible
+regions for the posterior predictive checks. We can see that the credible
+regions are indistinguishable from the ones obtained with the `linked`
+parameterization.
+
+![**Posterior predictive checks for the model.** The black line represents the
+true data, while the colored bands represent the 95%, 68%, and 50% credible
+regions for the posterior predictive checks. We can see that the model is able
+to capture the data well, as the credible regions for the posterior predictive
+checks are narrow and centered around the true values.](
+fig/supplementary/figSI_singer_svi_odds-ratio_nbdm_ppc){#fig-SI_singer_svi_odds-ratio_nbdm_ppc}
+
+This is even more clearly visible when looking at the ECDF credible regions.
+@fig-SI_singer_svi_odds-ratio_nbdm_ppc_ecdf shows the ECDF credible regions.
+
+![**ECDF credible regions for the posterior predictive checks.** These are the
+Bayesian analogues to the frequentist confidence intervals, but with a more
+principled interpretation. It is correct to interpret the, say, 95% credible
+region as the region that contains the true parameter with 95% probability.](
+fig/supplementary/figSI_singer_svi_odds-ratio_nbdm_ppc_ecdf){#fig-SI_singer_svi_odds-ratio_nbdm_ppc_ecdf}
+
+## Conclusion
+
+In this section, we have seen how to reparameterize the model in a way that
+allows us to capture the correlation between the $p$ and $\underline{r}$
+parameters, while being numerically more stable. This parameterization will be
+very powerful when applying it to larger full-transcriptome datasets.
