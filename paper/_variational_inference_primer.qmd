@@ -16,7 +16,13 @@ product of the likelihood and the prior distribution,
 
 $$
 \pi(\underline{x}, \underline{\theta}) =
-\pi(\underline{x} \mid \underline{\theta}) \pi(\underline{\theta}).
+\overbrace{
+\pi(\underline{x} \mid \underline{\theta}) 
+}^{\text{likelihood}}
+\,
+\overbrace{
+\pi(\underline{\theta})
+}^{\text{prior}}.
 $${#eq-vi_joint_dist}
 
 The central goal of Bayesian inference is to compute the posterior distribution
@@ -68,11 +74,13 @@ exhaustive grid-based evaluation requires sampling throughout the entire space,
 with most evaluations contributing little to the integral
 value.](./fig/supplementary/figSI_gaussian_peak){#fig-SI_gaussian_peak}
 
-While sophisticated sampling methods like Hamiltonian Monte Carlo can exploit
-gradient information to navigate high-dimensional probability landscapes more
-efficiently @betancourt2017, these approaches can become computationally
-prohibitive when dealing with large-scale datasets or complex model
-architectures. This limitation motivates the development of scalable
+While sophisticated sampling methods like Hamiltonian Monte Carlo---method used
+in @sec-singer_mcmc_nbdm---can exploit gradient information to navigate
+high-dimensional probability landscapes more efficiently @betancourt2017, these
+approaches can become computationally prohibitive when dealing with large-scale
+datasets or complex model architectures, unless we have access to sophisticated
+modern hardware such as GPUs capable of double precision arithmetic (such as
+NVIDIA's H100 GPUs). This limitation motivates the development of scalable
 approximate inference methods.
 
 Variational inference addresses these computational challenges by reformulating
@@ -86,8 +94,11 @@ multivariate normal distributions, then $\phi = (\underline{\mu},
 and covariance matrix $\underline{\underline{\Sigma}}$.
 
 The variational objective seeks to identify the member of this family that most
-closely resembles the true posterior. This resemblance is quantified using the
-Kullback-Leibler (KL) divergence, leading to the optimization problem,
+closely resembles the true posterior. In other words, we want to find the set of
+parameters $\phi$ that would make the approximate posterior
+$q_\phi(\underline{\theta})$ as similar as possible to the true posterior
+$\pi(\underline{\theta} \mid \underline{x})$. This resemblance is quantified
+using the Kullback-Leibler (KL) divergence, leading to the optimization problem,
 
 $$
 q_\phi^*(\underline{\theta}) =
@@ -226,7 +237,7 @@ $$
 $${#eq-vi_elbo}
 
 This inequality defines the **evidence lower bound** (ELBO), a cornerstone
-result in variational inference theory @kingma2014. The significance of this
+result in variational inference theory @kingma2014a. The significance of this
 result lies in its computational tractability: while the left-hand side (log
 evidence) remains intractable, the right-hand side consists of quantities we can
 readily evaluate and differentiate.
@@ -246,18 +257,31 @@ bound becomes tighter, the approximate posterior $q_\phi(\underline{\theta})$
 approaches the true posterior $\pi(\underline{\theta} \mid \underline{x})$ more
 closely.
 
+Put simply, the result in @eq-vi_elbo shows two things: On the left-hand side,
+we have a function of $\pi(\underline{x})$ that we cannot compute analytically.
+However, we know that if our posterior distribution was accurate, this quantity
+would be maximized. On the right-hand side, we have a function of $q_\phi$ that,
+is always a lower bound on the left-hand side. Thus, our objective is to tune
+the $\phi$ parameters to make the right-hand side as large as possible. The 
+better our approximate posterior is, closer the right-hand side will be to the
+left-hand side. This is an objective that we can optimize by taking advantage
+of the modern hardware and software specialized in this kind of gradient-based
+optimization.
+
 ## Stochastic Variational Inference
 
 To optimize the ELBO in @eq-vi_elbo, we employ **Stochastic Variational
 Inference** (SVI), a scalable approach that leverages stochastic optimization
-techniques @hoffman2013. Unlike traditional variational methods that process
-entire datasets simultaneously, SVI operates on mini-batches of data, making it
-particularly well-suited for large-scale applications.
+techniques @hoffman. Unlike traditional variational methods that process entire
+datasets simultaneously, SVI has the ability to operate on mini-batches of data,
+making it particularly well-suited for large-scale applications.
 
 The key insight behind SVI is that the expected log-likelihood term in the ELBO
-can be estimated using Monte Carlo sampling. Rather than computing exact
-expectations, we draw samples $\underline{\theta}^{(s)} \sim
-q_\phi(\underline{\theta})$ from our approximate posterior and evaluate
+---first term on the right-hand side of @eq-vi_elbo---can be estimated using
+Monte Carlo sampling. Rather than computing exact expectations, we draw samples
+$\underline{\theta}^{(s)} \sim q_\phi(\underline{\theta})$ from our approximate
+posterior and evaluate
+
 $$
 \left\langle
     \ln \pi(\underline{x} \mid \underline{\theta})
@@ -267,12 +291,12 @@ $${#eq-vi_mc_estimate}
 
 where $S$ represents the number of Monte Carlo samples.
 
-For large datasets, SVI further employs **mini-batch processing** to compute
-stochastic estimates of the ELBO gradient. Instead of processing all data points
-simultaneously, we randomly sample a subset of observations and scale the
-resulting gradient appropriately. This approach dramatically reduces
-computational requirements while maintaining convergence guarantees under
-appropriate conditions.
+As mentioned earlier, for large datasets, SVI further employs mini-batch
+processing to compute stochastic estimates of the ELBO gradient. Instead of
+processing all data points simultaneously, we randomly sample a subset of
+observations and scale the resulting gradient appropriately. This approach
+dramatically reduces computational requirements while maintaining convergence
+guarantees under appropriate conditions.
 
 The SVI algorithm iteratively updates the variational parameters using
 stochastic gradient ascent. At each iteration $t$, we:
@@ -291,21 +315,16 @@ where $\mathcal{L}$ denotes the ELBO and $\eta_t$ represents the learning rate
 at iteration $t$.
 
 The choice of variational family significantly impacts both the flexibility and
-computational efficiency of SVI. Common choices include:
-
-- **Mean-field approximation**: Assumes independence among parameters,
-  $q_\phi(\underline{\theta}) = \prod_i q_{\phi_i}(\theta_i)$
-- **Structured approximation**: Preserves certain dependence patterns while
-  maintaining computational tractability
-- **Normalizing flows**: Employ invertible transformations to construct more
-  flexible approximate posteriors
-
-The effectiveness of SVI depends critically on the **expressiveness** of the
-chosen variational family and the **optimization landscape** of the ELBO. While
-more flexible families can capture complex posterior dependencies, they may also
-introduce additional optimization challenges and computational overhead.
+computational efficiency of SVI. The effectiveness of SVI depends critically on
+the **expressiveness** of the chosen variational family and the **optimization
+landscape** of the ELBO. While more flexible families can capture complex
+posterior dependencies, they may also introduce additional optimization
+challenges and computational overhead.
 
 Through this framework, SVI transforms the intractable integration problem of
 exact Bayesian inference into a tractable stochastic optimization problem,
 enabling scalable approximate inference for complex probabilistic models with
 large datasets.
+
+In the following sections, we will showcase different parameterizations of the
+variational family used in `scribe` to perform SVI.
