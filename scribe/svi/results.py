@@ -2717,7 +2717,7 @@ class ScribeSVIResults:
                 else:
                     # Non-mixture model: mu has shape (n_samples, n_genes)
                     p_reshaped = p[:, None]
-                samples["r"] = mu * p_reshaped / (1.0 - p_reshaped)
+                samples["r"] = mu * (1.0 - p_reshaped) / p_reshaped
 
         elif parameterization == "unconstrained":
             if "r_unconstrained" in samples and "r" not in samples:
