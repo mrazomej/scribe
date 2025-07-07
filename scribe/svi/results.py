@@ -36,6 +36,7 @@ from ..models.model_config import ModelConfig
 from ..utils import numpyro_to_scipy
 
 from ..cell_assignment import temperature_scaling
+from ..core.normalization import normalize_counts_from_posterior
 
 try:
     from anndata import AnnData
@@ -338,8 +339,7 @@ class ScribeSVIResults:
                                     numpyro_to_scipy(dist.Normal(**params))
                                 )
                             else:
-                                distributions_list.append(
-                                    dist.Normal(**params))
+                                distributions_list.append(dist.Normal(**params))
                 return distributions_list
             else:
                 # Return batch distribution
@@ -889,8 +889,7 @@ class ScribeSVIResults:
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
         # Handle list/array indexing (by integer indices)
         elif isinstance(index, (list, np.ndarray, jnp.ndarray)) and not (
-            isinstance(index, (jnp.ndarray, np.ndarray)
-                       ) and index.dtype == bool
+            isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool
         ):
             indices = jnp.array(index)
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
@@ -912,8 +911,7 @@ class ScribeSVIResults:
 
         # Create new predictive samples if available
         new_predictive_samples = (
-            self._subset_predictive_samples(
-                self.predictive_samples, bool_index)
+            self._subset_predictive_samples(self.predictive_samples, bool_index)
             if self.predictive_samples is not None
             else None
         )
@@ -2656,6 +2654,116 @@ class ScribeSVIResults:
         probabilities = log_liks_to_probs(log_liks)
 
         return {"probabilities": probabilities}
+
+    # --------------------------------------------------------------------------
+    # Count normalization methods
+    # --------------------------------------------------------------------------
+
+    def normalize_counts(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples_dirichlet: int = 1,
+        fit_distribution: bool = False,
+        store_samples: bool = True,
+        sample_axis: int = 0,
+        return_concentrations: bool = False,
+        verbose: bool = True,
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Normalize counts using posterior samples of the r parameter.
+
+        This method takes posterior samples of the dispersion parameter (r) and
+        uses them as concentration parameters for Dirichlet distributions to generate
+        normalized expression profiles. For mixture models, normalization is performed
+        per component, resulting in an extra dimension in the output.
+
+        Based on the insights from the Dirichlet-multinomial model derivation, the
+        r parameters represent the concentration parameters of a Dirichlet distribution
+        that can be used to generate normalized expression profiles.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, default=random.PRNGKey(42)
+            JAX random number generator key
+        n_samples_dirichlet : int, default=1000
+            Number of samples to draw from each Dirichlet distribution
+        fit_distribution : bool, default=True
+            If True, fits a Dirichlet distribution to the generated samples using
+            fit_dirichlet_minka from stats.py
+        store_samples : bool, default=False
+            If True, includes the raw Dirichlet samples in the output
+        sample_axis : int, default=0
+            Axis containing samples in the Dirichlet fitting (passed to fit_dirichlet_minka)
+        return_concentrations : bool, default=False
+            If True, returns the original r parameter samples used as concentrations
+        verbose : bool, default=True
+            If True, prints progress messages
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing normalized expression profiles. Keys depend on
+            input arguments:
+            - 'samples': Raw Dirichlet samples (if store_samples=True)
+            - 'concentrations': Fitted concentration parameters (if fit_distribution=True)
+            - 'mean_probabilities': Mean probabilities from fitted distribution (if fit_distribution=True)
+            - 'original_concentrations': Original r parameter samples (if return_concentrations=True)
+
+            For non-mixture models:
+            - samples: shape (n_posterior_samples, n_genes, n_samples_dirichlet) or
+                      (n_posterior_samples, n_genes) if n_samples_dirichlet=1
+            - concentrations: shape (n_posterior_samples, n_genes)
+            - mean_probabilities: shape (n_posterior_samples, n_genes)
+
+            For mixture models:
+            - samples: shape (n_posterior_samples, n_components, n_genes, n_samples_dirichlet) or
+                      (n_posterior_samples, n_components, n_genes) if n_samples_dirichlet=1
+            - concentrations: shape (n_posterior_samples, n_components, n_genes)
+            - mean_probabilities: shape (n_posterior_samples, n_components, n_genes)
+
+        Raises
+        ------
+        ValueError
+            If posterior samples have not been generated yet, or if 'r' parameter
+            is not found in posterior samples
+
+        Examples
+        --------
+        >>> # For a non-mixture model
+        >>> normalized = results.normalize_counts(
+        ...     n_samples_dirichlet=100,
+        ...     fit_distribution=True
+        ... )
+        >>> print(normalized['mean_probabilities'].shape)  # (n_posterior_samples, n_genes)
+
+        >>> # For a mixture model
+        >>> normalized = results.normalize_counts(
+        ...     n_samples_dirichlet=100,
+        ...     fit_distribution=True
+        ... )
+        >>> print(normalized['mean_probabilities'].shape)  # (n_posterior_samples, n_components, n_genes)
+        """
+        # Check if posterior samples exist
+        if self.posterior_samples is None:
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
+
+        # Convert to canonical form to ensure r parameter is available
+        self._convert_to_canonical()
+
+        # Use the shared normalization function
+        return normalize_counts_from_posterior(
+            posterior_samples=self.posterior_samples,
+            n_components=self.n_components,
+            rng_key=rng_key,
+            n_samples_dirichlet=n_samples_dirichlet,
+            fit_distribution=fit_distribution,
+            store_samples=store_samples,
+            sample_axis=sample_axis,
+            return_concentrations=return_concentrations,
+            verbose=verbose,
+        )
 
     # --------------------------------------------------------------------------
     # Parameter conversion method
