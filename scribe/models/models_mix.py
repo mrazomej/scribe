@@ -82,7 +82,8 @@ def nbdm_mixture_model(
     )
     """
     # Validate required distributions based on parameterization
-    validate_required_distributions(model_config, ["mixing_distribution_model"])
+    validate_required_distributions(
+        model_config, ["mixing_distribution_model"])
 
     if model_config.parameterization == "standard":
         validate_required_distributions(
@@ -130,7 +131,7 @@ def nbdm_mixture_model(
             model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Define the prior on the p parameters - one for each component
         p = numpyro.sample("p", model_config.p_distribution_model)
@@ -552,7 +553,7 @@ def zinb_mixture_model(
             model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Define the prior on the p parameters - one for each component
         p = numpyro.sample("p", model_config.p_distribution_model)
@@ -974,7 +975,7 @@ def nbvcp_mixture_model(
     """
     # Validate required distributions based on parameterization
     validate_required_distributions(model_config, ["mixing_distribution_model"]
-    )
+                                    )
     if model_config.parameterization == "standard":
         validate_required_distributions(
             model_config,
@@ -1036,7 +1037,7 @@ def nbvcp_mixture_model(
             model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Define the prior on the p parameters - one for each component
         p = numpyro.sample("p", model_config.p_distribution_model)
@@ -1182,7 +1183,8 @@ def nbvcp_mixture_model(
                 # Compute effective probability for each component
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
+                    p * p_capture_reshaped /
+                    (1 - p * (1 - p_capture_reshaped)),
                 )
 
             # Create base negative binomial distribution
@@ -1631,7 +1633,7 @@ def zinbvcp_mixture_model(
             model_config.mu_distribution_model.expand([n_components, n_genes]),
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Define the prior on the p parameters - one for each component
         p = numpyro.sample("p", model_config.p_distribution_model)
@@ -1791,7 +1793,8 @@ def zinbvcp_mixture_model(
                 # Compute effective probability for each component
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
+                    p * p_capture_reshaped /
+                    (1 - p * (1 - p_capture_reshaped)),
                 )
 
             # Create base negative binomial distribution

@@ -104,7 +104,7 @@ def nbdm_model(
             "mu", model_config.mu_distribution_model.expand([n_genes])
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
@@ -493,7 +493,7 @@ def zinb_model(
             "mu", model_config.mu_distribution_model.expand([n_genes])
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Sample p
         p = numpyro.sample("p", model_config.p_distribution_model)
@@ -907,7 +907,7 @@ def nbvcp_model(
             "mu", model_config.mu_distribution_model.expand([n_genes])
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Define global parameters
         # Sample base success probability
@@ -1037,7 +1037,8 @@ def nbvcp_model(
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
+                    p * p_capture_reshaped /
+                    (1 - p * (1 - p_capture_reshaped)),
                 )
 
             # Sample counts
@@ -1390,7 +1391,7 @@ def zinbvcp_model(
             "mu", model_config.mu_distribution_model.expand([n_genes])
         )
         # Compute r
-        r = numpyro.deterministic("r", mu * p / (1 - p))
+        r = numpyro.deterministic("r", mu * (1 - p) / p)
     else:
         # Define global parameters
         # Sample base success probability
@@ -1531,7 +1532,8 @@ def zinbvcp_model(
                 p_capture_reshaped = p_capture[:, None]
                 p_hat = numpyro.deterministic(
                     "p_hat",
-                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
+                    p * p_capture_reshaped /
+                    (1 - p * (1 - p_capture_reshaped)),
                 )
 
             # Create base negative binomial distribution with adjusted
