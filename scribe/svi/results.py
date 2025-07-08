@@ -2667,8 +2667,9 @@ class ScribeSVIResults:
         store_samples: bool = True,
         sample_axis: int = 0,
         return_concentrations: bool = False,
+        backend: str = "numpyro",
         verbose: bool = True,
-    ) -> Dict[str, jnp.ndarray]:
+    ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
         Normalize counts using posterior samples of the r parameter.
 
@@ -2680,6 +2681,10 @@ class ScribeSVIResults:
         Based on the insights from the Dirichlet-multinomial model derivation, the
         r parameters represent the concentration parameters of a Dirichlet distribution
         that can be used to generate normalized expression profiles.
+
+        The method generates Dirichlet samples using all posterior samples of r, then
+        fits a single Dirichlet distribution to all these samples (or one per component
+        for mixture models).
 
         Parameters
         ----------
@@ -2696,30 +2701,38 @@ class ScribeSVIResults:
             Axis containing samples in the Dirichlet fitting (passed to fit_dirichlet_minka)
         return_concentrations : bool, default=False
             If True, returns the original r parameter samples used as concentrations
+        backend : str, default="numpyro"
+            Statistical package to use for distributions when fit_distribution=True.
+            Must be one of:
+            - "numpyro": Returns numpyro.distributions.Dirichlet objects
+            - "scipy": Returns scipy.stats distributions via numpyro_to_scipy conversion
         verbose : bool, default=True
             If True, prints progress messages
 
         Returns
         -------
-        Dict[str, jnp.ndarray]
+        Dict[str, Union[jnp.ndarray, object]]
             Dictionary containing normalized expression profiles. Keys depend on
             input arguments:
             - 'samples': Raw Dirichlet samples (if store_samples=True)
             - 'concentrations': Fitted concentration parameters (if fit_distribution=True)
             - 'mean_probabilities': Mean probabilities from fitted distribution (if fit_distribution=True)
+            - 'distributions': Dirichlet distribution objects (if fit_distribution=True)
             - 'original_concentrations': Original r parameter samples (if return_concentrations=True)
 
             For non-mixture models:
             - samples: shape (n_posterior_samples, n_genes, n_samples_dirichlet) or
                       (n_posterior_samples, n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_posterior_samples, n_genes)
-            - mean_probabilities: shape (n_posterior_samples, n_genes)
+            - concentrations: shape (n_genes,) - single fitted distribution
+            - mean_probabilities: shape (n_genes,) - single fitted distribution
+            - distributions: single Dirichlet distribution object
 
             For mixture models:
             - samples: shape (n_posterior_samples, n_components, n_genes, n_samples_dirichlet) or
                       (n_posterior_samples, n_components, n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_posterior_samples, n_components, n_genes)
-            - mean_probabilities: shape (n_posterior_samples, n_components, n_genes)
+            - concentrations: shape (n_components, n_genes) - one fitted distribution per component
+            - mean_probabilities: shape (n_components, n_genes) - one fitted distribution per component
+            - distributions: list of n_components Dirichlet distribution objects
 
         Raises
         ------
@@ -2734,14 +2747,16 @@ class ScribeSVIResults:
         ...     n_samples_dirichlet=100,
         ...     fit_distribution=True
         ... )
-        >>> print(normalized['mean_probabilities'].shape)  # (n_posterior_samples, n_genes)
+        >>> print(normalized['mean_probabilities'].shape)  # (n_genes,)
+        >>> print(type(normalized['distributions']))  # Single Dirichlet distribution
 
         >>> # For a mixture model
         >>> normalized = results.normalize_counts(
         ...     n_samples_dirichlet=100,
         ...     fit_distribution=True
         ... )
-        >>> print(normalized['mean_probabilities'].shape)  # (n_posterior_samples, n_components, n_genes)
+        >>> print(normalized['mean_probabilities'].shape)  # (n_components, n_genes)
+        >>> print(len(normalized['distributions']))  # n_components
         """
         # Check if posterior samples exist
         if self.posterior_samples is None:
@@ -2762,6 +2777,7 @@ class ScribeSVIResults:
             store_samples=store_samples,
             sample_axis=sample_axis,
             return_concentrations=return_concentrations,
+            backend=backend,
             verbose=verbose,
         )
 
