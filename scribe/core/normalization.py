@@ -10,7 +10,9 @@ import jax.numpy as jnp
 from jax import random
 import warnings
 
+import numpyro.distributions as dist
 from ..stats import sample_dirichlet_from_parameters, fit_dirichlet_minka
+from ..utils import numpyro_to_scipy
 
 
 def normalize_counts_from_posterior(
@@ -22,8 +24,9 @@ def normalize_counts_from_posterior(
     store_samples: bool = False,
     sample_axis: int = 0,
     return_concentrations: bool = False,
+    backend: str = "numpyro",
     verbose: bool = True,
-) -> Dict[str, jnp.ndarray]:
+) -> Dict[str, Union[jnp.ndarray, object]]:
     """
     Normalize counts using posterior samples of the r parameter.
 
@@ -52,44 +55,62 @@ def normalize_counts_from_posterior(
         fit_dirichlet_minka)
     return_concentrations : bool, default=False
         If True, returns the original r parameter samples used as concentrations
+    backend : str, default="numpyro"
+        Statistical package to use for distributions when fit_distribution=True.
+        Must be one of: - "numpyro": Returns numpyro.distributions.Dirichlet
+        objects - "scipy": Returns scipy.stats distributions via
+        numpyro_to_scipy conversion
     verbose : bool, default=True
         If True, prints progress messages
 
     Returns
     -------
-    Dict[str, jnp.ndarray]
+    Dict[str, Union[jnp.ndarray, object]]
         Dictionary containing normalized expression profiles. Keys depend on
-        input arguments: - 'samples': Raw Dirichlet samples (if
-        store_samples=True) - 'concentrations': Fitted concentration parameters
-        (if fit_distribution=True) - 'mean_probabilities': Mean probabilities
-        from fitted distribution (if fit_distribution=True) -
-        'original_concentrations': Original r parameter samples (if
-        return_concentrations=True)
+        input arguments:
+            - 'samples': Raw Dirichlet samples (if store_samples=True)
+            - 'concentrations': Fitted concentration parameters (if
+              fit_distribution=True)
+            - 'mean_probabilities': Mean probabilities from fitted distribution
+              (if fit_distribution=True)
+            - 'distributions': Dirichlet distribution objects (if
+              fit_distribution=True)
+            - 'original_concentrations': Original r parameter samples (if
+              return_concentrations=True)
 
-        For non-mixture models: - samples: shape (n_posterior_samples, n_genes,
-        n_samples_dirichlet) or
-                  (n_posterior_samples, n_genes) if n_samples_dirichlet=1
-        - concentrations: shape (n_posterior_samples, n_genes)
-        - mean_probabilities: shape (n_posterior_samples, n_genes)
+        For non-mixture models:
+            - samples: shape (n_posterior_samples, n_genes, n_samples_dirichlet)
+              or (n_posterior_samples, n_genes) if n_samples_dirichlet=1
+            - concentrations: shape (n_genes,) - single fitted distribution
+            - mean_probabilities: shape (n_genes,) - single fitted distribution
+            - distributions: single Dirichlet distribution object
 
-        For mixture models: - samples: shape (n_posterior_samples, n_components,
-        n_genes, n_samples_dirichlet) or
-                  (n_posterior_samples, n_components, n_genes) if
-                  n_samples_dirichlet=1
-        - concentrations: shape (n_posterior_samples, n_components, n_genes)
-        - mean_probabilities: shape (n_posterior_samples, n_components, n_genes)
+        For mixture models:
+            - samples: shape (n_posterior_samples, n_components, n_genes,
+              n_samples_dirichlet) or (n_posterior_samples, n_components,
+              n_genes) if n_samples_dirichlet=1
+            - concentrations: shape (n_components, n_genes) - one fitted
+              distribution per component
+            - mean_probabilities: shape (n_components, n_genes) - one fitted
+              distribution per component
+            - distributions: list of n_components Dirichlet distribution objects
 
     Raises
     ------
     ValueError
         If 'r' parameter is not found in posterior_samples
     """
-    # Validate that r parameter is available
+    # Validate inputs
     if "r" not in posterior_samples:
         raise ValueError(
             "'r' parameter not found in posterior_samples. "
             "This method requires posterior samples of the dispersion "
             "parameter. Please run get_posterior_samples() first."
+        )
+
+    if backend not in ["scipy", "numpyro"]:
+        raise ValueError(
+            f"Invalid backend: {backend}. Must be 'scipy' or 'numpyro'"
         )
 
     # Get r parameter samples
@@ -117,6 +138,7 @@ def normalize_counts_from_posterior(
             store_samples,
             sample_axis,
             return_concentrations,
+            backend,
             verbose,
         )
     # Process non-mixture model
@@ -131,6 +153,7 @@ def normalize_counts_from_posterior(
             store_samples,
             sample_axis,
             return_concentrations,
+            backend,
             verbose,
         )
 
@@ -148,15 +171,16 @@ def _normalize_non_mixture_model(
     store_samples: bool,
     sample_axis: int,
     return_concentrations: bool,
+    backend: str,
     verbose: bool,
-) -> Dict[str, jnp.ndarray]:
+) -> Dict[str, Union[jnp.ndarray, object]]:
     """Handle normalization for non-mixture models."""
     # r_samples shape: (n_posterior_samples, n_genes)
     n_posterior_samples, n_genes = r_samples.shape
 
     if verbose:
         print(
-            f"Generating {n_samples_dirichlet} Dirichlet samples for each of " 
+            f"Generating {n_samples_dirichlet} Dirichlet samples for each of "
             f"{n_posterior_samples} posterior samples"
         )
 
@@ -209,38 +233,45 @@ def _normalize_non_mixture_model(
             print("Fitting Dirichlet distributions to samples")
 
         if n_samples_dirichlet == 1:
-            # For single samples, we can't fit a distribution
-            # Instead, return the samples as both concentrations and mean probabilities
-            if verbose:
-                print(
-                    "    Using single samples as both concentrations and mean probabilities"
-                )
-            results["concentrations"] = dirichlet_samples
-            results["mean_probabilities"] = dirichlet_samples
+            all_samples = dirichlet_samples
         else:
-            # Fit Dirichlet distribution for each posterior sample
-            concentrations = jnp.zeros((n_posterior_samples, n_genes))
+            # Reshape samples: (n_posterior_samples, n_genes,
+            # n_samples_dirichlet) -> (n_posterior_samples *
+            # n_samples_dirichlet, n_genes)
+            # First transpose to (n_posterior_samples, n_samples_dirichlet,
+            # n_genes) so that each row after reshape represents a valid
+            # Dirichlet sample
+            all_samples = dirichlet_samples.transpose(0, 2, 1).reshape(
+                -1, n_genes
+            )
 
-            for i in range(n_posterior_samples):
-                if verbose and i % 100 == 0:
-                    print(
-                        f"    Fitting Dirichlet for posterior sample {i}/{n_posterior_samples}"
-                    )
+        # Fit single Dirichlet distribution to all samples
+        fitted_concentrations = fit_dirichlet_minka(
+            all_samples, sample_axis=sample_axis
+        )
 
-                # Fit using samples for this posterior sample
-                sample_data = dirichlet_samples[
-                    i
-                ].T  # Shape: (n_samples_dirichlet, n_genes)
-                fitted_concentrations = fit_dirichlet_minka(
-                    sample_data, sample_axis=sample_axis
-                )
-                concentrations = concentrations.at[i].set(fitted_concentrations)
+        # Store concentrations
+        results["concentrations"] = fitted_concentrations
 
-            results["concentrations"] = concentrations
+        # Compute mean probabilities (Dirichlet mean)
+        concentration_sum = jnp.sum(fitted_concentrations)
+        results["mean_probabilities"] = (
+            fitted_concentrations / concentration_sum
+        )
 
-            # Compute mean probabilities (Dirichlet mean)
-            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
-            results["mean_probabilities"] = concentrations / concentration_sums
+        # Create single distribution object
+        if verbose:
+            print(
+                f"Creating Dirichlet distribution object with {backend} backend"
+            )
+        # Create numpyro distribution object
+        dirichlet_dist = dist.Dirichlet(fitted_concentrations)
+        # Check if backend is scipy and convert to scipy distribution
+        if backend == "scipy":
+            # Convert to scipy distribution
+            dirichlet_dist = numpyro_to_scipy(dirichlet_dist)
+        # Store distribution object
+        results["distributions"] = dirichlet_dist
 
     # Return original concentrations if requested
     if return_concentrations:
@@ -261,8 +292,9 @@ def _normalize_mixture_model(
     store_samples: bool,
     sample_axis: int,
     return_concentrations: bool,
+    backend: str,
     verbose: bool,
-) -> Dict[str, jnp.ndarray]:
+) -> Dict[str, Union[jnp.ndarray, object]]:
     """Handle normalization for mixture models."""
     # r_samples shape: (n_posterior_samples, n_components, n_genes)
     n_posterior_samples, n_components_check, n_genes = r_samples.shape
@@ -338,43 +370,116 @@ def _normalize_mixture_model(
             print("Fitting Dirichlet distributions to samples")
 
         if n_samples_dirichlet == 1:
-            # For single samples, we can't fit a distribution
-            # Instead, return the samples as both concentrations and mean probabilities
+            # Even with single samples, fit single Dirichlet distribution per
+            # component using all posterior samples
             if verbose:
                 print(
-                    "    Using single samples as both concentrations and mean probabilities"
+                    f"    Collecting all {n_posterior_samples} samples per "
+                    f"component to fit single Dirichlet per component"
                 )
-            results["concentrations"] = dirichlet_samples
-            results["mean_probabilities"] = dirichlet_samples
-        else:
-            # Fit Dirichlet distribution for each posterior sample and component
-            concentrations = jnp.zeros(
-                (n_posterior_samples, n_components, n_genes)
-            )
 
-            for i in range(n_posterior_samples):
-                if verbose and i % 100 == 0:
-                    print(
-                        f"    Fitting Dirichlet for posterior sample {i}/{n_posterior_samples}"
-                    )
+            # Initialize concentrations for each component
+            concentrations = jnp.zeros((n_components, n_genes))
 
-                for c in range(n_components):
-                    # Fit using samples for this posterior sample and component
-                    sample_data = dirichlet_samples[
-                        i, c
-                    ].T  # Shape: (n_samples_dirichlet, n_genes)
-                    fitted_concentrations = fit_dirichlet_minka(
-                        sample_data, sample_axis=sample_axis
-                    )
-                    concentrations = concentrations.at[i, c].set(
-                        fitted_concentrations
-                    )
+            # Fit single Dirichlet distribution per component
+            for c in range(n_components):
+                if verbose:
+                    print(f"    Fitting single Dirichlet for component {c}")
 
+                # Collect all samples for this component from all posterior
+                # samples
+                # Shape: (n_posterior_samples, n_genes)
+                component_samples = dirichlet_samples[:, c, :]
+
+                # Fit single Dirichlet distribution to all samples for this
+                # component
+                fitted_concentrations = fit_dirichlet_minka(
+                    component_samples, sample_axis=sample_axis
+                )
+                concentrations = concentrations.at[c].set(fitted_concentrations)
+
+            # Store concentrations
             results["concentrations"] = concentrations
 
             # Compute mean probabilities (Dirichlet mean)
-            concentration_sums = jnp.sum(concentrations, axis=2, keepdims=True)
+            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
             results["mean_probabilities"] = concentrations / concentration_sums
+
+            # Create distribution objects per component
+            if verbose:
+                print(
+                    f"Creating single Dirichlet distribution object per "
+                    f"component with {backend} backend"
+                )
+
+            distributions = []
+            for c in range(n_components):
+                # Create Dirichlet distribution for this component
+                dirichlet_dist = dist.Dirichlet(concentrations[c])
+                if backend == "scipy":
+                    dirichlet_dist = numpyro_to_scipy(dirichlet_dist)
+                distributions.append(dirichlet_dist)
+            results["distributions"] = distributions
+        else:
+            # Fit single Dirichlet distribution per component using all
+            # posterior samples
+            if verbose:
+                print(
+                    f"    Collecting all "
+                    f"{n_posterior_samples * n_samples_dirichlet} samples per "
+                    f"component to fit single Dirichlet per component"
+                )
+
+            # Initialize concentrations for each component
+            concentrations = jnp.zeros((n_components, n_genes))
+
+            # Fit single Dirichlet distribution per component
+            for c in range(n_components):
+                if verbose:
+                    print(f"    Fitting single Dirichlet for component {c}")
+
+                # Collect all samples for this component from all posterior
+                # samples
+                # Shape: (n_posterior_samples, n_genes, n_samples_dirichlet)
+                # -> (n_posterior_samples * n_samples_dirichlet, n_genes)
+                # First transpose to (n_posterior_samples, n_samples_dirichlet,
+                # n_genes) so that each row after reshape represents a valid
+                # Dirichlet sample
+                component_samples = (
+                    dirichlet_samples[:, c, :, :]
+                    .transpose(0, 2, 1)
+                    .reshape(-1, n_genes)
+                )
+
+                # Fit single Dirichlet distribution to all samples for this
+                # component
+                fitted_concentrations = fit_dirichlet_minka(
+                    component_samples, sample_axis=sample_axis
+                )
+                concentrations = concentrations.at[c].set(fitted_concentrations)
+
+            # Store concentrations
+            results["concentrations"] = concentrations
+
+            # Compute mean probabilities (Dirichlet mean)
+            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
+            results["mean_probabilities"] = concentrations / concentration_sums
+
+            # Create distribution objects per component
+            if verbose:
+                print(
+                    f"Creating single Dirichlet distribution object per "
+                    f"component with {backend} backend"
+                )
+
+            distributions = []
+            for c in range(n_components):
+                # Create Dirichlet distribution for this component
+                dirichlet_dist = dist.Dirichlet(concentrations[c])
+                if backend == "scipy":
+                    dirichlet_dist = numpyro_to_scipy(dirichlet_dist)
+                distributions.append(dirichlet_dist)
+            results["distributions"] = distributions
 
     # Return original concentrations if requested
     if return_concentrations:

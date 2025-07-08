@@ -7,6 +7,7 @@ import numpy as np
 
 # Import typing
 from typing import Union
+from functools import partial
 
 # Import JAX-related libraries
 import jax.numpy as jnp
@@ -514,7 +515,7 @@ def digamma_inv(y, num_iters=5):
     return x
 
 
-@jax.jit
+@partial(jax.jit, static_argnums=(1, 2, 3,))
 def fit_dirichlet_minka(samples, max_iter=1000, tol=1e-7, sample_axis=0):
     """
     Fit a Dirichlet distribution to data using Minka's fixed-point iteration.
