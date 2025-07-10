@@ -10,14 +10,7 @@ import os
 
 # Set memory fraction to prevent JAX from allocating all GPU memory
 # Use only 90% of GPU memory
-os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
-
-# Preallocate a specific amount of memory (in bytes)
-os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
-
-# Disable the memory preallocation completely
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.5'
 
 # Enable double precision (Float64)
 jax.config.update("jax_enable_x64", True)
