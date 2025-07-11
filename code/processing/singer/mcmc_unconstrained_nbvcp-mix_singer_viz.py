@@ -31,6 +31,12 @@ colors = scribe.viz.colors()
 # Define model type
 model_type = "nbvcp_mix"
 
+# Define parameterization type
+parameterization = "unconstrained"
+
+# Define number of components
+n_components = 2
+
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
 
@@ -49,7 +55,7 @@ os.makedirs(FIG_DIR, exist_ok=True)
 df = pd.read_csv(f"{DATA_DIR}/singer_transcript_counts.csv", comment="#")
 
 # Define data
-data = jnp.array(df.to_numpy()).astype(jnp.float64)
+data = jnp.array(df.to_numpy())
 
 # Define number of cells
 n_cells = data.shape[0]
@@ -68,7 +74,9 @@ n_mcmc_samples = 5_000
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"mcmc_unconstrained_{model_type}_results_" \
+        f"mcmc_{parameterization.replace('_', '-')}_" \
+        f"{model_type.replace('_', '-')}_" \
+        f"{n_components}components_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_mcmc_burnin}burnin_" \
@@ -106,7 +114,10 @@ az.plot_trace(
 plt.tight_layout()
 
 # Save figure
-fig.savefig(f"{FIG_DIR}/mcmc_unconstrained_trace.png", bbox_inches="tight")
+fig.savefig(
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_trace.png",
+    bbox_inches="tight"
+)
 
 # %% ---------------------------------------------------------------------------
 
@@ -124,7 +135,11 @@ az.plot_pair(
 plt.tight_layout()
 
 # Save figure
-fig.savefig(f"{FIG_DIR}/mcmc_unconstrained_pairplot.png", bbox_inches="tight")
+fig.savefig(
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_pairplot.png",
+    bbox_inches="tight"
+)
+
 
 # %% ---------------------------------------------------------------------------
 
@@ -199,7 +214,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/mcmc_unconstrained_ppc.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_ppc.png", 
     bbox_inches="tight"
 )
 
@@ -277,7 +292,7 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 
 # Save figure
 fig.savefig(
-    f"{FIG_DIR}/mcmc_unconstrained_ppc_ecdf.png", 
+    f"{FIG_DIR}/mcmc_{parameterization.replace('_', '-')}_ppc_ecdf.png", 
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
