@@ -949,54 +949,56 @@ def nbvcp_mixture_guide(
         mixing_prior_params,
         constraint=constraints.positive,
     )
+    # Sample the mixture weights from a Dirichlet prior
     numpyro.sample("mixing_weights", dist.Dirichlet(mixing_conc))
 
+    # Get prior parameters for p, r, and p_capture
     p_prior_params = model_config.p_param_guide or (1.0, 1.0)
     r_prior_params = model_config.r_param_guide or (0.0, 1.0)
     p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
 
-    if model_config.component_specific_params:
-        with numpyro.plate("components", n_components):
-            p_alpha = numpyro.param(
-                "p_alpha_comp",
-                p_prior_params[0],
-                constraint=constraints.positive,
-            )
-            p_beta = numpyro.param(
-                "p_beta_comp",
-                p_prior_params[1],
-                constraint=constraints.positive,
-            )
-            numpyro.sample("p", dist.Beta(p_alpha, p_beta))
+    # Define parameters for r
+    r_loc = numpyro.param(
+        "r_loc",
+        jnp.full((n_components, n_genes), r_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    r_scale = numpyro.param(
+        "r_scale",
+        jnp.full((n_components, n_genes), r_prior_params[1]),
+        constraint=constraints.positive,
+    )
+    # Sample the gene-specific dispersion r from a LogNormal prior
+    numpyro.sample("r", dist.LogNormal(r_loc, r_scale).expand([n_components, n_genes]))
 
-            r_loc = numpyro.param(
-                "r_loc_comp", jnp.full(n_genes, r_prior_params[0])
-            )
-            r_scale = numpyro.param(
-                "r_scale_comp",
-                jnp.full(n_genes, r_prior_params[1]),
-                constraint=constraints.positive,
-            )
-            numpyro.sample("r", dist.LogNormal(r_loc, r_scale).to_event(1))
-    else:
+    if model_config.component_specific_params:
+        # Define parameters for p
         p_alpha = numpyro.param(
-            "p_alpha", p_prior_params[0], constraint=constraints.positive
+            "p_alpha",
+            jnp.full(n_components, p_prior_params[0]),
+            constraint=constraints.positive,
         )
         p_beta = numpyro.param(
-            "p_beta", p_prior_params[1], constraint=constraints.positive
+            "p_beta",
+            jnp.full(n_components, p_prior_params[1]),
+            constraint=constraints.positive,
         )
+        # Each component has its own p
         numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
-        with numpyro.plate("components", n_components):
-            r_loc = numpyro.param(
-                "r_loc_comp", jnp.full(n_genes, r_prior_params[0])
-            )
-            r_scale = numpyro.param(
-                "r_scale_comp",
-                jnp.full(n_genes, r_prior_params[1]),
-                constraint=constraints.positive,
-            )
-            numpyro.sample("r", dist.LogNormal(r_loc, r_scale).to_event(1))
+    else:
+        # Define parameters for p
+        p_alpha = numpyro.param(
+            "p_alpha",
+            p_prior_params[0],
+            constraint=constraints.positive,
+        )
+        p_beta = numpyro.param(
+            "p_beta",
+            p_prior_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
         p_capture_alpha = numpyro.param(
@@ -1039,29 +1041,30 @@ def zinbvcp_mixture_model(
     gate_prior_params = model_config.gate_param_prior or (1.0, 1.0)
     p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
 
+    # Sample the mixture weights from a Dirichlet prior
     mixing_probs = numpyro.sample(
         "mixing_weights", dist.Dirichlet(mixing_prior_params)
     )
     mixing_dist = dist.Categorical(probs=mixing_probs)
 
+    # Sample the gene-specific dispersion r from a LogNormal prior
+    r = numpyro.sample(
+        "r", dist.LogNormal(*r_prior_params).expand([n_components, n_genes])
+    )
+    # Sample the gene-specific gate from a Beta prior
+    gate = numpyro.sample(
+        "gate", dist.Beta(*gate_prior_params).expand([n_components, n_genes])
+    )
+
     if model_config.component_specific_params:
-        with numpyro.plate("components", n_components):
-            p = numpyro.sample("p", dist.Beta(*p_prior_params))
-            r = numpyro.sample(
-                "r", dist.LogNormal(*r_prior_params).expand([n_genes])
-            )
-            gate = numpyro.sample(
-                "gate", dist.Beta(*gate_prior_params).expand([n_genes])
-            )
+        # Each component has its own p
+        p = numpyro.sample(
+            "p", dist.Beta(*p_prior_params).expand([n_components])
+        )
+        # Broadcast p to have the right shape
+        p = p[:, None]
     else:
         p = numpyro.sample("p", dist.Beta(*p_prior_params))
-        gate = numpyro.sample(
-            "gate", dist.Beta(*gate_prior_params).expand([n_genes])
-        )
-        with numpyro.plate("components", n_components):
-            r = numpyro.sample(
-                "r", dist.LogNormal(*r_prior_params).expand([n_genes])
-            )
 
     plate_context = (
         numpyro.plate("cells", n_cells, subsample_size=batch_size)
@@ -1073,12 +1076,20 @@ def zinbvcp_mixture_model(
             "p_capture", dist.Beta(*p_capture_prior_params)
         )
         p_capture_reshaped = p_capture[:, None, None]
-        p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+        # Compute p_hat using the derived formula
+        p_hat = numpyro.deterministic(
+            "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+        )
 
+        # Define the base distribution for each component (Negative Binomial)
         base_dist = dist.NegativeBinomialProbs(r, p_hat)
+        # Create the zero-inflated distribution over components
         zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
+        # Create the mixture distribution over components
         mixture = dist.MixtureSameFamily(mixing_dist, zinb)
+        # Define observation context for sampling
         obs = counts[idx] if counts is not None else None
+        # Sample the counts from the mixture distribution
         numpyro.sample("counts", mixture, obs=obs)
 
 
@@ -1114,74 +1125,61 @@ def zinbvcp_mixture_guide(
     gate_prior_params = model_config.gate_param_guide or (1.0, 1.0)
     p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
 
+    # Define parameters for r
+    r_loc = numpyro.param(
+        "r_loc", jnp.full((n_components, n_genes), r_prior_params[0])
+    )
+    r_scale = numpyro.param(
+        "r_scale",
+        jnp.full((n_components, n_genes), r_prior_params[1]),
+        constraint=constraints.positive,
+    )
+    # Sample the gene-specific dispersion r from a LogNormal prior
+    numpyro.sample("r", dist.LogNormal(r_loc, r_scale))
+
+    # Define parameters for gate
+    gate_alpha = numpyro.param(
+        "gate_alpha",
+        jnp.full((n_components, n_genes), gate_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    gate_beta = numpyro.param(
+        "gate_beta",
+        jnp.full((n_components, n_genes), gate_prior_params[1]),
+        constraint=constraints.positive,
+    )
+    # Sample the gene-specific gate from a Beta prior
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
+
+    # Define parameters for p
     if model_config.component_specific_params:
-        with numpyro.plate("components", n_components):
-            p_alpha = numpyro.param(
-                "p_alpha_comp",
-                p_prior_params[0],
-                constraint=constraints.positive,
-            )
-            p_beta = numpyro.param(
-                "p_beta_comp",
-                p_prior_params[1],
-                constraint=constraints.positive,
-            )
-            numpyro.sample("p", dist.Beta(p_alpha, p_beta))
-
-            r_loc = numpyro.param(
-                "r_loc_comp", jnp.full(n_genes, r_prior_params[0])
-            )
-            r_scale = numpyro.param(
-                "r_scale_comp",
-                jnp.full(n_genes, r_prior_params[1]),
-                constraint=constraints.positive,
-            )
-            numpyro.sample("r", dist.LogNormal(r_loc, r_scale).to_event(1))
-
-            gate_alpha = numpyro.param(
-                "gate_alpha_comp",
-                jnp.full(n_genes, gate_prior_params[0]),
-                constraint=constraints.positive,
-            )
-            gate_beta = numpyro.param(
-                "gate_beta_comp",
-                jnp.full(n_genes, gate_prior_params[1]),
-                constraint=constraints.positive,
-            )
-            numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta).to_event(1))
-    else:
+        # Define parameters for p
         p_alpha = numpyro.param(
-            "p_alpha", p_prior_params[0], constraint=constraints.positive
+            "p_alpha",
+            jnp.full(n_components, p_prior_params[0]),
+            constraint=constraints.positive,
         )
         p_beta = numpyro.param(
-            "p_beta", p_prior_params[1], constraint=constraints.positive
+            "p_beta",
+            jnp.full(n_components, p_prior_params[1]),
+            constraint=constraints.positive,
         )
+        # Each component has its own p
         numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
-        gate_alpha = numpyro.param(
-            "gate_alpha",
-            gate_prior_params[0],
+    else:
+        # Define parameters for p
+        p_alpha = numpyro.param(
+            "p_alpha",
+            p_prior_params[0],
             constraint=constraints.positive,
         )
-        gate_beta = numpyro.param(
-            "gate_beta",
-            gate_prior_params[1],
+        p_beta = numpyro.param(
+            "p_beta",
+            p_prior_params[1],
             constraint=constraints.positive,
         )
-        numpyro.sample(
-            "gate", dist.Beta(gate_alpha, gate_beta).expand([n_genes])
-        )
-
-        with numpyro.plate("components", n_components):
-            r_loc = numpyro.param(
-                "r_loc_comp", jnp.full(n_genes, r_prior_params[0])
-            )
-            r_scale = numpyro.param(
-                "r_scale_comp",
-                jnp.full(n_genes, r_prior_params[1]),
-                constraint=constraints.positive,
-            )
-            numpyro.sample("r", dist.LogNormal(r_loc, r_scale).to_event(1))
+        numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
         p_capture_alpha = numpyro.param(
@@ -1253,25 +1251,5 @@ def get_posterior_distributions(
             distributions["mixing_weights"] = dist.Dirichlet(
                 params["mixing_concentrations"]
             )
-
-        # Component-specific parameters
-        if component_specific:
-            if "p_alpha_comp" in params and "p_beta_comp" in params:
-                distributions["p"] = dist.Beta(
-                    params["p_alpha_comp"], params["p_beta_comp"]
-                )
-            if "r_loc_comp" in params and "r_scale_comp" in params:
-                distributions["r"] = dist.LogNormal(
-                    params["r_loc_comp"], params["r_scale_comp"]
-                )
-            if "gate_alpha_comp" in params and "gate_beta_comp" in params:
-                distributions["gate"] = dist.Beta(
-                    params["gate_alpha_comp"], params["gate_beta_comp"]
-                )
-        else:  # not component_specific
-            if "r_loc_comp" in params and "r_scale_comp" in params:
-                distributions["r"] = dist.LogNormal(
-                    params["r_loc_comp"], params["r_scale_comp"]
-                )
 
     return distributions
