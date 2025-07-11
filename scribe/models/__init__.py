@@ -15,6 +15,8 @@ from .model_registry import (
 
 # Parameterization-specific model modules
 from . import standard
+from . import linked
+from . import model_registry
 
 __all__ = [
     # Configuration
