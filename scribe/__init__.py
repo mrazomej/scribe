@@ -5,44 +5,36 @@ A Bayesian method for identifying cell-type specific differences in gene express
 from single-cell RNA-sequencing data.
 """
 
-# Import unified inference interface
-from .inference import run_scribe
-
-# Import result classes
-from .svi import ScribeSVIResults
-from .mcmc import ScribeMCMCResults
-
 # Import core components for advanced usage
-from .core import InputProcessor, PriorConfigFactory, ModelConfigFactory
+from .core import InputProcessor
+from .models.model_config import ModelConfig
+
+from . import viz
+from . import utils
+from . import stats
 
 # Import configuration classes
-from .models import ModelConfig
+# Import main inference function
+from .inference import run_scribe
 
-# Import models and utilities
-from . import models
-from . import utils
-from . import viz
-from . import stats
-from . import sampling
+# Import results classes
+from .mcmc import ScribeMCMCResults
+from .svi import ScribeSVIResults
 
 __version__ = "0.1.0"
 
 __all__ = [
-    # Main unified interface
+    # Core components
+    "InputProcessor",
+    # Configuration classes
+    "ModelConfig",
+    # Main inference function
     "run_scribe",
     # Results classes
     "ScribeSVIResults",
     "ScribeMCMCResults",
-    # Core components
-    "InputProcessor",
-    "PriorConfigFactory",
-    "ModelConfigFactory",
-    # Configuration classes
-    "ModelConfig",
-    # Modules
-    "models",
-    "utils",
+    # Other modules
     "viz",
+    "utils",
     "stats",
-    "sampling",
 ]

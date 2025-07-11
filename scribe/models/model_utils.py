@@ -219,49 +219,6 @@ def setup_and_sample_parameter(
 
 
 # ------------------------------------------------------------------------------
-
-
-def validate_required_distributions(
-    model_config: ModelConfig, required: List[str]
-) -> None:
-    """
-    Validate that required distributions are present in model_config.
-
-    Parameters
-    ----------
-    model_config : ModelConfig
-        The model configuration to validate
-    required : List[str]
-        List of required distribution attribute names
-
-    Raises
-    ------
-    ValueError
-        If any required distribution is None or missing
-
-    Examples
-    --------
-    >>> # Standard NBDM
-    >>> validate_required_distributions(
-    ...     model_config,
-    ...     ["p_distribution_guide", "r_distribution_guide"]
-    ... )
-    >>>
-    >>> # ZINB model
-    >>> validate_required_distributions(
-    ...     model_config,
-    ...     ["p_distribution_guide", "r_distribution_guide",
-    ...      "gate_distribution_guide"]
-    ... )
-    """
-    # Iterate through each required attribute and check if it is None
-    for attr_name in required:
-        # If the attribute is None, raise an error
-        if getattr(model_config, attr_name, None) is None:
-            raise ValueError(f"Guide requires '{attr_name}' in model_config")
-
-
-# ------------------------------------------------------------------------------
 # Parameter Configuration Registry (Advanced Usage)
 # ------------------------------------------------------------------------------
 
@@ -353,10 +310,6 @@ def setup_guide_parameters_from_config(
 
     # Get the configuration for the guide type
     config = GUIDE_PARAMETER_CONFIGS[guide_type]
-
-    # Validate all required distributions first
-    required_attrs = [config_attr for _, config_attr, _ in config]
-    validate_required_distributions(model_config, required_attrs)
 
     # Set up each parameter
     for param_name, config_attr, shape_spec in config:

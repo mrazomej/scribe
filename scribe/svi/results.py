@@ -33,6 +33,7 @@ from ..stats import (
     log_liks_to_probs,
 )
 from ..models.model_config import ModelConfig
+from ..models.standard import get_posterior_distributions
 from ..utils import numpyro_to_scipy
 
 from ..cell_assignment import temperature_scaling
@@ -152,48 +153,33 @@ class ScribeSVIResults:
 
         # Validate required distributions based on model type
         if "zinb" in self.model_type:
-            if (
-                self.model_config.gate_distribution_model is None
-                or self.model_config.gate_distribution_guide is None
-            ):
-                raise ValueError("ZINB models require gate distributions")
+            if self.model_config.gate_param_prior is None:
+                raise ValueError("ZINB models require gate priors")
         else:
-            if (
-                self.model_config.gate_distribution_model is not None
-                or self.model_config.gate_distribution_guide is not None
-            ):
+            if self.model_config.gate_param_prior is not None:
                 raise ValueError(
-                    "Non-ZINB models should not have gate distributions"
+                    "Non-ZINB models should not have gate priors"
                 )
 
         if "vcp" in self.model_type and (
             self.model_config.parameterization == "standard"
             or self.model_config.parameterization == "linked"
         ):
-            if (
-                self.model_config.p_capture_distribution_model is None
-                or self.model_config.p_capture_distribution_guide is None
-            ):
+            if self.model_config.p_capture_param_prior is None:
                 raise ValueError(
-                    "VCP models require capture probability distributions"
+                    "VCP models require capture probability priors"
                 )
         elif "vcp" in self.model_type and (
             self.model_config.parameterization == "odds_ratio"
         ):
-            if (
-                self.model_config.phi_capture_distribution_model is None
-                or self.model_config.phi_capture_distribution_guide is None
-            ):
+            if self.model_config.phi_capture_param_prior is None:
                 raise ValueError(
-                    "VCP models with beta-prime parameterization require capture odds ratio distributions"
+                    "VCP models with beta-prime parameterization require capture odds ratio priors"
                 )
         else:
-            if (
-                self.model_config.p_capture_distribution_model is not None
-                or self.model_config.p_capture_distribution_guide is not None
-            ):
+            if self.model_config.p_capture_param_prior is not None:
                 raise ValueError(
-                    "Non-VCP models should not have capture probability distributions"
+                    "Non-VCP models should not have capture probability priors"
                 )
 
     # --------------------------------------------------------------------------
@@ -229,352 +215,50 @@ class ScribeSVIResults:
     # --------------------------------------------------------------------------
 
     def get_distributions(
-        self, backend: str = "numpyro", split: bool = False
+        self, backend: str = "numpyro"
     ) -> Dict[str, Any]:
         """
-        Get the variational distributions for all parameters using model config.
+        Get the variational distributions for all parameters.
 
-        This method handles all parameterizations (standard, linked, odds_ratio,
-        unconstrained) and returns appropriate distributions based on the
-        model configuration.
+        This method now delegates to the model-specific `get_posterior_distributions`
+        function associated with the "standard" parameterization.
 
         Parameters
         ----------
-        backend : str, default="scipy"
+        backend : str, default="numpyro"
             Statistical package to use for distributions. Must be one of:
             - "scipy": Returns scipy.stats distributions
             - "numpyro": Returns numpyro.distributions
-        split : bool, default=False
-            If True, returns lists of individual distributions for multidimensional
-            parameters (e.g., gene-specific or component-specific parameters) instead
-            of batch distributions. For example, instead of a single Gamma distribution
-            with batch_shape=(n_genes,), returns a list of n_genes individual Gamma
-            distributions.
 
         Returns
         -------
         Dict[str, Any]
-            Dictionary mapping parameter names to their distributions. When split=False,
-            multidimensional parameters return batch distributions. When split=True,
-            multidimensional parameters return lists of individual distributions.
+            Dictionary mapping parameter names to their distributions.
 
         Raises
         ------
         ValueError
-            If backend is not supported or if required distributions are missing
+            If backend is not supported.
         """
         if backend not in ["scipy", "numpyro"]:
             raise ValueError(f"Invalid backend: {backend}")
 
-        distributions = {}
-        parameterization = self.model_config.parameterization
-
-        # Handle different parameterizations
-        if parameterization == "unconstrained":
-            return self._get_unconstrained_distributions(backend, split)
-        else:
-            return self._get_constrained_distributions(
-                backend, parameterization, split
+        # For now, we only support the standard parameterization which has its
+        # own function to retrieve posterior distributions.
+        if self.model_config.parameterization != "standard":
+            raise NotImplementedError(
+                "get_distributions is only implemented for 'standard' parameterization."
             )
 
-    # --------------------------------------------------------------------------
+        distributions = get_posterior_distributions(
+            self.params, self.model_config
+        )
 
-    def _get_unconstrained_distributions(
-        self, backend: str = "scipy", split: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Get distributions for unconstrained parameterization.
-
-        For unconstrained parameterization, all parameters are Normal
-        distributions on transformed spaces (logit for probabilities, log for
-        positive parameters).
-        """
-        import numpyro.distributions as dist
-
-        distributions = {}
-
-        # For unconstrained, we create Normal distributions based on loc/scale
-        # params
-        active_params = self.model_config.get_active_parameters()
-
-        # Helper function to create distributions (split or batch)
-        def _create_distribution(
-            param_prefix, default_loc=0.0, default_scale=1.0
-        ):
-            """Create Normal distribution for unconstrained parameter"""
-            # Extract parameters from results
-            if f"{param_prefix}_loc" in self.params:
-                loc = self.params[f"{param_prefix}_loc"]
-                scale = self.params[f"{param_prefix}_scale"]
-            else:
-                # Fallback to default parameters
-                loc = getattr(
-                    self.model_config, f"{param_prefix}_loc", default_loc
-                )
-                scale = getattr(
-                    self.model_config, f"{param_prefix}_scale", default_scale
-                )
-
-            # Create distribution
-            if split and hasattr(loc, "shape") and len(loc.shape) > 0:
-                # Split into individual distributions
-                distributions_list = []
-                if len(loc.shape) == 1:
-                    # Gene-specific parameter: shape (n_genes,)
-                    for i in range(loc.shape[0]):
-                        params = {"loc": loc[i], "scale": scale[i]}
-                        if backend == "scipy":
-                            distributions_list.append(
-                                numpyro_to_scipy(dist.Normal(**params))
-                            )
-                        else:
-                            distributions_list.append(dist.Normal(**params))
-                elif len(loc.shape) == 2:
-                    # Component and gene-specific parameter: shape (n_components, n_genes)
-                    for c in range(loc.shape[0]):
-                        for g in range(loc.shape[1]):
-                            params = {"loc": loc[c, g], "scale": scale[c, g]}
-                            if backend == "scipy":
-                                distributions_list.append(
-                                    numpyro_to_scipy(dist.Normal(**params))
-                                )
-                            else:
-                                distributions_list.append(dist.Normal(**params))
-                return distributions_list
-            else:
-                # Return batch distribution
-                params = {"loc": loc, "scale": scale}
-                if backend == "scipy":
-                    return numpyro_to_scipy(dist.Normal(**params))
-                else:
-                    return dist.Normal(**params)
-
-        # Core parameters
-        if "p_unconstrained" in active_params:
-            distributions["p_unconstrained"] = _create_distribution(
-                "p_unconstrained"
-            )
-
-        if "r_unconstrained" in active_params:
-            distributions["r_unconstrained"] = _create_distribution(
-                "r_unconstrained"
-            )
-
-        # Optional parameters
-        if "gate_unconstrained" in active_params:
-            distributions["gate_unconstrained"] = _create_distribution(
-                "gate_unconstrained"
-            )
-
-        if "p_capture_unconstrained" in active_params:
-            distributions["p_capture_unconstrained"] = _create_distribution(
-                "p_capture_unconstrained"
-            )
-
-        if "mixing_logits_unconstrained" in active_params:
-            distributions["mixing_logits_unconstrained"] = _create_distribution(
-                "mixing_logits_unconstrained"
-            )
-
-        return distributions
-
-    # --------------------------------------------------------------------------
-
-    def _get_constrained_distributions(
-        self,
-        backend: str = "scipy",
-        parameterization: str = "standard",
-        split: bool = False,
-    ) -> Dict[str, Any]:
-        """
-        Get distributions for constrained parameterizations (standard, linked,
-        odds_ratio).
-
-        For constrained parameterizations, we use the actual distribution types
-        stored in the model config (Beta, Gamma, LogNormal, etc.) with
-        parameters extracted from the SVI results.
-        """
-        distributions = {}
-        active_params = self.model_config.get_active_parameters()
-
-        # Helper function to safely get distribution parameters
-        def _get_distribution_params(param_prefix: str, distribution_guide):
-            """Extract parameters for a distribution from self.params"""
-            if distribution_guide is None:
-                return None
-
-            params = {}
-            if hasattr(distribution_guide, "arg_constraints"):
-                for param_name in distribution_guide.arg_constraints:
-                    param_key = f"{param_prefix}_{param_name}"
-                    if param_key in self.params:
-                        params[param_name] = self.params[param_key]
-            return params if params else None
-
-        # Helper function to create distributions (split or batch)
-        def _create_distribution(param_prefix, distribution_guide):
-            """Create distribution with optional splitting"""
-            if distribution_guide is None:
-                return None
-
-            params = _get_distribution_params(param_prefix, distribution_guide)
-            if not params:
-                return None
-
-            # Check if any parameter is multidimensional and split is requested
-            if split:
-                # Get the shape of the first parameter to determine dimensionality
-                first_param_value = next(iter(params.values()))
-                if (
-                    hasattr(first_param_value, "shape")
-                    and len(first_param_value.shape) > 0
-                ):
-                    # Split into individual distributions
-                    distributions_list = []
-                    if len(first_param_value.shape) == 1:
-                        # Gene-specific parameter: shape (n_genes,)
-                        for i in range(first_param_value.shape[0]):
-                            individual_params = {
-                                k: v[i] for k, v in params.items()
-                            }
-                            if backend == "scipy":
-                                distributions_list.append(
-                                    numpyro_to_scipy(
-                                        distribution_guide.__class__(
-                                            **individual_params
-                                        )
-                                    )
-                                )
-                            else:
-                                distributions_list.append(
-                                    distribution_guide.__class__(
-                                        **individual_params
-                                    )
-                                )
-                    elif len(first_param_value.shape) == 2:
-                        # Component and gene-specific parameter: shape (n_components, n_genes)
-                        for c in range(first_param_value.shape[0]):
-                            for g in range(first_param_value.shape[1]):
-                                individual_params = {
-                                    k: v[c, g] for k, v in params.items()
-                                }
-                                if backend == "scipy":
-                                    distributions_list.append(
-                                        numpyro_to_scipy(
-                                            distribution_guide.__class__(
-                                                **individual_params
-                                            )
-                                        )
-                                    )
-                                else:
-                                    distributions_list.append(
-                                        distribution_guide.__class__(
-                                            **individual_params
-                                        )
-                                    )
-                    return distributions_list
-
-            # Return batch distribution (default behavior)
-            if backend == "scipy":
-                return numpyro_to_scipy(distribution_guide.__class__(**params))
-            else:
-                return distribution_guide.__class__(**params)
-
-        # Handle core parameters based on parameterization
-        if parameterization == "standard":
-            # p parameter (Beta distribution)
-            if (
-                "p" in active_params
-                and self.model_config.p_distribution_guide is not None
-            ):
-                distributions["p"] = _create_distribution(
-                    "p", self.model_config.p_distribution_guide
-                )
-
-            # r parameter (Gamma or LogNormal distribution)
-            if (
-                "r" in active_params
-                and self.model_config.r_distribution_guide is not None
-            ):
-                distributions["r"] = _create_distribution(
-                    "r", self.model_config.r_distribution_guide
-                )
-
-        elif parameterization == "linked":
-            # p parameter (Beta distribution)
-            if (
-                "p" in active_params
-                and self.model_config.p_distribution_guide is not None
-            ):
-                distributions["p"] = _create_distribution(
-                    "p", self.model_config.p_distribution_guide
-                )
-
-            # mu parameter (LogNormal distribution)
-            if (
-                "mu" in active_params
-                and self.model_config.mu_distribution_guide is not None
-            ):
-                distributions["mu"] = _create_distribution(
-                    "mu", self.model_config.mu_distribution_guide
-                )
-
-        elif parameterization == "odds_ratio":
-            # phi parameter (BetaPrime distribution)
-            if (
-                "phi" in active_params
-                and self.model_config.phi_distribution_guide is not None
-            ):
-                distributions["phi"] = _create_distribution(
-                    "phi", self.model_config.phi_distribution_guide
-                )
-
-            # mu parameter (LogNormal distribution)
-            if (
-                "mu" in active_params
-                and self.model_config.mu_distribution_guide is not None
-            ):
-                distributions["mu"] = _create_distribution(
-                    "mu", self.model_config.mu_distribution_guide
-                )
-
-        # Handle optional parameters (present in all constrained parameterizations)
-
-        # Gate parameter for ZINB models
-        if (
-            "gate" in active_params
-            and self.model_config.gate_distribution_guide is not None
-        ):
-            distributions["gate"] = _create_distribution(
-                "gate", self.model_config.gate_distribution_guide
-            )
-
-        # Capture probability parameter for VCP models
-        if (
-            "p_capture" in active_params
-            and self.model_config.p_capture_distribution_guide is not None
-        ):
-            distributions["p_capture"] = _create_distribution(
-                "p_capture", self.model_config.p_capture_distribution_guide
-            )
-
-        # Capture phi parameter for VCP models with odds_ratio parameterization
-        if (
-            "phi_capture" in active_params
-            and self.model_config.phi_capture_distribution_guide is not None
-        ):
-            distributions["phi_capture"] = _create_distribution(
-                "phi_capture", self.model_config.phi_capture_distribution_guide
-            )
-
-        # Mixing weights for mixture models
-        if (
-            "mixing" in active_params
-            and self.model_config.mixing_distribution_guide is not None
-        ):
-            distributions["mixing_weights"] = _create_distribution(
-                "mixing", self.model_config.mixing_distribution_guide
-            )
+        if backend == "scipy":
+            return {
+                name: numpyro_to_scipy(dist)
+                for name, dist in distributions.items()
+            }
 
         return distributions
 
@@ -663,72 +347,11 @@ class ScribeSVIResults:
         Dict
             Updated dictionary with canonical parameters computed
         """
-        # Make a copy to avoid modifying the original
+        # This method assumed multiple parameterizations which are no longer supported
+        # in the same way. For now, it only handles the standard case where p_hat
+        # might need to be computed. A more robust solution will be needed if more
+        # complex parameterizations are re-introduced.
         estimates = map_estimates.copy()
-
-        # Handle linked parameterization
-        if "mu" in estimates and "p" in estimates and "r" not in estimates:
-            if verbose:
-                print("Computing r from mu and p for linked parameterization")
-            # r = mu * p / (1 - p)
-            estimates["r"] = (
-                estimates["mu"] * estimates["p"] / (1 - estimates["p"])
-            )
-
-        # Handle odds_ratio parameterization
-        elif "phi" in estimates and "mu" in estimates and "r" not in estimates:
-            if verbose:
-                print(
-                    "Computing r from mu and phi for odds_ratio parameterization"
-                )
-            # r = mu * phi
-            estimates["r"] = estimates["mu"] * estimates["phi"]
-
-            if "p" not in estimates:
-                if verbose:
-                    print(
-                        "Computing p from phi for odds_ratio parameterization"
-                    )
-                # p = 1 / (1 + phi)
-                estimates["p"] = 1.0 / (1.0 + estimates["phi"])
-
-        # Handle unconstrained parameterization
-        elif "p_unconstrained" in estimates and "p" not in estimates:
-            if verbose:
-                print("Computing p from p_unconstrained")
-            # p = sigmoid(p_unconstrained)
-            estimates["p"] = jax.nn.sigmoid(estimates["p_unconstrained"])
-
-        if "r_unconstrained" in estimates and "r" not in estimates:
-            if verbose:
-                print("Computing r from r_unconstrained")
-            # r = exp(r_unconstrained)
-            estimates["r"] = jnp.exp(estimates["r_unconstrained"])
-
-        # Handle other unconstrained parameters
-        if "gate_unconstrained" in estimates and "gate" not in estimates:
-            if verbose:
-                print("Computing gate from gate_unconstrained")
-            # gate = sigmoid(gate_unconstrained)
-            estimates["gate"] = jax.nn.sigmoid(estimates["gate_unconstrained"])
-
-        if (
-            "p_capture_unconstrained" in estimates
-            and "p_capture" not in estimates
-        ):
-            if verbose:
-                print("Computing p_capture from p_capture_unconstrained")
-            # p_capture = sigmoid(p_capture_unconstrained)
-            estimates["p_capture"] = jax.nn.sigmoid(
-                estimates["p_capture_unconstrained"]
-            )
-
-        # Handle NBVCP and ZINBVCP models with odds_ratio parameterization
-        if "phi_capture" in estimates and "p_capture" not in estimates:
-            if verbose:
-                print("Computing p_capture from phi_capture")
-            # p_capture = 1 / (1 + phi_capture)
-            estimates["p_capture"] = 1.0 / (1.0 + estimates["phi_capture"])
 
         # Compute p_hat for NBVCP and ZINBVCP models if needed
         if (
@@ -742,26 +365,12 @@ class ScribeSVIResults:
             # Reshape p_capture for broadcasting
             p_capture_reshaped = estimates["p_capture"][:, None]
 
-            # For standard parameterization
-            if "phi" not in estimates:
-                # p_hat = p * p_capture / (1 - p * (1 - p_capture))
-                estimates["p_hat"] = (
-                    estimates["p"]
-                    * p_capture_reshaped
-                    / (1 - estimates["p"] * (1 - p_capture_reshaped))
-                ).flatten()
-            # For odds_ratio parameterization
-            else:
-                # p_hat = 1 / (1 + phi + phi * phi_capture)
-                phi_capture_reshaped = estimates["phi_capture"][:, None]
-                estimates["p_hat"] = (
-                    1.0
-                    / (
-                        1
-                        + estimates["phi"]
-                        + estimates["phi"] * phi_capture_reshaped
-                    ).flatten()
-                )
+            # p_hat = p * p_capture / (1 - p * (1 - p_capture))
+            estimates["p_hat"] = (
+                estimates["p"]
+                * p_capture_reshaped
+                / (1 - estimates["p"] * (1 - p_capture_reshaped))
+            ).flatten()
 
         return estimates
 
@@ -796,33 +405,21 @@ class ScribeSVIResults:
         """
         Create a new parameter dictionary for the given index.
         """
-        # Build list of (prefix, arg_constraints) for all gene-specific params
-        param_prefixes = []
-        # r
-        r_dist_guide = getattr(self.model_config, "r_distribution_guide", None)
-        param_prefixes.append(
-            ("r_", getattr(r_dist_guide, "arg_constraints", None))
-        )
-        # mu (if present)
-        mu_dist_guide = getattr(
-            self.model_config, "mu_distribution_guide", None
-        )
-        if mu_dist_guide is not None:
-            param_prefixes.append(
-                ("mu_", getattr(mu_dist_guide, "arg_constraints", None))
-            )
-        # gate (if present)
-        gate_dist_guide = getattr(
-            self.model_config, "gate_distribution_guide", None
-        )
-        if gate_dist_guide is not None:
-            param_prefixes.append(
-                ("gate_", getattr(gate_dist_guide, "arg_constraints", None))
-            )
-        # (extend here for other gene-specific params if needed)
-        return self._subset_gene_params(
-            params, param_prefixes, index, n_components=self.n_components
-        )
+        new_params = dict(params)
+        gene_specific_params = [
+            "r_loc", "r_scale", "r_loc_comp", "r_scale_comp",
+            "gate_alpha", "gate_beta", "gate_alpha_comp", "gate_beta_comp"
+        ]
+
+        for param_name in gene_specific_params:
+            if param_name in params:
+                param = params[param_name]
+                if param.ndim == 1: # (n_genes,)
+                    new_params[param_name] = param[index]
+                elif param.ndim == 2: # (n_components, n_genes)
+                    new_params[param_name] = param[:, index]
+
+        return new_params
 
     # --------------------------------------------------------------------------
 
@@ -1094,129 +691,40 @@ class ScribeSVIResults:
         """
         Handle subsetting of constrained parameters based on parameterization.
         """
-        # Handle r parameters (always gene-specific and component-specific)
-        if self.model_config.r_distribution_guide is not None:
-            r_param_names = list(
-                self.model_config.r_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in r_param_names:
-                param_key = f"r_{param_name}"
-                if param_key in self.params:
-                    param_value = self.params[param_key]
-                    # Check if parameter has component dimension
-                    if param_value.ndim > 1:  # Has component dimension
-                        new_params[param_key] = param_value[component_index]
-                    else:  # Scalar parameter, copy as-is
-                        new_params[param_key] = param_value
+        component_specific_params = [
+            "r_loc_comp", "r_scale_comp",
+            "p_alpha_comp", "p_beta_comp",
+            "gate_alpha_comp", "gate_beta_comp"
+        ]
 
-        # Handle mu parameters (for linked and odds_ratio parameterizations)
-        if (
-            parameterization in ["linked", "odds_ratio"]
-            and self.model_config.mu_distribution_guide is not None
-        ):
-            mu_param_names = list(
-                self.model_config.mu_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in mu_param_names:
-                param_key = f"mu_{param_name}"
-                if param_key in self.params:
-                    param_value = self.params[param_key]
-                    # Check if parameter has component dimension
-                    if param_value.ndim > 1:  # Has component dimension
-                        new_params[param_key] = param_value[component_index]
-                    else:  # Scalar parameter, copy as-is
-                        new_params[param_key] = param_value
+        shared_params = [
+            "p_alpha", "p_beta",
+            "p_capture_alpha", "p_capture_beta",
+            "mixing_conc"
+        ]
 
-        # Handle phi parameters (for odds_ratio parameterization)
-        if (
-            parameterization == "odds_ratio"
-            and self.model_config.phi_distribution_guide is not None
-        ):
-            phi_param_names = list(
-                self.model_config.phi_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in phi_param_names:
-                param_key = f"phi_{param_name}"
-                if param_key in self.params:
-                    param_value = self.params[param_key]
-                    # Check if parameter has component dimension
-                    if param_value.ndim > 1:  # Has component dimension
-                        new_params[param_key] = param_value[component_index]
-                    else:  # Scalar parameter, copy as-is
-                        new_params[param_key] = param_value
+        # Component-specific params: select the component
+        for param_name in component_specific_params:
+            if param_name in self.params:
+                new_params[param_name] = self.params[param_name][component_index]
 
-        # Handle p parameters (for standard and linked parameterizations)
-        if (
-            parameterization in ["standard", "linked"]
-            and self.model_config.p_distribution_guide is not None
-        ):
-            p_param_names = list(
-                self.model_config.p_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in p_param_names:
-                param_key = f"p_{param_name}"
-                if param_key in self.params:
-                    param_value = self.params[param_key]
-                    # Check if parameter has component dimension
-                    if param_value.ndim > 1:  # Has component dimension
-                        new_params[param_key] = param_value[component_index]
-                    else:  # Scalar parameter, copy as-is
-                        new_params[param_key] = param_value
+        # Shared params: take the component-specific version if it exists, otherwise copy
+        if "p_alpha_comp" not in self.params and "p_alpha" in self.params:
+             new_params["p_alpha"] = self.params["p_alpha"]
+             new_params["p_beta"] = self.params["p_beta"]
 
-        # Handle gate parameters if present (gene-specific and component-specific)
-        if self.model_config.gate_distribution_guide is not None:
-            gate_param_names = list(
-                self.model_config.gate_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in gate_param_names:
-                param_key = f"gate_{param_name}"
-                if param_key in self.params:
-                    param_value = self.params[param_key]
-                    # Check if parameter has component dimension
-                    if param_value.ndim > 1:  # Has component dimension
-                        new_params[param_key] = param_value[component_index]
-                    else:  # Scalar parameter, copy as-is
-                        new_params[param_key] = param_value
+        if "gate_alpha_comp" not in self.params and "gate_alpha" in self.params:
+            new_params["gate_alpha"] = self.params["gate_alpha"]
+            new_params["gate_beta"] = self.params["gate_beta"]
 
-        # Handle p_capture parameters (cell-specific, not component-specific)
-        if self.model_config.p_capture_distribution_guide is not None:
-            p_capture_param_names = list(
-                self.model_config.p_capture_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in p_capture_param_names:
-                param_key = f"p_capture_{param_name}"
-                if param_key in self.params:
-                    # These are cell-specific, so copy as-is
-                    new_params[param_key] = self.params[param_key]
+        # Cell-specific params: copy as is
+        if "p_capture_alpha" in self.params:
+            new_params["p_capture_alpha"] = self.params["p_capture_alpha"]
+            new_params["p_capture_beta"] = self.params["p_capture_beta"]
 
-        # Handle phi_capture parameters (for odds_ratio parameterization, cell-specific)
-        if (
-            parameterization == "odds_ratio"
-            and self.model_config.phi_capture_distribution_guide is not None
-        ):
-            phi_capture_param_names = list(
-                self.model_config.phi_capture_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in phi_capture_param_names:
-                param_key = f"phi_capture_{param_name}"
-                if param_key in self.params:
-                    # These are cell-specific, so copy as-is
-                    new_params[param_key] = self.params[param_key]
-
-        # Handle mixing weights (component-specific, not gene-specific)
-        if self.model_config.mixing_distribution_guide is not None:
-            mixing_param_names = list(
-                self.model_config.mixing_distribution_guide.arg_constraints.keys()
-            )
-            for param_name in mixing_param_names:
-                param_key = f"mixing_{param_name}"
-                if param_key in self.params:
-                    param_value = self.params[param_key]
-                    # Check if parameter has component dimension
-                    if param_value.ndim > 1:  # Has component dimension
-                        new_params[param_key] = param_value[component_index]
-                    else:  # Scalar parameter, copy as-is
-                        new_params[param_key] = param_value
+        # Mixing weights
+        if "mixing_conc" in self.params:
+            new_params["mixing_conc"] = self.params["mixing_conc"]
 
     # --------------------------------------------------------------------------
 
@@ -1482,6 +990,9 @@ class ScribeSVIResults:
         """Sample parameters from the variational posterior distribution."""
         # Get the guide function
         _, guide = self._model_and_guide()
+
+        if guide is None:
+            raise ValueError(f"Could not find a guide for model '{self.model_type}'.")
 
         # Prepare base model arguments
         model_args = {
@@ -2167,26 +1678,12 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
-        r_distribution = type(self.model_config.r_distribution_guide)
-        # Define corresponding Hellinger distance function
-        if r_distribution == dist.LogNormal:
-            hellinger_distance_fn = hellinger_lognormal
-        elif r_distribution == dist.Gamma:
-            hellinger_distance_fn = hellinger_gamma
-        else:
-            raise ValueError(
-                f"Unsupported distribution type: {r_distribution}. "
-                "Must be 'lognormal' or 'gamma'."
-            )
+        # The 'standard' parameterization uses LogNormal for the r parameter.
+        hellinger_distance_fn = hellinger_lognormal
 
-        # Extract parameters from r distribution based on distribution type
-        if r_distribution == dist.LogNormal:
-            r_param1 = self.params["r_loc"].astype(dtype)
-            r_param2 = self.params["r_scale"].astype(dtype)
-        elif r_distribution == dist.Gamma:
-            r_param1 = self.params["r_concentration"].astype(dtype)
-            r_param2 = self.params["r_rate"].astype(dtype)
+        # Extract parameters for LogNormal distribution
+        r_param1 = self.params["r_loc_comp"].astype(dtype)
+        r_param2 = self.params["r_scale_comp"].astype(dtype)
 
         # Initialize dictionary to store distances
         hellinger_distances = {}
@@ -2250,26 +1747,12 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
-        r_distribution = type(self.model_config.r_distribution_guide)
-        # Define corresponding KL divergence function
-        if r_distribution == dist.LogNormal:
-            kl_divergence_fn = kl_lognormal
-        elif r_distribution == dist.Gamma:
-            kl_divergence_fn = kl_gamma
-        else:
-            raise ValueError(
-                f"Unsupported distribution type: {r_distribution}. "
-                "Must be 'lognormal' or 'gamma'."
-            )
+        # The 'standard' parameterization uses LogNormal for the r parameter.
+        kl_divergence_fn = kl_lognormal
 
         # Extract parameters from r distribution based on distribution type
-        if r_distribution == dist.LogNormal:
-            r_param1 = self.params["r_loc"].astype(dtype)
-            r_param2 = self.params["r_scale"].astype(dtype)
-        elif r_distribution == dist.Gamma:
-            r_param1 = self.params["r_concentration"].astype(dtype)
-            r_param2 = self.params["r_rate"].astype(dtype)
+        r_param1 = self.params["r_loc_comp"].astype(dtype)
+        r_param2 = self.params["r_scale_comp"].astype(dtype)
 
         # Initialize dictionary to store divergences
         kl_divergences = {}
@@ -2340,27 +1823,12 @@ class ScribeSVIResults:
                 "with multiple components"
             )
 
-        # Get r distribution from ModelConfig
-        r_distribution = type(self.model_config.r_distribution_guide)
-
-        # Define corresponding JS divergence function based on distribution type
-        if r_distribution == dist.LogNormal:
-            js_divergence_fn = jensen_shannon_lognormal
-        elif r_distribution == dist.Gamma:
-            js_divergence_fn = jensen_shannon_gamma
-        else:
-            raise ValueError(
-                f"Unsupported distribution type: {r_distribution}. "
-                "Must be 'lognormal' or 'gamma'."
-            )
+        # The 'standard' parameterization uses LogNormal for the r parameter.
+        js_divergence_fn = jensen_shannon_lognormal
 
         # Extract parameters from r distribution based on distribution type
-        if r_distribution == dist.LogNormal:
-            r_param1 = self.params["r_loc"].astype(dtype)
-            r_param2 = self.params["r_scale"].astype(dtype)
-        elif r_distribution == dist.Gamma:
-            r_param1 = self.params["r_concentration"].astype(dtype)
-            r_param2 = self.params["r_rate"].astype(dtype)
+        r_param1 = self.params["r_loc_comp"].astype(dtype)
+        r_param2 = self.params["r_scale_comp"].astype(dtype)
 
         # Initialize dictionary to store divergences
         js_divergences = {}
