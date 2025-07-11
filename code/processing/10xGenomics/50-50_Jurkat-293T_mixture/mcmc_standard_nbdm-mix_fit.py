@@ -86,7 +86,7 @@ kernel_kwargs = {
     "dense_mass": False,
     "adapt_step_size": True,
     "adapt_mass_matrix": True,
-    "regularize_mass_matrix": False
+    "regularize_mass_matrix": True
 }
 
 print("Running MCMC sampling...")
