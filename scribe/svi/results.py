@@ -243,16 +243,19 @@ class ScribeSVIResults:
         if backend not in ["scipy", "numpyro"]:
             raise ValueError(f"Invalid backend: {backend}")
 
-        # For now, we only support the standard parameterization which has its
-        # own function to retrieve posterior distributions.
-        if self.model_config.parameterization != "standard":
+        # Dynamically import the correct posterior distribution function
+        if self.model_config.parameterization == "standard":
+            from ..models.standard import \
+                get_posterior_distributions as get_dist_fn
+        elif self.model_config.parameterization == "linked":
+            from ..models.linked import \
+                get_posterior_distributions as get_dist_fn
+        else:
             raise NotImplementedError(
-                "get_distributions is only implemented for 'standard' parameterization."
+                f"get_distributions not implemented for '{self.model_config.parameterization}'."
             )
 
-        distributions = get_posterior_distributions(
-            self.params, self.model_config
-        )
+        distributions = get_dist_fn(self.params, self.model_config)
 
         if backend == "scipy":
             return {
@@ -353,6 +356,16 @@ class ScribeSVIResults:
         # complex parameterizations are re-introduced.
         estimates = map_estimates.copy()
 
+        # Handle linked parameterization
+        if self.model_config.parameterization == "linked":
+            if "mu" in estimates and "p" in estimates and "r" not in estimates:
+                if verbose:
+                    print("Computing r from mu and p for linked parameterization")
+                # r = mu * (1 - p) / p
+                estimates["r"] = (
+                    estimates["mu"] * (1 - estimates["p"]) / estimates["p"]
+                )
+
         # Compute p_hat for NBVCP and ZINBVCP models if needed
         if (
             "p" in estimates
@@ -407,7 +420,7 @@ class ScribeSVIResults:
         """
         new_params = dict(params)
         gene_specific_params = [
-            "r_loc", "r_scale", "r_loc_comp", "r_scale_comp",
+            "r_loc", "r_scale", 
             "gate_alpha", "gate_beta", "gate_alpha_comp", "gate_beta_comp"
         ]
 
@@ -1679,11 +1692,21 @@ class ScribeSVIResults:
             )
 
         # The 'standard' parameterization uses LogNormal for the r parameter.
-        hellinger_distance_fn = hellinger_lognormal
+        # The 'linked' parameterization uses LogNormal for the mu parameter.
+        if self.model_config.parameterization == "standard":
+            hellinger_distance_fn = hellinger_lognormal
+            param1_key, param2_key = "r_loc_comp", "r_scale_comp"
+        elif self.model_config.parameterization == "linked":
+            hellinger_distance_fn = hellinger_lognormal
+            param1_key, param2_key = "mu_loc_comp", "mu_scale_comp"
+        else:
+            raise NotImplementedError(
+                f"Hellinger distance not implemented for '{self.model_config.parameterization}'."
+            )
 
         # Extract parameters for LogNormal distribution
-        r_param1 = self.params["r_loc_comp"].astype(dtype)
-        r_param2 = self.params["r_scale_comp"].astype(dtype)
+        r_param1 = self.params[param1_key].astype(dtype)
+        r_param2 = self.params[param2_key].astype(dtype)
 
         # Initialize dictionary to store distances
         hellinger_distances = {}
@@ -1748,11 +1771,21 @@ class ScribeSVIResults:
             )
 
         # The 'standard' parameterization uses LogNormal for the r parameter.
-        kl_divergence_fn = kl_lognormal
+        # The 'linked' parameterization uses LogNormal for the mu parameter.
+        if self.model_config.parameterization == "standard":
+            kl_divergence_fn = kl_lognormal
+            param1_key, param2_key = "r_loc_comp", "r_scale_comp"
+        elif self.model_config.parameterization == "linked":
+            kl_divergence_fn = kl_lognormal
+            param1_key, param2_key = "mu_loc_comp", "mu_scale_comp"
+        else:
+            raise NotImplementedError(
+                f"KL divergence not implemented for '{self.model_config.parameterization}'."
+            )
 
         # Extract parameters from r distribution based on distribution type
-        r_param1 = self.params["r_loc_comp"].astype(dtype)
-        r_param2 = self.params["r_scale_comp"].astype(dtype)
+        r_param1 = self.params[param1_key].astype(dtype)
+        r_param2 = self.params[param2_key].astype(dtype)
 
         # Initialize dictionary to store divergences
         kl_divergences = {}
@@ -1824,11 +1857,21 @@ class ScribeSVIResults:
             )
 
         # The 'standard' parameterization uses LogNormal for the r parameter.
-        js_divergence_fn = jensen_shannon_lognormal
+        # The 'linked' parameterization uses LogNormal for the mu parameter.
+        if self.model_config.parameterization == "standard":
+            js_divergence_fn = jensen_shannon_lognormal
+            param1_key, param2_key = "r_loc_comp", "r_scale_comp"
+        elif self.model_config.parameterization == "linked":
+            js_divergence_fn = jensen_shannon_lognormal
+            param1_key, param2_key = "mu_loc_comp", "mu_scale_comp"
+        else:
+            raise NotImplementedError(
+                f"Jensen-Shannon divergence not implemented for '{self.model_config.parameterization}'."
+            )
 
         # Extract parameters from r distribution based on distribution type
-        r_param1 = self.params["r_loc_comp"].astype(dtype)
-        r_param2 = self.params["r_scale_comp"].astype(dtype)
+        r_param1 = self.params[param1_key].astype(dtype)
+        r_param2 = self.params[param2_key].astype(dtype)
 
         # Initialize dictionary to store divergences
         js_divergences = {}
