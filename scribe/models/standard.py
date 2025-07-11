@@ -969,7 +969,9 @@ def nbvcp_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific dispersion r from a LogNormal prior
-    numpyro.sample("r", dist.LogNormal(r_loc, r_scale).expand([n_components, n_genes]))
+    numpyro.sample(
+        "r", dist.LogNormal(r_loc, r_scale).expand([n_components, n_genes])
+    )
 
     if model_config.component_specific_params:
         # Define parameters for p
