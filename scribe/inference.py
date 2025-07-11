@@ -6,13 +6,17 @@ treating unconstrained as just another parameterization rather than a separate
 model type.
 """
 
-from typing import Union, Optional, Dict, Any, Type
+from typing import Union, Optional, Dict, Any, Type, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from anndata import AnnData
+
 import jax.numpy as jnp
 import numpyro.distributions as dist
 
 # Import shared components
-from .core import InputProcessor, PriorConfigFactory
-from .core.config_factory import ModelConfigFactory
+from .core import InputProcessor
+from .models.model_config import ModelConfig
 
 # Import inference-specific components
 from .svi import SVIInferenceEngine, SVIResultsFactory
@@ -228,40 +232,40 @@ def run_scribe(
     if phi_capture_prior is not None:
         user_priors["phi_capture_prior"] = phi_capture_prior
 
-    # Create default priors (now handles unconstrained as just another
-    # parameterization)
-    default_priors = PriorConfigFactory.create_default_priors(
-        model_type=model_type,
-        inference_method=inference_method,
-        parameterization=parameterization,  # This now includes "unconstrained"
-        r_distribution=r_distribution,
-        mu_distribution=mu_distribution,
-        n_components=n_components,
-    )
+    # Step 3: Create ModelConfig directly
+    model_config_kwargs = {
+        "base_model": model_type,
+        "parameterization": parameterization,
+        "inference_method": inference_method,
+        "n_components": n_components,
+    }
 
-    # Merge user priors with defaults
-    final_priors = {**default_priors, **user_priors}
+    if parameterization == "unconstrained":
+        model_config_kwargs.update({
+            "p_unconstrained_prior": user_priors.get("p_prior"),
+            "r_unconstrained_prior": user_priors.get("r_prior"),
+            "gate_unconstrained_prior": user_priors.get("gate_prior"),
+            "p_capture_unconstrained_prior": user_priors.get("p_capture_prior"),
+            "mixing_logits_unconstrained_prior": user_priors.get("mixing_prior"),
+        })
+    else:
+        model_config_kwargs.update({
+            "p_param_prior": user_priors.get("p_prior"),
+            "r_param_prior": user_priors.get("r_prior"),
+            "mu_param_prior": user_priors.get("mu_prior"),
+            "phi_param_prior": user_priors.get("phi_prior"),
+            "gate_param_prior": user_priors.get("gate_prior"),
+            "p_capture_param_prior": user_priors.get("p_capture_prior"),
+            "phi_capture_param_prior": user_priors.get("phi_capture_prior"),
+            "mixing_param_prior": user_priors.get("mixing_prior"),
+        })
 
-    # Validate priors
-    PriorConfigFactory.validate_priors(
-        model_type=model_type,
-        inference_method=inference_method,
-        parameterization=parameterization,
-        prior_dict=final_priors,
-    )
-
-    # Step 3: Create Unified Model Configuration
-    model_config = ModelConfigFactory.create_config(
-        model_type=model_type,
-        parameterization=parameterization,
-        inference_method=inference_method,
-        priors=final_priors,
-        n_components=n_components,
-    )
-
+    model_config = ModelConfig(**model_config_kwargs)
+    model_config.validate()
+    
     # Step 4: Run Inference
     if inference_method == "svi":
-        return _run_svi_inference(
+        results = _run_svi_inference(
             model_config=model_config,
             count_data=count_data,
             adata=adata,
@@ -273,10 +277,9 @@ def run_scribe(
             batch_size=batch_size,
             stable_update=stable_update,
             seed=seed,
-            final_priors=final_priors,
         )
     elif inference_method == "mcmc":
-        return _run_mcmc_inference(
+        results = _run_mcmc_inference(
             model_config=model_config,
             count_data=count_data,
             adata=adata,
@@ -286,20 +289,16 @@ def run_scribe(
             n_warmup=n_warmup,
             n_chains=n_chains,
             seed=seed,
-            final_priors=final_priors,
             mcmc_kwargs=mcmc_kwargs,
         )
     else:
-        raise ValueError(f"Unknown inference method: {inference_method}")
+        raise ValueError("Invalid inference_method. Choose 'svi' or 'mcmc'")
 
-
-# ------------------------------------------------------------------------------
-# SVI Inference
-# ------------------------------------------------------------------------------
+    return results
 
 
 def _run_svi_inference(
-    model_config: "ModelConfig",
+    model_config: ModelConfig,
     count_data: jnp.ndarray,
     adata: Optional["AnnData"],
     n_cells: int,
@@ -310,54 +309,40 @@ def _run_svi_inference(
     batch_size: Optional[int],
     stable_update: bool,
     seed: int,
-    final_priors: Dict[str, Any],
 ) -> Any:
-    """Execute SVI inference with unified configuration."""
-    # Set defaults for optimizer and loss if not provided
-    if optimizer is None:
-        import numpyro.optim
+    """Helper function to run SVI inference."""
+    inference_kwargs = {
+        "model_config": model_config,
+        "count_data": count_data,
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "n_steps": n_steps,
+        "batch_size": batch_size,
+        "seed": seed,
+        "stable_update": stable_update,
+    }
+    if optimizer is not None:
+        inference_kwargs["optimizer"] = optimizer
+    if loss is not None:
+        inference_kwargs["loss"] = loss
+        
+    svi_results = SVIInferenceEngine.run_inference(**inference_kwargs)
 
-        optimizer = numpyro.optim.Adam(step_size=0.001)
-    if loss is None:
-        from numpyro.infer import TraceMeanField_ELBO
-
-        loss = TraceMeanField_ELBO()
-
-    # Run inference
-    svi_results = SVIInferenceEngine.run_inference(
-        model_config=model_config,
-        count_data=count_data,
-        n_cells=n_cells,
-        n_genes=n_genes,
-        optimizer=optimizer,
-        loss=loss,
-        n_steps=n_steps,
-        batch_size=batch_size,
-        seed=seed,
-        stable_update=stable_update,
-    )
-
-    # Package results
     return SVIResultsFactory.create_results(
         svi_results=svi_results,
-        model_config=model_config,
         adata=adata,
+        model_config=model_config,
         count_data=count_data,
         n_cells=n_cells,
         n_genes=n_genes,
         model_type=model_config.base_model,
         n_components=model_config.n_components,
-        prior_params=final_priors,
+        prior_params=model_config.get_active_priors(),
     )
 
 
-# ------------------------------------------------------------------------------
-# MCMC Inference
-# ------------------------------------------------------------------------------
-
-
 def _run_mcmc_inference(
-    model_config: "ModelConfig",
+    model_config: ModelConfig,
     count_data: jnp.ndarray,
     adata: Optional["AnnData"],
     n_cells: int,
@@ -366,12 +351,10 @@ def _run_mcmc_inference(
     n_warmup: int,
     n_chains: int,
     seed: int,
-    final_priors: Dict[str, Any],
-    mcmc_kwargs: Optional[Dict[str, Any]] = None,
+    mcmc_kwargs: Optional[Dict[str, Any]],
 ) -> Any:
-    """Execute MCMC inference with unified configuration."""
-    # Run inference (now works with any parameterization!)
-    mcmc_results = MCMCInferenceEngine.run_inference(
+    """Helper function to run MCMC inference."""
+    mcmc = MCMCInferenceEngine.run_inference(
         model_config=model_config,
         count_data=count_data,
         n_cells=n_cells,
@@ -383,15 +366,14 @@ def _run_mcmc_inference(
         mcmc_kwargs=mcmc_kwargs,
     )
 
-    # Package results
     return MCMCResultsFactory.create_results(
-        mcmc_results=mcmc_results,
-        model_config=model_config,
+        mcmc_results=mcmc,
         adata=adata,
+        model_config=model_config,
         count_data=count_data,
         n_cells=n_cells,
         n_genes=n_genes,
         model_type=model_config.base_model,
         n_components=model_config.n_components,
-        prior_params=final_priors,
+        prior_params=model_config.get_active_priors(),
     )
