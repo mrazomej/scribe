@@ -1,16 +1,15 @@
 # %% ---------------------------------------------------------------------------
 # Import base libraries
-import gc
-import scanpy as sc
-import scribe
-import jax.numpy as jnp
-import jax
 import pickle
+import jax
+import jax.numpy as jnp
+import scribe
+import scanpy as sc
+import gc
 import os
 
 # Set memory fraction to prevent JAX from allocating all GPU memory
-# Use only 90% of GPU memory
-os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.5'
+os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
 
 # Enable double precision (Float64)
 jax.config.update("jax_enable_x64", True)
