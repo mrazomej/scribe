@@ -10,6 +10,13 @@ import os
 
 # Set memory fraction to prevent JAX from allocating all GPU memory
 os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
+# Add these for tighter memory control
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+# Use only 70% of GPU memory
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.7'
+os.environ['JAX_PLATFORMS'] = 'gpu'
+# Force garbage collection more aggressively
+os.environ['JAX_TRACEBACK_FILTERING'] = 'off'  # Better error diagnostics
 
 # Enable double precision (Float64)
 jax.config.update("jax_enable_x64", True)
@@ -64,7 +71,7 @@ counts = jnp.array(data.X.toarray(), dtype=jnp.float64)
 
 # %% ---------------------------------------------------------------------------
 
-# Clear caches before running
+# Clear caches and force garbage collection before MCMC
 gc.collect()
 jax.clear_caches()
 
@@ -83,7 +90,7 @@ print("Defining kernel kwargs...")
 # Define kernel kwargs
 kernel_kwargs = {
     "target_accept_prob": 0.85,
-    "max_tree_depth": (10, 10),
+    "max_tree_depth": (8, 8),
     "step_size": jnp.array(1.0, dtype=jnp.float64),
     "find_heuristic_step_size": False,
     "dense_mass": False,
