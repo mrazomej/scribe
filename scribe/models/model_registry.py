@@ -11,6 +11,15 @@ from typing import Callable, Tuple, Optional
 # Model registry
 # ------------------------------------------------------------------------------
 
+# List of supported parameterizations (and their corresponding modules)
+SUPPORTED_PARAMETERIZATIONS = [
+    "standard",
+    "linked",
+]
+
+# Dictionary to cache imported model modules
+_model_module_cache = {}
+
 
 def get_model_and_guide(
     model_type: str, parameterization: str = "standard"
