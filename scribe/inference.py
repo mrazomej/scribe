@@ -31,6 +31,7 @@ def run_scribe(
     variable_capture: bool = False,
     mixture_model: bool = False,
     n_components: Optional[int] = None,
+    component_specific_params: bool = False,
     # Parameterization (now unified!)
     # "standard", "linked", "odds_ratio", "unconstrained"
     parameterization: str = "standard",
@@ -238,6 +239,7 @@ def run_scribe(
         "parameterization": parameterization,
         "inference_method": inference_method,
         "n_components": n_components,
+        "component_specific_params": component_specific_params,
     }
 
     if parameterization == "unconstrained":
