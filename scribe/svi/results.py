@@ -221,7 +221,7 @@ class ScribeSVIResults:
         Get the variational distributions for all parameters.
 
         This method now delegates to the model-specific `get_posterior_distributions`
-        function associated with the "standard" parameterization.
+        function associated with the parameterization.
 
         Parameters
         ----------
@@ -249,6 +249,12 @@ class ScribeSVIResults:
                 get_posterior_distributions as get_dist_fn
         elif self.model_config.parameterization == "linked":
             from ..models.linked import \
+                get_posterior_distributions as get_dist_fn
+        elif self.model_config.parameterization == "odds_ratio":
+            from ..models.odds_ratio import \
+                get_posterior_distributions as get_dist_fn
+        elif self.model_config.parameterization == "unconstrained":
+            from ..models.unconstrained import \
                 get_posterior_distributions as get_dist_fn
         else:
             raise NotImplementedError(
@@ -350,14 +356,11 @@ class ScribeSVIResults:
         Dict
             Updated dictionary with canonical parameters computed
         """
-        # This method assumed multiple parameterizations which are no longer supported
-        # in the same way. For now, it only handles the standard case where p_hat
-        # might need to be computed. A more robust solution will be needed if more
-        # complex parameterizations are re-introduced.
         estimates = map_estimates.copy()
+        parameterization = self.model_config.parameterization
 
         # Handle linked parameterization
-        if self.model_config.parameterization == "linked":
+        if parameterization == "linked":
             if "mu" in estimates and "p" in estimates and "r" not in estimates:
                 if verbose:
                     print("Computing r from mu and p for linked parameterization")
@@ -366,7 +369,60 @@ class ScribeSVIResults:
                     estimates["mu"] * (1 - estimates["p"]) / estimates["p"]
                 )
 
-        # Compute p_hat for NBVCP and ZINBVCP models if needed
+        # Handle odds_ratio parameterization
+        elif parameterization == "odds_ratio":
+            # Convert phi to p if needed
+            if "phi" in estimates and "p" not in estimates:
+                if verbose:
+                    print("Computing p from phi for odds_ratio parameterization")
+                estimates["p"] = 1.0 / (1.0 + estimates["phi"])
+            
+            # Convert phi and mu to r if needed
+            if "phi" in estimates and "mu" in estimates and "r" not in estimates:
+                if verbose:
+                    print("Computing r from phi and mu for odds_ratio parameterization")
+                # Reshape phi to broadcast with mu based on mixture model
+                if self.n_components is not None:
+                    # Mixture model: mu has shape (n_components, n_genes)
+                    phi_reshaped = estimates["phi"][:, None]
+                else:
+                    # Non-mixture model: mu has shape (n_genes,)
+                    phi_reshaped = estimates["phi"]
+                estimates["r"] = estimates["mu"] * phi_reshaped
+            
+            # Handle VCP capture probability conversion
+            if "phi_capture" in estimates and "p_capture" not in estimates:
+                if verbose:
+                    print("Computing p_capture from phi_capture for odds_ratio parameterization")
+                estimates["p_capture"] = 1.0 / (1.0 + estimates["phi_capture"])
+
+        # Handle unconstrained parameterization
+        elif parameterization == "unconstrained":
+            # Convert r_unconstrained to r if needed
+            if "r_unconstrained" in estimates and "r" not in estimates:
+                if verbose:
+                    print("Computing r from r_unconstrained for unconstrained parameterization")
+                estimates["r"] = jnp.exp(estimates["r_unconstrained"])
+            
+            # Convert p_unconstrained to p if needed
+            if "p_unconstrained" in estimates and "p" not in estimates:
+                if verbose:
+                    print("Computing p from p_unconstrained for unconstrained parameterization")
+                estimates["p"] = jnp.sigmoid(estimates["p_unconstrained"])
+            
+            # Convert gate_unconstrained to gate if needed
+            if "gate_unconstrained" in estimates and "gate" not in estimates:
+                if verbose:
+                    print("Computing gate from gate_unconstrained for unconstrained parameterization")
+                estimates["gate"] = jnp.sigmoid(estimates["gate_unconstrained"])
+            
+            # Handle VCP capture probability conversion
+            if "p_capture_unconstrained" in estimates and "p_capture" not in estimates:
+                if verbose:
+                    print("Computing p_capture from p_capture_unconstrained for unconstrained parameterization")
+                estimates["p_capture"] = jnp.sigmoid(estimates["p_capture_unconstrained"])
+
+        # Compute p_hat for NBVCP and ZINBVCP models if needed (applies to all parameterizations)
         if (
             "p" in estimates
             and "p_capture" in estimates
@@ -2313,8 +2369,9 @@ class ScribeSVIResults:
         parameterization = self.model_config.parameterization
         samples = self.posterior_samples
 
-        # Convert parameters to canonical form
+        # Convert parameters to canonical form based on parameterization
         if parameterization == "odds_ratio":
+            # Convert phi to p if needed
             if (
                 "phi" in samples
                 and "mu" in samples
@@ -2341,6 +2398,7 @@ class ScribeSVIResults:
                 samples["p_capture"] = 1.0 / (1.0 + phi_capture)
 
         elif parameterization == "linked":
+            # Convert linked parameters to canonical form
             if "p" in samples and "mu" in samples and "r" not in samples:
                 p = samples["p"]
                 mu = samples["mu"]
@@ -2355,6 +2413,7 @@ class ScribeSVIResults:
                 samples["r"] = mu * (1.0 - p_reshaped) / p_reshaped
 
         elif parameterization == "unconstrained":
+            # Convert unconstrained parameters to canonical form
             if "r_unconstrained" in samples and "r" not in samples:
                 samples["r"] = jnp.exp(samples["r_unconstrained"])
             if "p_unconstrained" in samples and "p" not in samples:
@@ -2370,5 +2429,8 @@ class ScribeSVIResults:
                 samples["p_capture"] = jnp.sigmoid(
                     samples["p_capture_unconstrained"]
                 )
+
+        # Standard parameterization doesn't need conversion
+        # (parameters are already in canonical form)
 
         return self

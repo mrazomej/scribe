@@ -14,9 +14,7 @@ from .model_registry import (
 )
 
 # Parameterization-specific model modules
-from . import standard
-from . import linked
-from . import model_registry
+from . import linked, odds_ratio, standard, unconstrained
 
 __all__ = [
     # Configuration
