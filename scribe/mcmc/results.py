@@ -939,9 +939,10 @@ class ScribeMCMCResults(MCMC):
 
 def _get_model_fn(model_type: str, model_config) -> Callable:
     """Get the model function for this model type and parameterization."""
-    from scribe.models.model_registry import get_model_and_guide
+    from ..models.model_registry import get_model_and_guide
 
-    return get_model_and_guide(model_type, model_config.parameterization)[0]
+    parameterization = model_config.parameterization or "standard"
+    return get_model_and_guide(model_type, parameterization)[0]
 
 
 # ------------------------------------------------------------------------------

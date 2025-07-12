@@ -15,6 +15,8 @@ from typing import Callable, Tuple, Optional
 SUPPORTED_PARAMETERIZATIONS = [
     "standard",
     "linked",
+    "odds_ratio",
+    "unconstrained",
 ]
 
 # Dictionary to cache imported model modules
@@ -53,14 +55,23 @@ def get_model_and_guide(
         If the parameterization module or the model/guide functions cannot be
         found.
     """
+    # Check if parameterization is supported
+    if parameterization not in SUPPORTED_PARAMETERIZATIONS:
+        raise ValueError(
+            f"Unsupported parameterization: {parameterization}. "
+            f"Supported parameterizations are: {SUPPORTED_PARAMETERIZATIONS}"
+        )
+
     # Dynamically import the parameterization module (e.g.,
     # scribe.models.standard)
     try:
         module = importlib.import_module(
             f".{parameterization}", "scribe.models"
         )
-    except ImportError:
-        raise ValueError(f"Unknown parameterization module: {parameterization}")
+    except ImportError as e:
+        raise ValueError(
+            f"Could not import parameterization module '{parameterization}': {e}"
+        )
 
     # Determine the function names based on convention
     if model_type.endswith("_mix"):
@@ -99,14 +110,33 @@ def get_log_likelihood_fn(model_type: str) -> Callable:
     """
     Get the log likelihood function for a specified model type.
 
-    The log likelihood is parameterization-independent, so it's always
-    retrieved from the 'standard' module.
+    The log likelihood functions are now located in the dedicated
+    log_likelihood module, which is parameterization-independent.
+
+    Parameters
+    ----------
+    model_type : str
+        The type of model to retrieve the log likelihood function for.
+        Examples: "nbdm", "zinb_mix".
+
+    Returns
+    -------
+    Callable
+        The log likelihood function for the specified model type.
+
+    Raises
+    ------
+    ValueError
+        If the log likelihood function cannot be found.
     """
     try:
-        standard_module = importlib.import_module(".standard", "scribe.models")
-    except ImportError:
+        # Import the dedicated log_likelihood module
+        log_likelihood_module = importlib.import_module(
+            ".log_likelihood", "scribe.models"
+        )
+    except ImportError as e:
         raise ImportError(
-            "The 'standard' model module is required for log likelihood functions."
+            f"Could not import log_likelihood module: {e}"
         )
 
     # Determine the function name based on convention
@@ -116,11 +146,11 @@ def get_log_likelihood_fn(model_type: str) -> Callable:
     else:
         ll_name = f"{model_type}_log_likelihood"
 
-    # Retrieve the function from the standard module
-    ll_fn = getattr(standard_module, ll_name, None)
+    # Retrieve the function from the log_likelihood module
+    ll_fn = getattr(log_likelihood_module, ll_name, None)
     if ll_fn is None:
         raise ValueError(
-            f"Log likelihood function '{ll_name}' not found in 'standard' module."
+            f"Log likelihood function '{ll_name}' not found in 'log_likelihood' module."
         )
 
     return ll_fn

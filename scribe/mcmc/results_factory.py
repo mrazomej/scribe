@@ -1,7 +1,8 @@
 """
 Results factory for MCMC inference.
 
-This module handles the packaging of MCMC results into ScribeMCMCResults objects.
+This module handles the packaging of MCMC results into ScribeMCMCResults
+objects.
 """
 
 from typing import Union, Optional, Dict, Any
