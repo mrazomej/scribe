@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import warnings
 
 import jax.numpy as jnp
+from jax.nn import sigmoid, softmax
 from jax import random, jit, vmap
 import pandas as pd
 from numpyro.infer import MCMC
@@ -347,7 +348,7 @@ class ScribeMCMCResults(MCMC):
             and "p" not in canonical_samples
         ):
             # Compute p from p_unconstrained
-            canonical_samples["p"] = jnp.sigmoid(
+            canonical_samples["p"] = sigmoid(
                 canonical_samples["p_unconstrained"]
             )
 
@@ -356,7 +357,7 @@ class ScribeMCMCResults(MCMC):
             and "gate" not in canonical_samples
         ):
             # Compute gate from gate_unconstrained
-            canonical_samples["gate"] = jnp.sigmoid(
+            canonical_samples["gate"] = sigmoid(
                 canonical_samples["gate_unconstrained"]
             )
 
@@ -375,8 +376,19 @@ class ScribeMCMCResults(MCMC):
             and "p_capture" not in canonical_samples
         ):
             # Compute p_capture from p_capture_unconstrained
-            canonical_samples["p_capture"] = jnp.sigmoid(
+            canonical_samples["p_capture"] = sigmoid(
                 canonical_samples["p_capture_unconstrained"]
+            )
+
+        # Handle mixing weights computation for mixture models
+        if (
+            "mixing_logits_unconstrained" in samples
+            and "mixing_weights" not in samples
+        ):
+            # Compute mixing weights from mixing_logits_unconstrained using
+            # softmax
+            canonical_samples["mixing_weights"] = softmax(
+                canonical_samples["mixing_logits_unconstrained"], axis=-1
             )
 
         return canonical_samples
@@ -1015,7 +1027,7 @@ class ScribeMCMCResults(MCMC):
                     and "p" not in canonical_samples
                 ):
                     # Compute p from p_unconstrained
-                    canonical_samples["p"] = jnp.sigmoid(
+                    canonical_samples["p"] = sigmoid(
                         canonical_samples["p_unconstrained"]
                     )
 
@@ -1024,7 +1036,7 @@ class ScribeMCMCResults(MCMC):
                     and "gate" not in canonical_samples
                 ):
                     # Compute gate from gate_unconstrained
-                    canonical_samples["gate"] = jnp.sigmoid(
+                    canonical_samples["gate"] = sigmoid(
                         canonical_samples["gate_unconstrained"]
                     )
 
@@ -1043,8 +1055,20 @@ class ScribeMCMCResults(MCMC):
                     and "p_capture" not in canonical_samples
                 ):
                     # Compute p_capture from p_capture_unconstrained
-                    canonical_samples["p_capture"] = jnp.sigmoid(
+                    canonical_samples["p_capture"] = sigmoid(
                         canonical_samples["p_capture_unconstrained"]
+                    )
+
+                # Handle mixing weights computation for mixture models
+                if (
+                    "mixing_logits_unconstrained" in canonical_samples
+                    and "mixing_weights" not in canonical_samples
+                ):
+                    # Compute mixing weights from mixing_logits_unconstrained using
+                    # softmax
+                    canonical_samples["mixing_weights"] = softmax(
+                        canonical_samples["mixing_logits_unconstrained"],
+                        axis=-1,
                     )
 
                 return canonical_samples
@@ -1148,14 +1172,14 @@ class ScribeMCMCResults(MCMC):
                         "p_unconstrained" in canonical_samples
                         and "p" not in canonical_samples
                     ):
-                        canonical_samples["p"] = jnp.sigmoid(
+                        canonical_samples["p"] = sigmoid(
                             canonical_samples["p_unconstrained"]
                         )
                     if (
                         "gate_unconstrained" in canonical_samples
                         and "gate" not in canonical_samples
                     ):
-                        canonical_samples["gate"] = jnp.sigmoid(
+                        canonical_samples["gate"] = sigmoid(
                             canonical_samples["gate_unconstrained"]
                         )
                     # Handle VCP capture probability conversion for
@@ -1164,7 +1188,7 @@ class ScribeMCMCResults(MCMC):
                         "p_capture_unconstrained" in canonical_samples
                         and "p_capture" not in canonical_samples
                     ):
-                        canonical_samples["p_capture"] = jnp.sigmoid(
+                        canonical_samples["p_capture"] = sigmoid(
                             canonical_samples["p_capture_unconstrained"]
                         )
 
