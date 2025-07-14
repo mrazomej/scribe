@@ -7,6 +7,7 @@ This module provides a single ModelConfig class that handles all parameterizatio
 
 from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
+import jax.numpy as jnp
 
 
 @dataclass
@@ -103,6 +104,71 @@ class ModelConfig:
         self._validate_base_model()
         self._validate_parameterization()
         self._validate_mixture_components()
+        self._set_default_priors()
+
+    def _set_default_priors(self):
+        """Set default priors for parameters that are None."""
+        if self.parameterization == "unconstrained":
+            # Set defaults for unconstrained parameterization
+            if self.p_unconstrained_prior is None:
+                self.p_unconstrained_prior = (0.0, 1.0)  # Normal on logit(p)
+            if self.r_unconstrained_prior is None:
+                self.r_unconstrained_prior = (0.0, 1.0)  # Normal on log(r)
+            if (
+                self.gate_unconstrained_prior is None
+                and "zinb" in self.base_model
+            ):
+                self.gate_unconstrained_prior = (
+                    0.0,
+                    1.0,
+                )  # Normal on logit(gate)
+            if (
+                self.p_capture_unconstrained_prior is None
+                and "vcp" in self.base_model
+            ):
+                self.p_capture_unconstrained_prior = (
+                    0.0,
+                    1.0,
+                )  # Normal on logit(p_capture)
+            if (
+                self.mixing_logits_unconstrained_prior is None
+                and self.is_mixture_model()
+            ):
+                self.mixing_logits_unconstrained_prior = (
+                    0.0,
+                    1.0,
+                )  # Normal on logits
+        else:
+            # Set defaults for constrained parameterizations
+            if self.parameterization == "standard":
+                if self.p_param_prior is None:
+                    self.p_param_prior = (1.0, 1.0)  # Beta
+                if self.r_param_prior is None:
+                    self.r_param_prior = (0.0, 1.0)  # LogNormal
+            elif self.parameterization == "linked":
+                if self.p_param_prior is None:
+                    self.p_param_prior = (1.0, 1.0)  # Beta
+                if self.mu_param_prior is None:
+                    self.mu_param_prior = (0.0, 1.0)  # LogNormal
+            elif self.parameterization == "odds_ratio":
+                if self.phi_param_prior is None:
+                    self.phi_param_prior = (1.0, 1.0)  # BetaPrime
+                if self.mu_param_prior is None:
+                    self.mu_param_prior = (0.0, 1.0)  # LogNormal
+
+            # Model-specific defaults
+            if self.gate_param_prior is None and "zinb" in self.base_model:
+                self.gate_param_prior = (1.0, 1.0)  # Beta
+            if self.p_capture_param_prior is None and "vcp" in self.base_model:
+                if self.parameterization == "odds_ratio":
+                    if self.phi_capture_param_prior is None:
+                        self.phi_capture_param_prior = (1.0, 1.0)  # BetaPrime
+                else:
+                    self.p_capture_param_prior = (1.0, 1.0)  # Beta
+            if self.mixing_param_prior is None and self.is_mixture_model():
+                self.mixing_param_prior = jnp.ones(
+                    self.n_components
+                )  # Symmetric Dirichlet
 
     def _validate_base_model(self):
         """Validate base model specification."""
@@ -146,7 +212,7 @@ class ModelConfig:
 
             if self.n_components is None or self.n_components < 2:
                 raise ValueError("Mixture models require n_components >= 2")
-            
+
         else:
             if self.n_components is not None:
                 raise ValueError(
@@ -215,7 +281,10 @@ class ModelConfig:
         for param in self.get_active_parameters():
             prior_name = f"{param}_param_prior"
             unconstrained_prior_name = f"{param}_unconstrained_prior"
-            if hasattr(self, prior_name) and getattr(self, prior_name) is not None:
+            if (
+                hasattr(self, prior_name)
+                and getattr(self, prior_name) is not None
+            ):
                 active_priors[param] = getattr(self, prior_name)
             elif (
                 hasattr(self, unconstrained_prior_name)
