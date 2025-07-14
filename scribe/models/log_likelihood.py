@@ -4,6 +4,7 @@ Log likelihood computation functions for single-cell RNA sequencing models.
 
 # Import JAX-related libraries
 import jax.numpy as jnp
+import jax.scipy as jsp
 
 # Import Pyro-related libraries
 import numpyro.distributions as dist
@@ -557,3 +558,906 @@ def zinbvcp_log_likelihood(
             gene_log_probs += jnp.sum(batch_log_probs, axis=0)
 
         return gene_log_probs
+
+
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Mixture Models
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Negative Binomial Dirichlet Multinomial Mixture Model
+# ------------------------------------------------------------------------------
+
+
+def nbdm_mixture_log_likelihood(
+    counts: jnp.ndarray,
+    params: Dict,
+    batch_size: Optional[int] = None,
+    cells_axis: int = 0,
+    return_by: str = "cell",
+    split_components: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
+    dtype: jnp.dtype = jnp.float32,
+) -> jnp.ndarray:
+    """
+    Compute log likelihood for NBDM mixture model using independent negative
+    binomials.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        Array of shape (n_cells, n_genes) containing observed counts
+    params : Dict
+        Dictionary containing model parameters:
+            - 'mixing_weights': probabilities for each component
+            - 'p': success probability parameter
+            - 'r': dispersion parameters for each gene and component
+    batch_size : Optional[int]
+        Size of mini-batches for stochastic computation. If None, uses full
+        dataset.
+    cells_axis: int = 0
+        Axis along which cells are arranged. 0 means cells are rows (default), 1
+        means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities summed over genes (default)
+            - 'gene': returns log probabilities summed over cells
+    split_components: bool = False
+        If True, returns separate log probabilities for each component. If
+        False, returns the log probability of the mixture.
+    weights: Optional[jnp.ndarray]
+        Array of shape (n_genes,) containing weights for each gene. If None,
+        weights are not used.
+    weight_type: Optional[str] = None
+        How to apply weights to probabilities. Must be one of:
+            - 'multiplicative': applies as p^weight (weight * log(p) in log
+              space)
+            - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
+
+    Returns
+    -------
+    jnp.ndarray
+        Shape depends on return_by and split_components:
+            - return_by='cell', split_components=False: shape (n_cells,)
+            - return_by='cell', split_components=True: shape (n_cells,
+              n_components)
+            - return_by='gene', split_components=False: shape (n_genes,)
+            - return_by='gene', split_components=True: shape (n_genes,
+              n_components)
+    """
+    # Check if counts is already a jnp.ndarray with the correct dtype
+    if not isinstance(counts, jnp.ndarray) or counts.dtype != dtype:
+        # Only allocate a new array if necessary
+        counts = jnp.array(counts, dtype=dtype)
+
+    # Check return_by and weight_type
+    if return_by not in ["cell", "gene"]:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
+
+    # Extract parameters
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
+    n_components = mixing_weights.shape[0]
+
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+    else:
+        n_genes, n_cells = counts.shape
+        counts = jnp.transpose(counts)  # Transpose to make cells rows
+
+    # Expand dimensions for vectorized computation
+    # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
+    counts = jnp.expand_dims(counts, axis=-1)
+    # r: (n_components, n_genes) -> (1, n_genes, n_components)
+    r = jnp.expand_dims(jnp.transpose(r), axis=0)
+    # p: scalar -> (1, 1, 1) for broadcasting
+    # First convert scalar to array, then add dimensions
+    p = jnp.array(p)[None, None, None]
+
+    # Create base NB distribution vectorized over cells, components, genes
+    nb_dist = dist.NegativeBinomialProbs(r, p)
+
+    # Validate and process weights
+    if weights is not None:
+        expected_length = n_genes if return_by == "cell" else n_cells
+        if len(weights) != expected_length:
+            raise ValueError(
+                f"For return_by='{return_by}', weights must be of shape "
+                f"({expected_length},)"
+            )
+        weights = jnp.array(weights, dtype=dtype)
+
+    if return_by == "cell":
+        if batch_size is None:
+            # Compute log probs for all cells at once
+            # This gives (n_cells, n_components, n_genes)
+            gene_log_probs = nb_dist.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+            # Sum over genes (axis=1) to get (n_cells, n_components)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
+            )
+        else:
+            # Initialize array for results
+            log_probs = jnp.zeros((n_cells, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+
+                # Compute log probs for batch
+                # Shape: (batch_size, n_components, n_genes)
+                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+                # Sum over genes (axis=1) to get (n_cells, n_components)
+                # Store log probs for batch
+                log_probs = log_probs.at[start_idx:end_idx].set(
+                    jnp.sum(batch_log_probs, axis=1) + jnp.log(mixing_weights)
+                )
+    else:  # return_by == 'gene'
+        if batch_size is None:
+            # Compute log probs for each gene
+            # Shape: (n_cells, n_components, n_genes)
+            gene_log_probs = nb_dist.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+            # Sum over cells and add mixing weights
+            # Shape: (n_genes, n_components)
+            log_probs = (
+                jnp.sum(gene_log_probs, axis=0) + jnp.log(mixing_weights).T
+            )
+        else:
+            # Initialize array for results
+            log_probs = jnp.zeros((n_genes, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+
+                # Compute log probs for batch
+                # Shape: (batch_size, n_components, n_genes)
+                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+                # Add weighted log probs for batch
+                log_probs += jnp.sum(batch_log_probs, axis=0)
+
+            # Add mixing weights
+            log_probs += jnp.log(mixing_weights).T
+
+    if split_components:
+        return log_probs
+    else:
+        return jsp.special.logsumexp(log_probs, axis=1)
+
+
+# ------------------------------------------------------------------------------
+# Zero-Inflated Negative Binomial Mixture Model
+# ------------------------------------------------------------------------------
+
+
+def zinb_mixture_log_likelihood(
+    counts: jnp.ndarray,
+    params: Dict,
+    batch_size: Optional[int] = None,
+    cells_axis: int = 0,
+    return_by: str = "cell",
+    split_components: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
+    dtype: jnp.dtype = jnp.float32,
+) -> jnp.ndarray:
+    """
+    Compute log likelihood for ZINB mixture model.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        Array of shape (n_cells, n_genes) containing observed counts
+    params : Dict
+        Dictionary containing model parameters:
+            - 'mixing_weights': probabilities for each component
+            - 'p': success probability parameter
+            - 'r': dispersion parameters for each gene and component
+            - 'gate': dropout probabilities for each gene and component
+    batch_size : Optional[int]
+        Size of mini-batches for stochastic computation. If None, uses full dataset.
+    cells_axis: int = 0
+        Axis along which cells are arranged. 0 means cells are rows (default),
+        1 means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities summed over genes (default)
+            - 'gene': returns log probabilities summed over cells
+    split_components: bool = False
+        If True, returns separate log probabilities for each component.
+        If False, returns the log probability of the mixture.
+    weights: Optional[jnp.ndarray]
+        Array of shape (n_genes,) containing weights for each gene. If None,
+        weights are not used.
+    weight_type: Optional[str] = None
+        How to apply weights to probabilities. Must be one of:
+            - 'multiplicative': applies as p^weight (weight * log(p) in log space)
+            - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
+
+    Returns
+    -------
+    jnp.ndarray
+        Shape depends on return_by and split_components:
+            - return_by='cell', split_components=False: shape (n_cells,)
+            - return_by='cell', split_components=True: shape (n_cells, n_components)
+            - return_by='gene', split_components=False: shape (n_genes,)
+            - return_by='gene', split_components=True: shape (n_genes, n_components)
+    """
+    # Check if counts is already a jnp.ndarray with the correct dtype
+    if not isinstance(counts, jnp.ndarray) or counts.dtype != dtype:
+        # Only allocate a new array if necessary
+        counts = jnp.array(counts, dtype=dtype)
+
+    # Check return_by and weight_type
+    if return_by not in ["cell", "gene"]:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
+
+    # Extract parameters
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    gate = jnp.squeeze(params["gate"]).astype(
+        dtype
+    )  # shape (n_components, n_genes)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
+    n_components = mixing_weights.shape[0]
+
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+    else:
+        n_genes, n_cells = counts.shape
+        counts = jnp.transpose(counts)  # Transpose to make cells rows
+
+    # Expand dimensions for vectorized computation
+    # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
+    counts = jnp.expand_dims(counts, axis=-1)
+    # r: (n_components, n_genes) -> (1, n_genes, n_components)
+    r = jnp.expand_dims(jnp.transpose(r), axis=0)
+    # gate: (n_components, n_genes) -> (1, n_components, n_genes)
+    gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
+    # p: scalar -> (1, 1, 1) for broadcasting
+    # First convert scalar to array, then add dimensions
+    p = jnp.array(p)[None, None, None]
+
+    # Create base NB distribution vectorized over cells, genes, components
+    # r: (1, n_genes, n_components)
+    # p: (1, 1, 1) or scalar
+    # counts: (n_cells, n_genes, 1)
+    # This will broadcast to: (n_cells, n_genes, n_components)
+    base_dist = dist.NegativeBinomialProbs(r, p)
+    # Create zero-inflated distribution for each component
+    # This will broadcast to: (n_cells, n_genes, n_components)
+    zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
+
+    # Validate and process weights
+    if weights is not None:
+        expected_length = n_genes if return_by == "cell" else n_cells
+        if len(weights) != expected_length:
+            raise ValueError(
+                f"For return_by='{return_by}', weights must be of shape "
+                f"({expected_length},)"
+            )
+        weights = jnp.array(weights, dtype=dtype)
+
+    if return_by == "cell":
+        if batch_size is None:
+            # Compute log probs for all cells at once
+            # This gives (n_cells, n_components, n_genes)
+            gene_log_probs = zinb.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+            # Sum over genes (axis=1) to get (n_cells, n_components)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
+            )
+        else:
+            # Initialize array for results
+            log_probs = jnp.zeros((n_cells, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+
+                # Compute log probs for batch
+                batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+                # Sum over genes (axis=1) to get (n_cells, n_components)
+                # Store log probs for batch
+                log_probs = log_probs.at[start_idx:end_idx].set(
+                    jnp.sum(batch_log_probs, axis=1) + jnp.log(mixing_weights)
+                )
+    else:  # return_by == 'gene'
+        if batch_size is None:
+            # Compute log probs for each gene
+            gene_log_probs = zinb.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+            # Sum over cells and add mixing weights
+            # Shape: (n_genes, n_components)
+            log_probs = (
+                jnp.sum(gene_log_probs, axis=0) + jnp.log(mixing_weights).T
+            )
+        else:
+            # Initialize array for results
+            log_probs = jnp.zeros((n_genes, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+
+                # Compute log probs for batch
+                # Shape: (batch_size, n_components, n_genes)
+                batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+                # Add weighted log probs for batch
+                log_probs += jnp.sum(batch_log_probs, axis=0)
+
+            # Add mixing weights
+            log_probs += jnp.log(mixing_weights).T
+
+    if split_components:
+        return log_probs
+    else:
+        return jsp.special.logsumexp(log_probs, axis=1)
+
+
+# ------------------------------------------------------------------------------
+# Negative Binomial Mixture Model with Capture Probabilities
+# ------------------------------------------------------------------------------
+
+
+def nbvcp_mixture_log_likelihood(
+    counts: jnp.ndarray,
+    params: Dict,
+    batch_size: Optional[int] = None,
+    cells_axis: int = 0,
+    return_by: str = "cell",
+    split_components: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
+    dtype: jnp.dtype = jnp.float32,
+) -> jnp.ndarray:
+    """
+    Compute log likelihood for NBVCP mixture model.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        Array of shape (n_cells, n_genes) containing observed counts
+    params : Dict
+        Dictionary containing model parameters:
+            - 'mixing_weights': probabilities for each component
+            - 'p': base success probability parameter
+            - 'r': dispersion parameters for each gene and component
+            - 'p_capture': cell-specific capture probabilities
+    batch_size : Optional[int]
+        Size of mini-batches for stochastic computation. If None, uses full
+        dataset.
+    cells_axis: int = 0
+        Axis along which cells are arranged. 0 means cells are rows (default), 1
+        means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities summed over genes (default)
+            - 'gene': returns log probabilities summed over cells
+    split_components: bool = False
+        If True, returns separate log probabilities for each component. If
+        False, returns the log probability of the mixture.
+    weights: Optional[jnp.ndarray]
+        Array of shape (n_genes,) containing weights for each gene. If None,
+        weights are not used.
+    weight_type: Optional[str] = None
+        How to apply weights to probabilities. Must be one of:
+            - 'multiplicative': applies as p^weight (weight * log(p) in log
+              space)
+            - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
+
+    Returns
+    -------
+    jnp.ndarray
+        Shape depends on return_by and split_components:
+            - return_by='cell', split_components=False: shape (n_cells,)
+            - return_by='cell', split_components=True: shape (n_cells,
+              n_components)
+            - return_by='gene', split_components=False: shape (n_genes,)
+            - return_by='gene', split_components=True: shape (n_genes,
+              n_components)
+    """
+    # Check if counts is already a jnp.ndarray with the correct dtype
+    if not isinstance(counts, jnp.ndarray) or counts.dtype != dtype:
+        # Only allocate a new array if necessary
+        counts = jnp.array(counts, dtype=dtype)
+
+    # Check return_by and weight_type
+    if return_by not in ["cell", "gene"]:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
+
+    # Extract parameters
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    p_capture = jnp.squeeze(params["p_capture"]).astype(
+        dtype
+    )  # shape (n_cells,)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
+    n_components = mixing_weights.shape[0]
+
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+    else:
+        n_genes, n_cells = counts.shape
+        counts = jnp.transpose(counts)  # Transpose to make cells rows
+
+    # Expand dimensions for vectorized computation
+    # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
+    counts = jnp.expand_dims(counts, axis=-1)
+    # r: (n_components, n_genes) -> (1, n_genes, n_components)
+    r = jnp.expand_dims(jnp.transpose(r), axis=0)
+    # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
+    p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
+    # p: scalar -> (1, 1, 1) for broadcasting
+    p = jnp.array(p)[None, None, None]
+    # Compute effective probability for each cell
+    # This will broadcast to shape (n_cells, 1, 1)
+    p_hat = p / (p_capture + p * (1 - p_capture))
+
+    # Validate and process weights
+    if weights is not None:
+        expected_length = n_genes if return_by == "cell" else n_cells
+        if len(weights) != expected_length:
+            raise ValueError(
+                f"For return_by='{return_by}', weights must be of shape "
+                f"({expected_length},)"
+            )
+        weights = jnp.array(weights, dtype=dtype)
+
+    if return_by == "cell":
+        if batch_size is None:
+            # Create base NB distribution vectorized over cells, genes, components
+            # r: (1, n_genes, n_components)
+            # p_hat: (n_cells, 1, 1) or scalar
+            # counts: (n_cells, n_genes, 1)
+            # This will broadcast to: (n_cells, n_genes, n_components)
+            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+
+            # Compute log probs for all cells at once
+            # This gives (n_cells, n_components, n_genes)
+            gene_log_probs = nb_dist.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+            # Sum over genes (axis=1) to get (n_cells, n_components)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
+            )
+        else:
+            # Initialize array for results
+            log_probs = jnp.zeros((n_cells, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+                # Create base NB distribution vectorized over cells, genes, components
+                # r: (1, n_genes, n_components)
+                # p_hat: (n_cells, 1, 1)
+                # counts: (n_cells, n_genes, 1)
+                # This will broadcast to: (batch_size, n_genes, n_components)
+                nb_dist = dist.NegativeBinomialProbs(
+                    r, p_hat[start_idx:end_idx]
+                )
+                # Compute log probs for batch
+                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+                # Sum over genes (axis=1) to get (n_cells, n_components)
+                # Store log probs for batch
+                log_probs = log_probs.at[start_idx:end_idx].set(
+                    jnp.sum(batch_log_probs, axis=1) + jnp.log(mixing_weights)
+                )
+
+    else:  # return_by == 'gene'
+        if batch_size is None:
+            # Create base NB distribution vectorized over cells, genes, components
+            # r: (1, n_genes, n_components)
+            # p_hat: (n_cells, 1, 1) or scalar
+            # counts: (n_cells, n_genes, 1)
+            # This will broadcast to: (n_cells, n_genes, n_components)
+            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+            # Compute log probs for each gene
+            gene_log_probs = nb_dist.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+            # Sum over cells and add mixing weights
+            # Shape: (n_genes, n_components)
+            log_probs = (
+                jnp.sum(gene_log_probs, axis=0) + jnp.log(mixing_weights).T
+            )
+        else:
+            # Initialize array for gene-wise sums
+            log_probs = jnp.zeros((n_genes, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+                # Create base NB distribution vectorized over cells, genes, components
+                # r: (1, n_genes, n_components)
+                # p_hat: (n_cells, 1, 1)
+                # counts: (n_cells, n_genes, 1)
+                # This will broadcast to: (batch_size, n_genes, n_components)
+                nb_dist = dist.NegativeBinomialProbs(
+                    r, p_hat[start_idx:end_idx]
+                )
+
+                # Compute log probs for batch
+                # Shape: (batch_size, n_genes, n_components)
+                batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+                # Add weighted log probs for batch
+                log_probs += jnp.sum(batch_log_probs, axis=0)
+
+            # Add mixing weights
+            log_probs += jnp.log(mixing_weights).T
+
+    if split_components:
+        return log_probs
+    else:
+        return jsp.special.logsumexp(log_probs, axis=1)
+
+
+# ------------------------------------------------------------------------------
+# Zero-Inflated Negative Binomial Mixture Model with Capture Probabilities
+# ------------------------------------------------------------------------------
+
+
+def zinbvcp_mixture_log_likelihood(
+    counts: jnp.ndarray,
+    params: Dict,
+    batch_size: Optional[int] = None,
+    cells_axis: int = 0,
+    return_by: str = "cell",
+    split_components: bool = False,
+    weights: Optional[jnp.ndarray] = None,
+    weight_type: Optional[str] = None,
+    dtype: jnp.dtype = jnp.float32,
+) -> jnp.ndarray:
+    """
+    Compute log likelihood for ZINBVCP mixture model.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        Array of shape (n_cells, n_genes) containing observed counts
+    params : Dict
+        Dictionary containing model parameters:
+            - 'mixing_weights': probabilities for each component
+            - 'p': base success probability parameter
+            - 'r': dispersion parameters for each gene and component
+            - 'p_capture': cell-specific capture probabilities
+            - 'gate': dropout probabilities for each gene and component
+    batch_size : Optional[int]
+        Size of mini-batches for stochastic computation. If None, uses full
+        dataset.
+    cells_axis: int = 0
+        Axis along which cells are arranged. 0 means cells are rows (default), 1
+        means cells are columns
+    return_by: str
+        Specifies how to return the log probabilities. Must be one of:
+            - 'cell': returns log probabilities summed over genes (default)
+            - 'gene': returns log probabilities summed over cells
+    split_components: bool = False
+        If True, returns separate log probabilities for each component. If
+        False, returns the log probability of the mixture.
+    weights: Optional[jnp.ndarray]
+        Array of shape (n_genes,) containing weights for each gene. If None,
+        weights are not used.
+    weight_type: Optional[str] = None
+        How to apply weights. Must be one of:
+            - 'multiplicative': multiply log probabilities by weights
+            - 'additive': add weights to log probabilities
+    dtype: jnp.dtype, default=jnp.float32
+        Data type for numerical precision in computations
+
+    Returns
+    -------
+    jnp.ndarray
+        Shape depends on return_by and split_components:
+            - return_by='cell', split_components=False: shape (n_cells,)
+            - return_by='cell', split_components=True: shape (n_cells,
+              n_components)
+            - return_by='gene', split_components=False: shape (n_genes,)
+            - return_by='gene', split_components=True: shape (n_genes,
+              n_components)
+    """
+    # Check if counts is already a jnp.ndarray with the correct dtype
+    if not isinstance(counts, jnp.ndarray) or counts.dtype != dtype:
+        # Only allocate a new array if necessary
+        counts = jnp.array(counts, dtype=dtype)
+
+    # Check return_by and weight_type
+    if return_by not in ["cell", "gene"]:
+        raise ValueError("return_by must be one of ['cell', 'gene']")
+    if weight_type is not None and weight_type not in [
+        "multiplicative",
+        "additive",
+    ]:
+        raise ValueError(
+            "weight_type must be one of " "['multiplicative', 'additive']"
+        )
+
+    # Extract parameters
+    p = jnp.squeeze(params["p"]).astype(dtype)
+    r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    p_capture = jnp.squeeze(params["p_capture"]).astype(
+        dtype
+    )  # shape (n_cells,)
+    gate = jnp.squeeze(params["gate"]).astype(
+        dtype
+    )  # shape (n_components, n_genes)
+    mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
+    n_components = mixing_weights.shape[0]
+
+    # Extract dimensions
+    if cells_axis == 0:
+        n_cells, n_genes = counts.shape
+    else:
+        n_genes, n_cells = counts.shape
+        counts = jnp.transpose(counts)  # Transpose to make cells rows
+
+    # Expand dimensions for vectorized computation
+    # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
+    counts = jnp.expand_dims(counts, axis=-1)
+    # r: (n_components, n_genes) -> (1, n_genes, n_components)
+    r = jnp.expand_dims(jnp.transpose(r), axis=0)
+    # gate: (n_components, n_genes) -> (1, n_genes, n_components)
+    gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
+    # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
+    p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
+    # p: scalar -> (1, 1, 1) for broadcasting
+    p = jnp.array(p)[None, None, None]
+    # Compute effective probability for each cell
+    # This will broadcast to shape (n_cells, 1, 1)
+    p_hat = p / (p_capture + p * (1 - p_capture))
+
+    # Validate and process weights
+    if weights is not None:
+        expected_length = n_genes if return_by == "cell" else n_cells
+        if len(weights) != expected_length:
+            raise ValueError(
+                f"For return_by='{return_by}', weights must be of shape "
+                f"({expected_length},)"
+            )
+        weights = jnp.array(weights, dtype=dtype)
+
+    if return_by == "cell":
+        if batch_size is None:
+            # Create base NB distribution vectorized over cells, genes, components
+            # r: (1, n_genes, n_components)
+            # p_hat: (n_cells, 1, 1) or scalar
+            # counts: (n_cells, n_genes, 1)
+            # This will broadcast to: (n_cells, n_genes, n_components)
+            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+            # Create zero-inflated distribution for each component
+            zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
+            # Compute log probs for all cells at once
+            # This gives (n_cells, n_components, n_genes)
+            gene_log_probs = zinb.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+            # Sum over genes (axis=1) to get (n_cells, n_components)
+            log_probs = jnp.sum(gene_log_probs, axis=1) + jnp.log(
+                mixing_weights
+            )
+        else:
+            # Initialize array for results
+            log_probs = jnp.zeros((n_cells, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+                # Create base NB distribution vectorized over cells, genes, components
+                # r: (1, n_genes, n_components)
+                # p_hat: (n_cells, 1, 1) or scalar
+                # counts: (n_cells, n_genes, 1)
+                # This will broadcast to: (batch_size, n_genes, n_components)
+                nb_dist = dist.NegativeBinomialProbs(
+                    r, p_hat[start_idx:end_idx]
+                )
+                # Create zero-inflated distribution for each component
+                zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
+                # Compute log probs for batch
+                # Shape: (batch_size, n_genes, n_components)
+                batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
+
+                # Sum over genes (axis=1) to get (n_cells, n_components)
+                # Store log probs for batch
+                log_probs = log_probs.at[start_idx:end_idx].set(
+                    jnp.sum(batch_log_probs, axis=1) + jnp.log(mixing_weights)
+                )
+
+    else:  # return_by == 'gene'
+        if batch_size is None:
+            # Create base NB distribution vectorized over cells, genes, components
+            # r: (1, n_genes, n_components)
+            # p_hat: (n_cells, 1, 1) or scalar
+            # counts: (n_cells, n_genes, 1)
+            # This will broadcast to: (n_cells, n_genes, n_components)
+            nb_dist = dist.NegativeBinomialProbs(r, p_hat)
+            # Create zero-inflated distribution for each component
+            zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
+            # Compute log probs for each gene
+            gene_log_probs = zinb.log_prob(counts)
+
+            # Apply weights based on weight_type
+            if weight_type == "multiplicative":
+                gene_log_probs *= weights
+            elif weight_type == "additive":
+                gene_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+            # Sum over cells and add mixing weights
+            # Shape: (n_genes, n_components)
+            log_probs = (
+                jnp.sum(gene_log_probs, axis=0) + jnp.log(mixing_weights).T
+            )
+        else:
+            # Initialize array for gene-wise sums
+            log_probs = jnp.zeros((n_genes, n_components))
+
+            # Process in batches
+            for i in range((n_cells + batch_size - 1) // batch_size):
+                # Get start and end indices for batch
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_cells)
+                # Create base NB distribution vectorized over cells, genes, components
+                # r: (1, n_genes, n_components)
+                # p_hat: (n_cells, 1, 1) or scalar
+                # counts: (n_cells, n_genes, 1)
+                # This will broadcast to: (batch_size, n_genes, n_components)
+                nb_dist = dist.NegativeBinomialProbs(
+                    r, p_hat[start_idx:end_idx]
+                )
+                # Create zero-inflated distribution for each component
+                zinb = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
+                # Compute log probs for batch
+                # Shape: (batch_size, n_genes, n_components)
+                batch_log_probs = zinb.log_prob(counts[start_idx:end_idx])
+
+                # Apply weights based on weight_type
+                if weight_type == "multiplicative":
+                    batch_log_probs *= weights
+                elif weight_type == "additive":
+                    batch_log_probs += jnp.expand_dims(weights, axis=(0, 1))
+
+                # Add weighted log probs for batch
+                log_probs += jnp.sum(batch_log_probs, axis=0)
+
+            # Add mixing weights
+            log_probs += jnp.log(mixing_weights).T
+
+    if split_components:
+        return log_probs
+    else:
+        return jsp.special.logsumexp(log_probs, axis=1)
