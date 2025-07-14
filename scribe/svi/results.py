@@ -694,23 +694,14 @@ class ScribeSVIResults:
         # Create new params dict with component subset
         new_params = dict(self.params)
 
-        # Handle parameters based on parameterization
-        parameterization = self.model_config.parameterization
-
-        if parameterization == "unconstrained":
-            # Handle unconstrained parameters
-            self._subset_unconstrained_params(new_params, component_index)
-        else:
-            # Handle constrained parameters (standard, linked, odds_ratio)
-            self._subset_constrained_params(
-                new_params, component_index, parameterization
-            )
+        # Handle all parameters based on their structure
+        self._subset_params_by_component(new_params, component_index)
 
         # Create new posterior samples if available
         new_posterior_samples = None
         if self.posterior_samples is not None:
-            new_posterior_samples = self._subset_posterior_samples_component(
-                self.posterior_samples, component_index, parameterization
+            new_posterior_samples = self._subset_posterior_samples_by_component(
+                self.posterior_samples, component_index
             )
 
         # Create new predictive samples if available - this is more complex
@@ -727,291 +718,109 @@ class ScribeSVIResults:
 
     # --------------------------------------------------------------------------
 
-    def _subset_unconstrained_params(
-        self, new_params: Dict, component_index: int
-    ):
-        """Handle subsetting of unconstrained parameters."""
-        # Handle r_unconstrained parameters (component and gene-specific)
-        if "r_unconstrained_loc" in self.params:
-            new_params["r_unconstrained_loc"] = self.params[
-                "r_unconstrained_loc"
-            ][component_index]
-        if "r_unconstrained_scale" in self.params:
-            new_params["r_unconstrained_scale"] = self.params[
-                "r_unconstrained_scale"
-            ][component_index]
-
-        # Handle p_unconstrained parameters (component-specific, not gene-specific)
-        if "p_unconstrained_loc" in self.params:
-            new_params["p_unconstrained_loc"] = self.params[
-                "p_unconstrained_loc"
-            ][component_index]
-        if "p_unconstrained_scale" in self.params:
-            new_params["p_unconstrained_scale"] = self.params[
-                "p_unconstrained_scale"
-            ][component_index]
-
-        # Handle gate_unconstrained parameters (component and gene-specific)
-        if "gate_unconstrained_loc" in self.params:
-            new_params["gate_unconstrained_loc"] = self.params[
-                "gate_unconstrained_loc"
-            ][component_index]
-        if "gate_unconstrained_scale" in self.params:
-            new_params["gate_unconstrained_scale"] = self.params[
-                "gate_unconstrained_scale"
-            ][component_index]
-
-        # Handle p_capture_unconstrained parameters (cell-specific, not
-        # component-specific)
-        # These are copied as-is since they're not component-specific
-        if "p_capture_unconstrained_loc" in self.params:
-            new_params["p_capture_unconstrained_loc"] = self.params[
-                "p_capture_unconstrained_loc"
-            ]
-        if "p_capture_unconstrained_scale" in self.params:
-            new_params["p_capture_unconstrained_scale"] = self.params[
-                "p_capture_unconstrained_scale"
-            ]
-
-        # Handle mixing_logits_unconstrained parameters (component-specific, not
-        # gene-specific)
-        if "mixing_logits_unconstrained_loc" in self.params:
-            new_params["mixing_logits_unconstrained_loc"] = self.params[
-                "mixing_logits_unconstrained_loc"
-            ][component_index]
-        if "mixing_logits_unconstrained_scale" in self.params:
-            new_params["mixing_logits_unconstrained_scale"] = self.params[
-                "mixing_logits_unconstrained_scale"
-            ][component_index]
-
-    # --------------------------------------------------------------------------
-
-    def _subset_constrained_params(
-        self, new_params: Dict, component_index: int, parameterization: str
-    ):
+    def _subset_params_by_component(self, new_params: Dict, component_index: int):
         """
-        Handle subsetting of constrained parameters based on parameterization.
+        Handle subsetting of all parameters based on their structure.
+        
+        This method intelligently handles parameters based on their dimensions
+        and naming conventions, regardless of parameterization.
         """
-        component_specific_params = [
-            "r_loc_comp",
-            "r_scale_comp",
-            "p_alpha_comp",
-            "p_beta_comp",
-            "gate_alpha_comp",
-            "gate_beta_comp",
+        # Define parameter categories based on their structure
+        component_gene_specific = [
+            "r_loc_comp", "r_scale_comp", "r_unconstrained_loc", "r_unconstrained_scale",
+            "gate_alpha_comp", "gate_beta_comp", "gate_unconstrained_loc", "gate_unconstrained_scale",
+            "mu_loc_comp", "mu_scale_comp", "phi_loc_comp", "phi_scale_comp"
         ]
-
+        
+        component_specific = [
+            "p_alpha_comp", "p_beta_comp", "p_unconstrained_loc", "p_unconstrained_scale",
+            "mixing_logits_unconstrained_loc", "mixing_logits_unconstrained_scale"
+        ]
+        
+        cell_specific = [
+            "p_capture_alpha", "p_capture_beta", "p_capture_unconstrained_loc", 
+            "p_capture_unconstrained_scale", "phi_capture_loc", "phi_capture_scale"
+        ]
+        
         shared_params = [
-            "p_alpha",
-            "p_beta",
-            "p_capture_alpha",
-            "p_capture_beta",
-            "mixing_conc",
+            "p_alpha", "p_beta", "gate_alpha", "gate_beta", "mixing_conc"
         ]
 
-        # Component-specific params: select the component
-        for param_name in component_specific_params:
+        # Handle component-gene-specific parameters (shape: [n_components, n_genes])
+        for param_name in component_gene_specific:
             if param_name in self.params:
-                new_params[param_name] = self.params[param_name][
-                    component_index
-                ]
+                new_params[param_name] = self.params[param_name][component_index]
 
-        # Shared params: take the component-specific version if it exists, otherwise copy
-        if "p_alpha_comp" not in self.params and "p_alpha" in self.params:
-            new_params["p_alpha"] = self.params["p_alpha"]
-            new_params["p_beta"] = self.params["p_beta"]
+        # Handle component-specific parameters (shape: [n_components])
+        for param_name in component_specific:
+            if param_name in self.params:
+                new_params[param_name] = self.params[param_name][component_index]
 
-        if "gate_alpha_comp" not in self.params and "gate_alpha" in self.params:
-            new_params["gate_alpha"] = self.params["gate_alpha"]
-            new_params["gate_beta"] = self.params["gate_beta"]
+        # Handle cell-specific parameters (copy as-is, not component-specific)
+        for param_name in cell_specific:
+            if param_name in self.params:
+                new_params[param_name] = self.params[param_name]
 
-        # Cell-specific params: copy as is
-        if "p_capture_alpha" in self.params:
-            new_params["p_capture_alpha"] = self.params["p_capture_alpha"]
-            new_params["p_capture_beta"] = self.params["p_capture_beta"]
-
-        # Mixing weights
-        if "mixing_conc" in self.params:
-            new_params["mixing_conc"] = self.params["mixing_conc"]
+        # Handle shared parameters (copy as-is, used across all components)
+        for param_name in shared_params:
+            if param_name in self.params:
+                new_params[param_name] = self.params[param_name]
 
     # --------------------------------------------------------------------------
 
-    def _subset_posterior_samples_component(
-        self, samples: Dict, component_index: int, parameterization: str
+    def _subset_posterior_samples_by_component(
+        self, samples: Dict, component_index: int
     ) -> Dict:
         """
         Create a new posterior samples dictionary for the given component index.
+        
+        This method handles all parameter types based on their dimensions.
         """
         if samples is None:
             return None
 
         new_posterior_samples = {}
 
-        if parameterization == "unconstrained":
-            # Handle unconstrained parameters
-            # r_unconstrained parameters (component and gene-specific)
-            if "r_unconstrained_loc" in samples:
-                sample_value = samples["r_unconstrained_loc"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["r_unconstrained_loc"] = sample_value[
-                        :, component_index, :
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["r_unconstrained_loc"] = sample_value
-            if "r_unconstrained_scale" in samples:
-                sample_value = samples["r_unconstrained_scale"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["r_unconstrained_scale"] = (
-                        sample_value[:, component_index, :]
-                    )
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["r_unconstrained_scale"] = (
-                        sample_value
-                    )
+        # Define parameter categories for posterior samples
+        component_gene_specific_samples = [
+            "r", "r_unconstrained", "gate", "gate_unconstrained", 
+            "mu", "phi", "r_unconstrained_loc", "r_unconstrained_scale",
+            "gate_unconstrained_loc", "gate_unconstrained_scale"
+        ]
+        
+        component_specific_samples = [
+            "p", "p_unconstrained", "mixing_weights", "mixing_logits_unconstrained",
+            "p_unconstrained_loc", "p_unconstrained_scale", 
+            "mixing_logits_unconstrained_loc", "mixing_logits_unconstrained_scale"
+        ]
+        
+        cell_specific_samples = [
+            "p_capture", "p_capture_unconstrained", "phi_capture",
+            "p_capture_unconstrained_loc", "p_capture_unconstrained_scale"
+        ]
 
-            # p_unconstrained parameters (component-specific, not gene-specific)
-            if "p_unconstrained_loc" in samples:
-                sample_value = samples["p_unconstrained_loc"]
+        # Handle component-gene-specific samples (shape: [n_samples, n_components, n_genes])
+        for param_name in component_gene_specific_samples:
+            if param_name in samples:
+                sample_value = samples[param_name]
+                if sample_value.ndim > 2:  # Has component dimension
+                    new_posterior_samples[param_name] = sample_value[:, component_index, :]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples[param_name] = sample_value
+
+        # Handle component-specific samples (shape: [n_samples, n_components])
+        for param_name in component_specific_samples:
+            if param_name in samples:
+                sample_value = samples[param_name]
                 if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples["p_unconstrained_loc"] = sample_value[
-                        :, component_index
-                    ]
+                    new_posterior_samples[param_name] = sample_value[:, component_index]
                 else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["p_unconstrained_loc"] = sample_value
-            if "p_unconstrained_scale" in samples:
-                sample_value = samples["p_unconstrained_scale"]
-                if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples["p_unconstrained_scale"] = (
-                        sample_value[:, component_index]
-                    )
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["p_unconstrained_scale"] = (
-                        sample_value
-                    )
+                    new_posterior_samples[param_name] = sample_value
 
-            # gate_unconstrained parameters (component and gene-specific)
-            if "gate_unconstrained_loc" in samples:
-                sample_value = samples["gate_unconstrained_loc"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["gate_unconstrained_loc"] = (
-                        sample_value[:, component_index, :]
-                    )
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["gate_unconstrained_loc"] = (
-                        sample_value
-                    )
-            if "gate_unconstrained_scale" in samples:
-                sample_value = samples["gate_unconstrained_scale"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["gate_unconstrained_scale"] = (
-                        sample_value[:, component_index, :]
-                    )
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["gate_unconstrained_scale"] = (
-                        sample_value
-                    )
-
-            # p_capture_unconstrained parameters (cell-specific, not component-specific)
-            if "p_capture_unconstrained_loc" in samples:
-                new_posterior_samples["p_capture_unconstrained_loc"] = samples[
-                    "p_capture_unconstrained_loc"
-                ]
-            if "p_capture_unconstrained_scale" in samples:
-                new_posterior_samples["p_capture_unconstrained_scale"] = (
-                    samples["p_capture_unconstrained_scale"]
-                )
-
-            # mixing_logits_unconstrained parameters (component-specific, not gene-specific)
-            if "mixing_logits_unconstrained_loc" in samples:
-                sample_value = samples["mixing_logits_unconstrained_loc"]
-                if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples["mixing_logits_unconstrained_loc"] = (
-                        sample_value[:, component_index]
-                    )
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["mixing_logits_unconstrained_loc"] = (
-                        sample_value
-                    )
-            if "mixing_logits_unconstrained_scale" in samples:
-                sample_value = samples["mixing_logits_unconstrained_scale"]
-                if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples[
-                        "mixing_logits_unconstrained_scale"
-                    ] = sample_value[:, component_index]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples[
-                        "mixing_logits_unconstrained_scale"
-                    ] = sample_value
-
-        else:
-            # Handle constrained parameters
-            # r parameters (component and gene-specific)
-            if "r" in samples:
-                sample_value = samples["r"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["r"] = sample_value[
-                        :, component_index, :
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["r"] = sample_value
-
-            # mu parameters (for linked and odds_ratio parameterizations)
-            if "mu" in samples:
-                sample_value = samples["mu"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["mu"] = sample_value[
-                        :, component_index, :
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["mu"] = sample_value
-
-            # phi parameters (for odds_ratio parameterization)
-            if "phi" in samples:
-                sample_value = samples["phi"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["phi"] = sample_value[
-                        :, component_index, :
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["phi"] = sample_value
-
-            # p parameters (for standard and linked parameterizations)
-            if "p" in samples:
-                sample_value = samples["p"]
-                if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples["p"] = sample_value[
-                        :, component_index
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["p"] = sample_value
-
-            # gate parameters if present (component and gene-specific)
-            if "gate" in samples:
-                sample_value = samples["gate"]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples["gate"] = sample_value[
-                        :, component_index, :
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["gate"] = sample_value
-
-            # p_capture parameters (cell-specific, not component-specific)
-            if "p_capture" in samples:
-                new_posterior_samples["p_capture"] = samples["p_capture"]
-
-            # phi_capture parameters (for odds_ratio parameterization, cell-specific)
-            if "phi_capture" in samples:
-                new_posterior_samples["phi_capture"] = samples["phi_capture"]
-
-            # mixing weights (component-specific, not gene-specific)
-            if "mixing_weights" in samples:
-                sample_value = samples["mixing_weights"]
-                if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples["mixing_weights"] = sample_value[
-                        :, component_index
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples["mixing_weights"] = sample_value
+        # Handle cell-specific samples (copy as-is, not component-specific)
+        for param_name in cell_specific_samples:
+            if param_name in samples:
+                new_posterior_samples[param_name] = samples[param_name]
 
         return new_posterior_samples
 
