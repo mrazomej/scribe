@@ -173,9 +173,6 @@ class ScribeMCMCResults(MCMC):
         ScribeMCMCResults
             Extended MCMC instance with SCRIBE functionality
         """
-        # Extract posterior means as point estimates
-        samples = mcmc.get_samples()
-
         # Create ScribeMCMCResults instance
         return cls(
             mcmc=mcmc,
@@ -224,16 +221,9 @@ class ScribeMCMCResults(MCMC):
         ScribeMCMCResults
             Extended MCMC instance with SCRIBE functionality
         """
-        # Extract posterior means as point estimates
-        samples = mcmc.get_samples()
-        params = {
-            param: jnp.mean(values, axis=0) for param, values in samples.items()
-        }
-
         # Create ScribeMCMCResults instance
         return cls(
             mcmc=mcmc,
-            params=params,
             n_cells=adata.n_obs,
             n_genes=adata.n_vars,
             model_type=model_type,
@@ -274,25 +264,174 @@ class ScribeMCMCResults(MCMC):
                 )
 
     # --------------------------------------------------------------------------
-    # SCRIBE-specific methods
+    # Override get_samples to provide canonical samples by default
     # --------------------------------------------------------------------------
 
-    def get_posterior_samples(self):
-        """
-        Get posterior samples from the MCMC run.
+    # --------------------------------------------------------------------------
+    # Parameter conversion method
+    # --------------------------------------------------------------------------
 
-        This is a convenience method to match the ScribeResults interface.
+    def _convert_to_canonical(self, samples):
+        """
+        Convert samples to canonical (p, r) form based on present parameters.
+
+        Parameters
+        ----------
+        samples : Dict
+            Raw samples dictionary
 
         Returns
         -------
         Dict
-            Dictionary of parameter samples
+            Canonical samples dictionary
         """
-        return self.get_samples()
+        # If no samples, return empty dict
+        if not samples:
+            return {}
+
+        # Create a copy of samples to avoid modifying the original
+        canonical_samples = samples.copy()
+
+        # Convert based on what parameters are present in the samples
+
+        # Handle odds_ratio parameterization (phi, mu -> p, r)
+        if "phi" in canonical_samples and "mu" in canonical_samples:
+            # Extract phi and mu
+            phi = canonical_samples["phi"]
+            mu = canonical_samples["mu"]
+            # Compute p from phi
+            canonical_samples["p"] = 1.0 / (1.0 + phi)
+
+            # Reshape phi to broadcast with mu based on mixture model
+            if self.n_components is not None:
+                # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                phi_reshaped = phi[:, None, None]
+            else:
+                # Non-mixture model: mu has shape (n_samples, n_genes)
+                phi_reshaped = phi[:, None]
+            # Compute r from mu and phi
+            canonical_samples["r"] = mu * phi_reshaped
+
+        # Handle linked parameterization (mu, p -> r)
+        elif (
+            "mu" in canonical_samples
+            and "p" in canonical_samples
+            and "r" not in canonical_samples
+        ):
+            # Extract p and mu
+            p = canonical_samples["p"]
+            mu = canonical_samples["mu"]
+            # Reshape p to broadcast with mu based on mixture model
+            if self.n_components is not None:
+                # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                p_reshaped = p[:, None, None]
+            else:
+                # Non-mixture model: mu has shape (n_samples, n_genes)
+                p_reshaped = p[:, None]
+            # Compute r from mu and p
+            canonical_samples["r"] = mu * (1.0 - p_reshaped) / p_reshaped
+
+        # Handle unconstrained parameterization (r_unconstrained,
+        # p_unconstrained, etc.)
+        if (
+            "r_unconstrained" in canonical_samples
+            and "r" not in canonical_samples
+        ):
+            # compute r from r_unconstrained
+            canonical_samples["r"] = jnp.exp(
+                canonical_samples["r_unconstrained"]
+            )
+
+        if (
+            "p_unconstrained" in canonical_samples
+            and "p" not in canonical_samples
+        ):
+            # Compute p from p_unconstrained
+            canonical_samples["p"] = jnp.sigmoid(
+                canonical_samples["p_unconstrained"]
+            )
+
+        if (
+            "gate_unconstrained" in canonical_samples
+            and "gate" not in canonical_samples
+        ):
+            # Compute gate from gate_unconstrained
+            canonical_samples["gate"] = jnp.sigmoid(
+                canonical_samples["gate_unconstrained"]
+            )
+
+        # Handle VCP capture probability conversions
+        if (
+            "phi_capture" in canonical_samples
+            and "p_capture" not in canonical_samples
+        ):
+            # Extract phi_capture
+            phi_capture = canonical_samples["phi_capture"]
+            # Compute p_capture from phi_capture
+            canonical_samples["p_capture"] = 1.0 / (1.0 + phi_capture)
+
+        if (
+            "p_capture_unconstrained" in canonical_samples
+            and "p_capture" not in canonical_samples
+        ):
+            # Compute p_capture from p_capture_unconstrained
+            canonical_samples["p_capture"] = jnp.sigmoid(
+                canonical_samples["p_capture_unconstrained"]
+            )
+
+        return canonical_samples
+
+    def get_samples(self, group_by_chain=False, canonical=False):
+        """
+        Get samples from the MCMC run, with option to return canonical form.
+
+        Parameters
+        ----------
+        group_by_chain : bool, default=False
+            Whether to preserve the chain dimension. If True, all samples will
+            have num_chains as the size of their leading dimension.
+        canonical : bool, default=True
+            Whether to return samples in canonical (p, r) form. If False, returns
+            raw samples as they were collected during MCMC.
+
+        Returns
+        -------
+        Dict
+            Dictionary of parameter samples. If canonical=True, parameters are
+            converted to canonical form. If canonical=False, returns raw samples.
+        """
+        # Get raw samples from parent class
+        raw_samples = super().get_samples(group_by_chain=group_by_chain)
+
+        if not canonical:
+            return raw_samples
+
+        # Convert to canonical form on-the-fly
+        return self._convert_to_canonical(raw_samples)
+
+    # --------------------------------------------------------------------------
+    # SCRIBE-specific methods
+    # --------------------------------------------------------------------------
+
+    def get_posterior_samples(self, canonical=True):
+        """
+        Get posterior samples from the MCMC run.
+
+        This is a convenience method to match the ScribeResults interface.
+        Returns canonical samples by default.
+
+        Returns
+        -------
+        Dict
+            Dictionary of parameter samples in canonical form
+        """
+        return self.get_samples(canonical=canonical)
 
     # --------------------------------------------------------------------------
 
-    def get_posterior_quantiles(self, param, quantiles=(0.025, 0.5, 0.975)):
+    def get_posterior_quantiles(
+        self, param, quantiles=(0.025, 0.5, 0.975), canonical=True
+    ):
         """
         Get quantiles for a specific parameter from MCMC samples.
 
@@ -308,11 +447,13 @@ class ScribeMCMCResults(MCMC):
         dict
             Dictionary mapping quantiles to values
         """
-        return _get_posterior_quantiles(self.get_samples(), param, quantiles)
+        return _get_posterior_quantiles(
+            self.get_samples(canonical=canonical), param, quantiles
+        )
 
     # --------------------------------------------------------------------------
 
-    def get_map(self):
+    def get_map(self, canonical=True):
         """
         Get the maximum a posteriori (MAP) estimate from MCMC samples.
 
@@ -324,7 +465,7 @@ class ScribeMCMCResults(MCMC):
         dict
             Dictionary of MAP estimates for each parameter
         """
-        samples = self.get_samples()
+        samples = self.get_samples(canonical=canonical)
 
         # Get extra fields to compute joint log density
         try:
@@ -386,7 +527,7 @@ class ScribeMCMCResults(MCMC):
         """
         # Generate predictive samples
         predictive_samples = _generate_ppc_samples(
-            self.get_samples(),
+            self.get_samples(canonical=True),
             self.model_type,
             self.n_cells,
             self.n_genes,
@@ -504,8 +645,8 @@ class ScribeMCMCResults(MCMC):
         >>> print(normalized['mean_probabilities'].shape)  # (n_components, n_genes)
         >>> print(len(normalized['distributions']))  # n_components
         """
-        # Get posterior samples from MCMC
-        posterior_samples = self.get_posterior_samples()
+        # Get canonical samples using the new method
+        posterior_samples = self.get_samples(canonical=True)
 
         # Use the shared normalization function
         return normalize_counts_from_posterior(
@@ -638,8 +779,11 @@ class ScribeMCMCResults(MCMC):
         ValueError
             If posterior samples have not been generated yet
         """
+        # Get canonical samples using the new method
+        samples = self.get_samples(canonical=True)
+
         return _compute_log_likelihood(
-            self.get_samples(),
+            samples,
             counts,
             self.model_type,
             n_components=self.n_components,
@@ -739,7 +883,7 @@ class ScribeMCMCResults(MCMC):
         new_var = self.var.iloc[bool_index] if self.var is not None else None
 
         # Get subset of samples
-        samples = self.get_samples()
+        samples = self.get_raw_samples()
         new_samples = self._subset_posterior_samples(samples, bool_index)
 
         # Create new instance with subset data
@@ -783,9 +927,139 @@ class ScribeMCMCResults(MCMC):
 
             # ------------------------------------------------------------------
 
-            def get_posterior_samples(self):
-                """Get posterior samples."""
+            def get_posterior_samples(self, canonical=True):
+                """Get posterior samples in canonical form."""
+                if canonical:
+                    # Convert to canonical form on-the-fly
+                    return self._convert_to_canonical(self.samples)
+                else:
+                    return self.samples
+
+            # ------------------------------------------------------------------
+
+            def get_raw_samples(self):
+                """Get raw posterior samples without canonical conversion."""
                 return self.samples
+
+            # ------------------------------------------------------------------
+
+            def _convert_to_canonical(self, samples):
+                """
+                Convert samples to canonical (p, r) form.
+
+                Parameters
+                ----------
+                samples : Dict
+                    Raw samples dictionary
+
+                Returns
+                -------
+                Dict
+                    Canonical samples dictionary
+                """
+                # If no samples, return empty dict
+                if not samples:
+                    return {}
+
+                # Create a copy of samples to avoid modifying the original
+                canonical_samples = samples.copy()
+
+                # Get parameterization
+                parameterization = self.model_config.parameterization
+
+                # Convert parameters to canonical form based on parameterization
+                if parameterization == "odds_ratio":
+                    # Convert phi to p if needed
+                    if (
+                        "phi" in canonical_samples
+                        and "mu" in canonical_samples
+                        and "r" not in canonical_samples
+                    ):
+                        phi = canonical_samples["phi"]
+                        mu = canonical_samples["mu"]
+                        canonical_samples["p"] = 1.0 / (1.0 + phi)
+                        # Reshape phi to broadcast with mu based on mixture
+                        # model
+                        if self.n_components is not None:
+                            # Mixture model: mu has shape
+                            # (n_samples, n_components, n_genes)
+                            phi_reshaped = phi[:, None, None]
+                        else:
+                            # Non-mixture model:
+                            # mu has shape (n_samples, n_genes)
+                            phi_reshaped = phi[:, None]
+                        canonical_samples["r"] = mu * phi_reshaped
+
+                    # Handle VCP capture probability conversion for odds_ratio
+                    # parameterization
+                    if (
+                        "phi_capture" in canonical_samples
+                        and "p_capture" not in canonical_samples
+                    ):
+                        phi_capture = canonical_samples["phi_capture"]
+                        canonical_samples["p_capture"] = 1.0 / (
+                            1.0 + phi_capture
+                        )
+
+                elif parameterization == "linked":
+                    # Convert linked parameters to canonical form
+                    if (
+                        "p" in canonical_samples
+                        and "mu" in canonical_samples
+                        and "r" not in canonical_samples
+                    ):
+                        p = canonical_samples["p"]
+                        mu = canonical_samples["mu"]
+                        # Reshape p to broadcast with mu based on mixture model
+                        if self.n_components is not None:
+                            # Mixture model: mu has shape
+                            # (n_samples, n_components, n_genes)
+                            p_reshaped = p[:, None, None]
+                        else:
+                            # Non-mixture model:
+                            # mu has shape (n_samples, n_genes)
+                            p_reshaped = p[:, None]
+                        canonical_samples["r"] = (
+                            mu * (1.0 - p_reshaped) / p_reshaped
+                        )
+
+                elif parameterization == "unconstrained":
+                    # Convert unconstrained parameters to canonical form
+                    if (
+                        "r_unconstrained" in canonical_samples
+                        and "r" not in canonical_samples
+                    ):
+                        canonical_samples["r"] = jnp.exp(
+                            canonical_samples["r_unconstrained"]
+                        )
+                    if (
+                        "p_unconstrained" in canonical_samples
+                        and "p" not in canonical_samples
+                    ):
+                        canonical_samples["p"] = jnp.sigmoid(
+                            canonical_samples["p_unconstrained"]
+                        )
+                    if (
+                        "gate_unconstrained" in canonical_samples
+                        and "gate" not in canonical_samples
+                    ):
+                        canonical_samples["gate"] = jnp.sigmoid(
+                            canonical_samples["gate_unconstrained"]
+                        )
+                    # Handle VCP capture probability conversion for
+                    # unconstrained parameterization
+                    if (
+                        "p_capture_unconstrained" in canonical_samples
+                        and "p_capture" not in canonical_samples
+                    ):
+                        canonical_samples["p_capture"] = jnp.sigmoid(
+                            canonical_samples["p_capture_unconstrained"]
+                        )
+
+                # Standard parameterization doesn't need conversion
+                # (parameters are already in canonical form)
+
+                return canonical_samples
 
             # ------------------------------------------------------------------
 
@@ -793,13 +1067,126 @@ class ScribeMCMCResults(MCMC):
                 self, param, quantiles=(0.025, 0.5, 0.975)
             ):
                 """Get quantiles for a specific parameter from samples."""
-                return _get_posterior_quantiles(self.samples, param, quantiles)
+                return _get_posterior_quantiles(
+                    self.get_posterior_samples(), param, quantiles
+                )
 
             # ------------------------------------------------------------------
 
             def get_map(self):
                 """Get MAP estimates for parameters."""
-                return _get_map_estimate(self.samples)
+                return _get_map_estimate(self.get_posterior_samples())
+
+            # ------------------------------------------------------------------
+
+            def _convert_to_canonical(self):
+                """
+                Convert posterior samples to canonical (p, r) form.
+
+                Returns
+                -------
+                self : ScribeMCMCSubset
+                    Returns self for method chaining
+                """
+                # Create a copy of samples to avoid modifying the original
+                canonical_samples = dict(self.samples)
+
+                # Get parameterization
+                parameterization = self.model_config.parameterization
+
+                # Convert parameters to canonical form based on parameterization
+                if parameterization == "odds_ratio":
+                    # Convert phi to p if needed
+                    if (
+                        "phi" in canonical_samples
+                        and "mu" in canonical_samples
+                        and "r" not in canonical_samples
+                    ):
+                        phi = canonical_samples["phi"]
+                        mu = canonical_samples["mu"]
+                        canonical_samples["p"] = 1.0 / (1.0 + phi)
+                        # Reshape phi to broadcast with mu based on mixture model
+                        if self.n_components is not None:
+                            # Mixture model: mu has shape
+                            # (n_samples, n_components, n_genes)
+                            phi_reshaped = phi[:, None, None]
+                        else:
+                            # Non-mixture model: mu has shape (n_samples, n_genes)
+                            phi_reshaped = phi[:, None]
+                        canonical_samples["r"] = mu * phi_reshaped
+
+                    # Handle VCP capture probability conversion for odds_ratio
+                    # parameterization
+                    if (
+                        "phi_capture" in canonical_samples
+                        and "p_capture" not in canonical_samples
+                    ):
+                        phi_capture = canonical_samples["phi_capture"]
+                        canonical_samples["p_capture"] = 1.0 / (
+                            1.0 + phi_capture
+                        )
+
+                elif parameterization == "linked":
+                    # Convert linked parameters to canonical form
+                    if (
+                        "p" in canonical_samples
+                        and "mu" in canonical_samples
+                        and "r" not in canonical_samples
+                    ):
+                        p = canonical_samples["p"]
+                        mu = canonical_samples["mu"]
+                        # Reshape p to broadcast with mu based on mixture model
+                        if self.n_components is not None:
+                            # Mixture model: mu has shape
+                            # (n_samples, n_components, n_genes)
+                            p_reshaped = p[:, None, None]
+                        else:
+                            # Non-mixture model: mu has shape (n_samples, n_genes)
+                            p_reshaped = p[:, None]
+                        canonical_samples["r"] = (
+                            mu * (1.0 - p_reshaped) / p_reshaped
+                        )
+
+                elif parameterization == "unconstrained":
+                    # Convert unconstrained parameters to canonical form
+                    if (
+                        "r_unconstrained" in canonical_samples
+                        and "r" not in canonical_samples
+                    ):
+                        canonical_samples["r"] = jnp.exp(
+                            canonical_samples["r_unconstrained"]
+                        )
+                    if (
+                        "p_unconstrained" in canonical_samples
+                        and "p" not in canonical_samples
+                    ):
+                        canonical_samples["p"] = jnp.sigmoid(
+                            canonical_samples["p_unconstrained"]
+                        )
+                    if (
+                        "gate_unconstrained" in canonical_samples
+                        and "gate" not in canonical_samples
+                    ):
+                        canonical_samples["gate"] = jnp.sigmoid(
+                            canonical_samples["gate_unconstrained"]
+                        )
+                    # Handle VCP capture probability conversion for unconstrained
+                    # parameterization
+                    if (
+                        "p_capture_unconstrained" in canonical_samples
+                        and "p_capture" not in canonical_samples
+                    ):
+                        canonical_samples["p_capture"] = jnp.sigmoid(
+                            canonical_samples["p_capture_unconstrained"]
+                        )
+
+                # Standard parameterization doesn't need conversion
+                # (parameters are already in canonical form)
+
+                # Store the canonical samples as an attribute
+                self.canonical_samples = canonical_samples
+
+                return self
 
             # ------------------------------------------------------------------
 
@@ -816,8 +1203,11 @@ class ScribeMCMCResults(MCMC):
                 dtype: jnp.dtype = jnp.float32,
             ) -> jnp.ndarray:
                 """Compute log likelihood of data under posterior samples."""
+                # Get canonical samples
+                samples = self.get_posterior_samples(canonical=True)
+
                 return _compute_log_likelihood(
-                    self.samples,
+                    samples,
                     counts,
                     self.model_type,
                     n_components=self.n_components,
@@ -841,7 +1231,7 @@ class ScribeMCMCResults(MCMC):
             ) -> jnp.ndarray:
                 """Generate predictive samples using posterior parameter samples."""
                 predictive_samples = _generate_ppc_samples(
-                    self.samples,
+                    self.get_posterior_samples(canonical=True),
                     self.model_type,
                     self.n_cells,
                     self.n_genes,
@@ -896,9 +1286,12 @@ class ScribeMCMCResults(MCMC):
                 verbose: bool = True,
             ) -> Dict[str, Union[jnp.ndarray, object]]:
                 """Normalize counts using posterior samples of the r parameter."""
+                # Get canonical samples
+                posterior_samples = self.get_posterior_samples(canonical=True)
+
                 # Use the shared normalization function
                 return normalize_counts_from_posterior(
-                    posterior_samples=self.samples,
+                    posterior_samples=posterior_samples,
                     n_components=self.n_components,
                     rng_key=rng_key,
                     n_samples_dirichlet=n_samples_dirichlet,
