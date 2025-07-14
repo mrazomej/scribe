@@ -150,34 +150,53 @@ class ScribeSVIResults:
                     f"{self.model_config.n_components} in model_config"
                 )
 
-        # Validate required distributions based on model type
+        # Validate required distributions based on model type and parameterization
+        parameterization = self.model_config.parameterization
+        
+        # ZINB models require gate priors
         if "zinb" in self.model_type:
-            if self.model_config.gate_param_prior is None:
-                raise ValueError("ZINB models require gate priors")
+            if parameterization == "unconstrained":
+                # Unconstrained uses gate_unconstrained_prior
+                if self.model_config.gate_unconstrained_prior is None:
+                    raise ValueError("ZINB models with unconstrained parameterization require gate_unconstrained_prior")
+            else:
+                # Standard, linked, odds_ratio use gate_param_prior
+                if self.model_config.gate_param_prior is None:
+                    raise ValueError("ZINB models require gate_param_prior")
         else:
-            if self.model_config.gate_param_prior is not None:
-                raise ValueError("Non-ZINB models should not have gate priors")
+            # Non-ZINB models should not have gate priors
+            if parameterization == "unconstrained":
+                if self.model_config.gate_unconstrained_prior is not None:
+                    raise ValueError("Non-ZINB models should not have gate_unconstrained_prior")
+            else:
+                if self.model_config.gate_param_prior is not None:
+                    raise ValueError("Non-ZINB models should not have gate_param_prior")
 
-        if "vcp" in self.model_type and (
-            self.model_config.parameterization == "standard"
-            or self.model_config.parameterization == "linked"
-        ):
-            if self.model_config.p_capture_param_prior is None:
-                raise ValueError(
-                    "VCP models require capture probability priors"
-                )
-        elif "vcp" in self.model_type and (
-            self.model_config.parameterization == "odds_ratio"
-        ):
-            if self.model_config.phi_capture_param_prior is None:
-                raise ValueError(
-                    "VCP models with beta-prime parameterization require capture odds ratio priors"
-                )
+        # VCP models require capture probability priors
+        if "vcp" in self.model_type:
+            if parameterization == "unconstrained":
+                # Unconstrained uses p_capture_unconstrained_prior
+                if self.model_config.p_capture_unconstrained_prior is None:
+                    raise ValueError("VCP models with unconstrained parameterization require p_capture_unconstrained_prior")
+            elif parameterization in ["standard", "linked"]:
+                # Standard and linked use p_capture_param_prior
+                if self.model_config.p_capture_param_prior is None:
+                    raise ValueError("VCP models require p_capture_param_prior")
+            elif parameterization == "odds_ratio":
+                # Odds_ratio uses phi_capture_param_prior
+                if self.model_config.phi_capture_param_prior is None:
+                    raise ValueError("VCP models with odds_ratio parameterization require phi_capture_param_prior")
         else:
-            if self.model_config.p_capture_param_prior is not None:
-                raise ValueError(
-                    "Non-VCP models should not have capture probability priors"
-                )
+            # Non-VCP models should not have capture probability priors
+            if parameterization == "unconstrained":
+                if self.model_config.p_capture_unconstrained_prior is not None:
+                    raise ValueError("Non-VCP models should not have p_capture_unconstrained_prior")
+            elif parameterization in ["standard", "linked"]:
+                if self.model_config.p_capture_param_prior is not None:
+                    raise ValueError("Non-VCP models should not have p_capture_param_prior")
+            elif parameterization == "odds_ratio":
+                if self.model_config.phi_capture_param_prior is not None:
+                    raise ValueError("Non-VCP models should not have phi_capture_param_prior")
 
     # --------------------------------------------------------------------------
     # Create ScribeSVIResults from AnnData object
