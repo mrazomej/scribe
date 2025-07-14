@@ -587,9 +587,7 @@ def nbdm_mixture_model(
     mu = numpyro.sample(
         "mu", dist.LogNormal(*mu_prior_params).expand([n_components, n_genes])
     )
-    # Compute r
-    r = numpyro.deterministic("r", mu * (1 - p) / p)
-
+    
     # Sample component-specific or shared parameters depending on config
     if model_config.component_specific_params:
         # Each component has its own p
@@ -602,6 +600,9 @@ def nbdm_mixture_model(
     else:
         # All components share p, but have their own r
         p = numpyro.sample("p", dist.Beta(*p_prior_params))
+
+    # Compute r
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     # Define the base distribution for each component (Negative Binomial)
     base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
