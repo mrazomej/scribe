@@ -166,14 +166,14 @@ def test_parameter_ranges(zinb_results, parameterization):
         zinb_results, "get_posterior_samples"
     ):
         # SVI case: get transformed parameters from posterior samples
-        samples = zinb_results.get_posterior_samples(n_samples=1)
+        samples = zinb_results.get_posterior_samples(n_samples=1, canonical=True)
         params = samples
     elif hasattr(zinb_results, "params"):
         # MCMC case: params might contain transformed parameters
-        params = zinb_results.params
+        params = zinb_results.get_posterior_samples(canonical=True)
     else:
         # Fallback: try to get samples
-        samples = zinb_results.get_posterior_samples()
+        samples = zinb_results.get_posterior_samples(canonical=True)
         params = samples
 
     # Check parameters based on parameterization
