@@ -209,9 +209,7 @@ def zinb_guide(
         jnp.full(n_genes, gate_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "gate_unconstrained", dist.Normal(gate_loc, gate_scale)
-    )
+    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
 
 # ------------------------------------------------------------------------------
@@ -515,9 +513,7 @@ def zinbvcp_guide(
         jnp.full(n_genes, gate_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "gate_unconstrained", dist.Normal(gate_loc, gate_scale)
-    )
+    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
     # Register cell-specific capture probability parameters
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
@@ -558,12 +554,12 @@ def nbdm_mixture_model(
         mixing_prior_params = (0.0, 1.0)
     else:
         mixing_prior_params = model_config.mixing_logits_unconstrained_prior
-        
+
     if model_config.p_unconstrained_prior is None:
         p_prior_params = (0.0, 1.0)
     else:
         p_prior_params = model_config.p_unconstrained_prior
-        
+
     if model_config.r_unconstrained_prior is None:
         r_prior_params = (0.0, 1.0)
     else:
@@ -680,11 +676,11 @@ def nbdm_mixture_guide(
         numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
     else:
         # All components share p, but have their own r
-        p_loc = numpyro.param(
-            "p_unconstrained_loc", p_guide_params[0]
-        )
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
         p_scale = numpyro.param(
-            "p_unconstrained_scale", p_guide_params[1], constraint=constraints.positive,
+            "p_unconstrained_scale",
+            p_guide_params[1],
+            constraint=constraints.positive,
         )
         numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
@@ -698,9 +694,7 @@ def nbdm_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "r_unconstrained", dist.Normal(r_loc, r_scale)
-    )
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
 
 
 # ------------------------------------------------------------------------------
@@ -723,59 +717,66 @@ def zinb_mixture_model(
         mixing_prior_params = (0.0, 1.0)
     else:
         mixing_prior_params = model_config.mixing_logits_unconstrained_prior
-        
+
     if model_config.p_unconstrained_prior is None:
         p_prior_params = (0.0, 1.0)
     else:
         p_prior_params = model_config.p_unconstrained_prior
-        
+
     if model_config.r_unconstrained_prior is None:
         r_prior_params = (0.0, 1.0)
     else:
         r_prior_params = model_config.r_unconstrained_prior
-        
+
     if model_config.gate_unconstrained_prior is None:
         gate_prior_params = (0.0, 1.0)
     else:
         gate_prior_params = model_config.gate_unconstrained_prior
 
-    # Sample unconstrained parameters
+    # Sample unconstrained mixing logits
     mixing_logits_unconstrained = numpyro.sample(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
-    numpyro.deterministic(
-        "mixing_weights", softmax(mixing_logits_unconstrained, axis=-1)
-    )
 
-    p_unconstrained = numpyro.sample(
-        "p_unconstrained",
-        dist.Normal(*p_prior_params).expand([n_components]),
-    )
+    # Sample component-specific or shared parameters depending on config
+    if model_config.component_specific_params:
+        # Each component has its own p
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params).expand([n_components]),
+        )
+        p_unconstrained = p_unconstrained[:, None]
+    else:
+        # All components share p, but have their own r
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params),
+        )
 
     r_unconstrained = numpyro.sample(
         "r_unconstrained",
         dist.Normal(*r_prior_params).expand([n_components, n_genes]),
     )
 
-    gate_unconstrained_comp = numpyro.sample(
-        "gate_unconstrained_comp",
+    gate_unconstrained = numpyro.sample(
+        "gate_unconstrained",
         dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
     )
 
     # Transform to constrained space
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
-    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained_comp))
+    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     # Define distributions
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     base_nb_dist = dist.NegativeBinomialLogits(
-        total_count=r, logits=p_unconstrained[:, None]
+        total_count=r, logits=p_unconstrained
     )
 
     zinb_comp_dist = dist.ZeroInflatedDistribution(
-        base_nb_dist, gate_logits=gate_unconstrained_comp
+        base_nb_dist, gate_logits=gate_unconstrained
     ).to_event(1)
 
     mixture = dist.MixtureSameFamily(mixing_dist, zinb_comp_dist)
@@ -819,7 +820,7 @@ def zinb_mixture_guide(
     r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
     gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
 
-    # Register parameters
+    # Register mixing weights parameters
     mixing_loc = numpyro.param(
         "mixing_logits_unconstrained_loc",
         jnp.full(n_components, mixing_guide_params[0]),
@@ -831,21 +832,31 @@ def zinb_mixture_guide(
     )
     numpyro.sample(
         "mixing_logits_unconstrained",
-        dist.Normal(mixing_loc, mixing_scale).to_event(1),
+        dist.Normal(mixing_loc, mixing_scale),
     )
 
-    p_loc = numpyro.param(
-        "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
-    )
-    p_scale = numpyro.param(
-        "p_unconstrained_scale",
-        jnp.full(n_components, p_guide_params[1]),
-        constraint=constraints.positive,
-    )
-    numpyro.sample(
-        "p_unconstrained", dist.Normal(p_loc, p_scale)
-    )
+    if model_config.component_specific_params:
+        # Each component has its own p
+        p_loc = numpyro.param(
+            "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
+        )
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            jnp.full(n_components, p_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
+    else:
+        # All components share p, but have their own r
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            p_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
+    # Register r parameters
     r_loc = numpyro.param(
         "r_unconstrained_loc",
         jnp.full((n_components, n_genes), r_guide_params[0]),
@@ -855,22 +866,19 @@ def zinb_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "r_unconstrained", dist.Normal(r_loc, r_scale)
-    )
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
 
+    # Register gate parameters
     gate_loc = numpyro.param(
-        "gate_unconstrained_comp_loc",
+        "gate_unconstrained_loc",
         jnp.full((n_components, n_genes), gate_guide_params[0]),
     )
     gate_scale = numpyro.param(
-        "gate_unconstrained_comp_scale",
+        "gate_unconstrained_scale",
         jnp.full((n_components, n_genes), gate_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "gate_unconstrained_comp", dist.Normal(gate_loc, gate_scale)
-    )
+    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
 
 # ------------------------------------------------------------------------------
@@ -893,17 +901,17 @@ def nbvcp_mixture_model(
         mixing_prior_params = (0.0, 1.0)
     else:
         mixing_prior_params = model_config.mixing_logits_unconstrained_prior
-        
+
     if model_config.p_unconstrained_prior is None:
         p_prior_params = (0.0, 1.0)
     else:
         p_prior_params = model_config.p_unconstrained_prior
-        
+
     if model_config.r_unconstrained_prior is None:
         r_prior_params = (0.0, 1.0)
     else:
         r_prior_params = model_config.r_unconstrained_prior
-        
+
     if model_config.p_capture_unconstrained_prior is None:
         p_capture_prior_params = (0.0, 1.0)
     else:
@@ -914,14 +922,21 @@ def nbvcp_mixture_model(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
-    numpyro.deterministic(
-        "mixing_weights", softmax(mixing_logits_unconstrained, axis=-1)
-    )
 
-    p_unconstrained = numpyro.sample(
-        "p_unconstrained",
-        dist.Normal(*p_prior_params).expand([n_components]),
-    )
+    # Sample component-specific or shared parameters depending on config
+    if model_config.component_specific_params:
+        # Each component has its own p
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params).expand([n_components]),
+        )
+        p_unconstrained = p_unconstrained[:, None]
+    else:
+        # All components share p, but have their own r
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params),
+        )
 
     r_unconstrained = numpyro.sample(
         "r_unconstrained",
@@ -969,9 +984,7 @@ def nbvcp_mixture_model(
             probs=p_hat_batch[:, :, None],
         ).to_event(1)
 
-        mixture_batch = dist.MixtureSameFamily(
-            mixing_dist, base_dist_batch
-        )
+        mixture_batch = dist.MixtureSameFamily(mixing_dist, base_dist_batch)
 
         numpyro.sample("counts", mixture_batch, obs=current_counts)
 
@@ -1015,21 +1028,31 @@ def nbvcp_mixture_guide(
     )
     numpyro.sample(
         "mixing_logits_unconstrained",
-        dist.Normal(mixing_loc, mixing_scale).to_event(1),
+        dist.Normal(mixing_loc, mixing_scale),
     )
 
-    p_loc = numpyro.param(
-        "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
-    )
-    p_scale = numpyro.param(
-        "p_unconstrained_scale",
-        jnp.full(n_components, p_guide_params[1]),
-        constraint=constraints.positive,
-    )
-    numpyro.sample(
-        "p_unconstrained", dist.Normal(p_loc, p_scale)
-    )
+    if model_config.component_specific_params:
+        # Each component has its own p
+        p_loc = numpyro.param(
+            "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
+        )
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            jnp.full(n_components, p_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
+    else:
+        # All components share p, but have their own r
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            p_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
+    # Register r parameters
     r_loc = numpyro.param(
         "r_unconstrained_loc",
         jnp.full((n_components, n_genes), r_guide_params[0]),
@@ -1039,9 +1062,7 @@ def nbvcp_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "r_unconstrained", dist.Normal(r_loc, r_scale)
-    )
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
 
     # Register cell-specific capture probability parameters
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
@@ -1080,22 +1101,22 @@ def zinbvcp_mixture_model(
         mixing_prior_params = (0.0, 1.0)
     else:
         mixing_prior_params = model_config.mixing_logits_unconstrained_prior
-        
+
     if model_config.p_unconstrained_prior is None:
         p_prior_params = (0.0, 1.0)
     else:
         p_prior_params = model_config.p_unconstrained_prior
-        
+
     if model_config.r_unconstrained_prior is None:
         r_prior_params = (0.0, 1.0)
     else:
         r_prior_params = model_config.r_unconstrained_prior
-        
+
     if model_config.gate_unconstrained_prior is None:
         gate_prior_params = (0.0, 1.0)
     else:
         gate_prior_params = model_config.gate_unconstrained_prior
-        
+
     if model_config.p_capture_unconstrained_prior is None:
         p_capture_prior_params = (0.0, 1.0)
     else:
@@ -1106,29 +1127,36 @@ def zinbvcp_mixture_model(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
-    numpyro.deterministic(
-        "mixing_weights", softmax(mixing_logits_unconstrained, axis=-1)
-    )
 
-    p_unconstrained = numpyro.sample(
-        "p_unconstrained",
-        dist.Normal(*p_prior_params).expand([n_components]),
-    )
+    # Sample component-specific or shared parameters depending on config
+    if model_config.component_specific_params:
+        # Each component has its own p
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params).expand([n_components]),
+        )
+        p_unconstrained = p_unconstrained[:, None]
+    else:
+        # All components share p, but have their own r
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params),
+        )
 
     r_unconstrained = numpyro.sample(
         "r_unconstrained",
         dist.Normal(*r_prior_params).expand([n_components, n_genes]),
     )
 
-    gate_unconstrained_comp = numpyro.sample(
-        "gate_unconstrained_comp",
+    gate_unconstrained = numpyro.sample(
+        "gate_unconstrained",
         dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
     )
 
     # Transform to constrained space
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
-    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained_comp))
+    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     # Define global mixing distribution
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
@@ -1166,14 +1194,12 @@ def zinbvcp_mixture_model(
 
         zinb_base_comp_dist = dist.ZeroInflatedDistribution(
             base_nb_dist_for_zinb,
-            gate_logits=gate_unconstrained_comp[None, :, :],
+            gate_logits=gate_unconstrained[None, :, :],
         )
 
         base_dist_batch = zinb_base_comp_dist.to_event(1)
 
-        mixture_batch = dist.MixtureSameFamily(
-            mixing_dist, base_dist_batch
-        )
+        mixture_batch = dist.MixtureSameFamily(mixing_dist, base_dist_batch)
 
         numpyro.sample("counts", mixture_batch, obs=current_counts)
 
@@ -1218,21 +1244,31 @@ def zinbvcp_mixture_guide(
     )
     numpyro.sample(
         "mixing_logits_unconstrained",
-        dist.Normal(mixing_loc, mixing_scale).to_event(1),
+        dist.Normal(mixing_loc, mixing_scale),
     )
 
-    p_loc = numpyro.param(
-        "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
-    )
-    p_scale = numpyro.param(
-        "p_unconstrained_scale",
-        jnp.full(n_components, p_guide_params[1]),
-        constraint=constraints.positive,
-    )
-    numpyro.sample(
-        "p_unconstrained", dist.Normal(p_loc, p_scale).to_event(1)
-    )
+    if model_config.component_specific_params:
+        # Each component has its own p
+        p_loc = numpyro.param(
+            "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
+        )
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            jnp.full(n_components, p_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
+    else:
+        # All components share p, but have their own r
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            p_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
+    # Register r parameters
     r_loc = numpyro.param(
         "r_unconstrained_loc",
         jnp.full((n_components, n_genes), r_guide_params[0]),
@@ -1242,22 +1278,18 @@ def zinbvcp_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "r_unconstrained", dist.Normal(r_loc, r_scale).to_event(2)
-    )
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
 
     gate_loc = numpyro.param(
-        "gate_unconstrained_comp_loc",
+        "gate_unconstrained_loc",
         jnp.full((n_components, n_genes), gate_guide_params[0]),
     )
     gate_scale = numpyro.param(
-        "gate_unconstrained_comp_scale",
+        "gate_unconstrained_scale",
         jnp.full((n_components, n_genes), gate_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample(
-        "gate_unconstrained_comp", dist.Normal(gate_loc, gate_scale).to_event(2)
-    )
+    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
     # Register cell-specific capture probability parameters
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
@@ -1285,16 +1317,16 @@ def get_posterior_distributions(
 ) -> Dict[str, dist.Distribution]:
     """
     Get posterior distributions for unconstrained parameters.
-    
+
     This function constructs and returns a dictionary of posterior distributions from
     estimated parameters for the unconstrained parameterization. It builds the
     appropriate `numpyro` distributions based on the guide parameters found in
     the `params` dictionary. It handles both single and mixture models.
-    
+
     Args:
         params: A dictionary of estimated parameters from the variational guide.
         model_config: The model configuration object.
-        
+
     Returns:
         A dictionary mapping parameter names to their posterior distributions.
     """
@@ -1313,38 +1345,58 @@ def get_posterior_distributions(
             params["r_unconstrained_loc"], params["r_unconstrained_scale"]
         )
 
-    if "gate_unconstrained_loc" in params and "gate_unconstrained_scale" in params:
+    if (
+        "gate_unconstrained_loc" in params
+        and "gate_unconstrained_scale" in params
+    ):
         distributions["gate_unconstrained"] = dist.Normal(
             params["gate_unconstrained_loc"], params["gate_unconstrained_scale"]
         )
 
-    if "p_capture_unconstrained_loc" in params and "p_capture_unconstrained_scale" in params:
+    if (
+        "p_capture_unconstrained_loc" in params
+        and "p_capture_unconstrained_scale" in params
+    ):
         distributions["p_capture_unconstrained"] = dist.Normal(
-            params["p_capture_unconstrained_loc"], params["p_capture_unconstrained_scale"]
+            params["p_capture_unconstrained_loc"],
+            params["p_capture_unconstrained_scale"],
         )
 
     # Mixture-specific parameters
     if n_components is not None:
-        if "mixing_logits_unconstrained_loc" in params and "mixing_logits_unconstrained_scale" in params:
+        if (
+            "mixing_logits_unconstrained_loc" in params
+            and "mixing_logits_unconstrained_scale" in params
+        ):
             distributions["mixing_logits_unconstrained"] = dist.Normal(
-                params["mixing_logits_unconstrained_loc"], 
-                params["mixing_logits_unconstrained_scale"]
+                params["mixing_logits_unconstrained_loc"],
+                params["mixing_logits_unconstrained_scale"],
             )
 
         # Component-specific parameters for mixture models
-        if "p_unconstrained_loc" in params and "p_unconstrained_scale" in params:
+        if (
+            "p_unconstrained_loc" in params
+            and "p_unconstrained_scale" in params
+        ):
             distributions["p_unconstrained"] = dist.Normal(
                 params["p_unconstrained_loc"], params["p_unconstrained_scale"]
             )
 
-        if "r_unconstrained_loc" in params and "r_unconstrained_scale" in params:
+        if (
+            "r_unconstrained_loc" in params
+            and "r_unconstrained_scale" in params
+        ):
             distributions["r_unconstrained"] = dist.Normal(
                 params["r_unconstrained_loc"], params["r_unconstrained_scale"]
             )
 
-        if "gate_unconstrained_comp_loc" in params and "gate_unconstrained_comp_scale" in params:
-            distributions["gate_unconstrained_comp"] = dist.Normal(
-                params["gate_unconstrained_comp_loc"], params["gate_unconstrained_comp_scale"]
+        if (
+            "gate_unconstrained_loc" in params
+            and "gate_unconstrained_scale" in params
+        ):
+            distributions["gate_unconstrained"] = dist.Normal(
+                params["gate_unconstrained_loc"],
+                params["gate_unconstrained_scale"],
             )
 
     return distributions
