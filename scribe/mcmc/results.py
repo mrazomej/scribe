@@ -883,7 +883,7 @@ class ScribeMCMCResults(MCMC):
         new_var = self.var.iloc[bool_index] if self.var is not None else None
 
         # Get subset of samples
-        samples = self.get_raw_samples()
+        samples = self.get_samples(canonical=False)
         new_samples = self._subset_posterior_samples(samples, bool_index)
 
         # Create new instance with subset data
@@ -937,15 +937,10 @@ class ScribeMCMCResults(MCMC):
 
             # ------------------------------------------------------------------
 
-            def get_raw_samples(self):
-                """Get raw posterior samples without canonical conversion."""
-                return self.samples
-
-            # ------------------------------------------------------------------
-
             def _convert_to_canonical(self, samples):
                 """
-                Convert samples to canonical (p, r) form.
+                Convert samples to canonical (p, r) form based on present
+                parameters.
 
                 Parameters
                 ----------
@@ -964,100 +959,93 @@ class ScribeMCMCResults(MCMC):
                 # Create a copy of samples to avoid modifying the original
                 canonical_samples = samples.copy()
 
-                # Get parameterization
-                parameterization = self.model_config.parameterization
+                # Convert based on what parameters are present in the samples
 
-                # Convert parameters to canonical form based on parameterization
-                if parameterization == "odds_ratio":
-                    # Convert phi to p if needed
-                    if (
-                        "phi" in canonical_samples
-                        and "mu" in canonical_samples
-                        and "r" not in canonical_samples
-                    ):
-                        phi = canonical_samples["phi"]
-                        mu = canonical_samples["mu"]
-                        canonical_samples["p"] = 1.0 / (1.0 + phi)
-                        # Reshape phi to broadcast with mu based on mixture
-                        # model
-                        if self.n_components is not None:
-                            # Mixture model: mu has shape
-                            # (n_samples, n_components, n_genes)
-                            phi_reshaped = phi[:, None, None]
-                        else:
-                            # Non-mixture model:
-                            # mu has shape (n_samples, n_genes)
-                            phi_reshaped = phi[:, None]
-                        canonical_samples["r"] = mu * phi_reshaped
+                # Handle odds_ratio parameterization (phi, mu -> p, r)
+                if "phi" in canonical_samples and "mu" in canonical_samples:
+                    # Extract phi and mu
+                    phi = canonical_samples["phi"]
+                    mu = canonical_samples["mu"]
+                    # Compute p from phi
+                    canonical_samples["p"] = 1.0 / (1.0 + phi)
 
-                    # Handle VCP capture probability conversion for odds_ratio
-                    # parameterization
-                    if (
-                        "phi_capture" in canonical_samples
-                        and "p_capture" not in canonical_samples
-                    ):
-                        phi_capture = canonical_samples["phi_capture"]
-                        canonical_samples["p_capture"] = 1.0 / (
-                            1.0 + phi_capture
-                        )
+                    # Reshape phi to broadcast with mu based on mixture model
+                    if self.n_components is not None:
+                        # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                        phi_reshaped = phi[:, None, None]
+                    else:
+                        # Non-mixture model: mu has shape (n_samples, n_genes)
+                        phi_reshaped = phi[:, None]
+                    # Compute r from mu and phi
+                    canonical_samples["r"] = mu * phi_reshaped
 
-                elif parameterization == "linked":
-                    # Convert linked parameters to canonical form
-                    if (
-                        "p" in canonical_samples
-                        and "mu" in canonical_samples
-                        and "r" not in canonical_samples
-                    ):
-                        p = canonical_samples["p"]
-                        mu = canonical_samples["mu"]
-                        # Reshape p to broadcast with mu based on mixture model
-                        if self.n_components is not None:
-                            # Mixture model: mu has shape
-                            # (n_samples, n_components, n_genes)
-                            p_reshaped = p[:, None, None]
-                        else:
-                            # Non-mixture model:
-                            # mu has shape (n_samples, n_genes)
-                            p_reshaped = p[:, None]
-                        canonical_samples["r"] = (
-                            mu * (1.0 - p_reshaped) / p_reshaped
-                        )
+                # Handle linked parameterization (mu, p -> r)
+                elif (
+                    "mu" in canonical_samples
+                    and "p" in canonical_samples
+                    and "r" not in canonical_samples
+                ):
+                    # Extract p and mu
+                    p = canonical_samples["p"]
+                    mu = canonical_samples["mu"]
+                    # Reshape p to broadcast with mu based on mixture model
+                    if self.n_components is not None:
+                        # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                        p_reshaped = p[:, None, None]
+                    else:
+                        # Non-mixture model: mu has shape (n_samples, n_genes)
+                        p_reshaped = p[:, None]
+                    # Compute r from mu and p
+                    canonical_samples["r"] = (
+                        mu * (1.0 - p_reshaped) / p_reshaped
+                    )
 
-                elif parameterization == "unconstrained":
-                    # Convert unconstrained parameters to canonical form
-                    if (
-                        "r_unconstrained" in canonical_samples
-                        and "r" not in canonical_samples
-                    ):
-                        canonical_samples["r"] = jnp.exp(
-                            canonical_samples["r_unconstrained"]
-                        )
-                    if (
-                        "p_unconstrained" in canonical_samples
-                        and "p" not in canonical_samples
-                    ):
-                        canonical_samples["p"] = jnp.sigmoid(
-                            canonical_samples["p_unconstrained"]
-                        )
-                    if (
-                        "gate_unconstrained" in canonical_samples
-                        and "gate" not in canonical_samples
-                    ):
-                        canonical_samples["gate"] = jnp.sigmoid(
-                            canonical_samples["gate_unconstrained"]
-                        )
-                    # Handle VCP capture probability conversion for
-                    # unconstrained parameterization
-                    if (
-                        "p_capture_unconstrained" in canonical_samples
-                        and "p_capture" not in canonical_samples
-                    ):
-                        canonical_samples["p_capture"] = jnp.sigmoid(
-                            canonical_samples["p_capture_unconstrained"]
-                        )
+                # Handle unconstrained parameterization (r_unconstrained, p_unconstrained, etc.)
+                if (
+                    "r_unconstrained" in canonical_samples
+                    and "r" not in canonical_samples
+                ):
+                    # compute r from r_unconstrained
+                    canonical_samples["r"] = jnp.exp(
+                        canonical_samples["r_unconstrained"]
+                    )
 
-                # Standard parameterization doesn't need conversion
-                # (parameters are already in canonical form)
+                if (
+                    "p_unconstrained" in canonical_samples
+                    and "p" not in canonical_samples
+                ):
+                    # Compute p from p_unconstrained
+                    canonical_samples["p"] = jnp.sigmoid(
+                        canonical_samples["p_unconstrained"]
+                    )
+
+                if (
+                    "gate_unconstrained" in canonical_samples
+                    and "gate" not in canonical_samples
+                ):
+                    # Compute gate from gate_unconstrained
+                    canonical_samples["gate"] = jnp.sigmoid(
+                        canonical_samples["gate_unconstrained"]
+                    )
+
+                # Handle VCP capture probability conversions
+                if (
+                    "phi_capture" in canonical_samples
+                    and "p_capture" not in canonical_samples
+                ):
+                    # Extract phi_capture
+                    phi_capture = canonical_samples["phi_capture"]
+                    # Compute p_capture from phi_capture
+                    canonical_samples["p_capture"] = 1.0 / (1.0 + phi_capture)
+
+                if (
+                    "p_capture_unconstrained" in canonical_samples
+                    and "p_capture" not in canonical_samples
+                ):
+                    # Compute p_capture from p_capture_unconstrained
+                    canonical_samples["p_capture"] = jnp.sigmoid(
+                        canonical_samples["p_capture_unconstrained"]
+                    )
 
                 return canonical_samples
 
@@ -1170,8 +1158,8 @@ class ScribeMCMCResults(MCMC):
                         canonical_samples["gate"] = jnp.sigmoid(
                             canonical_samples["gate_unconstrained"]
                         )
-                    # Handle VCP capture probability conversion for unconstrained
-                    # parameterization
+                    # Handle VCP capture probability conversion for
+                    # unconstrained parameterization
                     if (
                         "p_capture_unconstrained" in canonical_samples
                         and "p_capture" not in canonical_samples
