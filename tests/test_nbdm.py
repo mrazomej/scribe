@@ -33,12 +33,11 @@ def pytest_generate_tests(metafunc):
         # Determine which parameterizations to test based on command-line option
         params = ALL_PARAMETERIZATIONS if param_opt == "all" else [param_opt]
 
-        # Generate all valid combinations, excluding SVI+unconstrained
+        # Generate all valid combinations
         combinations = [
             (m, p)
             for m in methods
             for p in params
-            if not (m == "svi" and p == "unconstrained")
         ]
 
         # Parametrize the test with the generated combinations
