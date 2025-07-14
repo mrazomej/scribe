@@ -3,7 +3,7 @@ Results classes for SCRIBE MCMC inference.
 """
 
 from typing import Dict, Optional, Union, Callable, Tuple, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import warnings
 
 import jax.numpy as jnp
@@ -16,6 +16,417 @@ import numpy as np
 from ..sampling import generate_predictive_samples
 from ..models.model_config import ModelConfig
 from ..core.normalization import normalize_counts_from_posterior
+
+# ------------------------------------------------------------------------------
+# MCMC Subset class (moved to module level)
+# ------------------------------------------------------------------------------
+
+@dataclass
+class ScribeMCMCSubset:
+    """Lightweight container for subset of MCMC results."""
+
+    samples: Dict
+    n_cells: int
+    n_genes: int
+    model_type: str
+    model_config: ModelConfig
+    obs: Optional[pd.DataFrame] = None
+    var: Optional[pd.DataFrame] = None
+    uns: Optional[Dict] = None
+    n_obs: Optional[int] = None
+    n_vars: Optional[int] = None
+    n_components: Optional[int] = None
+    predictive_samples: Optional[jnp.ndarray] = None
+
+    # Add posterior_samples property for compatibility
+    @property
+    def posterior_samples(self):
+        """Get posterior samples in canonical form."""
+        return self.get_posterior_samples(canonical=True)
+
+    # --------------------------------------------------------------------------
+
+    def __getitem__(self, index):
+        """Support further indexing of subset by genes."""
+        # If index is a boolean mask, use it directly
+        if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
+            bool_index = index
+        # Handle integer indexing
+        elif isinstance(index, int):
+            # Initialize boolean index
+            bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            # Set True for the given index
+            bool_index = bool_index.at[index].set(True)
+        # Handle slice indexing
+        elif isinstance(index, slice):
+            # Get indices from slice
+            indices = jnp.arange(self.n_genes)[index]
+            # Initialize boolean index
+            bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            # Set True for the given indices
+            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
+        # Handle list/array indexing
+        elif not isinstance(index, (bool, jnp.bool_)) and not isinstance(
+            index[-1], (bool, jnp.bool_)
+        ):
+            # Get indices from list/array
+            indices = jnp.array(index)
+            # Initialize boolean index
+            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
+        else:
+            # Already a boolean index
+            bool_index = index
+
+        # Create new metadata if available
+        new_var = self.var.iloc[bool_index] if self.var is not None else None
+
+        # Get subset of samples
+        new_samples = self._subset_posterior_samples(self.samples, bool_index)
+
+        # Create new instance with subset data
+        return ScribeMCMCSubset(
+            samples=new_samples,
+            n_cells=self.n_cells,
+            n_genes=int(
+                bool_index.sum()
+                if hasattr(bool_index, "sum")
+                else len(bool_index)
+            ),
+            model_type=self.model_type,
+            model_config=self.model_config,
+            obs=self.obs,
+            var=new_var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=new_var.shape[0] if new_var is not None else None,
+            n_components=self.n_components,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
+        """
+        Create a new posterior samples dictionary for the given index.
+        """
+        if samples is None:
+            return None
+        
+        # List of gene-specific keys to subset
+        gene_keys = []
+        # r
+        if "r" in samples:
+            gene_keys.append("r")
+        # mu
+        if "mu" in samples:
+            gene_keys.append("mu")
+        # gate
+        if "gate" in samples:
+            gene_keys.append("gate")
+        # r_unconstrained
+        if "r_unconstrained" in samples:
+            gene_keys.append("r_unconstrained")
+        # gate_unconstrained
+        if "gate_unconstrained" in samples:
+            gene_keys.append("gate_unconstrained")
+        # (extend here for other gene-specific keys if needed)
+        
+        new_samples = dict(samples)
+        for key in gene_keys:
+            if self.n_components is not None:
+                new_samples[key] = samples[key][..., index]
+            else:
+                new_samples[key] = samples[key][..., index]
+        return new_samples
+
+    # --------------------------------------------------------------------------
+
+    def get_posterior_samples(self, canonical=True):
+        """Get posterior samples in canonical form."""
+        if canonical:
+            # Convert to canonical form on-the-fly
+            return self._convert_to_canonical(self.samples)
+        else:
+            return self.samples
+
+    # --------------------------------------------------------------------------
+
+    def _convert_to_canonical(self, samples):
+        """
+        Convert samples to canonical (p, r) form based on present
+        parameters.
+
+        Parameters
+        ----------
+        samples : Dict
+            Raw samples dictionary
+
+        Returns
+        -------
+        Dict
+            Canonical samples dictionary
+        """
+        # If no samples, return empty dict
+        if not samples:
+            return {}
+
+        # Create a copy of samples to avoid modifying the original
+        canonical_samples = samples.copy()
+
+        # Convert based on what parameters are present in the samples
+
+        # Handle odds_ratio parameterization (phi, mu -> p, r)
+        if "phi" in canonical_samples and "mu" in canonical_samples:
+            # Extract phi and mu
+            phi = canonical_samples["phi"]
+            mu = canonical_samples["mu"]
+            # Compute p from phi
+            canonical_samples["p"] = 1.0 / (1.0 + phi)
+
+            # Reshape phi to broadcast with mu based on mixture model
+            if self.n_components is not None:
+                # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                phi_reshaped = phi[:, None, None]
+            else:
+                # Non-mixture model: mu has shape (n_samples, n_genes)
+                phi_reshaped = phi[:, None]
+            # Compute r from mu and phi
+            canonical_samples["r"] = mu * phi_reshaped
+
+        # Handle linked parameterization (mu, p -> r)
+        elif (
+            "mu" in canonical_samples
+            and "p" in canonical_samples
+            and "r" not in canonical_samples
+        ):
+            # Extract p and mu
+            p = canonical_samples["p"]
+            mu = canonical_samples["mu"]
+            # Reshape p to broadcast with mu based on mixture model
+            if self.n_components is not None:
+                # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                p_reshaped = p[:, None, None]
+            else:
+                # Non-mixture model: mu has shape (n_samples, n_genes)
+                p_reshaped = p[:, None]
+            # Compute r from mu and p
+            canonical_samples["r"] = (
+                mu * (1.0 - p_reshaped) / p_reshaped
+            )
+
+        # Handle unconstrained parameterization (r_unconstrained, p_unconstrained, etc.)
+        if (
+            "r_unconstrained" in canonical_samples
+            and "r" not in canonical_samples
+        ):
+            # compute r from r_unconstrained
+            canonical_samples["r"] = jnp.exp(
+                canonical_samples["r_unconstrained"]
+            )
+
+        if (
+            "p_unconstrained" in canonical_samples
+            and "p" not in canonical_samples
+        ):
+            # Compute p from p_unconstrained
+            canonical_samples["p"] = sigmoid(
+                canonical_samples["p_unconstrained"]
+            )
+
+        if (
+            "gate_unconstrained" in canonical_samples
+            and "gate" not in canonical_samples
+        ):
+            # Compute gate from gate_unconstrained
+            canonical_samples["gate"] = sigmoid(
+                canonical_samples["gate_unconstrained"]
+            )
+
+        # Handle VCP capture probability conversions
+        if (
+            "phi_capture" in canonical_samples
+            and "p_capture" not in canonical_samples
+        ):
+            # Extract phi_capture
+            phi_capture = canonical_samples["phi_capture"]
+            # Compute p_capture from phi_capture
+            canonical_samples["p_capture"] = 1.0 / (1.0 + phi_capture)
+
+        if (
+            "p_capture_unconstrained" in canonical_samples
+            and "p_capture" not in canonical_samples
+        ):
+            # Compute p_capture from p_capture_unconstrained
+            canonical_samples["p_capture"] = sigmoid(
+                canonical_samples["p_capture_unconstrained"]
+            )
+
+        # Handle mixing weights computation for mixture models
+        if (
+            "mixing_logits_unconstrained" in canonical_samples
+            and "mixing_weights" not in canonical_samples
+        ):
+            # Compute mixing weights from mixing_logits_unconstrained using
+            # softmax
+            canonical_samples["mixing_weights"] = softmax(
+                canonical_samples["mixing_logits_unconstrained"],
+                axis=-1,
+            )
+
+        return canonical_samples
+
+    # --------------------------------------------------------------------------
+
+    def get_posterior_quantiles(
+        self, param, quantiles=(0.025, 0.5, 0.975)
+    ):
+        """Get quantiles for a specific parameter from samples."""
+        return _get_posterior_quantiles(
+            self.get_posterior_samples(), param, quantiles
+        )
+
+    # --------------------------------------------------------------------------
+
+    def get_map(self):
+        """Get MAP estimates for parameters."""
+        return _get_map_estimate(self.get_posterior_samples())
+
+    # --------------------------------------------------------------------------
+
+    def log_likelihood(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        return_by: str = "cell",
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        split_components: bool = False,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
+        """Compute log likelihood of data under posterior samples."""
+        # Get canonical samples
+        samples = self.get_posterior_samples(canonical=True)
+
+        return _compute_log_likelihood(
+            samples,
+            counts,
+            self.model_type,
+            n_components=self.n_components,
+            batch_size=batch_size,
+            return_by=return_by,
+            cells_axis=cells_axis,
+            ignore_nans=ignore_nans,
+            split_components=split_components,
+            weights=weights,
+            weight_type=weight_type,
+            dtype=dtype,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def get_ppc_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        batch_size: Optional[int] = None,
+        store_samples: bool = True,
+    ) -> jnp.ndarray:
+        """Generate predictive samples using posterior parameter samples."""
+        predictive_samples = _generate_ppc_samples(
+            self.get_posterior_samples(canonical=True),
+            self.model_type,
+            self.n_cells,
+            self.n_genes,
+            self.model_config,
+            rng_key=rng_key,
+            batch_size=batch_size,
+        )
+
+        if store_samples:
+            self.predictive_samples = predictive_samples
+
+        return predictive_samples
+
+    # --------------------------------------------------------------------------
+
+    def get_prior_predictive_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
+        batch_size: Optional[int] = None,
+        store_samples: bool = True,
+    ) -> jnp.ndarray:
+        """Generate prior predictive samples using the model."""
+        # Generate prior predictive samples
+        prior_predictive_samples = _generate_prior_predictive_samples(
+            self.model_type,
+            self.n_cells,
+            self.n_genes,
+            self.model_config,
+            rng_key=rng_key,
+            n_samples=n_samples,
+            batch_size=batch_size,
+        )
+
+        # Store samples if requested
+        if store_samples:
+            self.prior_predictive_samples = prior_predictive_samples
+
+        return prior_predictive_samples
+
+    # --------------------------------------------------------------------------
+
+    def normalize_counts(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples_dirichlet: int = 1,
+        fit_distribution: bool = False,
+        store_samples: bool = True,
+        sample_axis: int = 0,
+        return_concentrations: bool = False,
+        backend: str = "numpyro",
+        verbose: bool = True,
+    ) -> Dict[str, Union[jnp.ndarray, object]]:
+        """Normalize counts using posterior samples of the r parameter."""
+        # Get canonical samples
+        posterior_samples = self.get_posterior_samples(canonical=True)
+
+        # Use the shared normalization function
+        return normalize_counts_from_posterior(
+            posterior_samples=posterior_samples,
+            n_components=self.n_components,
+            rng_key=rng_key,
+            n_samples_dirichlet=n_samples_dirichlet,
+            fit_distribution=fit_distribution,
+            store_samples=store_samples,
+            sample_axis=sample_axis,
+            return_concentrations=return_concentrations,
+            backend=backend,
+            verbose=verbose,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def cell_type_probabilities(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        dtype: jnp.dtype = jnp.float32,
+        fit_distribution: bool = True,
+        temperature: Optional[float] = None,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        verbose: bool = True,
+    ) -> Dict[str, jnp.ndarray]:
+        """Compute probabilistic cell type assignments."""
+        # This method would need to be implemented for MCMC results
+        # For now, raise NotImplementedError
+        raise NotImplementedError(
+            "cell_type_probabilities not yet implemented for MCMC results"
+        )
+
 
 # ------------------------------------------------------------------------------
 # MCMC results class
@@ -382,8 +793,8 @@ class ScribeMCMCResults(MCMC):
 
         # Handle mixing weights computation for mixture models
         if (
-            "mixing_logits_unconstrained" in samples
-            and "mixing_weights" not in samples
+            "mixing_logits_unconstrained" in canonical_samples
+            and "mixing_weights" not in canonical_samples
         ):
             # Compute mixing weights from mixing_logits_unconstrained using
             # softmax
@@ -819,30 +1230,33 @@ class ScribeMCMCResults(MCMC):
         """
         if samples is None:
             return None
-
-        new_posterior_samples = {}
-
-        # Handle gene-specific parameters
-        for param_name, values in samples.items():
-            if param_name in [
-                "r",
-                "r_unconstrained",
-                "r_unconstrained__decentered",
-                "gate",
-                "gate_unconstrained",
-                "gate_unconstrained__decentered",
-            ]:
-                if self.n_components is not None:
-                    # Shape: (n_samples, n_components, n_genes)
-                    new_posterior_samples[param_name] = values[..., index]
-                else:
-                    # Shape: (n_samples, n_genes)
-                    new_posterior_samples[param_name] = values[..., index]
+        
+        # List of gene-specific keys to subset
+        gene_keys = []
+        # r
+        if "r" in samples:
+            gene_keys.append("r")
+        # mu
+        if "mu" in samples:
+            gene_keys.append("mu")
+        # gate
+        if "gate" in samples:
+            gene_keys.append("gate")
+        # r_unconstrained
+        if "r_unconstrained" in samples:
+            gene_keys.append("r_unconstrained")
+        # gate_unconstrained
+        if "gate_unconstrained" in samples:
+            gene_keys.append("gate_unconstrained")
+        # (extend here for other gene-specific keys if needed)
+        
+        new_samples = dict(samples)
+        for key in gene_keys:
+            if self.n_components is not None:
+                new_samples[key] = samples[key][..., index]
             else:
-                # Copy non-gene-specific parameters as is
-                new_posterior_samples[param_name] = values
-
-        return new_posterior_samples
+                new_samples[key] = samples[key][..., index]
+        return new_samples
 
     def __getitem__(self, index):
         """
@@ -859,7 +1273,7 @@ class ScribeMCMCResults(MCMC):
 
         Returns
         -------
-        ScribeMCMCResults
+        ScribeMCMCSubset
             A new ScribeMCMCResults object containing only the selected genes
         """
         # If index is a boolean mask, use it directly
@@ -904,420 +1318,7 @@ class ScribeMCMCResults(MCMC):
         # the subset data
         from dataclasses import dataclass
 
-        @dataclass
-        class ScribeMCMCSubset:
-            """Lightweight container for subset of MCMC results."""
-
-            samples: Dict
-            n_cells: int
-            n_genes: int
-            model_type: str
-            model_config: ModelConfig
-            obs: Optional[pd.DataFrame] = None
-            var: Optional[pd.DataFrame] = None
-            uns: Optional[Dict] = None
-            n_obs: Optional[int] = None
-            n_vars: Optional[int] = None
-            n_components: Optional[int] = None
-            predictive_samples: Optional[jnp.ndarray] = None
-
-            # ------------------------------------------------------------------
-
-            def __getitem__(self, index):
-                """Support further indexing of subset."""
-                # Convert subset indexing to original indexing
-                if self.var is not None:
-                    if isinstance(index, int):
-                        return self.var.index[index]
-                    elif isinstance(index, slice):
-                        return self.var.index[index]
-                    else:
-                        return self.var.index[index]
-                else:
-                    # If no var metadata, just return the index
-                    return index
-
-            # ------------------------------------------------------------------
-
-            def get_posterior_samples(self, canonical=True):
-                """Get posterior samples in canonical form."""
-                if canonical:
-                    # Convert to canonical form on-the-fly
-                    return self._convert_to_canonical(self.samples)
-                else:
-                    return self.samples
-
-            # ------------------------------------------------------------------
-
-            def _convert_to_canonical(self, samples):
-                """
-                Convert samples to canonical (p, r) form based on present
-                parameters.
-
-                Parameters
-                ----------
-                samples : Dict
-                    Raw samples dictionary
-
-                Returns
-                -------
-                Dict
-                    Canonical samples dictionary
-                """
-                # If no samples, return empty dict
-                if not samples:
-                    return {}
-
-                # Create a copy of samples to avoid modifying the original
-                canonical_samples = samples.copy()
-
-                # Convert based on what parameters are present in the samples
-
-                # Handle odds_ratio parameterization (phi, mu -> p, r)
-                if "phi" in canonical_samples and "mu" in canonical_samples:
-                    # Extract phi and mu
-                    phi = canonical_samples["phi"]
-                    mu = canonical_samples["mu"]
-                    # Compute p from phi
-                    canonical_samples["p"] = 1.0 / (1.0 + phi)
-
-                    # Reshape phi to broadcast with mu based on mixture model
-                    if self.n_components is not None:
-                        # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                        phi_reshaped = phi[:, None, None]
-                    else:
-                        # Non-mixture model: mu has shape (n_samples, n_genes)
-                        phi_reshaped = phi[:, None]
-                    # Compute r from mu and phi
-                    canonical_samples["r"] = mu * phi_reshaped
-
-                # Handle linked parameterization (mu, p -> r)
-                elif (
-                    "mu" in canonical_samples
-                    and "p" in canonical_samples
-                    and "r" not in canonical_samples
-                ):
-                    # Extract p and mu
-                    p = canonical_samples["p"]
-                    mu = canonical_samples["mu"]
-                    # Reshape p to broadcast with mu based on mixture model
-                    if self.n_components is not None:
-                        # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                        p_reshaped = p[:, None, None]
-                    else:
-                        # Non-mixture model: mu has shape (n_samples, n_genes)
-                        p_reshaped = p[:, None]
-                    # Compute r from mu and p
-                    canonical_samples["r"] = (
-                        mu * (1.0 - p_reshaped) / p_reshaped
-                    )
-
-                # Handle unconstrained parameterization (r_unconstrained, p_unconstrained, etc.)
-                if (
-                    "r_unconstrained" in canonical_samples
-                    and "r" not in canonical_samples
-                ):
-                    # compute r from r_unconstrained
-                    canonical_samples["r"] = jnp.exp(
-                        canonical_samples["r_unconstrained"]
-                    )
-
-                if (
-                    "p_unconstrained" in canonical_samples
-                    and "p" not in canonical_samples
-                ):
-                    # Compute p from p_unconstrained
-                    canonical_samples["p"] = sigmoid(
-                        canonical_samples["p_unconstrained"]
-                    )
-
-                if (
-                    "gate_unconstrained" in canonical_samples
-                    and "gate" not in canonical_samples
-                ):
-                    # Compute gate from gate_unconstrained
-                    canonical_samples["gate"] = sigmoid(
-                        canonical_samples["gate_unconstrained"]
-                    )
-
-                # Handle VCP capture probability conversions
-                if (
-                    "phi_capture" in canonical_samples
-                    and "p_capture" not in canonical_samples
-                ):
-                    # Extract phi_capture
-                    phi_capture = canonical_samples["phi_capture"]
-                    # Compute p_capture from phi_capture
-                    canonical_samples["p_capture"] = 1.0 / (1.0 + phi_capture)
-
-                if (
-                    "p_capture_unconstrained" in canonical_samples
-                    and "p_capture" not in canonical_samples
-                ):
-                    # Compute p_capture from p_capture_unconstrained
-                    canonical_samples["p_capture"] = sigmoid(
-                        canonical_samples["p_capture_unconstrained"]
-                    )
-
-                # Handle mixing weights computation for mixture models
-                if (
-                    "mixing_logits_unconstrained" in canonical_samples
-                    and "mixing_weights" not in canonical_samples
-                ):
-                    # Compute mixing weights from mixing_logits_unconstrained using
-                    # softmax
-                    canonical_samples["mixing_weights"] = softmax(
-                        canonical_samples["mixing_logits_unconstrained"],
-                        axis=-1,
-                    )
-
-                return canonical_samples
-
-            # ------------------------------------------------------------------
-
-            def get_posterior_quantiles(
-                self, param, quantiles=(0.025, 0.5, 0.975)
-            ):
-                """Get quantiles for a specific parameter from samples."""
-                return _get_posterior_quantiles(
-                    self.get_posterior_samples(), param, quantiles
-                )
-
-            # ------------------------------------------------------------------
-
-            def get_map(self):
-                """Get MAP estimates for parameters."""
-                return _get_map_estimate(self.get_posterior_samples())
-
-            # ------------------------------------------------------------------
-
-            def _convert_to_canonical(self):
-                """
-                Convert posterior samples to canonical (p, r) form.
-
-                Returns
-                -------
-                self : ScribeMCMCSubset
-                    Returns self for method chaining
-                """
-                # Create a copy of samples to avoid modifying the original
-                canonical_samples = dict(self.samples)
-
-                # Get parameterization
-                parameterization = self.model_config.parameterization
-
-                # Convert parameters to canonical form based on parameterization
-                if parameterization == "odds_ratio":
-                    # Convert phi to p if needed
-                    if (
-                        "phi" in canonical_samples
-                        and "mu" in canonical_samples
-                        and "r" not in canonical_samples
-                    ):
-                        phi = canonical_samples["phi"]
-                        mu = canonical_samples["mu"]
-                        canonical_samples["p"] = 1.0 / (1.0 + phi)
-                        # Reshape phi to broadcast with mu based on mixture model
-                        if self.n_components is not None:
-                            # Mixture model: mu has shape
-                            # (n_samples, n_components, n_genes)
-                            phi_reshaped = phi[:, None, None]
-                        else:
-                            # Non-mixture model: mu has shape (n_samples, n_genes)
-                            phi_reshaped = phi[:, None]
-                        canonical_samples["r"] = mu * phi_reshaped
-
-                    # Handle VCP capture probability conversion for odds_ratio
-                    # parameterization
-                    if (
-                        "phi_capture" in canonical_samples
-                        and "p_capture" not in canonical_samples
-                    ):
-                        phi_capture = canonical_samples["phi_capture"]
-                        canonical_samples["p_capture"] = 1.0 / (
-                            1.0 + phi_capture
-                        )
-
-                elif parameterization == "linked":
-                    # Convert linked parameters to canonical form
-                    if (
-                        "p" in canonical_samples
-                        and "mu" in canonical_samples
-                        and "r" not in canonical_samples
-                    ):
-                        p = canonical_samples["p"]
-                        mu = canonical_samples["mu"]
-                        # Reshape p to broadcast with mu based on mixture model
-                        if self.n_components is not None:
-                            # Mixture model: mu has shape
-                            # (n_samples, n_components, n_genes)
-                            p_reshaped = p[:, None, None]
-                        else:
-                            # Non-mixture model: mu has shape (n_samples, n_genes)
-                            p_reshaped = p[:, None]
-                        canonical_samples["r"] = (
-                            mu * (1.0 - p_reshaped) / p_reshaped
-                        )
-
-                elif parameterization == "unconstrained":
-                    # Convert unconstrained parameters to canonical form
-                    if (
-                        "r_unconstrained" in canonical_samples
-                        and "r" not in canonical_samples
-                    ):
-                        canonical_samples["r"] = jnp.exp(
-                            canonical_samples["r_unconstrained"]
-                        )
-                    if (
-                        "p_unconstrained" in canonical_samples
-                        and "p" not in canonical_samples
-                    ):
-                        canonical_samples["p"] = sigmoid(
-                            canonical_samples["p_unconstrained"]
-                        )
-                    if (
-                        "gate_unconstrained" in canonical_samples
-                        and "gate" not in canonical_samples
-                    ):
-                        canonical_samples["gate"] = sigmoid(
-                            canonical_samples["gate_unconstrained"]
-                        )
-                    # Handle VCP capture probability conversion for
-                    # unconstrained parameterization
-                    if (
-                        "p_capture_unconstrained" in canonical_samples
-                        and "p_capture" not in canonical_samples
-                    ):
-                        canonical_samples["p_capture"] = sigmoid(
-                            canonical_samples["p_capture_unconstrained"]
-                        )
-
-                # Standard parameterization doesn't need conversion
-                # (parameters are already in canonical form)
-
-                # Store the canonical samples as an attribute
-                self.canonical_samples = canonical_samples
-
-                return self
-
-            # ------------------------------------------------------------------
-
-            def log_likelihood(
-                self,
-                counts: jnp.ndarray,
-                batch_size: Optional[int] = None,
-                return_by: str = "cell",
-                cells_axis: int = 0,
-                ignore_nans: bool = False,
-                split_components: bool = False,
-                weights: Optional[jnp.ndarray] = None,
-                weight_type: Optional[str] = None,
-                dtype: jnp.dtype = jnp.float32,
-            ) -> jnp.ndarray:
-                """Compute log likelihood of data under posterior samples."""
-                # Get canonical samples
-                samples = self.get_posterior_samples(canonical=True)
-
-                return _compute_log_likelihood(
-                    samples,
-                    counts,
-                    self.model_type,
-                    n_components=self.n_components,
-                    batch_size=batch_size,
-                    return_by=return_by,
-                    cells_axis=cells_axis,
-                    ignore_nans=ignore_nans,
-                    split_components=split_components,
-                    weights=weights,
-                    weight_type=weight_type,
-                    dtype=dtype,
-                )
-
-            # ------------------------------------------------------------------
-
-            def get_ppc_samples(
-                self,
-                rng_key: random.PRNGKey = random.PRNGKey(42),
-                batch_size: Optional[int] = None,
-                store_samples: bool = True,
-            ) -> jnp.ndarray:
-                """Generate predictive samples using posterior parameter samples."""
-                predictive_samples = _generate_ppc_samples(
-                    self.get_posterior_samples(canonical=True),
-                    self.model_type,
-                    self.n_cells,
-                    self.n_genes,
-                    self.model_config,
-                    rng_key=rng_key,
-                    batch_size=batch_size,
-                )
-
-                if store_samples:
-                    self.predictive_samples = predictive_samples
-
-                return predictive_samples
-
-            # ------------------------------------------------------------------
-
-            def get_prior_predictive_samples(
-                self,
-                rng_key: random.PRNGKey = random.PRNGKey(42),
-                n_samples: int = 100,
-                batch_size: Optional[int] = None,
-                store_samples: bool = True,
-            ) -> jnp.ndarray:
-                """Generate prior predictive samples using the model."""
-                # Generate prior predictive samples
-                prior_predictive_samples = _generate_prior_predictive_samples(
-                    self.model_type,
-                    self.n_cells,
-                    self.n_genes,
-                    self.model_config,
-                    rng_key=rng_key,
-                    n_samples=n_samples,
-                    batch_size=batch_size,
-                )
-
-                # Store samples if requested
-                if store_samples:
-                    self.prior_predictive_samples = prior_predictive_samples
-
-                return prior_predictive_samples
-
-            # ------------------------------------------------------------------
-
-            def normalize_counts(
-                self,
-                rng_key: random.PRNGKey = random.PRNGKey(42),
-                n_samples_dirichlet: int = 1,
-                fit_distribution: bool = False,
-                store_samples: bool = True,
-                sample_axis: int = 0,
-                return_concentrations: bool = False,
-                backend: str = "numpyro",
-                verbose: bool = True,
-            ) -> Dict[str, Union[jnp.ndarray, object]]:
-                """Normalize counts using posterior samples of the r parameter."""
-                # Get canonical samples
-                posterior_samples = self.get_posterior_samples(canonical=True)
-
-                # Use the shared normalization function
-                return normalize_counts_from_posterior(
-                    posterior_samples=posterior_samples,
-                    n_components=self.n_components,
-                    rng_key=rng_key,
-                    n_samples_dirichlet=n_samples_dirichlet,
-                    fit_distribution=fit_distribution,
-                    store_samples=store_samples,
-                    sample_axis=sample_axis,
-                    return_concentrations=return_concentrations,
-                    backend=backend,
-                    verbose=verbose,
-                )
-
-        # ----------------------------------------------------------------------
-
-        # Create and return the subset
+        # Create and return the subset using the module-level class
         return ScribeMCMCSubset(
             samples=new_samples,
             n_cells=self.n_cells,
@@ -1335,6 +1336,304 @@ class ScribeMCMCResults(MCMC):
             n_vars=new_var.shape[0] if new_var is not None else None,
             n_components=self.n_components,
         )
+
+    # --------------------------------------------------------------------------
+    # Indexing by component
+    # --------------------------------------------------------------------------
+
+    def get_component(self, component_index):
+        """
+        Get a specific component from mixture model results.
+
+        This method returns a ScribeMCMCSubset object that contains parameter
+        samples for the specified component, allowing for further gene-based
+        indexing. Only applicable to mixture models.
+
+        Parameters
+        ----------
+        component_index : int
+            Index of the component to select
+
+        Returns
+        -------
+        ScribeMCMCSubset
+            A ScribeMCMCSubset object with samples for the selected component
+
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model or if component_index is out of range
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Component selection only applies to mixture models with multiple components"
+            )
+
+        # Check if component_index is valid
+        if component_index < 0 or component_index >= self.n_components:
+            raise ValueError(
+                f"Component index {component_index} out of range [0, {self.n_components-1}]"
+            )
+
+        # Get samples and subset by component
+        samples = self.get_samples(canonical=False)
+        component_samples = self._subset_samples_by_component(
+            samples, component_index
+        )
+
+        # Create modified model config (remove mixture aspects)
+        modified_model_config = replace(
+            self.model_config,
+            base_model=self.model_type.replace("_mix", ""),
+            n_components=None,
+        )
+
+        # Return ScribeMCMCSubset with component-specific data
+        return ScribeMCMCSubset(
+            samples=component_samples,
+            n_cells=self.n_cells,
+            n_genes=self.n_genes,
+            model_type=self.model_type.replace(
+                "_mix", ""
+            ),  # Remove _mix suffix
+            model_config=modified_model_config,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=self.n_vars,
+            n_components=None,  # No longer a mixture model
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _subset_samples_by_component(
+        self, samples: Dict, component_index: int
+    ) -> Dict:
+        """
+        Subset samples for a specific component.
+
+        Parameters
+        ----------
+        samples : Dict
+            Dictionary of parameter samples
+        component_index : int
+            Index of the component to select
+
+        Returns
+        -------
+        Dict
+            Dictionary of parameter samples for the selected component
+        """
+        new_samples = {}
+
+        # Define parameter categories based on their typical structure
+        component_gene_specific = [
+            "r",
+            "r_unconstrained",
+            "gate",
+            "gate_unconstrained",
+            "mu",
+            "phi",
+            "r_unconstrained_loc",
+            "r_unconstrained_scale",
+            "gate_unconstrained_loc",
+            "gate_unconstrained_scale",
+        ]
+
+        component_specific = [
+            "p",
+            "p_unconstrained",
+            "mixing_weights",
+            "mixing_logits_unconstrained",
+            "p_unconstrained_loc",
+            "p_unconstrained_scale",
+            "mixing_logits_unconstrained_loc",
+            "mixing_logits_unconstrained_scale",
+        ]
+
+        cell_specific = [
+            "p_capture",
+            "p_capture_unconstrained",
+            "phi_capture",
+            "p_capture_unconstrained_loc",
+            "p_capture_unconstrained_scale",
+        ]
+
+        for param_name, values in samples.items():
+            if param_name in component_gene_specific:
+                # Component-gene specific parameters: (n_samples, n_components, n_genes)
+                if values.ndim == 3:
+                    new_samples[param_name] = values[:, component_index, :]
+                else:  # Already in correct shape or scalar
+                    new_samples[param_name] = values
+            elif param_name in component_specific:
+                # Component-specific parameters: (n_samples, n_components)
+                if values.ndim == 2:
+                    new_samples[param_name] = values[:, component_index]
+                else:  # Scalar parameter
+                    new_samples[param_name] = values
+            else:
+                # Cell-specific or other parameters - copy as-is
+                new_samples[param_name] = values
+
+        return new_samples
+
+    # --------------------------------------------------------------------------
+    # Cell type assignment method for mixture models
+    # --------------------------------------------------------------------------
+
+    def cell_type_probabilities(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        cells_axis: int = 0,
+        ignore_nans: bool = False,
+        dtype: jnp.dtype = jnp.float32,
+        fit_distribution: bool = True,
+        temperature: Optional[float] = None,
+        weights: Optional[jnp.ndarray] = None,
+        weight_type: Optional[str] = None,
+        verbose: bool = True,
+    ) -> Dict[str, jnp.ndarray]:
+        """
+        Compute probabilistic cell type assignments and fit Dirichlet
+        distributions to characterize assignment uncertainty.
+
+        For each cell, this method:
+            1. Computes component-specific log-likelihoods using posterior
+               samples
+            2. Converts these to probability distributions over cell types
+            3. Fits a Dirichlet distribution to characterize the uncertainty in
+               these assignments
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data to evaluate assignments for
+        batch_size : Optional[int], default=None
+            Size of mini-batches for likelihood computation
+        cells_axis : int, default=0
+            Axis along which cells are arranged. 0 means cells are rows.
+        ignore_nans : bool, default=False
+            If True, removes any samples that contain NaNs.
+        dtype : jnp.dtype, default=jnp.float32
+            Data type for numerical precision in computations
+        fit_distribution : bool, default=True
+            If True, fits a Dirichlet distribution to the assignment
+            probabilities
+        temperature : Optional[float], default=None
+            If provided, apply temperature scaling to log probabilities
+        weights : Optional[jnp.ndarray], default=None
+            Array used to weight genes when computing log likelihoods
+        weight_type : Optional[str], default=None
+            How to apply weights. Must be one of:
+                - 'multiplicative': multiply log probabilities by weights
+                - 'additive': add weights to log probabilities
+        verbose : bool, default=True
+            If True, prints progress messages
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Dictionary containing:
+                - 'concentration': Dirichlet concentration parameters for each
+                  cell. Shape: (n_cells, n_components). Only returned if
+                  fit_distribution is True.
+                - 'mean_probabilities': Mean assignment probabilities for each
+                  cell. Shape: (n_cells, n_components). Only returned if
+                  fit_distribution is True.
+                - 'sample_probabilities': Assignment probabilities for each
+                  posterior sample. Shape: (n_samples, n_cells, n_components)
+
+        Raises
+        ------
+        ValueError
+            - If the model is not a mixture model
+            - If posterior samples have not been generated yet
+
+        Note
+        ----
+        Most of the log-likelihood value differences between cell types are
+        extremely large. Thus, the computation usually returns either 0 or 1.
+        This computation is therefore not very useful, but it is included for
+        completeness.
+        """
+        # Check if this is a mixture model
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Cell type assignment only applies to mixture models with "
+                "multiple components"
+            )
+
+        if verbose:
+            print("- Computing component-specific log-likelihoods...")
+
+        # Compute component-specific log-likelihoods
+        # Shape: (n_samples, n_cells, n_components)
+        log_liks = self.log_likelihood(
+            counts,
+            batch_size=batch_size,
+            return_by="cell",
+            cells_axis=cells_axis,
+            ignore_nans=ignore_nans,
+            split_components=True,
+            weights=weights,
+            weight_type=weight_type,
+            dtype=dtype,
+        )
+
+        if verbose:
+            print("- Converting log-likelihoods to probabilities...")
+
+        # Apply temperature scaling if requested
+        if temperature is not None:
+            from ..cell_assignment import temperature_scaling
+            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
+
+        # Convert log-likelihoods to probabilities using optimized softmax
+        from ..stats import log_liks_to_probs
+        probabilities = log_liks_to_probs(log_liks)
+
+        # Get shapes
+        n_samples, n_cells, n_components = probabilities.shape
+
+        if fit_distribution:
+            if verbose:
+                print("- Fitting Dirichlet distribution...")
+
+            # Initialize array for Dirichlet concentration parameters
+            concentrations = jnp.zeros((n_cells, n_components), dtype=dtype)
+
+            # Fit Dirichlet distribution for each cell
+            from ..stats import fit_dirichlet_minka
+            for cell in range(n_cells):
+                if verbose and cell % 1000 == 0:
+                    print(
+                        f"    - Fitting Dirichlet distributions for "
+                        f"cells {cell}-{min(cell+1000, n_cells)} out of "
+                        f"{n_cells} cells"
+                    )
+
+                # Get probability vectors for this cell across all samples
+                cell_probs = probabilities[:, cell, :]
+                # Fit Dirichlet using Minka's fixed-point method
+                concentrations = concentrations.at[cell].set(
+                    fit_dirichlet_minka(cell_probs)
+                )
+
+            # Compute mean probabilities (Dirichlet mean)
+            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
+            mean_probabilities = concentrations / concentration_sums
+
+            return {
+                "concentration": concentrations,
+                "mean_probabilities": mean_probabilities,
+                "sample_probabilities": probabilities,
+            }
+        else:
+            return {"sample_probabilities": probabilities}
 
 
 # ------------------------------------------------------------------------------
