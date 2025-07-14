@@ -517,8 +517,10 @@ class ScribeSVIResults:
             "r_scale",
             "gate_alpha",
             "gate_beta",
-            "gate_alpha_comp",
-            "gate_beta_comp",
+            "r_unconstrained_loc",
+            "r_unconstrained_scale",
+            "gate_unconstrained_loc",
+            "gate_unconstrained_scale",
         ]
 
         for param_name in gene_specific_params:
@@ -550,6 +552,12 @@ class ScribeSVIResults:
         # gate
         if "gate" in samples:
             gene_keys.append("gate")
+        # r_unconstrained
+        if "r_unconstrained" in samples:
+            gene_keys.append("r_unconstrained")
+        # gate_unconstrained
+        if "gate_unconstrained" in samples:
+            gene_keys.append("gate_unconstrained")
         # (extend here for other gene-specific keys if needed)
         new_samples = dict(samples)
         for key in gene_keys:
@@ -781,16 +789,22 @@ class ScribeSVIResults:
         # Handle component-gene-specific parameters (shape: [n_components, n_genes])
         for param_name in component_gene_specific:
             if param_name in self.params:
-                new_params[param_name] = self.params[param_name][
-                    component_index
-                ]
+                param = self.params[param_name]
+                # Check if parameter has component dimension
+                if param.ndim > 1:  # Has component dimension
+                    new_params[param_name] = param[component_index]
+                else:  # Scalar parameter, copy as-is
+                    new_params[param_name] = param
 
         # Handle component-specific parameters (shape: [n_components])
         for param_name in component_specific:
             if param_name in self.params:
-                new_params[param_name] = self.params[param_name][
-                    component_index
-                ]
+                param = self.params[param_name]
+                # Check if parameter has component dimension
+                if param.ndim > 0:  # Has component dimension
+                    new_params[param_name] = param[component_index]
+                else:  # Scalar parameter, copy as-is
+                    new_params[param_name] = param
 
         # Handle cell-specific parameters (copy as-is, not component-specific)
         for param_name in cell_specific:
