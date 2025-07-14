@@ -549,7 +549,7 @@ def zinbvcp_guide(
         jnp.full(n_genes, gate_prior_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("gate", BetaPrime(gate_alpha, gate_beta))
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
         phi_capture_alpha = numpyro.param(
@@ -765,7 +765,7 @@ def zinb_mixture_model(
     )
     # Sample the gene-specific gate from a Beta prior
     gate = numpyro.sample(
-        "gate", BetaPrime(*gate_prior_params).expand([n_components, n_genes])
+        "gate", dist.Beta(*gate_prior_params).expand([n_components, n_genes])
     )
 
     if model_config.component_specific_params:
@@ -1115,7 +1115,7 @@ def zinbvcp_mixture_model(
     )
     # Sample the gene-specific gate from a Beta prior
     gate = numpyro.sample(
-        "gate", BetaPrime(*gate_prior_params).expand([n_components, n_genes])
+        "gate", dist.Beta(*gate_prior_params).expand([n_components, n_genes])
     )
 
     if model_config.component_specific_params:
@@ -1219,7 +1219,7 @@ def zinbvcp_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific gate from a Beta prior
-    numpyro.sample("gate", BetaPrime(gate_alpha, gate_beta))
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
     # Define parameters for p
     if model_config.component_specific_params:
