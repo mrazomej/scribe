@@ -8,14 +8,13 @@ import warnings
 
 import jax.numpy as jnp
 import jax.scipy as jsp
-import jax.nn
+from jax.nn import sigmoid, softmax
 import pandas as pd
 import numpyro.distributions as dist
 from jax import random, jit, vmap
 
 import numpy as np
 import scipy.stats as stats
-from scipy.special import softmax
 
 from ..sampling import (
     sample_variational_posterior,
@@ -427,7 +426,7 @@ class ScribeSVIResults:
                     print(
                         "Computing p from p_unconstrained for unconstrained parameterization"
                     )
-                estimates["p"] = jnp.sigmoid(estimates["p_unconstrained"])
+                estimates["p"] = sigmoid(estimates["p_unconstrained"])
 
             # Convert gate_unconstrained to gate if needed
             if "gate_unconstrained" in estimates and "gate" not in estimates:
@@ -435,7 +434,7 @@ class ScribeSVIResults:
                     print(
                         "Computing gate from gate_unconstrained for unconstrained parameterization"
                     )
-                estimates["gate"] = jnp.sigmoid(estimates["gate_unconstrained"])
+                estimates["gate"] = sigmoid(estimates["gate_unconstrained"])
 
             # Handle VCP capture probability conversion
             if (
@@ -446,8 +445,18 @@ class ScribeSVIResults:
                     print(
                         "Computing p_capture from p_capture_unconstrained for unconstrained parameterization"
                     )
-                estimates["p_capture"] = jnp.sigmoid(
+                estimates["p_capture"] = sigmoid(
                     estimates["p_capture_unconstrained"]
+                )
+            # Handle mixing weights computation for mixture models
+            if (
+                "mixing_logits_unconstrained" in estimates
+                and "mixing_weights" not in estimates
+            ):
+                # Compute mixing weights from mixing_logits_unconstrained using
+                # softmax
+                estimates["mixing_weights"] = softmax(
+                    estimates["mixing_logits_unconstrained"], axis=-1
                 )
 
         # Compute p_hat for NBVCP and ZINBVCP models if needed (applies to all parameterizations)
@@ -718,43 +727,70 @@ class ScribeSVIResults:
 
     # --------------------------------------------------------------------------
 
-    def _subset_params_by_component(self, new_params: Dict, component_index: int):
+    def _subset_params_by_component(
+        self, new_params: Dict, component_index: int
+    ):
         """
         Handle subsetting of all parameters based on their structure.
-        
+
         This method intelligently handles parameters based on their dimensions
         and naming conventions, regardless of parameterization.
         """
         # Define parameter categories based on their structure
         component_gene_specific = [
-            "r_loc_comp", "r_scale_comp", "r_unconstrained_loc", "r_unconstrained_scale",
-            "gate_alpha_comp", "gate_beta_comp", "gate_unconstrained_loc", "gate_unconstrained_scale",
-            "mu_loc_comp", "mu_scale_comp", "phi_loc_comp", "phi_scale_comp"
+            "r_loc_comp",
+            "r_scale_comp",
+            "r_unconstrained_loc",
+            "r_unconstrained_scale",
+            "gate_alpha_comp",
+            "gate_beta_comp",
+            "gate_unconstrained_loc",
+            "gate_unconstrained_scale",
+            "mu_loc",
+            "mu_scale",
+            "phi_loc",
+            "phi_scale",
         ]
-        
+
         component_specific = [
-            "p_alpha_comp", "p_beta_comp", "p_unconstrained_loc", "p_unconstrained_scale",
-            "mixing_logits_unconstrained_loc", "mixing_logits_unconstrained_scale"
+            "p_alpha_comp",
+            "p_beta_comp",
+            "p_unconstrained_loc",
+            "p_unconstrained_scale",
+            "mixing_logits_unconstrained_loc",
+            "mixing_logits_unconstrained_scale",
         ]
-        
+
         cell_specific = [
-            "p_capture_alpha", "p_capture_beta", "p_capture_unconstrained_loc", 
-            "p_capture_unconstrained_scale", "phi_capture_loc", "phi_capture_scale"
+            "p_capture_alpha",
+            "p_capture_beta",
+            "p_capture_unconstrained_loc",
+            "p_capture_unconstrained_scale",
+            "phi_capture_loc",
+            "phi_capture_scale",
         ]
-        
+
         shared_params = [
-            "p_alpha", "p_beta", "gate_alpha", "gate_beta", "mixing_conc"
+            "p_alpha",
+            "p_beta",
+            "gate_alpha",
+            "gate_beta",
+            "mixing_conc",
         ]
 
         # Handle component-gene-specific parameters (shape: [n_components, n_genes])
         for param_name in component_gene_specific:
             if param_name in self.params:
-                new_params[param_name] = self.params[param_name][component_index]
+                new_params[param_name] = self.params[param_name][
+                    component_index
+                ]
 
         # Handle component-specific parameters (shape: [n_components])
         for param_name in component_specific:
             if param_name in self.params:
-                new_params[param_name] = self.params[param_name][component_index]
+                new_params[param_name] = self.params[param_name][
+                    component_index
+                ]
 
         # Handle cell-specific parameters (copy as-is, not component-specific)
         for param_name in cell_specific:
@@ -773,7 +809,7 @@ class ScribeSVIResults:
     ) -> Dict:
         """
         Create a new posterior samples dictionary for the given component index.
-        
+
         This method handles all parameter types based on their dimensions.
         """
         if samples is None:
@@ -783,20 +819,35 @@ class ScribeSVIResults:
 
         # Define parameter categories for posterior samples
         component_gene_specific_samples = [
-            "r", "r_unconstrained", "gate", "gate_unconstrained", 
-            "mu", "phi", "r_unconstrained_loc", "r_unconstrained_scale",
-            "gate_unconstrained_loc", "gate_unconstrained_scale"
+            "r",
+            "r_unconstrained",
+            "gate",
+            "gate_unconstrained",
+            "mu",
+            "phi",
+            "r_unconstrained_loc",
+            "r_unconstrained_scale",
+            "gate_unconstrained_loc",
+            "gate_unconstrained_scale",
         ]
-        
+
         component_specific_samples = [
-            "p", "p_unconstrained", "mixing_weights", "mixing_logits_unconstrained",
-            "p_unconstrained_loc", "p_unconstrained_scale", 
-            "mixing_logits_unconstrained_loc", "mixing_logits_unconstrained_scale"
+            "p",
+            "p_unconstrained",
+            "mixing_weights",
+            "mixing_logits_unconstrained",
+            "p_unconstrained_loc",
+            "p_unconstrained_scale",
+            "mixing_logits_unconstrained_loc",
+            "mixing_logits_unconstrained_scale",
         ]
-        
+
         cell_specific_samples = [
-            "p_capture", "p_capture_unconstrained", "phi_capture",
-            "p_capture_unconstrained_loc", "p_capture_unconstrained_scale"
+            "p_capture",
+            "p_capture_unconstrained",
+            "phi_capture",
+            "p_capture_unconstrained_loc",
+            "p_capture_unconstrained_scale",
         ]
 
         # Handle component-gene-specific samples (shape: [n_samples, n_components, n_genes])
@@ -804,7 +855,9 @@ class ScribeSVIResults:
             if param_name in samples:
                 sample_value = samples[param_name]
                 if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples[param_name] = sample_value[:, component_index, :]
+                    new_posterior_samples[param_name] = sample_value[
+                        :, component_index, :
+                    ]
                 else:  # Scalar parameter, copy as-is
                     new_posterior_samples[param_name] = sample_value
 
@@ -813,7 +866,9 @@ class ScribeSVIResults:
             if param_name in samples:
                 sample_value = samples[param_name]
                 if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples[param_name] = sample_value[:, component_index]
+                    new_posterior_samples[param_name] = sample_value[
+                        :, component_index
+                    ]
                 else:  # Scalar parameter, copy as-is
                     new_posterior_samples[param_name] = sample_value
 
@@ -901,6 +956,7 @@ class ScribeSVIResults:
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
         store_samples: bool = True,
+        canonical: bool = False,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
         # Get the guide function
@@ -922,6 +978,10 @@ class ScribeSVIResults:
         posterior_samples = sample_variational_posterior(
             guide, self.params, model_args, rng_key=rng_key, n_samples=n_samples
         )
+
+        # Convert to canonical form if requested
+        if canonical:
+            self._convert_to_canonical()
 
         # Store samples if requested
         if store_samples:
@@ -978,6 +1038,7 @@ class ScribeSVIResults:
         batch_size: Optional[int] = None,
         store_samples: bool = True,
         resample_parameters: bool = False,
+        canonical: bool = False,
     ) -> Dict:
         """Generate posterior predictive check samples."""
         # Check if we need to resample parameters
@@ -990,6 +1051,7 @@ class ScribeSVIResults:
                 rng_key=rng_key,
                 n_samples=n_samples,
                 store_samples=store_samples,
+                canonical=canonical,
             )
 
         # Generate predictive samples using existing parameters
@@ -2213,72 +2275,76 @@ class ScribeSVIResults:
         if self.posterior_samples is None:
             return self
 
-        # Get parameterization and samples
-        parameterization = self.model_config.parameterization
+        # Get samples
         samples = self.posterior_samples
 
-        # Convert parameters to canonical form based on parameterization
-        if parameterization == "odds_ratio":
-            # Convert phi to p if needed
-            if (
-                "phi" in samples
-                and "mu" in samples
-                and "p" not in samples
-                and "r" not in samples
-            ):
-                phi = samples["phi"]
-                mu = samples["mu"]
-                samples["p"] = 1.0 / (1.0 + phi)
-                # Reshape phi to broadcast with mu based on mixture model
-                if self.n_components is not None:
-                    # Mixture model: mu has shape
-                    # (n_samples, n_components, n_genes)
-                    phi_reshaped = phi[:, None, None]
-                else:
-                    # Non-mixture model: mu has shape (n_samples, n_genes)
-                    phi_reshaped = phi[:, None]
-                samples["r"] = mu * phi_reshaped
+        # Convert parameters to canonical form based on what's available
+        if "phi" in samples and "mu" in samples:
+            # Extract phi and mu
+            phi = samples["phi"]
+            mu = samples["mu"]
+            # Compute p from phi
+            samples["p"] = 1.0 / (1.0 + phi)
 
-            # Handle VCP capture probability conversion for odds_ratio
-            # parameterization
-            if "phi_capture" in samples and "p_capture" not in samples:
-                phi_capture = samples["phi_capture"]
-                samples["p_capture"] = 1.0 / (1.0 + phi_capture)
+            # Reshape phi to broadcast with mu based on mixture model
+            if self.n_components is not None:
+                # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                phi_reshaped = phi[:, None, None]
+            else:
+                # Non-mixture model: mu has shape (n_samples, n_genes)
+                phi_reshaped = phi[:, None]
+            # Compute r from mu and phi
+            samples["r"] = mu * phi_reshaped
 
-        elif parameterization == "linked":
-            # Convert linked parameters to canonical form
-            if "p" in samples and "mu" in samples and "r" not in samples:
-                p = samples["p"]
-                mu = samples["mu"]
-                # Reshape p to broadcast with mu based on mixture model
-                if self.n_components is not None:
-                    # Mixture model: mu has shape
-                    # (n_samples, n_components, n_genes)
-                    p_reshaped = p[:, None, None]
-                else:
-                    # Non-mixture model: mu has shape (n_samples, n_genes)
-                    p_reshaped = p[:, None]
-                samples["r"] = mu * (1.0 - p_reshaped) / p_reshaped
+        # Handle linked parameterization (mu, p -> r)
+        elif "mu" in samples and "p" in samples and "r" not in samples:
+            # Extract p and mu
+            p = samples["p"]
+            mu = samples["mu"]
+            # Reshape p to broadcast with mu based on mixture model
+            if self.n_components is not None:
+                # Mixture model: mu has shape (n_samples, n_components, n_genes)
+                p_reshaped = p[:, None, None]
+            else:
+                # Non-mixture model: mu has shape (n_samples, n_genes)
+                p_reshaped = p[:, None]
+            # Compute r from mu and p
+            samples["r"] = mu * (1.0 - p_reshaped) / p_reshaped
 
-        elif parameterization == "unconstrained":
-            # Convert unconstrained parameters to canonical form
-            if "r_unconstrained" in samples and "r" not in samples:
-                samples["r"] = jnp.exp(samples["r_unconstrained"])
-            if "p_unconstrained" in samples and "p" not in samples:
-                samples["p"] = jnp.sigmoid(samples["p_unconstrained"])
-            if "gate_unconstrained" in samples and "gate" not in samples:
-                samples["gate"] = jnp.sigmoid(samples["gate_unconstrained"])
-            # Handle VCP capture probability conversion for unconstrained
-            # parameterization
-            if (
-                "p_capture_unconstrained" in samples
-                and "p_capture" not in samples
-            ):
-                samples["p_capture"] = jnp.sigmoid(
-                    samples["p_capture_unconstrained"]
-                )
+        # Handle unconstrained parameterization (r_unconstrained,
+        # p_unconstrained, etc.)
+        if "r_unconstrained" in samples and "r" not in samples:
+            # compute r from r_unconstrained
+            samples["r"] = jnp.exp(samples["r_unconstrained"])
 
-        # Standard parameterization doesn't need conversion
-        # (parameters are already in canonical form)
+        if "p_unconstrained" in samples and "p" not in samples:
+            # Compute p from p_unconstrained
+            samples["p"] = sigmoid(samples["p_unconstrained"])
+
+        if "gate_unconstrained" in samples and "gate" not in samples:
+            # Compute gate from gate_unconstrained
+            samples["gate"] = sigmoid(samples["gate_unconstrained"])
+
+        # Handle VCP capture probability conversions
+        if "phi_capture" in samples and "p_capture" not in samples:
+            # Extract phi_capture
+            phi_capture = samples["phi_capture"]
+            # Compute p_capture from phi_capture
+            samples["p_capture"] = 1.0 / (1.0 + phi_capture)
+
+        if "p_capture_unconstrained" in samples and "p_capture" not in samples:
+            # Compute p_capture from p_capture_unconstrained
+            samples["p_capture"] = sigmoid(samples["p_capture_unconstrained"])
+
+        # Handle mixing weights computation for mixture models
+        if (
+            "mixing_logits_unconstrained" in samples
+            and "mixing_weights" not in samples
+        ):
+            # Compute mixing weights from mixing_logits_unconstrained using
+            # softmax
+            samples["mixing_weights"] = softmax(
+                samples["mixing_logits_unconstrained"], axis=-1
+            )
 
         return self
