@@ -538,7 +538,7 @@ def nbdm_mixture_model(
     batch_size=None,
 ):
     """
-    Numpyro mixture model for NBDM data.
+    Numpyro model for Negative Binomial-Dirichlet Multinomial data.
     """
     # Get the number of mixture components from the model configuration
     n_components = model_config.n_components
@@ -638,7 +638,6 @@ def nbdm_mixture_guide(
     r_loc = numpyro.param(
         "r_loc",
         jnp.full((n_components, n_genes), r_prior_params[0]),
-        constraint=constraints.positive,
     )
     r_scale = numpyro.param(
         "r_scale",
@@ -648,7 +647,7 @@ def nbdm_mixture_guide(
 
     # Sample the gene-specific dispersion r from a LogNormal prior
     numpyro.sample(
-        "r", dist.LogNormal(r_loc, r_scale).expand([n_components, n_genes])
+        "r", dist.LogNormal(r_loc, r_scale)
     )
 
     if model_config.component_specific_params:
@@ -730,6 +729,7 @@ def zinb_mixture_model(
         )
         # Broadcast p to have the right shape
         p = p[:, None]
+
     else:
         p = numpyro.sample("p", dist.Beta(*p_prior_params))
 
@@ -774,7 +774,7 @@ def zinb_mixture_guide(
     else:
         mixing_prior_params = jnp.array(model_config.mixing_param_guide)
     mixing_conc = numpyro.param(
-        "mixing_conc",
+        "mixing_concentrations",
         mixing_prior_params,
         constraint=constraints.positive,
     )
@@ -789,7 +789,6 @@ def zinb_mixture_guide(
     r_loc = numpyro.param(
         "r_loc",
         jnp.full((n_components, n_genes), r_prior_params[0]),
-        constraint=constraints.positive,
     )
     r_scale = numpyro.param(
         "r_scale",
@@ -799,7 +798,7 @@ def zinb_mixture_guide(
 
     # Sample the gene-specific dispersion r from a LogNormal prior
     numpyro.sample(
-        "r", dist.LogNormal(r_loc, r_scale).expand([n_components, n_genes])
+        "r", dist.LogNormal(r_loc, r_scale)
     )
 
     # Define parameters for gate
@@ -815,7 +814,7 @@ def zinb_mixture_guide(
     )
     # Sample the gene-specific gate from a Beta prior
     numpyro.sample(
-        "gate", dist.Beta(gate_alpha, gate_beta).expand([n_components, n_genes])
+        "gate", dist.Beta(gate_alpha, gate_beta)
     )
 
     if model_config.component_specific_params:
@@ -945,7 +944,7 @@ def nbvcp_mixture_guide(
         mixing_prior_params = jnp.array(model_config.mixing_param_guide)
     # Get prior parameters for p, r, and p_capture
     mixing_conc = numpyro.param(
-        "mixing_conc",
+        "mixing_concentrations",
         mixing_prior_params,
         constraint=constraints.positive,
     )
@@ -1116,7 +1115,7 @@ def zinbvcp_mixture_guide(
         mixing_prior_params = jnp.array(model_config.mixing_param_guide)
     # Get prior parameters for p, r, gate, and p_capture
     mixing_conc = numpyro.param(
-        "mixing_conc",
+        "mixing_concentrations",
         mixing_prior_params,
         constraint=constraints.positive,
     )
@@ -1233,7 +1232,7 @@ def get_posterior_distributions(
 
     if "gate_alpha" in params and "gate_beta" in params:
         # For ZINB, gate can be shared or component-specific
-        if params["gate_alpha"].ndim > 0:
+        if params["gate_alpha"].ndim > 1:
             distributions["gate"] = dist.Beta(
                 params["gate_alpha"], params["gate_beta"]
             )
