@@ -805,7 +805,7 @@ def zinb_mixture_guide(
     else:
         mixing_prior_params = jnp.array(model_config.mixing_param_guide)
     mixing_conc = numpyro.param(
-        "mixing_conc",
+        "mixing_concentrations",
         mixing_prior_params,
         constraint=constraints.positive,
     )
@@ -1149,7 +1149,7 @@ def zinbvcp_mixture_guide(
         mixing_prior_params = jnp.array(model_config.mixing_param_guide)
     # Get prior parameters for p, r, gate, and p_capture
     mixing_conc = numpyro.param(
-        "mixing_conc",
+        "mixing_concentrations",
         mixing_prior_params,
         constraint=constraints.positive,
     )
