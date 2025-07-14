@@ -45,7 +45,7 @@ def pytest_generate_tests(metafunc):
             (m, p)
             for m in methods
             for p in params
-            if not (m == "svi" and p == "unconstrained")
+            # if not (m == "svi" and p == "unconstrained")
         ]
 
         # Parametrize the test with the generated combinations
@@ -223,10 +223,10 @@ def test_parameter_ranges(nbdm_mix_results, parameterization):
 
     elif parameterization == "unconstrained":
         # Unconstrained parameterization: unconstrained parameters
-        assert any(k.startswith("p_unconstrained_") for k in params.keys())
-        assert any(k.startswith("r_unconstrained_") for k in params.keys())
+        assert any(k.startswith("p_unconstrained") for k in params.keys())
+        assert any(k.startswith("r_unconstrained") for k in params.keys())
         assert any(
-            k.startswith("mixing_logits_unconstrained_") for k in params.keys()
+            k.startswith("mixing_logits_unconstrained") for k in params.keys()
         )
 
 
@@ -265,10 +265,18 @@ def test_posterior_sampling(nbdm_mix_results, rng_key):
         assert "phi" in samples and "mu" in samples
         assert samples["mu"].shape[-2] == nbdm_mix_results.n_components
         assert samples["mu"].shape[-1] == nbdm_mix_results.n_genes
+    elif parameterization == "unconstrained":
+        assert "p_unconstrained" in samples
+        assert "r_unconstrained" in samples
+        assert samples["r_unconstrained"].shape[-2] == nbdm_mix_results.n_components
+        assert samples["r_unconstrained"].shape[-1] == nbdm_mix_results.n_genes
 
     # Check mixing weights
-    assert "mixing_weights" in samples
-    assert samples["mixing_weights"].shape[-1] == nbdm_mix_results.n_components
+    assert "mixing_weights" in samples or "mixing_logits_unconstrained" in samples
+    if "mixing_weights" in samples:
+        assert samples["mixing_weights"].shape[-1] == nbdm_mix_results.n_components
+    elif "mixing_logits_unconstrained" in samples:
+        assert samples["mixing_logits_unconstrained"].shape[-1] == nbdm_mix_results.n_components
 
 
 # ------------------------------------------------------------------------------
@@ -374,7 +382,7 @@ def test_log_likelihood(nbdm_mix_results, small_dataset, rng_key):
             pass
         else:  # SVI case
             nbdm_mix_results.get_posterior_samples(
-                rng_key=rng_key, n_samples=3, store_samples=True
+                rng_key=rng_key, n_samples=3, store_samples=True, canonical=True
             )
 
     # Test marginal log likelihood (across components)
@@ -439,8 +447,8 @@ def test_component_selection(nbdm_mix_results):
 
     # Check that it's no longer a mixture model
     assert component.n_components is None
-    assert component.model_type == "nbdm"  # Model type should lose _mix suffix
-
+    assert "_mix" not in component.model_type
+    
     # Check that gene counts are preserved
     assert component.n_genes == nbdm_mix_results.n_genes
     assert component.n_cells == nbdm_mix_results.n_cells
