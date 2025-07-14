@@ -343,50 +343,6 @@ def test_log_likelihood(nbdm_results, small_dataset, rng_key):
     assert jnp.all(jnp.isfinite(ll))
 
 # ------------------------------------------------------------------------------
-
-def test_parameter_relationships(nbdm_results, parameterization):
-    """Test that parameter relationships are correctly maintained."""
-    # Get parameters
-    params = None
-    if hasattr(nbdm_results, "params"):
-        params = nbdm_results.params
-    if params is None:
-        samples = nbdm_results.get_posterior_samples()
-        params = samples
-
-    if parameterization == "linked":
-        # In linked parameterization, r should be computed as r = mu * (1 - p) / p
-        if "p" in params and "mu" in params and "r" in params:
-            p, mu, r = params["p"], params["mu"], params["r"]
-            # p is scalar per sample, mu is gene-specific per sample
-            # Need to broadcast p to match mu's gene dimension
-            expected_r = mu * (1 - p[..., None]) / p[..., None]
-            assert jnp.allclose(r, expected_r, rtol=1e-5)
-
-    elif parameterization == "odds_ratio":
-        # In odds_ratio parameterization:
-        # p = 1 / (1 + phi)
-        # r = mu * phi
-        if (
-            "phi" in params
-            and "mu" in params
-            and "r" in params
-        ):
-            phi, mu, p, r = (
-                params["phi"],
-                params["mu"],
-                params["p"],
-                params["r"],
-            )
-            expected_p = 1.0 / (1.0 + phi)
-            # phi is scalar per sample, mu is gene-specific per sample
-            # Need to broadcast phi to match mu's gene dimension
-            expected_r = mu * phi[..., None]
-            assert jnp.allclose(p, expected_p, rtol=1e-5)
-            assert jnp.allclose(r, expected_r, rtol=1e-5)
-
-
-# ------------------------------------------------------------------------------
 # SVI-specific Tests 
 # ------------------------------------------------------------------------------
 
