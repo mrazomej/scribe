@@ -89,14 +89,12 @@ def get_model_and_guide(
             f"Model function '{model_name}' not found in module '{parameterization}'"
         )
 
-    # Guide is not used for unconstrained parameterization
-    guide_fn = None
-    if parameterization != "unconstrained":
-        guide_fn = getattr(module, guide_name, None)
-        if guide_fn is None:
-            raise ValueError(
-                f"Guide function '{guide_name}' not found in module '{parameterization}'"
-            )
+    # Guide functions exist for all parameterizations including unconstrained
+    guide_fn = getattr(module, guide_name, None)
+    if guide_fn is None:
+        raise ValueError(
+            f"Guide function '{guide_name}' not found in module '{parameterization}'"
+        )
 
     return model_fn, guide_fn
 
