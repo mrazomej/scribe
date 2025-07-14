@@ -157,9 +157,7 @@ class ScribeSVIResults:
                 raise ValueError("ZINB models require gate priors")
         else:
             if self.model_config.gate_param_prior is not None:
-                raise ValueError(
-                    "Non-ZINB models should not have gate priors"
-                )
+                raise ValueError("Non-ZINB models should not have gate priors")
 
         if "vcp" in self.model_type and (
             self.model_config.parameterization == "standard"
@@ -214,9 +212,7 @@ class ScribeSVIResults:
     # Get distributions using configs
     # --------------------------------------------------------------------------
 
-    def get_distributions(
-        self, backend: str = "numpyro"
-    ) -> Dict[str, Any]:
+    def get_distributions(self, backend: str = "numpyro") -> Dict[str, Any]:
         """
         Get the variational distributions for all parameters.
 
@@ -245,17 +241,21 @@ class ScribeSVIResults:
 
         # Dynamically import the correct posterior distribution function
         if self.model_config.parameterization == "standard":
-            from ..models.standard import \
-                get_posterior_distributions as get_dist_fn
+            from ..models.standard import (
+                get_posterior_distributions as get_dist_fn,
+            )
         elif self.model_config.parameterization == "linked":
-            from ..models.linked import \
-                get_posterior_distributions as get_dist_fn
+            from ..models.linked import (
+                get_posterior_distributions as get_dist_fn,
+            )
         elif self.model_config.parameterization == "odds_ratio":
-            from ..models.odds_ratio import \
-                get_posterior_distributions as get_dist_fn
+            from ..models.odds_ratio import (
+                get_posterior_distributions as get_dist_fn,
+            )
         elif self.model_config.parameterization == "unconstrained":
-            from ..models.unconstrained import \
-                get_posterior_distributions as get_dist_fn
+            from ..models.unconstrained import (
+                get_posterior_distributions as get_dist_fn,
+            )
         else:
             raise NotImplementedError(
                 f"get_distributions not implemented for '{self.model_config.parameterization}'."
@@ -363,7 +363,9 @@ class ScribeSVIResults:
         if parameterization == "linked":
             if "mu" in estimates and "p" in estimates and "r" not in estimates:
                 if verbose:
-                    print("Computing r from mu and p for linked parameterization")
+                    print(
+                        "Computing r from mu and p for linked parameterization"
+                    )
                 # r = mu * (1 - p) / p
                 estimates["r"] = (
                     estimates["mu"] * (1 - estimates["p"]) / estimates["p"]
@@ -374,26 +376,39 @@ class ScribeSVIResults:
             # Convert phi to p if needed
             if "phi" in estimates and "p" not in estimates:
                 if verbose:
-                    print("Computing p from phi for odds_ratio parameterization")
+                    print(
+                        "Computing p from phi for odds_ratio parameterization"
+                    )
                 estimates["p"] = 1.0 / (1.0 + estimates["phi"])
-            
+
             # Convert phi and mu to r if needed
-            if "phi" in estimates and "mu" in estimates and "r" not in estimates:
+            if (
+                "phi" in estimates
+                and "mu" in estimates
+                and "r" not in estimates
+            ):
                 if verbose:
-                    print("Computing r from phi and mu for odds_ratio parameterization")
+                    print(
+                        "Computing r from phi and mu for odds_ratio parameterization"
+                    )
                 # Reshape phi to broadcast with mu based on mixture model
-                if self.n_components is not None:
+                if (
+                    self.n_components is not None
+                    and self.model_config.component_specific_params
+                ):
                     # Mixture model: mu has shape (n_components, n_genes)
                     phi_reshaped = estimates["phi"][:, None]
                 else:
                     # Non-mixture model: mu has shape (n_genes,)
                     phi_reshaped = estimates["phi"]
                 estimates["r"] = estimates["mu"] * phi_reshaped
-            
+
             # Handle VCP capture probability conversion
             if "phi_capture" in estimates and "p_capture" not in estimates:
                 if verbose:
-                    print("Computing p_capture from phi_capture for odds_ratio parameterization")
+                    print(
+                        "Computing p_capture from phi_capture for odds_ratio parameterization"
+                    )
                 estimates["p_capture"] = 1.0 / (1.0 + estimates["phi_capture"])
 
         # Handle unconstrained parameterization
@@ -401,26 +416,39 @@ class ScribeSVIResults:
             # Convert r_unconstrained to r if needed
             if "r_unconstrained" in estimates and "r" not in estimates:
                 if verbose:
-                    print("Computing r from r_unconstrained for unconstrained parameterization")
+                    print(
+                        "Computing r from r_unconstrained for unconstrained parameterization"
+                    )
                 estimates["r"] = jnp.exp(estimates["r_unconstrained"])
-            
+
             # Convert p_unconstrained to p if needed
             if "p_unconstrained" in estimates and "p" not in estimates:
                 if verbose:
-                    print("Computing p from p_unconstrained for unconstrained parameterization")
+                    print(
+                        "Computing p from p_unconstrained for unconstrained parameterization"
+                    )
                 estimates["p"] = jnp.sigmoid(estimates["p_unconstrained"])
-            
+
             # Convert gate_unconstrained to gate if needed
             if "gate_unconstrained" in estimates and "gate" not in estimates:
                 if verbose:
-                    print("Computing gate from gate_unconstrained for unconstrained parameterization")
+                    print(
+                        "Computing gate from gate_unconstrained for unconstrained parameterization"
+                    )
                 estimates["gate"] = jnp.sigmoid(estimates["gate_unconstrained"])
-            
+
             # Handle VCP capture probability conversion
-            if "p_capture_unconstrained" in estimates and "p_capture" not in estimates:
+            if (
+                "p_capture_unconstrained" in estimates
+                and "p_capture" not in estimates
+            ):
                 if verbose:
-                    print("Computing p_capture from p_capture_unconstrained for unconstrained parameterization")
-                estimates["p_capture"] = jnp.sigmoid(estimates["p_capture_unconstrained"])
+                    print(
+                        "Computing p_capture from p_capture_unconstrained for unconstrained parameterization"
+                    )
+                estimates["p_capture"] = jnp.sigmoid(
+                    estimates["p_capture_unconstrained"]
+                )
 
         # Compute p_hat for NBVCP and ZINBVCP models if needed (applies to all parameterizations)
         if (
@@ -476,16 +504,20 @@ class ScribeSVIResults:
         """
         new_params = dict(params)
         gene_specific_params = [
-            "r_loc", "r_scale", 
-            "gate_alpha", "gate_beta", "gate_alpha_comp", "gate_beta_comp"
+            "r_loc",
+            "r_scale",
+            "gate_alpha",
+            "gate_beta",
+            "gate_alpha_comp",
+            "gate_beta_comp",
         ]
 
         for param_name in gene_specific_params:
             if param_name in params:
                 param = params[param_name]
-                if param.ndim == 1: # (n_genes,)
+                if param.ndim == 1:  # (n_genes,)
                     new_params[param_name] = param[index]
-                elif param.ndim == 2: # (n_components, n_genes)
+                elif param.ndim == 2:  # (n_components, n_genes)
                     new_params[param_name] = param[:, index]
 
         return new_params
@@ -761,26 +793,33 @@ class ScribeSVIResults:
         Handle subsetting of constrained parameters based on parameterization.
         """
         component_specific_params = [
-            "r_loc_comp", "r_scale_comp",
-            "p_alpha_comp", "p_beta_comp",
-            "gate_alpha_comp", "gate_beta_comp"
+            "r_loc_comp",
+            "r_scale_comp",
+            "p_alpha_comp",
+            "p_beta_comp",
+            "gate_alpha_comp",
+            "gate_beta_comp",
         ]
 
         shared_params = [
-            "p_alpha", "p_beta",
-            "p_capture_alpha", "p_capture_beta",
-            "mixing_conc"
+            "p_alpha",
+            "p_beta",
+            "p_capture_alpha",
+            "p_capture_beta",
+            "mixing_conc",
         ]
 
         # Component-specific params: select the component
         for param_name in component_specific_params:
             if param_name in self.params:
-                new_params[param_name] = self.params[param_name][component_index]
+                new_params[param_name] = self.params[param_name][
+                    component_index
+                ]
 
         # Shared params: take the component-specific version if it exists, otherwise copy
         if "p_alpha_comp" not in self.params and "p_alpha" in self.params:
-             new_params["p_alpha"] = self.params["p_alpha"]
-             new_params["p_beta"] = self.params["p_beta"]
+            new_params["p_alpha"] = self.params["p_alpha"]
+            new_params["p_beta"] = self.params["p_beta"]
 
         if "gate_alpha_comp" not in self.params and "gate_alpha" in self.params:
             new_params["gate_alpha"] = self.params["gate_alpha"]
@@ -995,8 +1034,6 @@ class ScribeSVIResults:
             self.model_config,
             base_model=base_model,
             n_components=None,
-            mixing_distribution_model=None,
-            mixing_distribution_guide=None,
         )
 
         return type(self)(
@@ -1061,7 +1098,9 @@ class ScribeSVIResults:
         _, guide = self._model_and_guide()
 
         if guide is None:
-            raise ValueError(f"Could not find a guide for model '{self.model_type}'.")
+            raise ValueError(
+                f"Could not find a guide for model '{self.model_type}'."
+            )
 
         # Prepare base model arguments
         model_args = {
