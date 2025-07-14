@@ -214,7 +214,7 @@ def zinb_guide(
     )
     # Sample mu from the variational LogNormal distribution (vectorized over
     # genes)
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
 
     # Register variational parameters for gate (zero-inflation probability)
     gate_alpha = numpyro.param(
@@ -228,7 +228,7 @@ def zinb_guide(
         constraint=constraints.positive,
     )
     # Sample gate from the variational Beta distribution (vectorized over genes)
-    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta).to_event(1))
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
 
 # ------------------------------------------------------------------------------
@@ -362,7 +362,7 @@ def nbvcp_guide(
         jnp.full(n_genes, mu_prior_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
 
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
         p_capture_alpha = numpyro.param(
@@ -520,7 +520,7 @@ def zinbvcp_guide(
         jnp.full(n_genes, mu_prior_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
 
     # Register variational parameters for gate (zero-inflation probability)
     gate_alpha = numpyro.param(
@@ -533,7 +533,7 @@ def zinbvcp_guide(
         jnp.full(n_genes, gate_prior_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta).to_event(1))
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
     with numpyro.plate("cells", n_cells, subsample_size=batch_size):
         p_capture_alpha = numpyro.param(
