@@ -42,7 +42,6 @@ def pytest_generate_tests(metafunc):
             (m, p)
             for m in methods
             for p in params
-            if not (m == "svi" and p == "unconstrained")
         ]
 
         # Parametrize the test with the generated combinations
@@ -198,12 +197,12 @@ def test_parameter_ranges(zinb_results, parameterization):
         assert jnp.all(mu > 0)  # mu is positive mean
         assert jnp.all((gate >= 0) & (gate <= 1))  # gate is probability
 
-        # Check that r is computed correctly: r = mu * p / (1 - p)
+        # Check that r is computed correctly: r = mu * (1 - p) / p
         if "r" in params:
             r = params["r"]
             # p is scalar per sample, mu is gene-specific per sample
             # Need to broadcast p to match mu's gene dimension
-            expected_r = mu * p[..., None] / (1 - p[..., None])
+            expected_r = mu * (1 - p[..., None]) / p[..., None]
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
     elif parameterization == "odds_ratio":
@@ -395,12 +394,12 @@ def test_parameter_relationships(zinb_results, parameterization):
         params = samples
 
     if parameterization == "linked":
-        # In linked parameterization, r should be computed as r = mu * p / (1 - p)
+        # In linked parameterization, r should be computed as r = mu * (1 - p) / p
         if "p" in params and "mu" in params and "r" in params:
             p, mu, r = params["p"], params["mu"], params["r"]
             # p is scalar per sample, mu is gene-specific per sample
             # Need to broadcast p to match mu's gene dimension
-            expected_r = mu * p[..., None] / (1 - p[..., None])
+            expected_r = mu * (1 - p[..., None]) / p[..., None]
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
     elif parameterization == "odds_ratio":
