@@ -1311,59 +1311,121 @@ def zinbvcp_mixture_guide(
 
 
 def get_posterior_distributions(
-    params: Dict[str, jnp.ndarray], model_config: ModelConfig
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    split: bool = False,
 ) -> Dict[str, dist.Distribution]:
     """
     Constructs and returns a dictionary of posterior distributions from
     estimated parameters.
 
-    This function is specific to the 'odds_ratio' parameterization and builds
-    the appropriate `numpyro` distributions based on the guide parameters found
-    in the `params` dictionary. It handles both single and mixture models.
+    This function is specific to the 'odds_ratio' parameterization and builds the
+    appropriate `numpyro` distributions based on the guide parameters found in
+    the `params` dictionary. It handles both single and mixture models.
 
     Args:
         params: A dictionary of estimated parameters from the variational guide.
         model_config: The model configuration object.
+        split: If True, returns lists of individual distributions for
+        multidimensional parameters instead of batch distributions.
 
     Returns:
         A dictionary mapping parameter names to their posterior distributions.
     """
     distributions = {}
-    n_components = model_config.n_components
-    component_specific = model_config.component_specific_params
 
-    # Single models (or shared params in mixture models)
-    if "phi_alpha" in params and "phi_beta" in params:
-        distributions["phi"] = BetaPrime(
-            params["phi_alpha"], params["phi_beta"]
-        )
-
-    if "mu_loc" in params and "mu_scale" in params:
-        distributions["mu"] = dist.LogNormal(
-            params["mu_loc"], params["mu_scale"]
-        )
-
-    if "gate_alpha" in params and "gate_beta" in params:
-        # For ZINB, gate can be shared or component-specific
-        if params["gate_alpha"].ndim > 0:
-            distributions["gate"] = dist.Beta(
-                params["gate_alpha"], params["gate_beta"]
+    # phi parameter (LogNormal distribution)
+    if "phi_loc" in params and "phi_scale" in params:
+        if split and len(params["phi_loc"].shape) == 1:
+            # Gene-specific phi parameters
+            distributions["phi"] = [
+                dist.LogNormal(params["phi_loc"][c], params["phi_scale"][c])
+                for c in range(params["phi_loc"].shape[0])
+            ]
+        elif split and len(params["phi_loc"].shape) == 2:
+            # Component and gene-specific phi parameters
+            distributions["phi"] = [
+                [
+                    dist.LogNormal(
+                        params["phi_loc"][c, g], params["phi_scale"][c, g]
+                    )
+                    for g in range(params["phi_loc"].shape[1])
+                ]
+                for c in range(params["phi_loc"].shape[0])
+            ]
+        else:
+            distributions["phi"] = dist.LogNormal(
+                params["phi_loc"], params["phi_scale"]
             )
+
+    # mu parameter (LogNormal distribution)
+    if "mu_loc" in params and "mu_scale" in params:
+        if split and len(params["mu_loc"].shape) == 1:
+            # Gene-specific mu parameters
+            distributions["mu"] = [
+                dist.LogNormal(params["mu_loc"][c], params["mu_scale"][c])
+                for c in range(params["mu_loc"].shape[0])
+            ]
+        elif split and len(params["mu_loc"].shape) == 2:
+            # Component and gene-specific mu parameters
+            distributions["mu"] = [
+                [
+                    dist.LogNormal(
+                        params["mu_loc"][c, g], params["mu_scale"][c, g]
+                    )
+                    for g in range(params["mu_loc"].shape[1])
+                ]
+                for c in range(params["mu_loc"].shape[0])
+            ]
+        else:
+            distributions["mu"] = dist.LogNormal(
+                params["mu_loc"], params["mu_scale"]
+            )
+
+    # gate parameter (Beta distribution)
+    if "gate_alpha" in params and "gate_beta" in params:
+        if split and len(params["gate_alpha"].shape) == 1:
+            # Gene-specific gate parameters
+            distributions["gate"] = [
+                dist.Beta(params["gate_alpha"][c], params["gate_beta"][c])
+                for c in range(params["gate_alpha"].shape[0])
+            ]
+        elif split and len(params["gate_alpha"].shape) == 2:
+            # Component and gene-specific gate parameters
+            distributions["gate"] = [
+                [
+                    dist.Beta(
+                        params["gate_alpha"][c, g], params["gate_beta"][c, g]
+                    )
+                    for g in range(params["gate_alpha"].shape[1])
+                ]
+                for c in range(params["gate_alpha"].shape[0])
+            ]
         else:
             distributions["gate"] = dist.Beta(
                 params["gate_alpha"], params["gate_beta"]
             )
 
-    if "phi_capture_alpha" in params and "phi_capture_beta" in params:
-        distributions["phi_capture"] = BetaPrime(
-            params["phi_capture_alpha"], params["phi_capture_beta"]
-        )
-
-    # Mixture-specific parameters
-    if n_components is not None:
-        if "mixing_concentrations" in params:
-            distributions["mixing_weights"] = dist.Dirichlet(
-                params["mixing_concentrations"]
+    # phi_capture parameter (LogNormal distribution)
+    if "phi_capture_loc" in params and "phi_capture_scale" in params:
+        if split and len(params["phi_capture_loc"].shape) == 1:
+            # Cell-specific phi_capture parameters
+            distributions["phi_capture"] = [
+                dist.LogNormal(
+                    params["phi_capture_loc"][c], params["phi_capture_scale"][c]
+                )
+                for c in range(params["phi_capture_loc"].shape[0])
+            ]
+        else:
+            distributions["phi_capture"] = dist.LogNormal(
+                params["phi_capture_loc"], params["phi_capture_scale"]
             )
+
+    # mixing_weights parameter (Dirichlet distribution)
+    if "mixing_concentrations" in params:
+        mixing_dist = dist.Dirichlet(params["mixing_concentrations"])
+        # Dirichlet is typically not split since it represents a single
+        # probability vector
+        distributions["mixing_weights"] = mixing_dist
 
     return distributions
