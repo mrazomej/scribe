@@ -971,6 +971,15 @@ def nbvcp_mixture_model(
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
 
+    # Define global mixing distribution
+    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
+
+    # Sample r unconstrained
+    r_unconstrained = numpyro.sample(
+        "r_unconstrained",
+        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
+    )
+
     # Sample component-specific or shared parameters depending on config
     if model_config.component_specific_params:
         # Each component has its own p
@@ -986,55 +995,41 @@ def nbvcp_mixture_model(
             dist.Normal(*p_prior_params),
         )
 
-    r_unconstrained = numpyro.sample(
-        "r_unconstrained",
-        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
-    )
-
     # Transform to constrained space
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
 
-    # Define global mixing distribution
-    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
-
-    # Cell-specific sampling with capture probability
-    plate_context = numpyro.plate(
-        "cells",
-        n_cells,
-        subsample_size=batch_size if counts is not None else None,
+    # Define plate context for sampling
+    plate_context = (
+        numpyro.plate("cells", n_cells, subsample_size=batch_size)
+        if counts is not None and batch_size is not None
+        else numpyro.plate("cells", n_cells)
     )
 
     with plate_context as idx:
-        current_counts = counts[idx] if counts is not None else None
-
         # Sample unconstrained cell-specific capture probability
-        p_capture_unconstrained_batch = numpyro.sample(
+        p_capture_unconstrained = numpyro.sample(
             "p_capture_unconstrained",
             dist.Normal(*p_capture_prior_params),
         )
-
-        p_capture_batch = numpyro.deterministic(
-            "p_capture", jsp.special.expit(p_capture_unconstrained_batch)
+        # Convert to constrained space
+        p_capture = numpyro.deterministic(
+            "p_capture", jsp.special.expit(p_capture_unconstrained)
         )
-
-        # Calculate effective probabilities
-        p_hat_batch = numpyro.deterministic(
-            "p_hat",
-            p[None, :]
-            * p_capture_batch[:, None]
-            / (1 - p[None, :] * (1 - p_capture_batch[:, None])),
+        # Reshape p_capture for broadcasting with components
+        p_capture_reshaped = p_capture[:, None, None]
+        # Compute p_hat using the derived formula
+        p_hat = numpyro.deterministic(
+            "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
         )
-
-        # Define component distribution
-        base_dist_batch = dist.NegativeBinomialProbs(
-            total_count=r[None, :, :],
-            probs=p_hat_batch[:, :, None],
-        ).to_event(1)
-
-        mixture_batch = dist.MixtureSameFamily(mixing_dist, base_dist_batch)
-
-        numpyro.sample("counts", mixture_batch, obs=current_counts)
+        # Define the base distribution for each component (Negative Binomial)
+        base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+        # Create the mixture distribution over components
+        mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
+        # Define observation context for sampling
+        obs = counts[idx] if counts is not None else None
+        # Sample the counts from the mixture distribution
+        numpyro.sample("counts", mixture, obs=obs)
 
 
 # ------------------------------------------------------------------------------
@@ -1079,6 +1074,18 @@ def nbvcp_mixture_guide(
         dist.Normal(mixing_loc, mixing_scale),
     )
 
+    # Register r parameters
+    r_loc = numpyro.param(
+        "r_unconstrained_loc",
+        jnp.full((n_components, n_genes), r_guide_params[0]),
+    )
+    r_scale = numpyro.param(
+        "r_unconstrained_scale",
+        jnp.full((n_components, n_genes), r_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+
     if model_config.component_specific_params:
         # Each component has its own p
         p_loc = numpyro.param(
@@ -1099,18 +1106,6 @@ def nbvcp_mixture_guide(
             constraint=constraints.positive,
         )
         numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
-
-    # Register r parameters
-    r_loc = numpyro.param(
-        "r_unconstrained_loc",
-        jnp.full((n_components, n_genes), r_guide_params[0]),
-    )
-    r_scale = numpyro.param(
-        "r_unconstrained_scale",
-        jnp.full((n_components, n_genes), r_guide_params[1]),
-        constraint=constraints.positive,
-    )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
 
     # Set up cell-specific capture probability parameters
     p_capture_loc = numpyro.param(
@@ -1185,6 +1180,20 @@ def zinbvcp_mixture_model(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
+    # Define global mixing distribution
+    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
+
+    # Sample r unconstrained
+    r_unconstrained = numpyro.sample(
+        "r_unconstrained",
+        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
+    )
+
+    # Sample gate unconstrained
+    gate_unconstrained = numpyro.sample(
+        "gate_unconstrained",
+        dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
+    )
 
     # Sample component-specific or shared parameters depending on config
     if model_config.component_specific_params:
@@ -1201,65 +1210,47 @@ def zinbvcp_mixture_model(
             dist.Normal(*p_prior_params),
         )
 
-    r_unconstrained = numpyro.sample(
-        "r_unconstrained",
-        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
-    )
-
-    gate_unconstrained = numpyro.sample(
-        "gate_unconstrained",
-        dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
-    )
-
     # Transform to constrained space
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
-    # Define global mixing distribution
-    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
-
-    # Cell-specific sampling with capture probability
-    plate_context = numpyro.plate(
-        "cells",
-        n_cells,
-        subsample_size=batch_size if counts is not None else None,
+    # Define plate context for sampling
+    plate_context = (
+        numpyro.plate("cells", n_cells, subsample_size=batch_size)
+        if counts is not None and batch_size is not None
+        else numpyro.plate("cells", n_cells)
     )
 
     with plate_context as idx:
-        current_counts = counts[idx] if counts is not None else None
-
-        p_capture_unconstrained_batch = numpyro.sample(
+        # Sample unconstrained cell-specific capture probability
+        p_capture_unconstrained = numpyro.sample(
             "p_capture_unconstrained",
             dist.Normal(*p_capture_prior_params),
         )
-
-        p_capture_batch = numpyro.deterministic(
-            "p_capture", jsp.special.expit(p_capture_unconstrained_batch)
+        # Convert to constrained space
+        p_capture = numpyro.deterministic(
+            "p_capture", jsp.special.expit(p_capture_unconstrained)
         )
-
-        p_hat_batch = numpyro.deterministic(
-            "p_hat",
-            p[None, :]
-            * p_capture_batch[:, None]
-            / (1 - p[None, :] * (1 - p_capture_batch[:, None])),
+        # Reshape p_capture for broadcasting with components
+        p_capture_reshaped = p_capture[:, None, None]
+        # Compute p_hat using the derived formula
+        p_hat = numpyro.deterministic(
+            "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
         )
+        # Define the base distribution for each component (Negative Binomial)
+        base_dist = dist.NegativeBinomialProbs(r, p_hat)
 
-        # Define component distribution with zero-inflation
-        base_nb_dist_for_zinb = dist.NegativeBinomialProbs(
-            total_count=r[None, :, :], probs=p_hat_batch[:, :, None]
-        )
-
-        zinb_base_comp_dist = dist.ZeroInflatedDistribution(
-            base_nb_dist_for_zinb,
+        zinb_base_dist = dist.ZeroInflatedDistribution(
+            base_dist,
             gate_logits=gate_unconstrained[None, :, :],
-        )
-
-        base_dist_batch = zinb_base_comp_dist.to_event(1)
-
-        mixture_batch = dist.MixtureSameFamily(mixing_dist, base_dist_batch)
-
-        numpyro.sample("counts", mixture_batch, obs=current_counts)
+        ).to_event(1)
+        # Create the mixture distribution over components
+        mixture = dist.MixtureSameFamily(mixing_dist, zinb_base_dist)
+        # Define observation context for sampling
+        obs = counts[idx] if counts is not None else None
+        # Sample the counts from the mixture distribution
+        numpyro.sample("counts", mixture, obs=obs)
 
 
 # ------------------------------------------------------------------------------
