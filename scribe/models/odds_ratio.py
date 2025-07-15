@@ -4,6 +4,7 @@ Odds Ratio parameterization models for single-cell RNA sequencing data.
 
 # Import JAX-related libraries
 import jax.numpy as jnp
+from jax.nn import sigmoid
 
 # Import Pyro-related libraries
 import numpyro
@@ -47,7 +48,7 @@ def nbdm_model(
     r = numpyro.deterministic("r", mu * phi)
 
     # Define base distribution
-    base_dist = dist.NegativeBinomialLogits(r, jnp.log(phi)).to_event(1)
+    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
 
     # Sample counts
     if counts is not None:
@@ -146,7 +147,7 @@ def zinb_model(
     r = numpyro.deterministic("r", mu * phi)
 
     # Construct the base Negative Binomial distribution using r and p
-    base_dist = dist.NegativeBinomialLogits(r, jnp.log(phi))
+    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
     # Construct the zero-inflated distribution using the base NB and gate, and
     # set event dimension to 1
     zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
@@ -1335,27 +1336,27 @@ def get_posterior_distributions(
     distributions = {}
 
     # phi parameter (LogNormal distribution)
-    if "phi_loc" in params and "phi_scale" in params:
-        if split and len(params["phi_loc"].shape) == 1:
+    if "phi_alpha" in params and "phi_beta" in params:
+        if split and len(params["phi_alpha"].shape) == 1:
             # Gene-specific phi parameters
             distributions["phi"] = [
-                dist.LogNormal(params["phi_loc"][c], params["phi_scale"][c])
-                for c in range(params["phi_loc"].shape[0])
+                BetaPrime(params["phi_alpha"][c], params["phi_beta"][c])
+                for c in range(params["phi_alpha"].shape[0])
             ]
-        elif split and len(params["phi_loc"].shape) == 2:
+        elif split and len(params["phi_alpha"].shape) == 2:
             # Component and gene-specific phi parameters
             distributions["phi"] = [
                 [
-                    dist.LogNormal(
-                        params["phi_loc"][c, g], params["phi_scale"][c, g]
+                    BetaPrime(
+                        params["phi_alpha"][c, g], params["phi_beta"][c, g]
                     )
-                    for g in range(params["phi_loc"].shape[1])
+                    for g in range(params["phi_alpha"].shape[1])
                 ]
-                for c in range(params["phi_loc"].shape[0])
+                for c in range(params["phi_alpha"].shape[0])
             ]
         else:
-            distributions["phi"] = dist.LogNormal(
-                params["phi_loc"], params["phi_scale"]
+            distributions["phi"] = BetaPrime(
+                params["phi_alpha"], params["phi_beta"]
             )
 
     # mu parameter (LogNormal distribution)
@@ -1407,18 +1408,18 @@ def get_posterior_distributions(
             )
 
     # phi_capture parameter (LogNormal distribution)
-    if "phi_capture_loc" in params and "phi_capture_scale" in params:
-        if split and len(params["phi_capture_loc"].shape) == 1:
+    if "phi_capture_alpha" in params and "phi_capture_beta" in params:
+        if split and len(params["phi_capture_alpha"].shape) == 1:
             # Cell-specific phi_capture parameters
             distributions["phi_capture"] = [
-                dist.LogNormal(
-                    params["phi_capture_loc"][c], params["phi_capture_scale"][c]
+                BetaPrime(
+                    params["phi_capture_alpha"][c], params["phi_capture_beta"][c]
                 )
-                for c in range(params["phi_capture_loc"].shape[0])
+                for c in range(params["phi_capture_alpha"].shape[0])
             ]
         else:
-            distributions["phi_capture"] = dist.LogNormal(
-                params["phi_capture_loc"], params["phi_capture_scale"]
+            distributions["phi_capture"] = BetaPrime(
+                params["phi_capture_alpha"], params["phi_capture_beta"]
             )
 
     # mixing_weights parameter (Dirichlet distribution)
