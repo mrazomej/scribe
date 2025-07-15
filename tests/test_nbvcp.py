@@ -42,7 +42,6 @@ def pytest_generate_tests(metafunc):
             (m, p)
             for m in methods
             for p in params
-            if not (m == "svi" and p == "unconstrained")
         ]
 
         # Parametrize the test with the generated combinations
@@ -218,12 +217,12 @@ def test_parameter_ranges(nbvcp_results, parameterization):
         )  # p_capture is probability
         assert p_capture.shape[-1] == nbvcp_results.n_cells  # cell-specific
 
-        # Check that r is computed correctly: r = mu * p / (1 - p)
+        # Check that r is computed correctly: r = mu * (1 - p) / p
         if "r" in params:
             r = params["r"]
             # p is scalar per sample, mu is gene-specific per sample
             # Need to broadcast p to match mu's gene dimension
-            expected_r = mu * p[..., None] / (1 - p[..., None])
+            expected_r = mu * (1 - p[..., None]) / p[..., None]
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
     elif parameterization == "odds_ratio":
@@ -451,10 +450,10 @@ def test_parameter_relationships(nbvcp_results, parameterization):
             # Handle different shapes for SVI vs MCMC
             if p.ndim == 1 and mu.ndim == 2:
                 # SVI case: p is (n_samples,), mu is (n_samples, n_genes)
-                expected_r = mu * p[:, None] / (1 - p[:, None])
+                expected_r = mu * (1 - p[:, None]) / p[:, None]
             elif p.ndim == 0 and mu.ndim == 1:
                 # MCMC case: p is scalar, mu is (n_genes,)
-                expected_r = mu * p / (1 - p)
+                expected_r = mu * (1 - p) / p
             else:
                 # Skip test if shapes are unexpected
                 return
