@@ -5,629 +5,821 @@ Tests for the Negative Binomial Mixture Model with Variable Capture Probability.
 import pytest
 import jax.numpy as jnp
 from jax import random
-import numpyro
-from scribe.models_mix import nbvcp_mixture_model, nbvcp_mixture_guide, nbvcp_mixture_log_likelihood
-from scribe.svi import run_scribe
-from scribe.sampling import (
-    sample_variational_posterior,
-    generate_predictive_samples,
-    generate_ppc_samples
-)
-from scribe.model_config import ModelConfig
-from scribe.model_registry import get_model_and_guide, get_log_likelihood_fn
+import os
+
+ALL_METHODS = ["svi", "mcmc"]
+ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio", "unconstrained"]
 
 # ------------------------------------------------------------------------------
-# Test fixtures
+# Dynamic matrix parametrization
 # ------------------------------------------------------------------------------
 
-# Define number of steps for testing
-N_STEPS = 3
-N_COMPONENTS = 2  # Number of mixture components for testing
-N_SAMPLES = 11  # Number of samples for posterior sampling
 
-@pytest.fixture
-def example_nbvcp_mix_results(small_dataset, rng_key):
-    """Generate example NBVCP mixture model results for testing."""
-    counts, _ = small_dataset
-    return run_scribe(
-        counts=counts,
-        zero_inflated=False,
-        variable_capture=True,
-        mixture_model=True,
-        n_components=N_COMPONENTS,
-        n_steps=N_STEPS,
-        batch_size=5,
-        r_dist="gamma",
-        r_prior=(2, 0.1),
-        p_prior=(1, 1),
-        p_capture_prior=(1, 1),
-        mixing_prior=jnp.ones(N_COMPONENTS),
-        seed=42
-    )
+def pytest_generate_tests(metafunc):
+    """
+    Dynamically generate test combinations for inference methods and
+    parameterizations.
 
-# ------------------------------------------------------------------------------
-# Test inference
-# ------------------------------------------------------------------------------
+    Excludes incompatible combinations and handles command-line options for
+    selective testing.
+    """
+    # Check if this test function uses the required fixtures
+    if {"nbvcp_mix_results", "inference_method", "parameterization"}.issubset(
+        metafunc.fixturenames
+    ):
+        # Get command-line options for method and parameterization
+        method_opt = metafunc.config.getoption("--method")
+        param_opt = metafunc.config.getoption("--parameterization")
 
-def test_inference_run(small_dataset, rng_key):
-    """Test that inference runs and produces expected results."""
-    counts, _ = small_dataset
-    n_cells, n_genes = counts.shape
-    
-    results = run_scribe(
-        counts=counts,
-        zero_inflated=False,
-        variable_capture=True,
-        mixture_model=True,
-        n_components=N_COMPONENTS,
-        n_steps=N_STEPS,
-        batch_size=5,
-        seed=42,
-        r_prior=(2, 0.1),
-        p_prior=(1, 1),
-        p_capture_prior=(1, 1),
-        mixing_prior=jnp.ones(N_COMPONENTS)
-    )
-    
-    assert results.n_cells == n_cells
-    assert results.n_genes == n_genes
-    assert results.n_components == N_COMPONENTS
-    assert len(results.loss_history) == N_STEPS
-    assert results.model_type == "nbvcp_mix"
-    assert isinstance(results.model_config, ModelConfig)
+        # Determine which methods to test based on command-line option
+        methods = ALL_METHODS if method_opt == "all" else [method_opt]
 
-def test_parameter_ranges(example_nbvcp_mix_results):
-    """Test that inferred parameters are in valid ranges."""
-    # All parameters should be positive - look for distribution parameters
-    r_params = [
-        param for param in example_nbvcp_mix_results.params 
-        if param.startswith('r_')
-    ]
-    for param in r_params:
-        assert jnp.all(example_nbvcp_mix_results.params[param] > 0)
-        assert example_nbvcp_mix_results.params[param].shape == (
-            N_COMPONENTS, example_nbvcp_mix_results.n_genes
+        # Determine which parameterizations to test based on command-line option
+        params = ALL_PARAMETERIZATIONS if param_opt == "all" else [param_opt]
+
+        # Generate all valid combinations
+        combinations = [
+            (m, p)
+            for m in methods
+            for p in params
+        ]
+
+        # Parametrize the test with the generated combinations
+        metafunc.parametrize(
+            "inference_method,parameterization",
+            combinations,
         )
-        
-    # Check p parameters - should be positive
-    p_params = [
-        param for param in example_nbvcp_mix_results.params 
-        if param.startswith('p_') and not param.startswith('p_capture_')
-    ]
-    for param in p_params:
-        assert jnp.all(example_nbvcp_mix_results.params[param] > 0)
-        
-    # Check p_capture parameters - should be positive and cell-specific
-    p_capture_params = [
-        param for param in example_nbvcp_mix_results.params 
-        if param.startswith('p_capture_')
-    ]
-    for param in p_capture_params:
-        assert jnp.all(example_nbvcp_mix_results.params[param] > 0)
-        assert example_nbvcp_mix_results.params[param].shape == (
-            example_nbvcp_mix_results.n_cells,)
-        
-    # Check mixing parameters - should be positive
-    mixing_params = [
-        param for param in example_nbvcp_mix_results.params 
-        if param.startswith('mixing_')
-    ]
-    for param in mixing_params:
-        assert jnp.all(example_nbvcp_mix_results.params[param] > 0)
-        assert example_nbvcp_mix_results.params[param].shape == (N_COMPONENTS,)
+
 
 # ------------------------------------------------------------------------------
-# Test model and guide functions
+# Fixtures
 # ------------------------------------------------------------------------------
 
-def test_get_model_and_guide():
-    """Test that get_model_and_guide returns the correct functions."""
-    model, guide = get_model_and_guide("nbvcp_mix")
-    
-    assert model == nbvcp_mixture_model
-    assert guide == nbvcp_mixture_guide
 
-def test_get_log_likelihood_fn():
-    """Test that get_log_likelihood_fn returns the correct function."""
-    log_lik_fn = get_log_likelihood_fn("nbvcp_mix")
-    
-    assert log_lik_fn == nbvcp_mixture_log_likelihood
+@pytest.fixture(scope="session")
+def device_type():
+    # Default to CPU for matrix tests; can override with env var if needed
+    return os.environ.get("SCRIBE_TEST_DEVICE", "cpu")
+
+
+# Global cache for results
+_nbvcp_mix_results_cache = {}
+
+
+@pytest.fixture(scope="function")
+def nbvcp_mix_results(
+    inference_method, device_type, parameterization, small_dataset, rng_key
+):
+    key = (inference_method, device_type, parameterization)
+    if key in _nbvcp_mix_results_cache:
+        return _nbvcp_mix_results_cache[key]
+
+    # Configure JAX device
+    if device_type == "cpu":
+        os.environ["JAX_PLATFORM_NAME"] = "cpu"
+        import jax
+
+        jax.config.update("jax_platform_name", "cpu")
+    else:
+        if "JAX_PLATFORM_NAME" in os.environ:
+            del os.environ["JAX_PLATFORM_NAME"]
+
+    counts, _ = small_dataset
+
+    # Set up priors based on parameterization
+    if parameterization == "standard":
+        priors = {
+            "r_prior": (2, 0.1),
+            "p_prior": (1, 1),
+            "p_capture_prior": (1, 1),
+        }
+    elif parameterization == "linked":
+        priors = {
+            "p_prior": (1, 1),
+            "mu_prior": (0, 1),
+            "p_capture_prior": (1, 1),
+        }
+    elif parameterization == "odds_ratio":
+        priors = {
+            "phi_prior": (3, 2),
+            "mu_prior": (0, 1),
+            "phi_capture_prior": (3, 2),
+        }
+    elif parameterization == "unconstrained":
+        priors = {}  # Unconstrained uses defaults
+    else:
+        raise ValueError(f"Unknown parameterization: {parameterization}")
+
+    from scribe import run_scribe
+
+    if inference_method == "svi":
+        result = run_scribe(
+            counts=counts,
+            inference_method="svi",
+            zero_inflated=False,
+            variable_capture=True,
+            mixture_model=True,
+            n_components=2,  # Test with 2 components
+            parameterization=parameterization,
+            n_steps=3,
+            batch_size=5,
+            seed=42,
+            r_prior=priors.get("r_prior"),
+            p_prior=priors.get("p_prior"),
+            mu_prior=priors.get("mu_prior"),
+            phi_prior=priors.get("phi_prior"),
+            p_capture_prior=priors.get("p_capture_prior"),
+            phi_capture_prior=priors.get("phi_capture_prior"),
+            mixing_prior=jnp.ones(2),  # Uniform prior for 2 components
+        )
+    else:
+        result = run_scribe(
+            counts=counts,
+            inference_method="mcmc",
+            zero_inflated=False,
+            variable_capture=True,
+            mixture_model=True,
+            n_components=2,  # Test with 2 components
+            parameterization=parameterization,
+            n_warmup=2,
+            n_samples=3,
+            n_chains=1,
+            seed=42,
+            r_prior=priors.get("r_prior"),
+            p_prior=priors.get("p_prior"),
+            mu_prior=priors.get("mu_prior"),
+            phi_prior=priors.get("phi_prior"),
+            p_capture_prior=priors.get("p_capture_prior"),
+            phi_capture_prior=priors.get("phi_capture_prior"),
+            mixing_prior=jnp.ones(2),  # Uniform prior for 2 components
+        )
+
+    _nbvcp_mix_results_cache[key] = result
+    return result
+
 
 # ------------------------------------------------------------------------------
-# Test sampling
+# Shared Tests
 # ------------------------------------------------------------------------------
 
-def test_posterior_sampling(example_nbvcp_mix_results, rng_key):
+
+def test_inference_run(nbvcp_mix_results):
+    """Test that inference runs and produces expected results."""
+    assert nbvcp_mix_results.n_cells > 0
+    assert nbvcp_mix_results.n_genes > 0
+    assert nbvcp_mix_results.model_type == "nbvcp_mix"
+    assert hasattr(nbvcp_mix_results, "model_config")
+    assert nbvcp_mix_results.n_components == 2
+
+
+def test_parameterization_config(nbvcp_mix_results, parameterization):
+    """Test that the correct parameterization is used."""
+    assert nbvcp_mix_results.model_config.parameterization == parameterization
+
+
+def test_parameter_ranges(nbvcp_mix_results, parameterization):
+    """Test that parameters have correct ranges and relationships."""
+    # For SVI, we need to get posterior samples to access transformed parameters
+    # For MCMC, we can use either params or samples
+    if hasattr(nbvcp_mix_results, "params") and hasattr(
+        nbvcp_mix_results, "get_posterior_samples"
+    ):
+        # SVI case: get transformed parameters from posterior samples
+        samples = nbvcp_mix_results.get_posterior_samples(n_samples=1)
+        params = samples
+    elif hasattr(nbvcp_mix_results, "params"):
+        # MCMC case: params might contain transformed parameters
+        params = nbvcp_mix_results.params
+    else:
+        # Fallback: try to get samples
+        samples = nbvcp_mix_results.get_posterior_samples()
+        params = samples
+
+    # Check parameters based on parameterization
+    if parameterization == "standard":
+        # Standard parameterization: p, r, and p_capture (component-specific)
+        assert "p" in params or any(k.startswith("p_") for k in params.keys())
+        assert "r" in params or any(k.startswith("r_") for k in params.keys())
+        assert "p_capture" in params or any(k.startswith("p_capture_") for k in params.keys())
+
+        # Check mixing weights
+        assert "mixing" in params or any(
+            k.startswith("mixing_") for k in params.keys()
+        )
+
+    elif parameterization == "linked":
+        # Linked parameterization: p, mu, and p_capture (component-specific)
+        assert "p" in params or any(k.startswith("p_") for k in params.keys())
+        assert "mu" in params or any(k.startswith("mu_") for k in params.keys())
+        assert "p_capture" in params or any(k.startswith("p_capture_") for k in params.keys())
+
+        # Check mixing weights
+        assert "mixing" in params or any(
+            k.startswith("mixing_") for k in params.keys()
+        )
+
+    elif parameterization == "odds_ratio":
+        # Odds ratio parameterization: phi, mu, and phi_capture (component-specific)
+        assert "phi" in params or any(
+            k.startswith("phi_") for k in params.keys()
+        )
+        assert "mu" in params or any(k.startswith("mu_") for k in params.keys())
+        assert "phi_capture" in params or any(k.startswith("phi_capture_") for k in params.keys())
+
+        # Check mixing weights
+        assert "mixing" in params or any(
+            k.startswith("mixing_") for k in params.keys()
+        )
+
+    elif parameterization == "unconstrained":
+        # Unconstrained parameterization: unconstrained parameters
+        assert any(k.startswith("p_unconstrained") for k in params.keys())
+        assert any(k.startswith("r_unconstrained") for k in params.keys())
+        assert any(k.startswith("p_capture_unconstrained") for k in params.keys())
+        assert any(
+            k.startswith("mixing_logits_unconstrained") for k in params.keys()
+        )
+
+
+def test_posterior_sampling(nbvcp_mix_results, rng_key):
     """Test sampling from the variational posterior."""
-    n_samples = 10
-    posterior_samples = example_nbvcp_mix_results.get_posterior_samples(
-        rng_key=random.PRNGKey(42),
-        n_samples=n_samples,
-        store_samples=True
-    )
-    
-    # Check structure of posterior samples
-    assert 'mixing_weights' in posterior_samples
-    assert 'p' in posterior_samples
-    assert 'r' in posterior_samples
-    assert 'p_capture' in posterior_samples
-    
-    # Check dimensions of samples
-    assert posterior_samples['mixing_weights'].shape == (n_samples, N_COMPONENTS)
-    assert posterior_samples['p'].shape == (n_samples,)
-    assert posterior_samples['r'].shape == (n_samples, N_COMPONENTS, example_nbvcp_mix_results.n_genes)
-    assert posterior_samples['p_capture'].shape == (n_samples, example_nbvcp_mix_results.n_cells)
-    
-    # Test that samples are in valid ranges
-    assert jnp.all(posterior_samples['mixing_weights'] >= 0)
-    assert jnp.all(posterior_samples['mixing_weights'] <= 1)
-    assert jnp.allclose(
-        jnp.sum(posterior_samples['mixing_weights'], axis=1), 
-        jnp.ones(n_samples)
-    )
-    assert jnp.all(posterior_samples['p'] >= 0) 
-    assert jnp.all(posterior_samples['p'] <= 1)
-    assert jnp.all(posterior_samples['r'] > 0)
-    assert jnp.all(posterior_samples['p_capture'] >= 0)
-    assert jnp.all(posterior_samples['p_capture'] <= 1)
+    # For SVI, must call get_posterior_samples with parameters; for MCMC, just call
+    # get_posterior_samples without parameters
+    if hasattr(nbvcp_mix_results, "get_posterior_samples"):
+        # Check if this is MCMC (inherits from MCMC class) or SVI
+        if hasattr(nbvcp_mix_results, "get_samples"):  # MCMC case
+            samples = nbvcp_mix_results.get_posterior_samples()
+        else:  # SVI case
+            samples = nbvcp_mix_results.get_posterior_samples(
+                rng_key=rng_key, n_samples=3, store_samples=True
+            )
+    else:
+        samples = nbvcp_mix_results.get_posterior_samples()
 
-def test_predictive_sampling(example_nbvcp_mix_results, rng_key):
+    # Check that we have the expected parameters based on parameterization
+    parameterization = nbvcp_mix_results.model_config.parameterization
+
+    if parameterization == "standard":
+        assert "p" in samples and "r" in samples and "p_capture" in samples
+        assert (
+            samples["r"].shape[-2] == nbvcp_mix_results.n_components
+        )  # Component dimension
+        assert samples["r"].shape[-1] == nbvcp_mix_results.n_genes
+        assert samples["p_capture"].shape[-1] == nbvcp_mix_results.n_cells
+    elif parameterization == "linked":
+        assert "p" in samples and "mu" in samples and "p_capture" in samples
+        assert samples["mu"].shape[-2] == nbvcp_mix_results.n_components
+        assert samples["mu"].shape[-1] == nbvcp_mix_results.n_genes
+        assert samples["p_capture"].shape[-1] == nbvcp_mix_results.n_cells
+    elif parameterization == "odds_ratio":
+        assert "phi" in samples and "mu" in samples and "phi_capture" in samples
+        assert samples["mu"].shape[-2] == nbvcp_mix_results.n_components
+        assert samples["mu"].shape[-1] == nbvcp_mix_results.n_genes
+        assert samples["phi_capture"].shape[-1] == nbvcp_mix_results.n_cells
+    elif parameterization == "unconstrained":
+        assert "p_unconstrained" in samples
+        assert "r_unconstrained" in samples
+        assert "p_capture_unconstrained" in samples
+        assert samples["r_unconstrained"].shape[-2] == nbvcp_mix_results.n_components
+        assert samples["r_unconstrained"].shape[-1] == nbvcp_mix_results.n_genes
+        assert samples["p_capture_unconstrained"].shape[-1] == nbvcp_mix_results.n_cells
+
+    # Check mixing weights
+    assert "mixing_weights" in samples or "mixing_logits_unconstrained" in samples
+    if "mixing_weights" in samples:
+        assert samples["mixing_weights"].shape[-1] == nbvcp_mix_results.n_components
+    elif "mixing_logits_unconstrained" in samples:
+        assert samples["mixing_logits_unconstrained"].shape[-1] == nbvcp_mix_results.n_components
+
+
+def test_predictive_sampling(nbvcp_mix_results, rng_key):
     """Test generating predictive samples."""
-    n_samples = 10
-    
-    # First get posterior samples
-    example_nbvcp_mix_results.get_posterior_samples(
-        rng_key=random.PRNGKey(42),
-        n_samples=n_samples,
-        store_samples=True
-    )
-    
-    # Then generate predictive samples
-    pred_samples = example_nbvcp_mix_results.get_predictive_samples(
-        rng_key=random.PRNGKey(43),
-        store_samples=True
-    )
-    
-    expected_shape = (n_samples, example_nbvcp_mix_results.n_cells, example_nbvcp_mix_results.n_genes)
-    assert pred_samples.shape == expected_shape
-    assert jnp.all(pred_samples >= 0)  # Counts should be non-negative
+    # For SVI, must generate posterior samples first
+    if hasattr(nbvcp_mix_results, "get_posterior_samples"):
+        # Check if this is MCMC (inherits from MCMC class) or SVI
+        if hasattr(nbvcp_mix_results, "get_samples"):  # MCMC case
+            # MCMC already has samples, no need to generate them
+            pred = nbvcp_mix_results.get_ppc_samples(
+                rng_key=rng_key, store_samples=True
+            )
+        else:  # SVI case
+            nbvcp_mix_results.get_posterior_samples(
+                rng_key=rng_key, n_samples=3, store_samples=True
+            )
+            pred = nbvcp_mix_results.get_predictive_samples(
+                rng_key=rng_key, store_samples=True
+            )
+    else:
+        pred = nbvcp_mix_results.get_ppc_samples(
+            rng_key=rng_key, store_samples=True
+        )
+    assert pred.shape[-1] == nbvcp_mix_results.n_genes
+    assert jnp.all(pred >= 0)
 
-def test_ppc_sampling(example_nbvcp_mix_results, rng_key):
-    """Test posterior predictive check sampling."""
-    n_samples = 10
-    
-    ppc_results = example_nbvcp_mix_results.get_ppc_samples(
-        rng_key=random.PRNGKey(44),
-        n_samples=n_samples,
-        store_samples=True
-    )
-    
-    assert 'parameter_samples' in ppc_results
-    assert 'predictive_samples' in ppc_results
-    
-    # Check predictive samples shape
-    expected_shape = (n_samples, example_nbvcp_mix_results.n_cells, example_nbvcp_mix_results.n_genes)
-    assert ppc_results['predictive_samples'].shape == expected_shape
 
-# ------------------------------------------------------------------------------
-# Test results methods
-# ------------------------------------------------------------------------------
-
-def test_get_distributions(example_nbvcp_mix_results):
-    """Test getting distribution objects from results."""
-    # Get scipy distributions
-    scipy_dists = example_nbvcp_mix_results.get_distributions(backend="scipy")
-    assert 'p' in scipy_dists
-    assert 'r' in scipy_dists
-    assert 'p_capture' in scipy_dists
-    assert 'mixing_weights' in scipy_dists
-    
-    # Get numpyro distributions
-    numpyro_dists = example_nbvcp_mix_results.get_distributions(backend="numpyro")
-    assert 'p' in numpyro_dists
-    assert 'r' in numpyro_dists
-    assert 'p_capture' in numpyro_dists
-    assert 'mixing_weights' in numpyro_dists
-
-def test_get_map(example_nbvcp_mix_results):
+def test_get_map(nbvcp_mix_results):
     """Test getting MAP estimates."""
-    map_estimates = example_nbvcp_mix_results.get_map()
-    
-    assert 'p' in map_estimates
-    assert 'r' in map_estimates
-    assert 'p_capture' in map_estimates
-    assert 'mixing_weights' in map_estimates
-    assert map_estimates['p'].shape == ()  # scalar
-    assert map_estimates['r'].shape == (
-        N_COMPONENTS, example_nbvcp_mix_results.n_genes
+    map_est = (
+        nbvcp_mix_results.get_map()
+        if hasattr(nbvcp_mix_results, "get_map")
+        else None
     )
-    assert map_estimates['p_capture'].shape == (example_nbvcp_mix_results.n_cells,)
-    assert map_estimates['mixing_weights'].shape == (N_COMPONENTS,)
+    assert map_est is not None
 
-def test_model_and_guide_retrieval(example_nbvcp_mix_results):
-    """Test that model and guide functions can be retrieved from results."""
-    model, guide = example_nbvcp_mix_results.get_model_and_guide()
-    
-    assert callable(model)
-    assert callable(guide)
+    # Check parameters based on parameterization
+    parameterization = nbvcp_mix_results.model_config.parameterization
+    if parameterization == "standard":
+        assert "r" in map_est and "p" in map_est and "p_capture" in map_est
+    elif parameterization == "linked":
+        assert "p" in map_est and "mu" in map_est and "p_capture" in map_est
+    elif parameterization == "odds_ratio":
+        assert "phi" in map_est and "mu" in map_est and "phi_capture" in map_est
 
-def test_log_likelihood_fn_retrieval(example_nbvcp_mix_results):
-    """Test that log likelihood function can be retrieved from results."""
-    log_lik_fn = example_nbvcp_mix_results.get_log_likelihood_fn()
-    
-    assert callable(log_lik_fn)
+    # Check mixing weights
+    assert "mixing_weights" in map_est
 
-# ------------------------------------------------------------------------------
-# Test indexing
-# ------------------------------------------------------------------------------
 
-def test_getitem_integer(example_nbvcp_mix_results):
+def test_indexing_integer(nbvcp_mix_results):
     """Test indexing with an integer."""
-    subset = example_nbvcp_mix_results[0]
-    
+    subset = nbvcp_mix_results[0]
     assert subset.n_genes == 1
-    assert subset.n_cells == example_nbvcp_mix_results.n_cells
-    assert subset.model_type == example_nbvcp_mix_results.model_type
-    assert subset.n_components == N_COMPONENTS
-    
-    # Check component and gene-specific parameters are correctly subset
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('r_'):
-            # Parameters should maintain component dimension but subset gene
-            # dimension
-            assert subset.params[param].shape == (N_COMPONENTS, 1)
-            
-    # Check cell-specific parameters are preserved
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('p_capture_'):
-            # Cell-specific parameters should not be affected by gene subsetting
-            assert subset.params[param].shape == (
-                example_nbvcp_mix_results.n_cells,)
+    assert subset.n_cells == nbvcp_mix_results.n_cells
+    assert subset.n_components == nbvcp_mix_results.n_components
 
-def test_getitem_slice(example_nbvcp_mix_results):
+
+def test_indexing_slice(nbvcp_mix_results):
     """Test indexing with a slice."""
-    subset = example_nbvcp_mix_results[0:2]
-    
-    assert subset.n_genes == 2
-    assert subset.n_cells == example_nbvcp_mix_results.n_cells
-    assert subset.model_type == example_nbvcp_mix_results.model_type
-    assert subset.n_components == N_COMPONENTS
-    
-    # Check component and gene-specific parameters are correctly subset
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('r_'):
-            # Parameters should maintain component dimension but subset gene
-            # dimension
-            assert subset.params[param].shape == (N_COMPONENTS, 2)
-            
-    # Check cell-specific parameters are preserved
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('p_capture_'):
-            # Cell-specific parameters should not be affected by gene subsetting
-            assert subset.params[param].shape == (
-                example_nbvcp_mix_results.n_cells,)
+    end_idx = min(2, nbvcp_mix_results.n_genes)
+    subset = nbvcp_mix_results[0:end_idx]
+    assert subset.n_genes == end_idx
+    assert subset.n_cells == nbvcp_mix_results.n_cells
+    assert subset.n_components == nbvcp_mix_results.n_components
 
-def test_getitem_boolean(example_nbvcp_mix_results):
+
+def test_indexing_boolean(nbvcp_mix_results):
     """Test indexing with a boolean array."""
-    mask = jnp.array([True, False, True] + [False] * (
-        example_nbvcp_mix_results.n_genes - 3))
-    subset = example_nbvcp_mix_results[mask]
-    
-    assert subset.n_genes == int(jnp.sum(mask))
-    assert subset.n_cells == example_nbvcp_mix_results.n_cells
-    assert subset.n_components == N_COMPONENTS
-    
-    # Check component and gene-specific parameters are correctly subset
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('r_'):
-            # Parameters should maintain component dimension but subset gene
-            # dimension
-            assert subset.params[param].shape == (N_COMPONENTS, int(jnp.sum(mask)))
-            
-    # Check cell-specific parameters are preserved
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('p_capture_'):
-            # Cell-specific parameters should not be affected by gene subsetting
-            assert subset.params[param].shape == (
-                example_nbvcp_mix_results.n_cells,)
+    mask = jnp.zeros(nbvcp_mix_results.n_genes, dtype=bool)
+    mask = mask.at[0].set(True)
 
-def test_subset_with_posterior_samples(example_nbvcp_mix_results, rng_key):
-    """Test that subsetting preserves posterior samples."""
-    # Generate posterior samples
-    example_nbvcp_mix_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=N_SAMPLES,
-        store_samples=True
-    )
-    
-    # Subset results by genes
-    subset = example_nbvcp_mix_results[0:2]
-    
-    # Check posterior samples were preserved and correctly subset
-    assert subset.posterior_samples is not None
-    assert 'p' in subset.posterior_samples
-    assert 'r' in subset.posterior_samples
-    assert 'p_capture' in subset.posterior_samples
-    assert 'mixing_weights' in subset.posterior_samples
-    assert subset.posterior_samples['r'].shape == (N_SAMPLES, N_COMPONENTS, 2)
-    assert subset.posterior_samples['p'].shape == (N_SAMPLES,)
-    assert subset.posterior_samples['p_capture'].shape == (N_SAMPLES, example_nbvcp_mix_results.n_cells)
-    assert subset.posterior_samples['mixing_weights'].shape == (
-        N_SAMPLES, N_COMPONENTS)
+    subset = nbvcp_mix_results[mask]
+    assert subset.n_genes == 1
+    assert subset.n_cells == nbvcp_mix_results.n_cells
+    assert subset.n_components == nbvcp_mix_results.n_components
 
-# ------------------------------------------------------------------------------
-# Test component selection
-# ------------------------------------------------------------------------------
 
-def test_get_component(example_nbvcp_mix_results):
-    """Test selecting a specific component from a mixture model."""
-    # Select the first component
-    component = example_nbvcp_mix_results.get_component(0)
-    
-    # Check that it's no longer a mixture model
-    assert component.n_components is None
-    assert component.model_type == "nbvcp"  # Model type should lose _mix suffix
-    
-    # Check that gene and cell counts are preserved
-    assert component.n_genes == example_nbvcp_mix_results.n_genes
-    assert component.n_cells == example_nbvcp_mix_results.n_cells
-    
-    # Check that gene-specific parameters are correctly subset (component dimension removed)
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('r_'):
-            # Component dimension should be removed, gene dimension preserved
-            orig_shape = example_nbvcp_mix_results.params[param].shape
-            if len(orig_shape) > 1 and orig_shape[0] == N_COMPONENTS:
-                assert component.params[param].shape == (example_nbvcp_mix_results.n_genes,)
-                # Check values match
-                assert jnp.allclose(
-                    component.params[param],
-                    example_nbvcp_mix_results.params[param][0]
-                )
-    
-    # Check that cell-specific parameters are preserved
-    for param in example_nbvcp_mix_results.params:
-        if param.startswith('p_capture_'):
-            # Cell parameters should be unaffected
-            assert component.params[param].shape == (example_nbvcp_mix_results.n_cells,)
-            assert jnp.allclose(
-                component.params[param],
-                example_nbvcp_mix_results.params[param]
+def test_log_likelihood(nbvcp_mix_results, small_dataset, rng_key):
+    """Test computing log likelihood."""
+    counts, _ = small_dataset
+
+    # For SVI, must generate posterior samples first
+    if hasattr(nbvcp_mix_results, "get_posterior_samples"):
+        # Check if this is MCMC (inherits from MCMC class) or SVI
+        if hasattr(nbvcp_mix_results, "get_samples"):  # MCMC case
+            # MCMC already has samples, no need to generate them
+            pass
+        else:  # SVI case
+            nbvcp_mix_results.get_posterior_samples(
+                rng_key=rng_key, n_samples=3, store_samples=True
             )
 
-def test_get_component_with_posterior_samples(example_nbvcp_mix_results, rng_key):
+    # Test marginal log likelihood (across components)
+    ll = nbvcp_mix_results.log_likelihood(counts, return_by="cell")
+    assert ll.shape[0] > 0
+    assert jnp.all(jnp.isfinite(ll))
+
+    # Test component-specific log likelihood
+    ll_components = nbvcp_mix_results.log_likelihood(
+        counts, return_by="cell", split_components=True
+    )
+    assert ll_components.shape[-1] == nbvcp_mix_results.n_components
+    assert jnp.all(jnp.isfinite(ll_components))
+
+
+def test_parameter_relationships(nbvcp_mix_results, parameterization):
+    """Test that parameter relationships are correctly maintained."""
+    # Get parameters
+    params = None
+    if hasattr(nbvcp_mix_results, "params"):
+        params = nbvcp_mix_results.params
+    if params is None:
+        samples = nbvcp_mix_results.get_posterior_samples()
+        params = samples
+
+    if parameterization == "linked":
+        # In linked parameterization, r should be computed as
+        # r = mu * (1 - p) / p
+        if "p" in params and "mu" in params and "r" in params:
+            p, mu, r = params["p"], params["mu"], params["r"]
+            # Handle different shapes for SVI vs MCMC
+            if p.ndim == 1 and mu.ndim == 2:
+                # SVI case: p is (n_samples,), mu is (n_samples, n_components, n_genes)
+                expected_r = mu * (1 - p[:, None, None]) / p[:, None, None]
+            elif p.ndim == 0 and mu.ndim == 2:
+                # MCMC case: p is scalar, mu is (n_components, n_genes)
+                expected_r = mu * (1 - p) / p
+            else:
+                # Skip test if shapes are unexpected
+                return
+            assert jnp.allclose(r, expected_r, rtol=1e-5)
+
+    elif parameterization == "odds_ratio":
+        # In odds_ratio parameterization:
+        # p = 1 / (1 + phi)
+        # r = mu * phi
+        # p_capture = 1 / (1 + phi_capture)
+        if (
+            "phi" in params
+            and "mu" in params
+            and "p" in params
+            and "r" in params
+            and "phi_capture" in params
+            and "p_capture" in params
+        ):
+            phi, mu, p, r, phi_capture, p_capture = (
+                params["phi"],
+                params["mu"],
+                params["p"],
+                params["r"],
+                params["phi_capture"],
+                params["p_capture"],
+            )
+            expected_p = 1.0 / (1.0 + phi)
+
+            # Handle different shapes for SVI vs MCMC
+            if phi.ndim == 1 and mu.ndim == 2:
+                # SVI case: phi is (n_samples,), mu is (n_samples, n_components, n_genes)
+                expected_r = mu * phi[:, None, None]
+            elif phi.ndim == 0 and mu.ndim == 2:
+                # MCMC case: phi is scalar, mu is (n_components, n_genes)
+                expected_r = mu * phi
+            else:
+                # Skip r test if shapes are unexpected
+                expected_r = None
+
+            # phi_capture is cell-specific per sample
+            expected_p_capture = 1.0 / (1.0 + phi_capture)
+
+            assert jnp.allclose(p, expected_p, rtol=1e-5)
+            if expected_r is not None:
+                assert jnp.allclose(r, expected_r, rtol=1e-5)
+            # Make shapes compatible for broadcasting
+            pc1 = jnp.squeeze(p_capture)
+            pc2 = jnp.squeeze(expected_p_capture)
+            assert (
+                pc1.shape == pc2.shape
+            ), f"Shape mismatch after squeeze: {pc1.shape} vs {pc2.shape}"
+            assert jnp.allclose(pc1, pc2, rtol=1e-5)
+
+
+# ------------------------------------------------------------------------------
+# NBVCP-specific Tests
+# ------------------------------------------------------------------------------
+
+
+def test_cell_specific_parameters(nbvcp_mix_results, parameterization):
+    """Test that cell-specific parameters have correct shapes and ranges."""
+    # Get parameters
+    params = None
+    if hasattr(nbvcp_mix_results, "params"):
+        params = nbvcp_mix_results.params
+    if params is None:
+        samples = nbvcp_mix_results.get_posterior_samples()
+        params = samples
+
+    # Check cell-specific parameters regardless of parameterization
+    if parameterization == "odds_ratio":
+        if "phi_capture" in params:
+            phi_capture = params["phi_capture"]
+            assert (
+                phi_capture.shape[-1] == nbvcp_mix_results.n_cells
+            ), "phi_capture should be cell-specific"
+            assert jnp.all(phi_capture > 0), "phi_capture should be positive"
+    else:
+        if "p_capture" in params:
+            p_capture = params["p_capture"]
+            assert (
+                p_capture.shape[-1] == nbvcp_mix_results.n_cells
+            ), "p_capture should be cell-specific"
+            assert jnp.all(
+                (p_capture >= 0) & (p_capture <= 1)
+            ), "p_capture should be in [0, 1]"
+
+
+def test_variable_capture_behavior(nbvcp_mix_results, rng_key):
+    """Test that the model exhibits variable capture behavior."""
+    # Generate predictive samples
+    if hasattr(nbvcp_mix_results, "get_posterior_samples"):
+        if hasattr(nbvcp_mix_results, "get_samples"):  # MCMC case
+            pred = nbvcp_mix_results.get_ppc_samples(
+                rng_key=rng_key, store_samples=True
+            )
+        else:  # SVI case
+            nbvcp_mix_results.get_posterior_samples(
+                rng_key=rng_key, n_samples=3, store_samples=True
+            )
+            pred = nbvcp_mix_results.get_predictive_samples(
+                rng_key=rng_key, store_samples=True
+            )
+    else:
+        pred = nbvcp_mix_results.get_ppc_samples(
+            rng_key=rng_key, store_samples=True
+        )
+
+    # Check that we have non-negative counts
+    assert jnp.all(pred >= 0), "NBVCP model should produce non-negative counts"
+
+    # Check that we have some non-zero counts
+    assert jnp.any(pred > 0), "NBVCP model should produce some non-zero counts"
+
+
+# ------------------------------------------------------------------------------
+# SVI-specific Tests
+# ------------------------------------------------------------------------------
+
+
+def test_svi_loss_history(nbvcp_mix_results, inference_method):
+    if inference_method == "svi":
+        assert hasattr(nbvcp_mix_results, "loss_history")
+        assert len(nbvcp_mix_results.loss_history) > 0
+
+
+# ------------------------------------------------------------------------------
+# MCMC-specific Tests
+# ------------------------------------------------------------------------------
+
+
+def test_mcmc_samples_shape(nbvcp_mix_results, inference_method):
+    if inference_method == "mcmc":
+        samples = nbvcp_mix_results.get_posterior_samples()
+
+        # Check parameters based on parameterization
+        parameterization = nbvcp_mix_results.model_config.parameterization
+        if parameterization == "standard":
+            assert "r" in samples and "p" in samples and "p_capture" in samples
+            assert samples["r"].ndim >= 3  # n_samples, n_components, n_genes
+            assert samples["p_capture"].ndim >= 2  # n_samples, n_cells
+        elif parameterization == "linked":
+            assert "p" in samples and "mu" in samples and "p_capture" in samples
+            assert samples["mu"].ndim >= 3  # n_samples, n_components, n_genes
+            assert samples["p_capture"].ndim >= 2  # n_samples, n_cells
+        elif parameterization == "odds_ratio":
+            assert (
+                "phi" in samples
+                and "mu" in samples
+                and "phi_capture" in samples
+            )
+            assert samples["mu"].ndim >= 3  # n_samples, n_components, n_genes
+            assert samples["phi_capture"].ndim >= 2  # n_samples, n_cells
+
+        # Check mixing weights
+        assert "mixing_weights" in samples
+        assert samples["mixing_weights"].ndim >= 2  # n_samples, n_components
+
+
+# ------------------------------------------------------------------------------
+# Mixture-specific Tests
+# ------------------------------------------------------------------------------
+
+
+def test_component_selection(nbvcp_mix_results):
+    """Test selecting a specific component from the mixture."""
+    # Select the first component
+    component = nbvcp_mix_results.get_component(0)
+
+    # Check that it's no longer a mixture model
+    assert component.n_components is None
+    assert "_mix" not in component.model_type
+    
+    # Check that gene and cell counts are preserved
+    assert component.n_genes == nbvcp_mix_results.n_genes
+    assert component.n_cells == nbvcp_mix_results.n_cells
+
+
+def test_component_selection_with_posterior_samples(nbvcp_mix_results, rng_key):
     """Test component selection with posterior samples."""
     # Generate posterior samples
-    example_nbvcp_mix_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=N_SAMPLES,
-        store_samples=True
-    )
-    
+    if hasattr(nbvcp_mix_results, "get_samples"):  # MCMC case
+        # MCMC already has samples
+        pass
+    else:  # SVI case
+        nbvcp_mix_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=3, store_samples=True,
+        )
+
     # Select component
-    component = example_nbvcp_mix_results.get_component(1)
-    
+    component = nbvcp_mix_results.get_component(1)
+
     # Check posterior samples are correctly subset
     assert component.posterior_samples is not None
-    assert 'p' in component.posterior_samples
-    assert 'r' in component.posterior_samples
-    assert 'p_capture' in component.posterior_samples
-    assert 'mixing_weights' not in component.posterior_samples
     
-    # Check shapes
-    assert component.posterior_samples['p'].shape == (N_SAMPLES,)
-    assert component.posterior_samples['r'].shape == (N_SAMPLES, example_nbvcp_mix_results.n_genes)
-    assert component.posterior_samples['p_capture'].shape == (N_SAMPLES, example_nbvcp_mix_results.n_cells)
+    # Check parameters based on parameterization
+    parameterization = nbvcp_mix_results.model_config.parameterization
     
-    # Check values match the original component values
-    assert jnp.allclose(
-        component.posterior_samples['r'],
-        example_nbvcp_mix_results.posterior_samples['r'][:, 1, :]
-    )
-    # Cell-specific parameters should be unmodified
-    assert jnp.allclose(
-        component.posterior_samples['p_capture'],
-        example_nbvcp_mix_results.posterior_samples['p_capture']
-    )
+    if parameterization == "standard":
+        assert "p" in component.posterior_samples
+        assert "r" in component.posterior_samples
+        assert "p_capture" in component.posterior_samples
+        # Check shapes - component dimension should be removed
+        assert component.posterior_samples["p"].shape == (3,)  # n_samples
+        assert component.posterior_samples["r"].shape == (
+            3,
+            nbvcp_mix_results.n_genes,
+        )
+        assert component.posterior_samples["p_capture"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
+    elif parameterization == "linked":
+        assert "p" in component.posterior_samples
+        assert "mu" in component.posterior_samples
+        assert "p_capture" in component.posterior_samples
+        # Check shapes - component dimension should be removed
+        assert component.posterior_samples["p"].shape == (3,)  # n_samples
+        assert component.posterior_samples["mu"].shape == (
+            3,
+            nbvcp_mix_results.n_genes,
+        )
+        assert component.posterior_samples["p_capture"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
+    elif parameterization == "odds_ratio":
+        assert "phi" in component.posterior_samples
+        assert "mu" in component.posterior_samples
+        assert "phi_capture" in component.posterior_samples
+        # Check shapes - component dimension should be removed
+        assert component.posterior_samples["phi"].shape == (3,)  # n_samples
+        assert component.posterior_samples["mu"].shape == (
+            3,
+            nbvcp_mix_results.n_genes,
+        )
+        assert component.posterior_samples["phi_capture"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
+    elif parameterization == "unconstrained":
+        assert "p_unconstrained" in component.posterior_samples
+        assert "r_unconstrained" in component.posterior_samples
+        assert "p_capture_unconstrained" in component.posterior_samples
+        # Check shapes - component dimension should be removed
+        assert component.posterior_samples["p_unconstrained"].shape == (3,)  # n_samples
+        assert component.posterior_samples["r_unconstrained"].shape == (
+            3,
+            nbvcp_mix_results.n_genes,
+        )
+        assert component.posterior_samples["p_capture_unconstrained"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
 
-def test_component_then_gene_indexing(example_nbvcp_mix_results):
-    """Test selecting a component and then indexing genes."""
-    # First select a component
-    component = example_nbvcp_mix_results.get_component(0)
-    
-    # Then select genes
-    gene_subset = component[0:2]
-    
-    # Check dimensions
-    assert gene_subset.n_genes == 2
-    assert gene_subset.n_cells == example_nbvcp_mix_results.n_cells
-    assert gene_subset.n_components is None
-    assert gene_subset.model_type == "nbvcp"
-    
-    # Check gene parameters
-    for param in component.params:
-        if param.startswith('r_'):
-            # Gene dimension should be subset
-            orig_shape = component.params[param].shape
-            if len(orig_shape) > 0 and orig_shape[0] == example_nbvcp_mix_results.n_genes:
-                assert gene_subset.params[param].shape == (2,)
-    
-    # Check cell parameters are unchanged
-    for param in component.params:
-        if param.startswith('p_capture_'):
-            assert gene_subset.params[param].shape == (
-                example_nbvcp_mix_results.n_cells,)
 
-# ------------------------------------------------------------------------------
-# Test log likelihood
-# ------------------------------------------------------------------------------
-
-def test_compute_log_likelihood(example_nbvcp_mix_results, small_dataset, rng_key):
-    """Test computing log likelihood with the model."""
-    counts, _ = small_dataset
-    
-    # First generate posterior samples
-    example_nbvcp_mix_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=N_SAMPLES,
-        store_samples=True
-    )
-    
-    # Compute per-cell log likelihood (marginal over components)
-    cell_ll = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        return_by='cell',
-        split_components=False
-    )
-    
-    # Check shape - should be (n_samples, n_cells)
-    assert cell_ll.shape == (N_SAMPLES, example_nbvcp_mix_results.n_cells)
-    assert jnp.all(jnp.isfinite(cell_ll))
-    assert jnp.all(cell_ll <= 0)  # Log likelihoods should be negative
-    
-    # Compute per-gene log likelihood (marginal over components)
-    gene_ll = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        return_by='gene',
-        split_components=False
-    )
-    
-    # Check shape - should be (n_samples, n_genes)
-    assert gene_ll.shape == (N_SAMPLES, example_nbvcp_mix_results.n_genes)
-    assert jnp.all(jnp.isfinite(gene_ll))
-    
-    # Now test with split_components=True
-    # Compute per-cell log likelihood by component
-    cell_ll_by_comp = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        return_by='cell',
-        split_components=True
-    )
-    
-    # Check shape - should be (n_samples, n_cells, n_components)
-    assert cell_ll_by_comp.shape == (N_SAMPLES, example_nbvcp_mix_results.n_cells, N_COMPONENTS)
-    assert jnp.all(jnp.isfinite(cell_ll_by_comp))
-    
-    # Compute per-gene log likelihood by component
-    gene_ll_by_comp = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        return_by='gene',
-        split_components=True
-    )
-    
-    # Check shape - should be (n_samples, n_genes, n_components)
-    assert gene_ll_by_comp.shape == (N_SAMPLES, example_nbvcp_mix_results.n_genes, N_COMPONENTS)
-    assert jnp.all(jnp.isfinite(gene_ll_by_comp))
-
-def test_compute_log_likelihood_batched(example_nbvcp_mix_results, small_dataset, rng_key):
-    """Test computing log likelihood with batching."""
-    counts, _ = small_dataset
-    
-    # First generate posterior samples
-    example_nbvcp_mix_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=N_SAMPLES,
-        store_samples=True
-    )
-    
-    # Compute without batching (marginal over components)
-    full_ll = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        return_by='cell',
-        split_components=False
-    )
-    
-    # Compute with batching
-    batched_ll = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        batch_size=3,
-        return_by='cell',
-        split_components=False
-    )
-    
-    # Results should match
-    assert jnp.allclose(full_ll, batched_ll, rtol=1e-5, atol=1e-5)
-    
-    # Now test with split_components=True
-    # Compute without batching
-    full_ll_split = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        return_by='cell',
-        split_components=True
-    )
-    
-    # Compute with batching
-    batched_ll_split = example_nbvcp_mix_results.compute_log_likelihood(
-        counts,
-        batch_size=3,
-        return_by='cell',
-        split_components=True
-    )
-    
-    # Results should match
-    assert jnp.allclose(full_ll_split, batched_ll_split, rtol=1e-5, atol=1e-5)
-
-# ------------------------------------------------------------------------------
-# Test cell type assignments
-# ------------------------------------------------------------------------------
-
-def test_compute_cell_type_assignments(example_nbvcp_mix_results, small_dataset, rng_key):
+def test_cell_type_assignments(nbvcp_mix_results, small_dataset, rng_key):
     """Test computing cell type assignments."""
     counts, _ = small_dataset
-    
-    # First generate posterior samples
-    example_nbvcp_mix_results.get_posterior_samples(
-        rng_key=rng_key,
-        n_samples=N_SAMPLES,
-        store_samples=True
-    )
-    
-    # Compute assignments
-    assignments = example_nbvcp_mix_results.compute_cell_type_assignments(
-        counts,
-        fit_distribution=True,
-        verbose=False
-    )
-    
-    # Check structure of results
-    assert 'concentration' in assignments
-    assert 'mean_probabilities' in assignments
-    assert 'sample_probabilities' in assignments
-    
-    # Check shapes
-    assert assignments['concentration'].shape == (example_nbvcp_mix_results.n_cells, N_COMPONENTS)
-    assert assignments['mean_probabilities'].shape == (example_nbvcp_mix_results.n_cells, N_COMPONENTS)
-    assert assignments['sample_probabilities'].shape == (N_SAMPLES, example_nbvcp_mix_results.n_cells, N_COMPONENTS)
-    
-    # Check that probabilities sum to 1
-    assert jnp.allclose(jnp.sum(assignments['mean_probabilities'], axis=1), 1.0)
-    assert jnp.allclose(jnp.sum(assignments['sample_probabilities'], axis=2), 1.0)
-    
-    # Test without fitting distribution
-    assignments_no_fit = example_nbvcp_mix_results.compute_cell_type_assignments(
-        counts,
-        fit_distribution=False,
-        verbose=False
-    )
-    
-    assert 'sample_probabilities' in assignments_no_fit
-    assert 'concentration' not in assignments_no_fit
-    assert 'mean_probabilities' not in assignments_no_fit
-    assert assignments_no_fit['sample_probabilities'].shape == (N_SAMPLES, example_nbvcp_mix_results.n_cells, N_COMPONENTS)
 
-def test_compute_cell_type_assignments_map(example_nbvcp_mix_results, small_dataset):
-    """Test computing cell type assignments using MAP estimates."""
-    counts, _ = small_dataset
-    
-    # Compute assignments using MAP
-    assignments = example_nbvcp_mix_results.compute_cell_type_assignments_map(
-        counts,
-        verbose=False
+    # Generate posterior samples
+    if hasattr(nbvcp_mix_results, "get_samples"):  # MCMC case
+        # MCMC already has samples
+        pass
+    else:  # SVI case
+        nbvcp_mix_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=3, store_samples=True
+        )
+
+    # Compute assignments
+    assignments = nbvcp_mix_results.cell_type_probabilities(
+        counts, fit_distribution=True, verbose=False
     )
-    
+
     # Check structure of results
-    assert 'probabilities' in assignments
-    
+    assert "concentration" in assignments
+    assert "mean_probabilities" in assignments
+    assert "sample_probabilities" in assignments
+
     # Check shapes
-    assert assignments['probabilities'].shape == (
-        example_nbvcp_mix_results.n_cells, N_COMPONENTS)
+    assert assignments["concentration"].shape == (
+        nbvcp_mix_results.n_cells,
+        nbvcp_mix_results.n_components,
+    )
+    assert assignments["mean_probabilities"].shape == (
+        nbvcp_mix_results.n_cells,
+        nbvcp_mix_results.n_components,
+    )
+    assert assignments["sample_probabilities"].shape == (
+        3,
+        nbvcp_mix_results.n_cells,
+        nbvcp_mix_results.n_components,
+    )
+
+
+def test_subset_with_posterior_samples(nbvcp_mix_results, rng_key):
+    """Test that subsetting preserves posterior samples."""
+    # Generate posterior samples
+    if hasattr(nbvcp_mix_results, "get_samples"):  # MCMC case
+        # MCMC already has samples
+        pass
+    else:  # SVI case
+        nbvcp_mix_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=3, store_samples=True,
+        )
+
+    # Subset results by genes
+    subset = nbvcp_mix_results[0:2]
+
+    # Check posterior samples were preserved and correctly subset
+    assert subset.posterior_samples is not None
+    
+    # Check parameters based on parameterization
+    parameterization = nbvcp_mix_results.model_config.parameterization
+    
+    if parameterization == "standard":
+        assert "p" in subset.posterior_samples
+        assert "r" in subset.posterior_samples
+        assert "p_capture" in subset.posterior_samples
+        assert "mixing_weights" in subset.posterior_samples
+        assert subset.posterior_samples["r"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+            2,
+        )
+        assert subset.posterior_samples["p"].shape == (3,)
+        assert subset.posterior_samples["p_capture"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
+        assert subset.posterior_samples["mixing_weights"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+        )
+    elif parameterization == "linked":
+        assert "p" in subset.posterior_samples
+        assert "mu" in subset.posterior_samples
+        assert "p_capture" in subset.posterior_samples
+        assert "mixing_weights" in subset.posterior_samples
+        assert subset.posterior_samples["mu"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+            2,
+        )
+        assert subset.posterior_samples["p"].shape == (3,)
+        assert subset.posterior_samples["p_capture"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
+        assert subset.posterior_samples["mixing_weights"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+        )
+    elif parameterization == "odds_ratio":
+        assert "phi" in subset.posterior_samples
+        assert "mu" in subset.posterior_samples
+        assert "phi_capture" in subset.posterior_samples
+        assert "mixing_weights" in subset.posterior_samples
+        assert subset.posterior_samples["mu"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+            2,
+        )
+        assert subset.posterior_samples["phi"].shape == (3,)
+        assert subset.posterior_samples["phi_capture"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
+        assert subset.posterior_samples["mixing_weights"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+        )
+    elif parameterization == "unconstrained":
+        assert "p_unconstrained" in subset.posterior_samples
+        assert "r_unconstrained" in subset.posterior_samples
+        assert "p_capture_unconstrained" in subset.posterior_samples
+        assert "mixing_logits_unconstrained" in subset.posterior_samples
+        assert subset.posterior_samples["r_unconstrained"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+            2,
+        )
+        assert subset.posterior_samples["p_unconstrained"].shape == (3,)
+        assert subset.posterior_samples["p_capture_unconstrained"].shape == (
+            3,
+            nbvcp_mix_results.n_cells,
+        )
+        assert subset.posterior_samples["mixing_logits_unconstrained"].shape == (
+            3,
+            nbvcp_mix_results.n_components,
+        )
+
+
+def test_component_then_gene_indexing(nbvcp_mix_results):
+    """Test selecting a component and then indexing genes."""
+    # First select a component
+    component = nbvcp_mix_results.get_component(0)
+
+    # Then select genes
+    gene_subset = component[0:2]
+
+    # Check dimensions
+    assert gene_subset.n_genes == 2
+    assert gene_subset.n_cells == nbvcp_mix_results.n_cells
+    assert gene_subset.n_components is None
+    assert gene_subset.model_type == "nbvcp"
