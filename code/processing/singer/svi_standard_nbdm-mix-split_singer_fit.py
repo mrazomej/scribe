@@ -19,7 +19,7 @@ import scribe
 
 # %% ---------------------------------------------------------------------------
 # Define model type
-model_type = "nbdm_mix"
+model_type = "nbdm"
 
 # Define parameterization type
 parameterization = "standard"
@@ -64,8 +64,7 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization.replace('_', '-')}_" \
-        f"{model_type.replace('_', '-')}_" \
+        f"svi_{parameterization}_{model_type}_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{n_components}components_" \

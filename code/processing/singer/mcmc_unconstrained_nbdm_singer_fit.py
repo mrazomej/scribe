@@ -103,12 +103,13 @@ kernel_kwargs = {
 
 if not os.path.exists(file_name):
     # Run MCMC sampling
-    mcmc_results = scribe.mcmc.run_scribe(
+    mcmc_results = scribe.run_scribe(
         counts=data,
-        unconstrained_model=True,
-        num_warmup=n_mcmc_burnin,
-        num_samples=n_mcmc_samples,
-        kernel_kwargs=kernel_kwargs,
+        inference_method="mcmc",
+        parameterization="unconstrained",
+        n_warmup=n_mcmc_burnin,
+        n_samples=n_mcmc_samples,
+        mcmc_kwargs=kernel_kwargs,
     )
     # Save MCMC results
     with open(file_name, "wb") as f:
