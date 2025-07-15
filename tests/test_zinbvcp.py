@@ -186,14 +186,14 @@ def test_parameter_ranges(zinbvcp_results, parameterization):
         zinbvcp_results, "get_posterior_samples"
     ):
         # SVI case: get transformed parameters from posterior samples
-        samples = zinbvcp_results.get_posterior_samples(n_samples=1)
+        samples = zinbvcp_results.get_posterior_samples(n_samples=1, canonical=True)
         params = samples
     elif hasattr(zinbvcp_results, "params"):
         # MCMC case: params might contain transformed parameters
-        params = zinbvcp_results.params
+        params = zinbvcp_results.get_posterior_samples(canonical=True)
     else:
         # Fallback: try to get samples
-        samples = zinbvcp_results.get_posterior_samples()
+        samples = zinbvcp_results.get_posterior_samples(canonical=True)
         params = samples
 
     # Check parameters based on parameterization
@@ -239,12 +239,12 @@ def test_parameter_ranges(zinbvcp_results, parameterization):
         assert gate.shape[-1] == zinbvcp_results.n_genes  # gene-specific
         assert p_capture.shape[-1] == zinbvcp_results.n_cells  # cell-specific
 
-        # Check that r is computed correctly: r = mu * p / (1 - p)
+        # Check that r is computed correctly: r = mu * (1 - p) / p
         if "r" in params:
             r = params["r"]
             # p is scalar per sample, mu is gene-specific per sample
             # Need to broadcast p to match mu's gene dimension
-            expected_r = mu * p[..., None] / (1 - p[..., None])
+            expected_r = mu * (1 - p[..., None]) / p[..., None]
             assert jnp.allclose(r, expected_r, rtol=1e-5)
 
     elif parameterization == "odds_ratio":
@@ -506,16 +506,16 @@ def test_parameter_relationships(zinbvcp_results, parameterization):
 
     if parameterization == "linked":
         # In linked parameterization, r should be computed as
-        # r = mu * p / (1 - p)
+        # r = mu * (1 - p) / p
         if "p" in params and "mu" in params and "r" in params:
             p, mu, r = params["p"], params["mu"], params["r"]
             # Handle different shapes for SVI vs MCMC
             if p.ndim == 1 and mu.ndim == 2:
                 # SVI case: p is (n_samples,), mu is (n_samples, n_genes)
-                expected_r = mu * p[:, None] / (1 - p[:, None])
+                expected_r = mu * (1 - p[:, None]) / p[:, None]
             elif p.ndim == 0 and mu.ndim == 1:
                 # MCMC case: p is scalar, mu is (n_genes,)
-                expected_r = mu * p / (1 - p)
+                expected_r = mu * (1 - p) / p
             else:
                 # Skip test if shapes are unexpected
                 return
