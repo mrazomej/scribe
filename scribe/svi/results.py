@@ -561,6 +561,8 @@ class ScribeSVIResults:
             "r_scale",
             "gate_alpha",
             "gate_beta",
+            "mu_loc",
+            "mu_scale",
             "r_unconstrained_loc",
             "r_unconstrained_scale",
             "gate_unconstrained_loc",
