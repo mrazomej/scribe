@@ -187,7 +187,6 @@ def zinb_guide(
     p_beta = numpyro.param(
         "p_beta", p_prior_params[1], constraint=constraints.positive
     )
-    # Sample p from the variational Beta distribution
     numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
     # Register variational parameters for r (dispersion)
@@ -197,8 +196,6 @@ def zinb_guide(
         jnp.full(n_genes, r_prior_params[1]),
         constraint=constraints.positive,
     )
-    # Sample r from the variational LogNormal distribution (vectorized over
-    # genes)
     numpyro.sample("r", dist.LogNormal(r_loc, r_scale))
 
     # Register variational parameters for gate (zero-inflation probability)
@@ -212,7 +209,6 @@ def zinb_guide(
         jnp.full(n_genes, gate_prior_params[1]),
         constraint=constraints.positive,
     )
-    # Sample gate from the variational Beta distribution (vectorized over genes)
     numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
 
@@ -345,22 +341,34 @@ def nbvcp_guide(
     )
     numpyro.sample("r", dist.LogNormal(r_loc, r_scale))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_alpha = numpyro.param(
-            "p_capture_alpha",
-            jnp.full(n_cells, p_capture_prior_params[0]),
-            constraint=constraints.positive,
-        )
-        p_capture_beta = numpyro.param(
-            "p_capture_beta",
-            jnp.full(n_cells, p_capture_prior_params[1]),
-            constraint=constraints.positive,
-        )
-        numpyro.sample("p_capture", dist.Beta(p_capture_alpha, p_capture_beta))
+    # Set up cell-specific capture probability parameters
+    p_capture_alpha = numpyro.param(
+        "p_capture_alpha",
+        jnp.full(n_cells, p_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    p_capture_beta = numpyro.param(
+        "p_capture_beta",
+        jnp.full(n_cells, p_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture",
+                dist.Beta(p_capture_alpha[idx], p_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
-# Zero-Inflated Negative Binomial with variable capture probability
+# Zero-Inflated Negative Binomial Mixture Model
 # ------------------------------------------------------------------------------
 
 
@@ -511,18 +519,30 @@ def zinbvcp_guide(
     )
     numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_alpha = numpyro.param(
-            "p_capture_alpha",
-            jnp.full(n_cells, p_capture_prior_params[0]),
-            constraint=constraints.positive,
-        )
-        p_capture_beta = numpyro.param(
-            "p_capture_beta",
-            jnp.full(n_cells, p_capture_prior_params[1]),
-            constraint=constraints.positive,
-        )
-        numpyro.sample("p_capture", dist.Beta(p_capture_alpha, p_capture_beta))
+    # Set up cell-specific capture probability parameters
+    p_capture_alpha = numpyro.param(
+        "p_capture_alpha",
+        jnp.full(n_cells, p_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    p_capture_beta = numpyro.param(
+        "p_capture_beta",
+        jnp.full(n_cells, p_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture",
+                dist.Beta(p_capture_alpha[idx], p_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -646,9 +666,7 @@ def nbdm_mixture_guide(
     )
 
     # Sample the gene-specific dispersion r from a LogNormal prior
-    numpyro.sample(
-        "r", dist.LogNormal(r_loc, r_scale)
-    )
+    numpyro.sample("r", dist.LogNormal(r_loc, r_scale))
 
     if model_config.component_specific_params:
         # Define parameters for p
@@ -797,9 +815,7 @@ def zinb_mixture_guide(
     )
 
     # Sample the gene-specific dispersion r from a LogNormal prior
-    numpyro.sample(
-        "r", dist.LogNormal(r_loc, r_scale)
-    )
+    numpyro.sample("r", dist.LogNormal(r_loc, r_scale))
 
     # Define parameters for gate
     gate_alpha = numpyro.param(
@@ -813,9 +829,7 @@ def zinb_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific gate from a Beta prior
-    numpyro.sample(
-        "gate", dist.Beta(gate_alpha, gate_beta)
-    )
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
     if model_config.component_specific_params:
         # Define parameters for p
@@ -1001,18 +1015,30 @@ def nbvcp_mixture_guide(
         )
         numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_alpha = numpyro.param(
-            "p_capture_alpha",
-            p_capture_prior_params[0],
-            constraint=constraints.positive,
-        )
-        p_capture_beta = numpyro.param(
-            "p_capture_beta",
-            p_capture_prior_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample("p_capture", dist.Beta(p_capture_alpha, p_capture_beta))
+    # Set up cell-specific capture probability parameters
+    p_capture_alpha = numpyro.param(
+        "p_capture_alpha",
+        jnp.full(n_cells, p_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    p_capture_beta = numpyro.param(
+        "p_capture_beta",
+        jnp.full(n_cells, p_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture",
+                dist.Beta(p_capture_alpha[idx], p_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -1182,18 +1208,30 @@ def zinbvcp_mixture_guide(
         )
         numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_alpha = numpyro.param(
-            "p_capture_alpha",
-            p_capture_prior_params[0],
-            constraint=constraints.positive,
-        )
-        p_capture_beta = numpyro.param(
-            "p_capture_beta",
-            p_capture_prior_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample("p_capture", dist.Beta(p_capture_alpha, p_capture_beta))
+    # Set up cell-specific capture probability parameters
+    p_capture_alpha = numpyro.param(
+        "p_capture_alpha",
+        jnp.full(n_cells, p_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    p_capture_beta = numpyro.param(
+        "p_capture_beta",
+        jnp.full(n_cells, p_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture",
+                dist.Beta(p_capture_alpha[idx], p_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------

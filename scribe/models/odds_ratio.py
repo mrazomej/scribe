@@ -200,9 +200,7 @@ def zinb_guide(
         "phi_beta", phi_prior_params[1], constraint=constraints.positive
     )
     # Sample p from the BetaPrime distribution parameterized by phi_alpha
-    numpyro.sample(
-        "phi", BetaPrime(phi_alpha, phi_beta)
-    )
+    numpyro.sample("phi", BetaPrime(phi_alpha, phi_beta))
 
     # Register variational parameters for r (dispersion)
     mu_loc = numpyro.param("mu_loc", jnp.full(n_genes, mu_prior_params[0]))
@@ -370,20 +368,30 @@ def nbvcp_guide(
     )
     numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        phi_capture_alpha = numpyro.param(
-            "phi_capture_alpha",
-            jnp.full(n_cells, phi_capture_prior_params[0]),
-            constraint=constraints.positive,
-        )
-        phi_capture_beta = numpyro.param(
-            "phi_capture_beta",
-            jnp.full(n_cells, phi_capture_prior_params[1]),
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
-        )
+    # Set up cell-specific capture probability parameters
+    phi_capture_alpha = numpyro.param(
+        "phi_capture_alpha",
+        jnp.full(n_cells, phi_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    phi_capture_beta = numpyro.param(
+        "phi_capture_beta",
+        jnp.full(n_cells, phi_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample phi_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "phi_capture",
+                BetaPrime(phi_capture_alpha[idx], phi_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -551,20 +559,30 @@ def zinbvcp_guide(
     )
     numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        phi_capture_alpha = numpyro.param(
-            "phi_capture_alpha",
-            jnp.full(n_cells, phi_capture_prior_params[0]),
-            constraint=constraints.positive,
-        )
-        phi_capture_beta = numpyro.param(
-            "phi_capture_beta",
-            jnp.full(n_cells, phi_capture_prior_params[1]),
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
-        )
+    # Set up cell-specific capture probability parameters
+    phi_capture_alpha = numpyro.param(
+        "phi_capture_alpha",
+        jnp.full(n_cells, phi_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    phi_capture_beta = numpyro.param(
+        "phi_capture_beta",
+        jnp.full(n_cells, phi_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample phi_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "phi_capture",
+                BetaPrime(phi_capture_alpha[idx], phi_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -1057,20 +1075,30 @@ def nbvcp_mixture_guide(
         )
         numpyro.sample("phi", BetaPrime(phi_alpha, phi_beta))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        phi_capture_alpha = numpyro.param(
-            "phi_capture_alpha",
-            phi_capture_prior_params[0],
-            constraint=constraints.positive,
-        )
-        phi_capture_beta = numpyro.param(
-            "phi_capture_beta",
-            phi_capture_prior_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
-        )
+    # Set up cell-specific capture probability parameters
+    phi_capture_alpha = numpyro.param(
+        "phi_capture_alpha",
+        jnp.full(n_cells, phi_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    phi_capture_beta = numpyro.param(
+        "phi_capture_beta",
+        jnp.full(n_cells, phi_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample phi_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "phi_capture",
+                BetaPrime(phi_capture_alpha[idx], phi_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -1251,20 +1279,30 @@ def zinbvcp_mixture_guide(
         )
         numpyro.sample("phi", BetaPrime(phi_alpha, phi_beta))
 
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        phi_capture_alpha = numpyro.param(
-            "phi_capture_alpha",
-            phi_capture_prior_params[0],
-            constraint=constraints.positive,
-        )
-        phi_capture_beta = numpyro.param(
-            "phi_capture_beta",
-            phi_capture_prior_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
-        )
+    # Set up cell-specific capture probability parameters
+    phi_capture_alpha = numpyro.param(
+        "phi_capture_alpha",
+        jnp.full(n_cells, phi_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    phi_capture_beta = numpyro.param(
+        "phi_capture_beta",
+        jnp.full(n_cells, phi_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample phi_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "phi_capture",
+                BetaPrime(phi_capture_alpha[idx], phi_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
