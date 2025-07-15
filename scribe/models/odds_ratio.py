@@ -642,7 +642,7 @@ def nbdm_mixture_model(
     r = numpyro.deterministic("r", mu * phi)
 
     # Define the base distribution for each component (Negative Binomial)
-    base_dist = dist.NegativeBinomialLogits(r, phi).to_event(1)
+    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
     # Create the mixture distribution over components
     mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
 
@@ -802,7 +802,7 @@ def zinb_mixture_model(
     r = numpyro.deterministic("r", mu * phi)
 
     # Define the base distribution for each component (Negative Binomial)
-    base_dist = dist.NegativeBinomialLogits(r, phi)
+    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
     # Create the zero-inflated distribution over components
     zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
     # Create the mixture distribution over components
