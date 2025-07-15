@@ -260,9 +260,13 @@ def nbvcp_model(
                     "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
 
+                # Reshape p_capture for broadcasting to genes
+                # Shape: (batch_size, 1)
+                p_capture_reshaped = p_capture[:, None]  
+
                 # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture / (1 - p * (1 - p_capture))
+                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 # Define distribution and sample
@@ -280,8 +284,13 @@ def nbvcp_model(
                     "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
 
+                # Reshape p_capture for broadcasting to genes
+                # Shape: (batch_size, 1)
+                p_capture_reshaped = p_capture[:, None]  
+
+                # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture / (1 - p * (1 - p_capture))
+                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
@@ -295,8 +304,13 @@ def nbvcp_model(
                 "p_capture", jsp.special.expit(p_capture_unconstrained)
             )
 
+            # Reshape p_capture for broadcasting to genes
+            # Shape: (batch_size, 1)
+            p_capture_reshaped = p_capture[:, None]  
+
+            # Compute effective probability
             p_hat = numpyro.deterministic(
-                "p_hat", p * p_capture / (1 - p * (1 - p_capture))
+                "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
             )
 
             base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
@@ -343,20 +357,30 @@ def nbvcp_guide(
     )
     numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
 
-    # Register cell-specific capture probability parameters
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_loc = numpyro.param(
-            "p_capture_unconstrained_loc", p_capture_guide_params[0]
-        )
-        p_capture_scale = numpyro.param(
-            "p_capture_unconstrained_scale",
-            p_capture_guide_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "p_capture_unconstrained",
-            dist.Normal(p_capture_loc, p_capture_scale),
-        )
+    # Set up cell-specific capture probability parameters
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
+    )
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -412,9 +436,13 @@ def zinbvcp_model(
                     "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
 
+                # Reshape p_capture for broadcasting to genes
+                # Shape: (batch_size, 1)
+                p_capture_reshaped = p_capture[:, None]  
+
                 # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture / (1 - p * (1 - p_capture))
+                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 # Define distribution and sample
@@ -435,8 +463,13 @@ def zinbvcp_model(
                     "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
 
+                # Reshape p_capture for broadcasting to genes
+                # Shape: (batch_size, 1)
+                p_capture_reshaped = p_capture[:, None]  
+
+                # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture / (1 - p * (1 - p_capture))
+                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
                 )
 
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
@@ -453,8 +486,13 @@ def zinbvcp_model(
                 "p_capture", jsp.special.expit(p_capture_unconstrained)
             )
 
+            # Reshape p_capture for broadcasting to genes
+            # Shape: (batch_size, 1)
+            p_capture_reshaped = p_capture[:, None]  
+
+            # Compute effective probability
             p_hat = numpyro.deterministic(
-                "p_hat", p * p_capture / (1 - p * (1 - p_capture))
+                "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
             )
 
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
@@ -515,20 +553,30 @@ def zinbvcp_guide(
     )
     numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
-    # Register cell-specific capture probability parameters
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_loc = numpyro.param(
-            "p_capture_unconstrained_loc", p_capture_guide_params[0]
-        )
-        p_capture_scale = numpyro.param(
-            "p_capture_unconstrained_scale",
-            p_capture_guide_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "p_capture_unconstrained",
-            dist.Normal(p_capture_loc, p_capture_scale),
-        )
+    # Set up cell-specific capture probability parameters
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
+    )
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -1064,20 +1112,30 @@ def nbvcp_mixture_guide(
     )
     numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
 
-    # Register cell-specific capture probability parameters
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_loc = numpyro.param(
-            "p_capture_unconstrained_loc", p_capture_guide_params[0]
-        )
-        p_capture_scale = numpyro.param(
-            "p_capture_unconstrained_scale",
-            p_capture_guide_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "p_capture_unconstrained",
-            dist.Normal(p_capture_loc, p_capture_scale),
-        )
+    # Set up cell-specific capture probability parameters
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
+    )
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -1291,20 +1349,30 @@ def zinbvcp_mixture_guide(
     )
     numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
-    # Register cell-specific capture probability parameters
-    with numpyro.plate("cells", n_cells, subsample_size=batch_size):
-        p_capture_loc = numpyro.param(
-            "p_capture_unconstrained_loc", p_capture_guide_params[0]
-        )
-        p_capture_scale = numpyro.param(
-            "p_capture_unconstrained_scale",
-            p_capture_guide_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample(
-            "p_capture_unconstrained",
-            dist.Normal(p_capture_loc, p_capture_scale),
-        )
+    # Set up cell-specific capture probability parameters
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
+    )
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
