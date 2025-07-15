@@ -1296,6 +1296,30 @@ def zinbvcp_mixture_guide(
         dist.Normal(mixing_loc, mixing_scale),
     )
 
+    # Register r parameters
+    r_loc = numpyro.param(
+        "r_unconstrained_loc",
+        jnp.full((n_components, n_genes), r_guide_params[0]),
+    )
+    r_scale = numpyro.param(
+        "r_unconstrained_scale",
+        jnp.full((n_components, n_genes), r_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+
+    # Register gate parameters
+    gate_loc = numpyro.param(
+        "gate_unconstrained_loc",
+        jnp.full((n_components, n_genes), gate_guide_params[0]),
+    )
+    gate_scale = numpyro.param(
+        "gate_unconstrained_scale",
+        jnp.full((n_components, n_genes), gate_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
+
     if model_config.component_specific_params:
         # Each component has its own p
         p_loc = numpyro.param(
@@ -1316,29 +1340,6 @@ def zinbvcp_mixture_guide(
             constraint=constraints.positive,
         )
         numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
-
-    # Register r parameters
-    r_loc = numpyro.param(
-        "r_unconstrained_loc",
-        jnp.full((n_components, n_genes), r_guide_params[0]),
-    )
-    r_scale = numpyro.param(
-        "r_unconstrained_scale",
-        jnp.full((n_components, n_genes), r_guide_params[1]),
-        constraint=constraints.positive,
-    )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
-
-    gate_loc = numpyro.param(
-        "gate_unconstrained_loc",
-        jnp.full((n_components, n_genes), gate_guide_params[0]),
-    )
-    gate_scale = numpyro.param(
-        "gate_unconstrained_scale",
-        jnp.full((n_components, n_genes), gate_guide_params[1]),
-        constraint=constraints.positive,
-    )
-    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
     # Set up cell-specific capture probability parameters
     p_capture_loc = numpyro.param(
