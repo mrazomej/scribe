@@ -262,11 +262,12 @@ def nbvcp_model(
 
                 # Reshape p_capture for broadcasting to genes
                 # Shape: (batch_size, 1)
-                p_capture_reshaped = p_capture[:, None]  
+                p_capture_reshaped = p_capture[:, None]
 
                 # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    "p_hat",
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
 
                 # Define distribution and sample
@@ -286,11 +287,12 @@ def nbvcp_model(
 
                 # Reshape p_capture for broadcasting to genes
                 # Shape: (batch_size, 1)
-                p_capture_reshaped = p_capture[:, None]  
+                p_capture_reshaped = p_capture[:, None]
 
                 # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    "p_hat",
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
 
                 base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
@@ -306,11 +308,12 @@ def nbvcp_model(
 
             # Reshape p_capture for broadcasting to genes
             # Shape: (batch_size, 1)
-            p_capture_reshaped = p_capture[:, None]  
+            p_capture_reshaped = p_capture[:, None]
 
             # Compute effective probability
             p_hat = numpyro.deterministic(
-                "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                "p_hat",
+                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
             )
 
             base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
@@ -438,11 +441,12 @@ def zinbvcp_model(
 
                 # Reshape p_capture for broadcasting to genes
                 # Shape: (batch_size, 1)
-                p_capture_reshaped = p_capture[:, None]  
+                p_capture_reshaped = p_capture[:, None]
 
                 # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    "p_hat",
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
 
                 # Define distribution and sample
@@ -465,11 +469,12 @@ def zinbvcp_model(
 
                 # Reshape p_capture for broadcasting to genes
                 # Shape: (batch_size, 1)
-                p_capture_reshaped = p_capture[:, None]  
+                p_capture_reshaped = p_capture[:, None]
 
                 # Compute effective probability
                 p_hat = numpyro.deterministic(
-                    "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                    "p_hat",
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
                 )
 
                 base_dist = dist.NegativeBinomialProbs(r, p_hat)
@@ -488,11 +493,12 @@ def zinbvcp_model(
 
             # Reshape p_capture for broadcasting to genes
             # Shape: (batch_size, 1)
-            p_capture_reshaped = p_capture[:, None]  
+            p_capture_reshaped = p_capture[:, None]
 
             # Compute effective probability
             p_hat = numpyro.deterministic(
-                "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                "p_hat",
+                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped)),
             )
 
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
@@ -1373,90 +1379,136 @@ def zinbvcp_mixture_guide(
 
 
 def get_posterior_distributions(
-    params: Dict[str, jnp.ndarray], model_config: ModelConfig
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    split: bool = False,
 ) -> Dict[str, dist.Distribution]:
     """
-    Get posterior distributions for unconstrained parameters.
+    Constructs and returns a dictionary of posterior distributions from
+    estimated parameters.
 
-    This function constructs and returns a dictionary of posterior distributions from
-    estimated parameters for the unconstrained parameterization. It builds the
+    This function is specific to the 'unconstrained' parameterization and builds the
     appropriate `numpyro` distributions based on the guide parameters found in
     the `params` dictionary. It handles both single and mixture models.
 
     Args:
         params: A dictionary of estimated parameters from the variational guide.
         model_config: The model configuration object.
+        split: If True, returns lists of individual distributions for
+        multidimensional parameters instead of batch distributions.
 
     Returns:
         A dictionary mapping parameter names to their posterior distributions.
     """
     distributions = {}
-    n_components = model_config.n_components
-    component_specific = model_config.component_specific_params
 
-    # Single models (or shared params in mixture models)
+    # p_unconstrained parameter (Normal distribution)
     if "p_unconstrained_loc" in params and "p_unconstrained_scale" in params:
-        distributions["p_unconstrained"] = dist.Normal(
-            params["p_unconstrained_loc"], params["p_unconstrained_scale"]
-        )
-
-    if "r_unconstrained_loc" in params and "r_unconstrained_scale" in params:
-        distributions["r_unconstrained"] = dist.Normal(
-            params["r_unconstrained_loc"], params["r_unconstrained_scale"]
-        )
-
-    if (
-        "gate_unconstrained_loc" in params
-        and "gate_unconstrained_scale" in params
-    ):
-        distributions["gate_unconstrained"] = dist.Normal(
-            params["gate_unconstrained_loc"], params["gate_unconstrained_scale"]
-        )
-
-    if (
-        "p_capture_unconstrained_loc" in params
-        and "p_capture_unconstrained_scale" in params
-    ):
-        distributions["p_capture_unconstrained"] = dist.Normal(
-            params["p_capture_unconstrained_loc"],
-            params["p_capture_unconstrained_scale"],
-        )
-
-    # Mixture-specific parameters
-    if n_components is not None:
-        if (
-            "mixing_logits_unconstrained_loc" in params
-            and "mixing_logits_unconstrained_scale" in params
-        ):
-            distributions["mixing_logits_unconstrained"] = dist.Normal(
-                params["mixing_logits_unconstrained_loc"],
-                params["mixing_logits_unconstrained_scale"],
-            )
-
-        # Component-specific parameters for mixture models
-        if (
-            "p_unconstrained_loc" in params
-            and "p_unconstrained_scale" in params
-        ):
+        if split and model_config.component_specific_params:
+            # Component-specific p_unconstrained parameters
+            distributions["p_unconstrained"] = [
+                dist.Normal(
+                    params["p_unconstrained_loc"][i],
+                    params["p_unconstrained_scale"][i],
+                )
+                for i in range(params["p_unconstrained_loc"].shape[0])
+            ]
+        else:
             distributions["p_unconstrained"] = dist.Normal(
                 params["p_unconstrained_loc"], params["p_unconstrained_scale"]
             )
 
-        if (
-            "r_unconstrained_loc" in params
-            and "r_unconstrained_scale" in params
-        ):
+    # r_unconstrained parameter (Normal distribution)
+    if "r_unconstrained_loc" in params and "r_unconstrained_scale" in params:
+        if split and len(params["r_unconstrained_loc"].shape) == 1:
+            # Gene-specific r_unconstrained parameters
+            distributions["r_unconstrained"] = [
+                dist.Normal(
+                    params["r_unconstrained_loc"][c],
+                    params["r_unconstrained_scale"][c],
+                )
+                for c in range(params["r_unconstrained_loc"].shape[0])
+            ]
+        elif split and len(params["r_unconstrained_loc"].shape) == 2:
+            # Component and gene-specific r_unconstrained parameters
+            distributions["r_unconstrained"] = [
+                [
+                    dist.Normal(
+                        params["r_unconstrained_loc"][c, g],
+                        params["r_unconstrained_scale"][c, g],
+                    )
+                    for g in range(params["r_unconstrained_loc"].shape[1])
+                ]
+                for c in range(params["r_unconstrained_loc"].shape[0])
+            ]
+        else:
             distributions["r_unconstrained"] = dist.Normal(
                 params["r_unconstrained_loc"], params["r_unconstrained_scale"]
             )
 
-        if (
-            "gate_unconstrained_loc" in params
-            and "gate_unconstrained_scale" in params
-        ):
+    # gate_unconstrained parameter (Normal distribution)
+    if (
+        "gate_unconstrained_loc" in params
+        and "gate_unconstrained_scale" in params
+    ):
+        if split and len(params["gate_unconstrained_loc"].shape) == 1:
+            # Gene-specific gate_unconstrained parameters
+            distributions["gate_unconstrained"] = [
+                dist.Normal(
+                    params["gate_unconstrained_loc"][c],
+                    params["gate_unconstrained_scale"][c],
+                )
+                for c in range(params["gate_unconstrained_loc"].shape[0])
+            ]
+        elif split and len(params["gate_unconstrained_loc"].shape) == 2:
+            # Component and gene-specific gate_unconstrained parameters
+            distributions["gate_unconstrained"] = [
+                [
+                    dist.Normal(
+                        params["gate_unconstrained_loc"][c, g],
+                        params["gate_unconstrained_scale"][c, g],
+                    )
+                    for g in range(params["gate_unconstrained_loc"].shape[1])
+                ]
+                for c in range(params["gate_unconstrained_loc"].shape[0])
+            ]
+        else:
             distributions["gate_unconstrained"] = dist.Normal(
                 params["gate_unconstrained_loc"],
                 params["gate_unconstrained_scale"],
             )
+
+    # p_capture_unconstrained parameter (Normal distribution)
+    if (
+        "p_capture_unconstrained_loc" in params
+        and "p_capture_unconstrained_scale" in params
+    ):
+        if split and len(params["p_capture_unconstrained_loc"].shape) == 1:
+            # Cell-specific p_capture_unconstrained parameters
+            distributions["p_capture_unconstrained"] = [
+                dist.Normal(
+                    params["p_capture_unconstrained_loc"][c],
+                    params["p_capture_unconstrained_scale"][c],
+                )
+                for c in range(params["p_capture_unconstrained_loc"].shape[0])
+            ]
+        else:
+            distributions["p_capture_unconstrained"] = dist.Normal(
+                params["p_capture_unconstrained_loc"],
+                params["p_capture_unconstrained_scale"],
+            )
+
+    # mixing_logits_unconstrained parameter (Normal distribution)
+    if (
+        "mixing_logits_unconstrained_loc" in params
+        and "mixing_logits_unconstrained_scale" in params
+    ):
+        mixing_dist = dist.Normal(
+            params["mixing_logits_unconstrained_loc"],
+            params["mixing_logits_unconstrained_scale"],
+        )
+        # mixing_logits_unconstrained is typically not split since it represents a single
+        # probability vector
+        distributions["mixing_logits_unconstrained"] = mixing_dist
 
     return distributions

@@ -230,7 +230,11 @@ class ScribeSVIResults:
     # Get distributions using configs
     # --------------------------------------------------------------------------
 
-    def get_distributions(self, backend: str = "numpyro") -> Dict[str, Any]:
+    def get_distributions(
+        self,
+        backend: str = "numpyro",
+        split: bool = False,
+    ) -> Dict[str, Any]:
         """
         Get the variational distributions for all parameters.
 
@@ -243,6 +247,9 @@ class ScribeSVIResults:
             Statistical package to use for distributions. Must be one of:
             - "scipy": Returns scipy.stats distributions
             - "numpyro": Returns numpyro.distributions
+        split : bool, default=False
+            If True, returns lists of individual distributions for
+            multidimensional parameters instead of batch distributions.
 
         Returns
         -------
@@ -279,13 +286,31 @@ class ScribeSVIResults:
                 f"get_distributions not implemented for '{self.model_config.parameterization}'."
             )
 
-        distributions = get_dist_fn(self.params, self.model_config)
+        distributions = get_dist_fn(
+            self.params, self.model_config, split=split
+        )
 
         if backend == "scipy":
-            return {
-                name: numpyro_to_scipy(dist)
-                for name, dist in distributions.items()
-            }
+            # Handle conversion to scipy, accounting for split distributions
+            scipy_distributions = {}
+            for name, dist_obj in distributions.items():
+                if isinstance(dist_obj, list):
+                    # Handle split distributions - convert each element
+                    if all(isinstance(sublist, list) for sublist in dist_obj):
+                        # Handle nested lists (2D case: components × genes)
+                        scipy_distributions[name] = [
+                            [numpyro_to_scipy(d) for d in sublist] 
+                            for sublist in dist_obj
+                        ]
+                    else:
+                        # Handle simple lists (1D case: genes or components)
+                        scipy_distributions[name] = [
+                            numpyro_to_scipy(d) for d in dist_obj
+                        ]
+                else:
+                    # Handle single distribution
+                    scipy_distributions[name] = numpyro_to_scipy(dist_obj)
+            return scipy_distributions
 
         return distributions
 
