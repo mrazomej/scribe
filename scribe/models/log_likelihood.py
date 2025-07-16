@@ -652,6 +652,9 @@ def nbdm_mixture_log_likelihood(
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
+    # Determine if p is component-specific or shared
+    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -664,9 +667,14 @@ def nbdm_mixture_log_likelihood(
     counts = jnp.expand_dims(counts, axis=-1)
     # r: (n_components, n_genes) -> (1, n_genes, n_components)
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # p: scalar -> (1, 1, 1) for broadcasting
-    # First convert scalar to array, then add dimensions
-    p = jnp.array(p)[None, None, None]
+
+    # Handle p parameter based on whether it's component-specific or shared
+    if p_is_component_specific:
+        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+        p = jnp.expand_dims(p, axis=(0, 1))
+    else:
+        # Shared p: scalar -> (1, 1, 1) for broadcasting
+        p = jnp.array(p)[None, None, None]
 
     # Create base NB distribution vectorized over cells, components, genes
     nb_dist = dist.NegativeBinomialProbs(r, p)
@@ -854,6 +862,9 @@ def zinb_mixture_log_likelihood(
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
+    # Determine if p is component-specific or shared
+    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -866,11 +877,16 @@ def zinb_mixture_log_likelihood(
     counts = jnp.expand_dims(counts, axis=-1)
     # r: (n_components, n_genes) -> (1, n_genes, n_components)
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # gate: (n_components, n_genes) -> (1, n_components, n_genes)
+    # gate: (n_components, n_genes) -> (1, n_genes, n_components)
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
-    # p: scalar -> (1, 1, 1) for broadcasting
-    # First convert scalar to array, then add dimensions
-    p = jnp.array(p)[None, None, None]
+
+    # Handle p parameter based on whether it's component-specific or shared
+    if p_is_component_specific:
+        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+        p = jnp.expand_dims(p, axis=(0, 1))
+    else:
+        # Shared p: scalar -> (1, 1, 1) for broadcasting
+        p = jnp.array(p)[None, None, None]
 
     # Create base NB distribution vectorized over cells, genes, components
     # r: (1, n_genes, n_components)
@@ -1005,7 +1021,7 @@ def nbvcp_mixture_log_likelihood(
     params : Dict
         Dictionary containing model parameters:
             - 'mixing_weights': probabilities for each component
-            - 'p': base success probability parameter
+            - 'p': base success probability parameter (shared or component-specific)
             - 'r': dispersion parameters for each gene and component
             - 'p_capture': cell-specific capture probabilities
     batch_size : Optional[int]
@@ -1068,6 +1084,9 @@ def nbvcp_mixture_log_likelihood(
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
+    # Determine if p is component-specific or shared
+    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -1082,11 +1101,19 @@ def nbvcp_mixture_log_likelihood(
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
     # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
     p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
-    # p: scalar -> (1, 1, 1) for broadcasting
-    p = jnp.array(p)[None, None, None]
-    # Compute effective probability for each cell
-    # This will broadcast to shape (n_cells, 1, 1)
-    p_hat = p / (p_capture + p * (1 - p_capture))
+
+    # Handle p parameter based on whether it's component-specific or shared
+    if p_is_component_specific:
+        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+        p = jnp.expand_dims(p, axis=(0, 1))
+    else:
+        # Shared p: scalar -> (1, 1, 1) for broadcasting
+        p = jnp.array(p)[None, None, None]
+
+    # Compute effective probability for each cell using the correct formula
+    # p_hat = p * p_capture / (1 - p * (1 - p_capture))
+    # This will broadcast to shape (n_cells, 1, n_components) or (n_cells, 1, 1)
+    p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     # Validate and process weights
     if weights is not None:
@@ -1102,13 +1129,13 @@ def nbvcp_mixture_log_likelihood(
         if batch_size is None:
             # Create base NB distribution vectorized over cells, genes, components
             # r: (1, n_genes, n_components)
-            # p_hat: (n_cells, 1, 1) or scalar
+            # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
             nb_dist = dist.NegativeBinomialProbs(r, p_hat)
 
             # Compute log probs for all cells at once
-            # This gives (n_cells, n_components, n_genes)
+            # This gives (n_cells, n_genes, n_components)
             gene_log_probs = nb_dist.log_prob(counts)
 
             # Apply weights based on weight_type
@@ -1130,14 +1157,16 @@ def nbvcp_mixture_log_likelihood(
                 # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                # Create base NB distribution vectorized over cells, genes, components
-                # r: (1, n_genes, n_components)
-                # p_hat: (n_cells, 1, 1)
-                # counts: (n_cells, n_genes, 1)
-                # This will broadcast to: (batch_size, n_genes, n_components)
-                nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx]
+
+                # Compute p_hat for this batch
+                batch_p_capture = p_capture[start_idx:end_idx]
+                batch_p_hat = (
+                    p * batch_p_capture / (1 - p * (1 - batch_p_capture))
                 )
+
+                # Create base NB distribution for batch
+                nb_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
+
                 # Compute log probs for batch
                 batch_log_probs = nb_dist.log_prob(counts[start_idx:end_idx])
 
@@ -1147,7 +1176,7 @@ def nbvcp_mixture_log_likelihood(
                 elif weight_type == "additive":
                     batch_log_probs += jnp.expand_dims(weights, axis=(0, -1))
 
-                # Sum over genes (axis=1) to get (n_cells, n_components)
+                # Sum over genes (axis=1) to get (batch_size, n_components)
                 # Store log probs for batch
                 log_probs = log_probs.at[start_idx:end_idx].set(
                     jnp.sum(batch_log_probs, axis=1) + jnp.log(mixing_weights)
@@ -1157,7 +1186,7 @@ def nbvcp_mixture_log_likelihood(
         if batch_size is None:
             # Create base NB distribution vectorized over cells, genes, components
             # r: (1, n_genes, n_components)
-            # p_hat: (n_cells, 1, 1) or scalar
+            # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
             nb_dist = dist.NegativeBinomialProbs(r, p_hat)
@@ -1184,14 +1213,15 @@ def nbvcp_mixture_log_likelihood(
                 # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                # Create base NB distribution vectorized over cells, genes, components
-                # r: (1, n_genes, n_components)
-                # p_hat: (n_cells, 1, 1)
-                # counts: (n_cells, n_genes, 1)
-                # This will broadcast to: (batch_size, n_genes, n_components)
-                nb_dist = dist.NegativeBinomialProbs(
-                    r, p_hat[start_idx:end_idx]
+
+                # Compute p_hat for this batch
+                batch_p_capture = p_capture[start_idx:end_idx]
+                batch_p_hat = (
+                    p * batch_p_capture / (1 - p * (1 - batch_p_capture))
                 )
+
+                # Create base NB distribution for batch
+                nb_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
 
                 # Compute log probs for batch
                 # Shape: (batch_size, n_genes, n_components)
@@ -1307,6 +1337,9 @@ def zinbvcp_mixture_log_likelihood(
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
+    # Determine if p is component-specific or shared
+    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
+
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -1323,11 +1356,19 @@ def zinbvcp_mixture_log_likelihood(
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
     # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
     p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
-    # p: scalar -> (1, 1, 1) for broadcasting
-    p = jnp.array(p)[None, None, None]
-    # Compute effective probability for each cell
-    # This will broadcast to shape (n_cells, 1, 1)
-    p_hat = p / (p_capture + p * (1 - p_capture))
+
+    # Handle p parameter based on whether it's component-specific or shared
+    if p_is_component_specific:
+        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+        p = jnp.expand_dims(p, axis=(0, 1))
+    else:
+        # Shared p: scalar -> (1, 1, 1) for broadcasting
+        p = jnp.array(p)[None, None, None]
+
+    # Compute effective probability for each cell using the correct formula
+    # p_hat = p * p_capture / (1 - p * (1 - p_capture))
+    # This will broadcast to shape (n_cells, 1, n_components) or (n_cells, 1, 1)
+    p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     # Validate and process weights
     if weights is not None:
@@ -1341,9 +1382,10 @@ def zinbvcp_mixture_log_likelihood(
 
     if return_by == "cell":
         if batch_size is None:
-            # Create base NB distribution vectorized over cells, genes, components
+            # Create base NB distribution vectorized over 
+            # cells, genes, components
             # r: (1, n_genes, n_components)
-            # p_hat: (n_cells, 1, 1) or scalar
+            # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
             nb_dist = dist.NegativeBinomialProbs(r, p_hat)
@@ -1372,9 +1414,10 @@ def zinbvcp_mixture_log_likelihood(
                 # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                # Create base NB distribution vectorized over cells, genes, components
+                # Create base NB distribution vectorized over 
+                # cells, genes, components
                 # r: (1, n_genes, n_components)
-                # p_hat: (n_cells, 1, 1) or scalar
+                # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
                 nb_dist = dist.NegativeBinomialProbs(
@@ -1400,9 +1443,10 @@ def zinbvcp_mixture_log_likelihood(
 
     else:  # return_by == 'gene'
         if batch_size is None:
-            # Create base NB distribution vectorized over cells, genes, components
+            # Create base NB distribution vectorized over 
+            # cells, genes, components
             # r: (1, n_genes, n_components)
-            # p_hat: (n_cells, 1, 1) or scalar
+            # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
             # counts: (n_cells, n_genes, 1)
             # This will broadcast to: (n_cells, n_genes, n_components)
             nb_dist = dist.NegativeBinomialProbs(r, p_hat)
@@ -1431,9 +1475,10 @@ def zinbvcp_mixture_log_likelihood(
                 # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                # Create base NB distribution vectorized over cells, genes, components
+                # Create base NB distribution vectorized over 
+                # cells, genes, components
                 # r: (1, n_genes, n_components)
-                # p_hat: (n_cells, 1, 1) or scalar
+                # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
                 # counts: (n_cells, n_genes, 1)
                 # This will broadcast to: (batch_size, n_genes, n_components)
                 nb_dist = dist.NegativeBinomialProbs(
