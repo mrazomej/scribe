@@ -29,13 +29,12 @@ from ..stats import (
     kl_lognormal,
     jensen_shannon_gamma,
     jensen_shannon_lognormal,
-    log_liks_to_probs,
 )
 from ..models.model_config import ModelConfig
 from ..models.standard import get_posterior_distributions
 from ..utils import numpyro_to_scipy
 
-from ..cell_assignment import temperature_scaling
+
 from ..core.normalization import normalize_counts_from_posterior
 
 try:
@@ -152,13 +151,15 @@ class ScribeSVIResults:
 
         # Validate required distributions based on model type and parameterization
         parameterization = self.model_config.parameterization
-        
+
         # ZINB models require gate priors
         if "zinb" in self.model_type:
             if parameterization == "unconstrained":
                 # Unconstrained uses gate_unconstrained_prior
                 if self.model_config.gate_unconstrained_prior is None:
-                    raise ValueError("ZINB models with unconstrained parameterization require gate_unconstrained_prior")
+                    raise ValueError(
+                        "ZINB models with unconstrained parameterization require gate_unconstrained_prior"
+                    )
             else:
                 # Standard, linked, odds_ratio use gate_param_prior
                 if self.model_config.gate_param_prior is None:
@@ -167,17 +168,23 @@ class ScribeSVIResults:
             # Non-ZINB models should not have gate priors
             if parameterization == "unconstrained":
                 if self.model_config.gate_unconstrained_prior is not None:
-                    raise ValueError("Non-ZINB models should not have gate_unconstrained_prior")
+                    raise ValueError(
+                        "Non-ZINB models should not have gate_unconstrained_prior"
+                    )
             else:
                 if self.model_config.gate_param_prior is not None:
-                    raise ValueError("Non-ZINB models should not have gate_param_prior")
+                    raise ValueError(
+                        "Non-ZINB models should not have gate_param_prior"
+                    )
 
         # VCP models require capture probability priors
         if "vcp" in self.model_type:
             if parameterization == "unconstrained":
                 # Unconstrained uses p_capture_unconstrained_prior
                 if self.model_config.p_capture_unconstrained_prior is None:
-                    raise ValueError("VCP models with unconstrained parameterization require p_capture_unconstrained_prior")
+                    raise ValueError(
+                        "VCP models with unconstrained parameterization require p_capture_unconstrained_prior"
+                    )
             elif parameterization in ["standard", "linked"]:
                 # Standard and linked use p_capture_param_prior
                 if self.model_config.p_capture_param_prior is None:
@@ -185,18 +192,26 @@ class ScribeSVIResults:
             elif parameterization == "odds_ratio":
                 # Odds_ratio uses phi_capture_param_prior
                 if self.model_config.phi_capture_param_prior is None:
-                    raise ValueError("VCP models with odds_ratio parameterization require phi_capture_param_prior")
+                    raise ValueError(
+                        "VCP models with odds_ratio parameterization require phi_capture_param_prior"
+                    )
         else:
             # Non-VCP models should not have capture probability priors
             if parameterization == "unconstrained":
                 if self.model_config.p_capture_unconstrained_prior is not None:
-                    raise ValueError("Non-VCP models should not have p_capture_unconstrained_prior")
+                    raise ValueError(
+                        "Non-VCP models should not have p_capture_unconstrained_prior"
+                    )
             elif parameterization in ["standard", "linked"]:
                 if self.model_config.p_capture_param_prior is not None:
-                    raise ValueError("Non-VCP models should not have p_capture_param_prior")
+                    raise ValueError(
+                        "Non-VCP models should not have p_capture_param_prior"
+                    )
             elif parameterization == "odds_ratio":
                 if self.model_config.phi_capture_param_prior is not None:
-                    raise ValueError("Non-VCP models should not have phi_capture_param_prior")
+                    raise ValueError(
+                        "Non-VCP models should not have phi_capture_param_prior"
+                    )
 
     # --------------------------------------------------------------------------
     # Create ScribeSVIResults from AnnData object
@@ -286,9 +301,7 @@ class ScribeSVIResults:
                 f"get_distributions not implemented for '{self.model_config.parameterization}'."
             )
 
-        distributions = get_dist_fn(
-            self.params, self.model_config, split=split
-        )
+        distributions = get_dist_fn(self.params, self.model_config, split=split)
 
         if backend == "scipy":
             # Handle conversion to scipy, accounting for split distributions
@@ -299,7 +312,7 @@ class ScribeSVIResults:
                     if all(isinstance(sublist, list) for sublist in dist_obj):
                         # Handle nested lists (2D case: components × genes)
                         scipy_distributions[name] = [
-                            [numpyro_to_scipy(d) for d in sublist] 
+                            [numpyro_to_scipy(d) for d in sublist]
                             for sublist in dist_obj
                         ]
                     else:
@@ -1557,12 +1570,14 @@ class ScribeSVIResults:
 
         # Apply temperature scaling if requested
         if temperature is not None:
+            from ..core.cell_type_assignment import temperature_scaling
+
             log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
         print("Converting log-likelihoods to probabilities...")
 
         # Convert log-likelihoods to probabilities
-        probs = log_liks_to_probs(log_liks)
+        probs = softmax(log_liks, axis=-1)
 
         print("Computing entropy...")
 
@@ -1654,6 +1669,8 @@ class ScribeSVIResults:
 
         # Apply temperature scaling if requested
         if temperature is not None:
+            from ..core.cell_type_assignment import temperature_scaling
+
             log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
 
         # Compute log-sum-exp for normalization
@@ -1994,77 +2011,21 @@ class ScribeSVIResults:
         This computation is therefore not very useful, but it is included for
         completeness.
         """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "Cell type assignment only applies to mixture models with "
-                "multiple components"
-            )
+        from ..core.cell_type_assignment import compute_cell_type_probabilities
 
-        if verbose:
-            print("- Computing component-specific log-likelihoods...")
-
-        # Compute component-specific log-likelihoods
-        # Shape: (n_samples, n_cells, n_components)
-        log_liks = self.log_likelihood(
-            counts,
+        return compute_cell_type_probabilities(
+            results=self,
+            counts=counts,
             batch_size=batch_size,
-            return_by="cell",
             cells_axis=cells_axis,
             ignore_nans=ignore_nans,
-            split_components=True,
+            dtype=dtype,
+            fit_distribution=fit_distribution,
+            temperature=temperature,
             weights=weights,
             weight_type=weight_type,
-            dtype=dtype,
+            verbose=verbose,
         )
-
-        if verbose:
-            print("- Converting log-likelihoods to probabilities...")
-
-        # Apply temperature scaling if requested
-        if temperature is not None:
-            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
-
-        # Convert log-likelihoods to probabilities using optimized softmax
-        probabilities = log_liks_to_probs(log_liks)
-
-        # Get shapes
-        n_samples, n_cells, n_components = probabilities.shape
-
-        if fit_distribution:
-            if verbose:
-                print("- Fitting Dirichlet distribution...")
-
-            # Initialize array for Dirichlet concentration parameters
-            concentrations = jnp.zeros((n_cells, n_components), dtype=dtype)
-
-            # Fit Dirichlet distribution for each cell
-            for cell in range(n_cells):
-                if verbose and cell % 1000 == 0:
-                    print(
-                        f"    - Fitting Dirichlet distributions for "
-                        f"cells {cell}-{min(cell+1000, n_cells)} out of "
-                        f"{n_cells} cells"
-                    )
-
-                # Get probability vectors for this cell across all samples
-                cell_probs = probabilities[:, cell, :]
-                # Fit Dirichlet using Minka's fixed-point method
-                concentrations = concentrations.at[cell].set(
-                    fit_dirichlet_minka(cell_probs)
-                )
-
-            # Compute mean probabilities (Dirichlet mean)
-            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
-            mean_probabilities = concentrations / concentration_sums
-
-            return {
-                "concentration": concentrations,
-                "mean_probabilities": mean_probabilities,
-                "sample_probabilities": probabilities,
-            }
-        else:
-            return {"sample_probabilities": probabilities}
 
     # --------------------------------------------------------------------------
 
@@ -2124,73 +2085,22 @@ class ScribeSVIResults:
         ValueError
             If the model is not a mixture model
         """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "Cell type assignment only applies to mixture models with "
-                "multiple components"
-            )
-
-        if verbose:
-            print("- Computing component-specific log-likelihoods...")
-
-        # Get the log likelihood function
-        likelihood_fn = self._log_likelihood_fn()
-
-        # Get the MAP estimates
-        map_estimates = self.get_map()
-
-        # Replace NaN values with means if requested
-        if use_mean:
-            # Get distributions to compute means
-            distributions = self.get_distributions(backend="numpyro")
-
-            # Check each parameter for NaNs and replace with means
-            any_replaced = False
-            for param, value in map_estimates.items():
-                # Check if any values are NaN
-                if jnp.any(jnp.isnan(value)):
-                    # Update flag
-                    any_replaced = True
-                    # Get mean value
-                    mean_value = distributions[param].mean
-                    # Replace NaN values with means
-                    map_estimates[param] = jnp.where(
-                        jnp.isnan(value), mean_value, value
-                    )
-
-            if any_replaced and verbose:
-                print(
-                    "    - Replaced undefined MAP values with posterior means"
-                )
-
-        # Compute component-specific log-likelihoods using MAP estimates
-        # Shape: (n_cells, n_components)
-        log_liks = likelihood_fn(
-            counts,
-            map_estimates,
-            batch_size=batch_size,
-            cells_axis=cells_axis,
-            return_by="cell",
-            split_components=True,
-            weights=weights,
-            weight_type=weight_type,
-            dtype=dtype,
+        from ..core.cell_type_assignment import (
+            compute_cell_type_probabilities_map,
         )
 
-        # Assert shape of log_liks
-        assert log_liks.shape == (self.n_cells, self.n_components)
-
-        if verbose:
-            print("- Converting log-likelihoods to probabilities...")
-
-        # Apply temperature scaling if requested
-        if temperature is not None:
-            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
-
-        probabilities = log_liks_to_probs(log_liks)
-
-        return {"probabilities": probabilities}
+        return compute_cell_type_probabilities_map(
+            results=self,
+            counts=counts,
+            batch_size=batch_size,
+            cells_axis=cells_axis,
+            dtype=dtype,
+            temperature=temperature,
+            weights=weights,
+            weight_type=weight_type,
+            use_mean=use_mean,
+            verbose=verbose,
+        )
 
     # --------------------------------------------------------------------------
     # Count normalization methods
@@ -2354,7 +2264,7 @@ class ScribeSVIResults:
                     # Component-specific phi: shape (n_samples, n_components)
                     phi_reshaped = phi[:, :, None]
                 else:
-                    # Shared phi: shape (n_samples,) -> 
+                    # Shared phi: shape (n_samples,) ->
                     # broadcast to (n_samples, 1, 1)
                     phi_reshaped = phi[:, None, None]
             else:
@@ -2374,7 +2284,7 @@ class ScribeSVIResults:
                     # Component-specific p: shape (n_samples, n_components)
                     p_reshaped = p[:, :, None]
                 else:
-                    # Shared p: shape (n_samples,) -> 
+                    # Shared p: shape (n_samples,) ->
                     # broadcast to (n_samples, 1, 1)
                     p_reshaped = p[:, None, None]
             else:
