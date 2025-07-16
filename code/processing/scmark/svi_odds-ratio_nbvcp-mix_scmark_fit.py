@@ -5,6 +5,8 @@ import pickle
 import glob
 import warnings
 
+# Import numpy
+import numpy as np
 # Import scribe
 import scribe
 # Import library for reading 10x Genomics data
@@ -19,13 +21,11 @@ model_type = "nbvcp_mix"
 # Define number of steps
 n_steps = 50_000
 
+# Define parameterization
+parameterization = "odds_ratio"
+
 # Define batch size for memory-efficient sampling
 batch_size = 2048
-
-# Define priors
-p_prior = (1, 1)
-p_capture_prior = (1, 1)
-r_prior = (2, 0.075)
 
 # Define dataset directory
 DATA_DIR = f"/app/data/scmark_v2/scmark_v2/"
@@ -49,7 +49,7 @@ print(f"Found {len(files)} datasets")
 # %% ---------------------------------------------------------------------------
 
 # Loop over the datasets
-for i, file in enumerate(files[3:]):
+for i, file in enumerate(files):
     # Define dataset name
     dataset_name = file.split("/")[-1].split(".")[0]
 
@@ -63,13 +63,16 @@ for i, file in enumerate(files[3:]):
     # Define number of components
     n_components = len(data.obs["standard_true_celltype"].unique())
 
-    # Define mixing prior
-    mixing_prior = tuple([1] * n_components)
+    # Find genes with all zero counts
+    zero_counts = np.all(data.X.toarray() == 0, axis=0)
 
+    # Remove all zero genes
+    data = data[:, ~zero_counts]
 
     # Define output file
     output_file = f"{OUTPUT_DIR}/" \
-        f"{model_type}_" \
+        f"{model_type.replace('_', '-')}_" \
+        f"{parameterization.replace('_', '-')}_" \
         f"{n_components}components_" \
         f"{n_steps}steps_" \
         f"{batch_size}batch_" \
@@ -84,20 +87,17 @@ for i, file in enumerate(files[3:]):
 
     print(f"Running the inference...")
     # Run scribe
-    scribe_results = scribe.svi.run_scribe(
-        model_type=model_type,
+    scribe_results = scribe.run_scribe(
+        inference_method="svi",
+        parameterization=parameterization,
         counts=data,
-        n_steps=n_steps,
+        mixture_model=True,
         n_components=n_components,
+        n_steps=n_steps,
         batch_size=batch_size,
-        prior_params={
-            "p_prior": p_prior,
-            "r_prior": r_prior,
-            "p_capture_prior": p_capture_prior,
-            "mixing_prior": mixing_prior
-        }
     )
 
     # Save the results
     with open(output_file, "wb") as f:
         pickle.dump(scribe_results, f)
+# %% ---------------------------------------------------------------------------
