@@ -21,6 +21,7 @@ from ..core.normalization import normalize_counts_from_posterior
 # MCMC Subset class (moved to module level)
 # ------------------------------------------------------------------------------
 
+
 @dataclass
 class ScribeMCMCSubset:
     """Lightweight container for subset of MCMC results."""
@@ -110,7 +111,7 @@ class ScribeMCMCSubset:
         """
         if samples is None:
             return None
-        
+
         # List of gene-specific keys to subset
         gene_keys = []
         # r
@@ -129,7 +130,7 @@ class ScribeMCMCSubset:
         if "gate_unconstrained" in samples:
             gene_keys.append("gate_unconstrained")
         # (extend here for other gene-specific keys if needed)
-        
+
         new_samples = dict(samples)
         for key in gene_keys:
             if self.n_components is not None:
@@ -209,9 +210,7 @@ class ScribeMCMCSubset:
                 # Non-mixture model: mu has shape (n_samples, n_genes)
                 p_reshaped = p[:, None]
             # Compute r from mu and p
-            canonical_samples["r"] = (
-                mu * (1.0 - p_reshaped) / p_reshaped
-            )
+            canonical_samples["r"] = mu * (1.0 - p_reshaped) / p_reshaped
 
         # Handle unconstrained parameterization (r_unconstrained, p_unconstrained, etc.)
         if (
@@ -276,9 +275,7 @@ class ScribeMCMCSubset:
 
     # --------------------------------------------------------------------------
 
-    def get_posterior_quantiles(
-        self, param, quantiles=(0.025, 0.5, 0.975)
-    ):
+    def get_posterior_quantiles(self, param, quantiles=(0.025, 0.5, 0.975)):
         """Get quantiles for a specific parameter from samples."""
         return _get_posterior_quantiles(
             self.get_posterior_samples(), param, quantiles
@@ -421,10 +418,20 @@ class ScribeMCMCSubset:
         verbose: bool = True,
     ) -> Dict[str, jnp.ndarray]:
         """Compute probabilistic cell type assignments."""
-        # This method would need to be implemented for MCMC results
-        # For now, raise NotImplementedError
-        raise NotImplementedError(
-            "cell_type_probabilities not yet implemented for MCMC results"
+        from ..core.cell_type_assignment import compute_cell_type_probabilities
+
+        return compute_cell_type_probabilities(
+            results=self,
+            counts=counts,
+            batch_size=batch_size,
+            cells_axis=cells_axis,
+            ignore_nans=ignore_nans,
+            dtype=dtype,
+            fit_distribution=fit_distribution,
+            temperature=temperature,
+            weights=weights,
+            weight_type=weight_type,
+            verbose=verbose,
         )
 
 
@@ -1230,7 +1237,7 @@ class ScribeMCMCResults(MCMC):
         """
         if samples is None:
             return None
-        
+
         # List of gene-specific keys to subset
         gene_keys = []
         # r
@@ -1249,7 +1256,7 @@ class ScribeMCMCResults(MCMC):
         if "gate_unconstrained" in samples:
             gene_keys.append("gate_unconstrained")
         # (extend here for other gene-specific keys if needed)
-        
+
         new_samples = dict(samples)
         for key in gene_keys:
             if self.n_components is not None:
@@ -1560,80 +1567,21 @@ class ScribeMCMCResults(MCMC):
         This computation is therefore not very useful, but it is included for
         completeness.
         """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "Cell type assignment only applies to mixture models with "
-                "multiple components"
-            )
+        from ..core.cell_type_assignment import compute_cell_type_probabilities
 
-        if verbose:
-            print("- Computing component-specific log-likelihoods...")
-
-        # Compute component-specific log-likelihoods
-        # Shape: (n_samples, n_cells, n_components)
-        log_liks = self.log_likelihood(
-            counts,
+        return compute_cell_type_probabilities(
+            results=self,
+            counts=counts,
             batch_size=batch_size,
-            return_by="cell",
             cells_axis=cells_axis,
             ignore_nans=ignore_nans,
-            split_components=True,
+            dtype=dtype,
+            fit_distribution=fit_distribution,
+            temperature=temperature,
             weights=weights,
             weight_type=weight_type,
-            dtype=dtype,
+            verbose=verbose,
         )
-
-        if verbose:
-            print("- Converting log-likelihoods to probabilities...")
-
-        # Apply temperature scaling if requested
-        if temperature is not None:
-            from ..cell_assignment import temperature_scaling
-            log_liks = temperature_scaling(log_liks, temperature, dtype=dtype)
-
-        # Convert log-likelihoods to probabilities using optimized softmax
-        from ..stats import log_liks_to_probs
-        probabilities = log_liks_to_probs(log_liks)
-
-        # Get shapes
-        n_samples, n_cells, n_components = probabilities.shape
-
-        if fit_distribution:
-            if verbose:
-                print("- Fitting Dirichlet distribution...")
-
-            # Initialize array for Dirichlet concentration parameters
-            concentrations = jnp.zeros((n_cells, n_components), dtype=dtype)
-
-            # Fit Dirichlet distribution for each cell
-            from ..stats import fit_dirichlet_minka
-            for cell in range(n_cells):
-                if verbose and cell % 1000 == 0:
-                    print(
-                        f"    - Fitting Dirichlet distributions for "
-                        f"cells {cell}-{min(cell+1000, n_cells)} out of "
-                        f"{n_cells} cells"
-                    )
-
-                # Get probability vectors for this cell across all samples
-                cell_probs = probabilities[:, cell, :]
-                # Fit Dirichlet using Minka's fixed-point method
-                concentrations = concentrations.at[cell].set(
-                    fit_dirichlet_minka(cell_probs)
-                )
-
-            # Compute mean probabilities (Dirichlet mean)
-            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
-            mean_probabilities = concentrations / concentration_sums
-
-            return {
-                "concentration": concentrations,
-                "mean_probabilities": mean_probabilities,
-                "sample_probabilities": probabilities,
-            }
-        else:
-            return {"sample_probabilities": probabilities}
 
 
 # ------------------------------------------------------------------------------
