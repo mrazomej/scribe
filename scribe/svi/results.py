@@ -1039,13 +1039,13 @@ class ScribeSVIResults:
             guide, self.params, model_args, rng_key=rng_key, n_samples=n_samples
         )
 
-        # Convert to canonical form if requested
-        if canonical:
-            self._convert_to_canonical()
-
         # Store samples if requested
         if store_samples:
             self.posterior_samples = posterior_samples
+
+        # Convert to canonical form if requested
+        if canonical:
+            self._convert_to_canonical()
 
         return posterior_samples
 
@@ -2346,10 +2346,17 @@ class ScribeSVIResults:
             # Compute p from phi
             samples["p"] = 1.0 / (1.0 + phi)
 
-            # Reshape phi to broadcast with mu based on mixture model
+            # Reshape phi to broadcast with mu based on mixture model and
+            # component specificity
             if self.n_components is not None:
                 # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                phi_reshaped = phi[:, None, None]
+                if self.model_config.component_specific_params:
+                    # Component-specific phi: shape (n_samples, n_components)
+                    phi_reshaped = phi[:, :, None]
+                else:
+                    # Shared phi: shape (n_samples,) -> 
+                    # broadcast to (n_samples, 1, 1)
+                    phi_reshaped = phi[:, None, None]
             else:
                 # Non-mixture model: mu has shape (n_samples, n_genes)
                 phi_reshaped = phi[:, None]
@@ -2361,10 +2368,15 @@ class ScribeSVIResults:
             # Extract p and mu
             p = samples["p"]
             mu = samples["mu"]
-            # Reshape p to broadcast with mu based on mixture model
+            # Reshape p to broadcast with mu based on mixture model and component specificity
             if self.n_components is not None:
-                # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                p_reshaped = p[:, None, None]
+                if self.model_config.component_specific_params:
+                    # Component-specific p: shape (n_samples, n_components)
+                    p_reshaped = p[:, :, None]
+                else:
+                    # Shared p: shape (n_samples,) -> 
+                    # broadcast to (n_samples, 1, 1)
+                    p_reshaped = p[:, None, None]
             else:
                 # Non-mixture model: mu has shape (n_samples, n_genes)
                 p_reshaped = p[:, None]
