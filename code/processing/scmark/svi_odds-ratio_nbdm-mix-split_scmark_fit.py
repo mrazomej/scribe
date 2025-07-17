@@ -16,13 +16,16 @@ import anndata as ad
 print("Setting up the model parameters and output directory...")
 
 # Define model type
-model_type = "nbvcp_mix"
+model_type = "nbdm_mix"
 
 # Define number of steps
 n_steps = 50_000
 
 # Define parameterization
 parameterization = "odds_ratio"
+
+# Define component_specific_params
+component_specific_params = True
 
 # Define batch size for memory-efficient sampling
 batch_size = 2048
@@ -71,7 +74,7 @@ for i, file in enumerate(files):
 
     # Define output file
     output_file = f"{OUTPUT_DIR}/" \
-        f"{model_type.replace('_', '-')}_" \
+        f"svi_{model_type.replace('_', '-')}-split_" \
         f"{parameterization.replace('_', '-')}_" \
         f"{n_components}components_" \
         f"{n_steps}steps_" \
@@ -95,6 +98,7 @@ for i, file in enumerate(files):
         n_components=n_components,
         n_steps=n_steps,
         batch_size=batch_size,
+        component_specific_params=component_specific_params,
     )
 
     # Save the results
