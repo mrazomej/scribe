@@ -456,6 +456,7 @@ def compute_cell_type_probabilities(
     else:
         return {"sample_probabilities": probabilities}
 
+# ------------------------------------------------------------------------------
 
 def compute_cell_type_probabilities_map(
     results,
@@ -473,7 +474,8 @@ def compute_cell_type_probabilities_map(
     Compute probabilistic cell type assignments using MAP estimates of
     parameters.
 
-    This function works with both ScribeSVIResults and ScribeMCMCResults objects.
+    This function works with both ScribeSVIResults and ScribeMCMCResults
+    objects.
 
     For each cell, this method:
         1. Computes component-specific log-likelihoods using MAP parameter
