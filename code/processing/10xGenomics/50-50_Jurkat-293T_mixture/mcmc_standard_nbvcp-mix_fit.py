@@ -1,12 +1,16 @@
 # %% ---------------------------------------------------------------------------
 # Import base libraries
-import pickle
-import jax
-import jax.numpy as jnp
-import scribe
-import scanpy as sc
 import gc
+import scanpy as sc
+import scribe
+import jax.numpy as jnp
+import jax
+import pickle
 import os
+
+# Set memory fraction to prevent JAX from allocating all GPU memory
+# Use only 90% of GPU memory
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.5'
 
 # Enable double precision (Float64)
 jax.config.update("jax_enable_x64", True)
@@ -25,7 +29,7 @@ n_mcmc_samples = 2_500
 # %% ---------------------------------------------------------------------------
 
 # Define model type
-model_type = "nbdm_mix"
+model_type = "nbvcp_mix"
 
 # Define parameterization
 parameterization = "standard"
@@ -61,7 +65,7 @@ counts = jnp.array(data.X.toarray(), dtype=jnp.float64)
 
 # %% ---------------------------------------------------------------------------
 
-# Clear caches and force garbage collection before MCMC
+# Clear caches before running
 gc.collect()
 jax.clear_caches()
 
@@ -80,13 +84,13 @@ print("Defining kernel kwargs...")
 # Define kernel kwargs
 kernel_kwargs = {
     "target_accept_prob": 0.85,
-    "max_tree_depth": (8, 8),
+    "max_tree_depth": (10, 10),
     "step_size": jnp.array(1.0, dtype=jnp.float64),
     "find_heuristic_step_size": False,
     "dense_mass": False,
     "adapt_step_size": True,
     "adapt_mass_matrix": True,
-    "regularize_mass_matrix": True
+    "regularize_mass_matrix": False
 }
 
 print("Running MCMC sampling...")
@@ -97,6 +101,7 @@ if not os.path.exists(file_name):
         inference_method="mcmc",
         parameterization=parameterization,
         counts=counts,
+        variable_capture=True,
         mixture_model=True,
         n_components=n_components,
         n_warmup=n_mcmc_burnin,
