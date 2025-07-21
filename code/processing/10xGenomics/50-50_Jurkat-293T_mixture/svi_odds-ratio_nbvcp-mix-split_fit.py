@@ -27,6 +27,9 @@ model_type = "nbvcp_mix"
 # Define parameterization
 parameterization = "odds_ratio"
 
+# Define component-specific parameters
+component_specific_params = True
+
 # Define training parameters
 n_steps = 50_000
 
@@ -66,7 +69,7 @@ print("Running inference...")
 # Define file name
 file_name = f"{OUTPUT_DIR}/" \
     f"svi_{parameterization.replace('_', '-')}_" \
-    f"{model_type.replace('_', '-')}_" \
+    f"{model_type.replace('_', '-')}-split_" \
     f"{n_components:02d}components_" \
     f"{batch_size}batch_" \
     f"{n_steps}steps.pkl"
@@ -84,6 +87,7 @@ if not os.path.exists(file_name):
         parameterization=parameterization,
         n_components=n_components,
         mixing_prior=(30.0, 30.0),
+        component_specific_params=component_specific_params,
     )
 
     # Save the results, the true values, and the counts

@@ -36,6 +36,8 @@ colors = scribe.viz.colors()
 
 # %% ---------------------------------------------------------------------------
 
+print("Defining directories...")
+
 # Define model type
 model_type = "nbvcp_mix"
 
@@ -89,7 +91,7 @@ svi_results = pickle.load(
     open(
         f"{OUTPUT_DIR}/"
         f"svi_{parameterization.replace('_', '-')}_"
-        f"{model_type.replace('_', '-')}_"
+        f"{model_type.replace('_', '-')}-split_"
         f"{n_components:02d}components_"
         f"{batch_size}batch_"
         f"{n_steps}steps.pkl",
@@ -122,24 +124,55 @@ fig.savefig(
 
 # %% ---------------------------------------------------------------------------
 
-print("Plotting ECDF...")
+print("Plotting ECDF for representative genes...")
 # Define number of genes to select
-n_genes = 25
+n_genes = 36
+
+# Compute the median expression of each gene
+median_counts = np.median(counts, axis=0)
 
 # Compute the mean expression of each gene
-mean_counts = np.median(counts, axis=0)
+mean_counts = np.mean(counts, axis=0)
 
-# Get indices where mean counts > 0
-nonzero_idx = np.where(mean_counts > 0)[0]
+# Get indices where median counts > 0
+nonzero_idx = np.where(mean_counts > 0.1)[0]
 
-# Sort the nonzero means and get sorting indices
-sorted_idx = nonzero_idx[np.argsort(mean_counts[nonzero_idx])]
+# Sort the nonzero medians and get sorting indices
+sorted_idx = nonzero_idx[np.argsort(median_counts[nonzero_idx])]
+sorted_medians = median_counts[sorted_idx]
 
-# Generate evenly spaced indices across the sorted nonzero genes
-spaced_indices = np.linspace(0, len(sorted_idx) - 1, num=n_genes, dtype=int)
+# Find unique median values to avoid duplicates
+unique_medians, unique_indices = np.unique(sorted_medians, return_index=True)
 
-# Get the actual gene indices after sorting
-selected_idx = sorted_idx[spaced_indices]
+# Generate logarithmically spaced indices across the unique median values
+if len(unique_medians) >= n_genes:
+    # Use log-spaced indices across unique medians, avoiding log(0)
+    log_spaced_indices = np.logspace(
+        np.log10(1), np.log10(len(unique_medians)), num=n_genes, dtype=int
+    )
+    # Ensure we don't exceed array bounds and adjust for 0-based indexing
+    log_spaced_indices = np.clip(
+        log_spaced_indices - 1, 0, len(unique_medians) - 1
+    )
+    # Remove duplicates and ensure we get unique indices
+    log_spaced_indices = np.unique(log_spaced_indices)
+    # If we have fewer unique indices than desired, add more
+    if len(log_spaced_indices) < n_genes:
+        # Add more indices to reach desired number
+        remaining_indices = np.setdiff1d(
+            np.arange(len(unique_medians)), log_spaced_indices
+        )
+        if len(remaining_indices) > 0:
+            additional_needed = n_genes - len(log_spaced_indices)
+            additional_indices = remaining_indices[:additional_needed]
+            log_spaced_indices = np.concatenate(
+                [log_spaced_indices, additional_indices]
+            )
+    # Get the actual gene indices for unique medians
+    selected_idx = sorted_idx[unique_indices[log_spaced_indices]]
+else:
+    # If we have fewer unique medians than desired genes, use all unique ones
+    selected_idx = sorted_idx[unique_indices]
 
 # Initialize figure with extra space for legends
 fig, ax = plt.subplots(1, 1, figsize=(3.5, 3))
@@ -189,22 +222,26 @@ results_subset.get_ppc_samples(n_samples=n_samples)
 
 print("Plotting PPC for multiple example genes...")
 
+# Sort genes by mean UMI count for better visualization
+gene_means = np.mean(counts[:, selected_idx], axis=0)
+sorted_gene_order = np.argsort(gene_means)
+
 # Single plot example
-fig, axes = plt.subplots(5, 5, figsize=(10, 10))
+fig, axes = plt.subplots(6, 6, figsize=(12, 12))
 
 # Flatten axes
 axes = axes.flatten()
 
-# Loop through each gene
-for i, ax in enumerate(axes):
+# Loop through each gene in sorted order
+for i, gene_idx in enumerate(sorted_gene_order):
     print(f"Plotting gene {i} PPC...")
 
     # Extract true counts for this gene
-    true_counts = data.X.toarray()[:, selected_idx[i]]
+    true_counts = data.X.toarray()[:, selected_idx[gene_idx]]
 
     # Compute credible regions
     credible_regions = scribe.stats.compute_histogram_credible_regions(
-        results_subset.predictive_samples[:, :, i],
+        results_subset.predictive_samples[:, :, gene_idx],
         credible_regions=[95, 68, 50],
         # max_bin=true_counts.max()
     )
@@ -221,7 +258,7 @@ for i, ax in enumerate(axes):
 
     # Plot credible regions
     scribe.viz.plot_histogram_credible_regions_stairs(
-        ax, credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
+        axes[i], credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
     )
 
     # Define max_bin for histogram
@@ -229,7 +266,7 @@ for i, ax in enumerate(axes):
         max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
     )
     # Plot histogram of the real data as step plot
-    ax.step(
+    axes[i].step(
         hist_results[1][:max_bin_hist],
         hist_results[0][:max_bin_hist],
         where="post",
@@ -238,14 +275,17 @@ for i, ax in enumerate(axes):
     )
 
     # Set axis labels
-    ax.set_xlabel("counts")
-    ax.set_ylabel("frequency")
+    axes[i].set_xlabel("counts")
+    axes[i].set_ylabel("frequency")
 
-    # Set title
-    ax.set_title(
+    # Set title with mean UMI count
+    axes[i].set_title(
         f"$\\langle U \\rangle = {true_counts.mean():.2f}$",
         fontsize=8,
     )
+
+    # Remove y-axis tick labels
+    axes[i].set_yticklabels([])
 
 plt.tight_layout()
 
@@ -299,16 +339,16 @@ fig.savefig(
 
 print("Sampling from full posterior distribution...")
 # Sample from full posterior distribution
-svi_results.get_posterior_samples(n_samples=100)
-# Convert to canonical form
-svi_results._convert_to_canonical()
+svi_results.get_posterior_samples(n_samples=250, canonical=True)
 
 # %% ---------------------------------------------------------------------------
 
 print("Computing cell type assignments...")
 # Use posterior samples to assign cell types
-cell_types = svi_results.cell_type_assignments(
-    counts=counts, fit_distribution=False, batch_size=128
+cell_types = svi_results.cell_type_probabilities(
+    counts=counts,
+    batch_size=1024,
+    fit_distribution=False,
 )
 
 # %% ---------------------------------------------------------------------------
