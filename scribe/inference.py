@@ -33,7 +33,7 @@ def run_scribe(
     n_components: Optional[int] = None,
     component_specific_params: bool = False,
     # Parameterization (now unified!)
-    # "standard", "linked", "odds_ratio", "unconstrained"
+    # "standard", "linked", "odds_ratio", "unconstrained", "twostate"
     parameterization: str = "standard",
     # Data processing parameters
     cells_axis: int = 0,
@@ -61,6 +61,10 @@ def run_scribe(
     mu_prior: Optional[tuple] = None,
     phi_prior: Optional[tuple] = None,
     phi_capture_prior: Optional[tuple] = None,
+    # Two-state promoter prior parameters
+    k_on_prior: Optional[tuple] = None,
+    r_m_prior: Optional[tuple] = None,
+    ratio_prior: Optional[tuple] = None,
     # General parameters
     seed: int = 42,
 ) -> Any:
@@ -71,7 +75,7 @@ def run_scribe(
     methods, treating unconstrained as just another parameterization. This means:
 
     - You can run MCMC with any parameterization (standard, linked,
-      odds_ratio, unconstrained)
+      odds_ratio, unconstrained, twostate)
     - You can run SVI with any parameterization (though guides may not exist for
       all yet)
     - The interface is completely unified and consistent
@@ -102,6 +106,7 @@ def run_scribe(
         - "linked": Beta/LogNormal for p/mu parameters
         - "odds_ratio": BetaPrime/LogNormal for phi/mu parameters
         - "unconstrained": Normal distributions on transformed parameters
+        - "twostate": LogNormal distributions for two-state promoter k_on/r_m/ratio parameters
 
     Data Processing:
     ---------------
@@ -153,6 +158,11 @@ def run_scribe(
         Prior for mixture components (array-like or scalar)
     mu_prior, phi_prior, phi_capture_prior : Optional[tuple]
         Additional prior parameters for specific parameterizations
+    k_on_prior, r_m_prior, ratio_prior : Optional[tuple]
+        Two-state promoter prior parameters as (loc, scale) tuples for LogNormal distributions
+            - k_on_prior: Prior for promoter ON switching rate
+            - r_m_prior: Prior for mRNA transcription rate  
+            - ratio_prior: Prior for r_m/k_off ratio
 
     General:
     -------
@@ -197,11 +207,30 @@ def run_scribe(
         parameterization="linked",
         n_samples=1000
     )
+
+    # SVI with two-state promoter parameterization
+    results = run_scribe(
+        counts,
+        inference_method="svi",
+        parameterization="twostate",
+        k_on_prior=(0.0, 1.0),
+        r_m_prior=(1.0, 0.5),
+        ratio_prior=(0.0, 1.0)
+    )
     """
     # Step 1: Input Processing & Validation
     InputProcessor.validate_model_configuration(
         zero_inflated, variable_capture, mixture_model, n_components
     )
+
+    # Special validation for twostate parameterization
+    if parameterization == "twostate":
+        if zero_inflated or variable_capture or mixture_model:
+            raise ValueError(
+                "twostate parameterization is incompatible with zero_inflated, "
+                "variable_capture, and mixture_model flags. Please set these to False "
+                "when using parameterization='twostate'."
+            )
 
     # Process count data
     count_data, adata, n_cells, n_genes = InputProcessor.process_counts_data(
@@ -232,6 +261,12 @@ def run_scribe(
         user_priors["phi_prior"] = phi_prior
     if phi_capture_prior is not None:
         user_priors["phi_capture_prior"] = phi_capture_prior
+    if k_on_prior is not None:
+        user_priors["k_on_prior"] = k_on_prior
+    if r_m_prior is not None:
+        user_priors["r_m_prior"] = r_m_prior
+    if ratio_prior is not None:
+        user_priors["ratio_prior"] = ratio_prior
 
     # Step 3: Create ModelConfig directly
     model_config_kwargs = {
@@ -249,6 +284,12 @@ def run_scribe(
             "gate_unconstrained_prior": user_priors.get("gate_prior"),
             "p_capture_unconstrained_prior": user_priors.get("p_capture_prior"),
             "mixing_logits_unconstrained_prior": user_priors.get("mixing_prior"),
+        })
+    elif parameterization == "twostate":
+        model_config_kwargs.update({
+            "k_on_param_prior": user_priors.get("k_on_prior"),
+            "r_m_param_prior": user_priors.get("r_m_prior"),
+            "ratio_param_prior": user_priors.get("ratio_prior"),
         })
     else:
         model_config_kwargs.update({

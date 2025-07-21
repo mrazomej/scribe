@@ -14,7 +14,7 @@ from .model_registry import (
 )
 
 # Parameterization-specific model modules
-from . import linked, odds_ratio, standard, unconstrained
+from . import linked, odds_ratio, standard, unconstrained, twostate
 
 __all__ = [
     # Configuration
@@ -24,4 +24,5 @@ __all__ = [
     "get_log_likelihood_fn",
     # Model modules
     "standard",
+    "twostate",
 ]

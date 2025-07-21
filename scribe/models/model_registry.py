@@ -17,6 +17,7 @@ SUPPORTED_PARAMETERIZATIONS = [
     "linked",
     "odds_ratio",
     "unconstrained",
+    "twostate",
 ]
 
 # Dictionary to cache imported model modules
@@ -61,6 +62,10 @@ def get_model_and_guide(
             f"Unsupported parameterization: {parameterization}. "
             f"Supported parameterizations are: {SUPPORTED_PARAMETERIZATIONS}"
         )
+
+    # Special case: twostate parameterization always uses twostate model
+    if parameterization == "twostate":
+        model_type = "twostate"
 
     # Dynamically import the parameterization module (e.g.,
     # scribe.models.standard)

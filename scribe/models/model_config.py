@@ -20,6 +20,7 @@ class ModelConfig:
     - linked: Beta/LogNormal for p/mu parameters
     - odds_ratio: BetaPrime/LogNormal for phi/mu parameters
     - unconstrained: Normal distributions on transformed parameters
+    - twostate: LogNormal distributions for k_on/r_m/ratio parameters
 
     The parameterization determines which parameters are used and how they're
     interpreted by the model and guide functions.
@@ -27,7 +28,7 @@ class ModelConfig:
     Parameters
     ----------
     base_model : str
-        Name of the base model (e.g., "nbdm", "zinb", "nbvcp", "zinbvcp")
+        Name of the base model (e.g., "nbdm", "zinb", "nbvcp", "zinbvcp", "twostate")
         Can include "_mix" suffix for mixture models
     parameterization : str
         Parameterization type:
@@ -35,6 +36,7 @@ class ModelConfig:
             - "linked"
             - "odds_ratio"
             - "unconstrained"
+            - "twostate"
     n_components : Optional[int], default=None
         Number of mixture components for mixture models
     inference_method : str, default="svi"
@@ -82,6 +84,16 @@ class ModelConfig:
     mixing_param_prior: Optional[tuple] = None
     mixing_param_guide: Optional[tuple] = None
 
+    # Two-state promoter parameters - used in twostate parameterization
+    k_on_param_prior: Optional[tuple] = None
+    k_on_param_guide: Optional[tuple] = None
+    
+    r_m_param_prior: Optional[tuple] = None
+    r_m_param_guide: Optional[tuple] = None
+    
+    ratio_param_prior: Optional[tuple] = None
+    ratio_param_guide: Optional[tuple] = None
+
     # Unconstrained parameters (used when parameterization="unconstrained")
     # These are Normal distributions on transformed parameters
     p_unconstrained_prior: Optional[tuple] = None
@@ -101,6 +113,21 @@ class ModelConfig:
 
     def validate(self):
         """Validate configuration parameters."""
+        # Special case: twostate parameterization forces twostate base model
+        if self.parameterization == "twostate":
+            self.base_model = "twostate"
+            
+            # Validate that twostate is not used with incompatible model features
+            if self.n_components is not None:
+                raise ValueError(
+                    "twostate parameterization does not support mixture models. "
+                    "Please set mixture_model=False or use a different parameterization."
+                )
+            
+            # Check if the original base_model (before override) had incompatible features
+            # We can't directly check this, but we can check the current base_model
+            # after it's been set to "twostate" and warn if other flags were likely set
+            
         self._validate_base_model()
         self._validate_parameterization()
         self._validate_mixture_components()
@@ -155,6 +182,13 @@ class ModelConfig:
                     self.phi_param_prior = (1.0, 1.0)  # BetaPrime
                 if self.mu_param_prior is None:
                     self.mu_param_prior = (0.0, 1.0)  # LogNormal
+            elif self.parameterization == "twostate":
+                if self.k_on_param_prior is None:
+                    self.k_on_param_prior = (0.0, 1.0)  # LogNormal
+                if self.r_m_param_prior is None:
+                    self.r_m_param_prior = (1.0, 1.0)  # LogNormal
+                if self.ratio_param_prior is None:
+                    self.ratio_param_prior = (0.0, 1.0)  # LogNormal
 
             # Model-specific defaults
             if self.gate_param_prior is None and "zinb" in self.base_model:
@@ -181,6 +215,7 @@ class ModelConfig:
             "zinb_mix",
             "nbvcp_mix",
             "zinbvcp_mix",
+            "twostate",
         }
 
         if self.base_model not in valid_base_models:
@@ -196,6 +231,7 @@ class ModelConfig:
             "linked",
             "odds_ratio",
             "unconstrained",
+            "twostate",
         }
 
         if self.parameterization not in valid_parameterizations:
@@ -239,6 +275,7 @@ class ModelConfig:
             "linked",
             "odds_ratio",
             "unconstrained",
+            "twostate",
         ]
 
     def get_active_parameters(self) -> List[str]:
@@ -262,6 +299,8 @@ class ModelConfig:
                 params.extend(["p", "mu"])
             elif self.parameterization == "odds_ratio":
                 params.extend(["phi", "mu"])
+            elif self.parameterization == "twostate":
+                params.extend(["k_on", "r_m", "ratio"])
 
             if self.is_zero_inflated():
                 params.append("gate")
