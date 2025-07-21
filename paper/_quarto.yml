@@ -3,15 +3,10 @@ project:
   output-dir: _output
   resources:
     - paper.pdf
+    - supplementary.pdf
   render:
     - paper.qmd
     - supplementary.qmd
-    # - code.qmd
-    # - code/metropolis_hastings_evolution.qmd
-    # - code/evolutionary_dynamics.qmd
-    # - code/rhvae_sim.qmd
-    # - code/iwasawa_bayesian_inference.qmd
-    # - code/metropolis_kimura_evolution.qmd
 
 # Title
 title: "SCRIBE: Single-Cell RNA-seq Inference"
@@ -91,37 +86,11 @@ website:
         file: paper.qmd
       - text: "Supplementary Material"
         file: supplementary.qmd
-      # - text: "Code"
-      #   menu:
-      #     - text: "Overview"
-      #       file: code.qmd
-      #     - text: "Metropolis-Hastings Evolution"
-      #       file: code/metropolis_hastings_evolution.qmd
-      #     - text: "Evolutionary Dynamics Simulation"
-      #       file: code/evolutionary_dynamics.qmd
-      #     - text: "RHVAE training on Simulated Data"
-      #       file: code/rhvae_sim.qmd
-      #     - text: "Bayesian Inference of $IC_{50}$ Values"
-      #       file: code/iwasawa_bayesian_inference.qmd
-      #     - text: "Metropolis-Kimura Evolution"
-      #       file: code/metropolis_kimura_evolution.qmd
     right:
       - icon: github
         href: https://github.com/mrazomej/scribe
-      - icon: twitter-x
-        href: https://twitter.com/mrazomej
-  sidebar:
-    - title: "Code"
-      style: "docked"
-      contents:
-        - code.qmd
-        - section: "Notebooks"
-          contents:
-            # - code/metropolis_hastings_evolution.qmd
-            # - code/evolutionary_dynamics.qmd
-            # - code/rhvae_sim.qmd
-            # - code/iwasawa_bayesian_inference.qmd
-            # - code/metropolis_kimura_evolution.qmd
+      - icon: bluesky
+        href: https://bsky.app/profile/mrazo.bsky.social
 format:
   html:
     theme: cosmo
@@ -138,8 +107,8 @@ format:
     default-image-extension: pdf
     include-in-header:
       - file: _preamble.tex
-    biblio-style: vancouver
-    keep-tex: true
+    biblio-style: ieee
+    keep-tex: false
     filters:
       - abstract-filter.lua
       - color-text-span.lua

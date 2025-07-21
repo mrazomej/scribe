@@ -324,8 +324,8 @@ $endif$
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 $if(biblatex)$
-\usepackage[
-    $if(biblio-style)$style=$biblio-style$,$endif$
+% Biblatex is already loaded by Quarto, so we just configure it
+\ExecuteBibliographyOptions{
     sorting=none,				% Do not sort bibliography
 	url=false, 					% Do not show url in reference
 	doi=false, 					% Do not show doi in reference
@@ -333,7 +333,7 @@ $if(biblatex)$
 	eprint=false, 			    % Do not show eprint link in reference
 	maxbibnames=9, 			    % Include up to 9 names in citation
 	firstinits=true,
-]{biblatex}
+}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 $for(bibliography)$
 \addbibresource{$bibliography$}
