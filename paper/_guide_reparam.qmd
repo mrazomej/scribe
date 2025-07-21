@@ -1,0 +1,120 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+## Reparameterization for Variational Inference Guides {#sec-reparam}
+
+In the @sec-vi_primer, we introduced the core principles of variational
+inference, culminating in the formulation of the Evidence Lower Bound (ELBO) as
+a tractable objective for approximating posterior distributions. A central
+assumption in the simplest form of variational inference, known as the
+**mean-field approximation**, is that the variational distribution
+$q_\phi(\underline{\theta})$ factorizes into independent components for each
+parameter,
+
+$$
+q_\phi(\underline{\theta}) = \prod_{i=1}^K q_{\phi_i}(\theta_i).
+$${#eq-reparam_mean_field}
+
+This assumption simplifies the optimization problem considerably. However, it
+fails to capture any correlation structure that may exist in the true posterior
+distribution $\pi(\underline{\theta} \mid \underline{x})$. When parameters in
+the true posterior are highly correlated, a factorized approximation provides a
+poor fit, leading to inaccurate inference. This is precisely the challenge we
+face with the Negative Binomial-Dirichlet Multinomial (NBDM) model.
+
+### The Challenge of Correlated Parameters
+
+The Negative Binomial distribution is characterized by a success probability
+parameter $p$ and a dispersion parameter $r$. The mean of the distribution is
+given by $\mu = r(1-p)/p$, and the variance is $\sigma^2 = r(1-p)/p^2 = \mu/p$.
+From these relationships, it is evident that $r$ and $p$ are not independent.
+The shape of the posterior distribution often exhibits a strong "banana-shaped"
+correlation between these parameters, as illustrated in @fig-SI_reparam. A
+mean-field guide, which assumes independence, attempts to fit a rectangular
+region to this curved geometry. This results in an approximation that either
+covers large areas of low probability or misses significant portions of the true
+posterior mass.
+
+![**Posterior Geometry and Variational Approximation.** Conceptual illustration
+of the challenges in fitting a factorized variational distribution to a
+correlated posterior. The true posterior (blue) for the Negative Binomial
+parameters $(r, p)$ exhibits a characteristic curved shape. A mean-field guide
+(red rectangle) fails to capture this correlation, leading to a poor
+approximation. Reparameterizing in terms of mean and dispersion $(\mu, r)$ can
+result in a more separable geometry (green), allowing for a better
+fit.](./fig/supplementary/figSI_reparam_motivation){#fig-SI_reparam}
+
+### Linked Parameterization: Mean and Probability
+
+To address this limitation, we can reparameterize the model to reduce the
+correlation in the guide's parameter space. One intuitive approach is to define
+the variational distribution in terms of the mean $\mu$ and the success
+probability $p$. In this "*linked*" parameterization, we treat $\mu$ and $p$ as
+independent random variables in our guide and define $r$ as a deterministic
+function of them.
+
+Given the mean expression $\mu = r(1-p)/p$, we can express $r$ as
+
+$$
+r = \frac{\mu p}{1-p}.
+$${#eq-reparam_linked_r}
+
+The variational guide now becomes a factorized distribution over $\mu$ and $p$,
+
+$$
+q(\mu, p) = q(\mu)q(p).
+$${#eq-reparam_linked_guide}
+
+This reparameterization explicitly encodes the mean-variance relationship of the
+Negative Binomial distribution into the guide, allowing it to better capture the
+posterior's geometry. However, this formulation introduces a potential for
+numerical instability. As the success probability $p$ approaches 1, the
+denominator $(1-p)$ approaches zero, which can lead to computational issues
+during optimization.
+
+### Odds-Ratio Parameterization: A More Stable Approach
+
+To overcome the numerical challenges of the linked parameterization while still
+capturing the parameter correlations, we introduce a third, more robust
+parameterization based on the odds ratio. Instead of sampling $p$ directly from
+a Beta distribution, which is constrained to the interval $[0, 1]$, we introduce
+a new parameter $\phi$ from which $p$ can be derived. We define their
+relationship as
+
+$$
+p = \frac{1}{1+\phi},
+$${#eq-reparam_odds_p}
+
+which implies that $\phi = (1-p)/p$. This quantity, $\phi$, represents the odds
+of failure versus success. The advantage of this formulation is that while $p$
+is constrained to $[0, 1]$, $\phi$ is a positive real number, $\phi \in [0,
+\infty)$. We can therefore use flexible and unconstrained distributions like the
+Log-Normal or Beta-Prime distribution for its prior and variational guide,
+avoiding the boundary issues encountered with $p$.
+
+We retain the gene-specific mean $\mu_g$ as an independent parameter in our
+guide. The dispersion parameter $r_g$ is then defined deterministically as
+
+$$
+r_g = \mu_g \phi.
+$${#eq-reparam_odds_r}
+
+Let's verify this formulation. The mean of the Negative Binomial is $\mu_g =
+r_g(1-p)/p$. Substituting our expression for $\phi$ gives $\mu_g = r_g \phi$.
+This is inconsistent with our definition for $r_g$. Let's re-examine the
+relationship. The mean of the negative binomial is $\mu = r(1-p)/p$. If we
+define $\phi = (1-p)/p$, then $\mu = r \phi$. This implies that $r$ should be
+defined as
+
+$$
+r_g = \frac{\mu_g}{\phi}.
+$${#eq-reparam_odds_r_corrected}
+
+This corrected "odds-ratio" parameterization, based on a factorized guide
+$q(\mu, \phi) = q(\mu)q(\phi)$, provides a numerically stable and flexible
+framework for approximating the complex posterior of the NBDM model, forming the
+basis of the `odds_ratio` models used in this work. 
