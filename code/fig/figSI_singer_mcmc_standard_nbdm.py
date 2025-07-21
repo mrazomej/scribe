@@ -276,6 +276,12 @@ fig.savefig(
     f"{model_type}_ppc.png",
     bbox_inches="tight"
 )
+fig.savefig(
+    f"{FIG_DIR}/figSI_singer_mcmc_{parameterization.replace('_', '-')}_"
+    f"{model_type}_ppc.pdf",
+    bbox_inches="tight"
+)
+
 
 # %% ---------------------------------------------------------------------------
 
@@ -353,6 +359,11 @@ fig.suptitle("Posterior Predictive Checks", y=1.02)
 fig.savefig(
     f"{FIG_DIR}/figSI_singer_mcmc_{parameterization.replace('_', '-')}_"
     f"{model_type}_ppc_ecdf.png",
+    bbox_inches="tight"
+)
+fig.savefig(
+    f"{FIG_DIR}/figSI_singer_mcmc_{parameterization.replace('_', '-')}_"
+    f"{model_type}_ppc_ecdf.pdf",
     bbox_inches="tight"
 )
 # %% ---------------------------------------------------------------------------
