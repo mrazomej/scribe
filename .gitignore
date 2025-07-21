@@ -92,13 +92,13 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
-# Images and other binary files 
+# Images and other binary files
 *.tif*
 *.pdf
-*.swp 
+*.swp
 *.log
 *.bbl
-*.blg 
+*.blg
 *.jpg
 *.jpeg
 
@@ -106,12 +106,20 @@ Temporary Items
 .github/
 .devcontainer/
 
-# Data files
+# Data Folders
 data/**
+sandbox/**
+# Output files
 output/**
 **/output/**
+# Figures
 **/fig/**
 !code/fig/**
-sandbox/**
-paper/**_files/
-paper/**html
+# Paper files
+paper/*_files/*
+paper/_*.html
+paper/_*.pdf
+paper/_output/*
+paper/site_libs/*
+
+/.luarc.json
