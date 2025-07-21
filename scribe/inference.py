@@ -225,10 +225,10 @@ def run_scribe(
 
     # Special validation for twostate parameterization
     if parameterization == "twostate":
-        if zero_inflated or variable_capture or mixture_model:
+        if zero_inflated or mixture_model:
             raise ValueError(
-                "twostate parameterization is incompatible with zero_inflated, "
-                "variable_capture, and mixture_model flags. Please set these to False "
+                "twostate parameterization is incompatible with zero_inflated "
+                "and mixture_model flags. Please set these to False "
                 "when using parameterization='twostate'."
             )
 
@@ -241,6 +241,10 @@ def run_scribe(
     model_type = InputProcessor.determine_model_type(
         zero_inflated, variable_capture, mixture_model
     )
+
+    # Handle two-state variable capture case
+    if parameterization == "twostate" and variable_capture:
+        model_type = "twostate_vcp"
 
     # Step 2: Prior Configuration
     # Collect user-provided priors
@@ -290,6 +294,7 @@ def run_scribe(
             "k_on_param_prior": user_priors.get("k_on_prior"),
             "r_m_param_prior": user_priors.get("r_m_prior"),
             "ratio_param_prior": user_priors.get("ratio_prior"),
+            "p_capture_param_prior": user_priors.get("p_capture_prior"),
         })
     else:
         model_config_kwargs.update({
@@ -305,7 +310,7 @@ def run_scribe(
 
     model_config = ModelConfig(**model_config_kwargs)
     model_config.validate()
-    
+
     # Step 4: Run Inference
     if inference_method == "svi":
         results = _run_svi_inference(
@@ -368,7 +373,7 @@ def _run_svi_inference(
         inference_kwargs["optimizer"] = optimizer
     if loss is not None:
         inference_kwargs["loss"] = loss
-        
+
     svi_results = SVIInferenceEngine.run_inference(**inference_kwargs)
 
     return SVIResultsFactory.create_results(

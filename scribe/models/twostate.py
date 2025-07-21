@@ -21,6 +21,7 @@ from .twostate_distribution import TwoStatePromoter
 # Two-state promoter model
 # ------------------------------------------------------------------------------
 
+
 def twostate_model(
     n_cells: int,
     n_genes: int,
@@ -30,13 +31,13 @@ def twostate_model(
 ):
     """
     Numpyro model for two-state promoter single-cell RNA sequencing data.
-    
+
     This model assumes a hierarchical structure where each gene's expression
     is governed by a two-state promoter model with parameters:
         - k_on: Rate of promoter switching from OFF to ON state
         - r_m: Transcription rate of mRNA when promoter is ON
         - ratio: Ratio of transcription rate to OFF rate (r_m/k_off)
-    
+
     Parameters
     ----------
     n_cells : int
@@ -60,14 +61,14 @@ def twostate_model(
         - ratio ~ LogNormal(ratio_prior) [one per gene]
         Derived:
         - k_off = r_m / ratio [one per gene]
-    
+
     Likelihood:
         counts ~ TwoStatePromoter(k_on, k_off, r_m)
     """
     # Get prior parameters from model config or use defaults
-    k_on_prior_params = model_config.k_on_param_prior or (0.0, 1.0)  # (loc, scale) for LogNormal
-    r_m_prior_params = model_config.r_m_param_prior or (1.0, 1.0)    # (loc, scale) for LogNormal
-    ratio_prior_params = model_config.ratio_param_prior or (0.0, 1.0)  # (loc, scale) for LogNormal
+    k_on_prior_params = model_config.k_on_param_prior or (5.0, 2.0)
+    r_m_prior_params = model_config.r_m_param_prior or (1.0, 1.0)
+    ratio_prior_params = model_config.ratio_param_prior or (5.0, 2.0)
 
     # Sample gene-specific k_on parameters
     k_on = numpyro.sample(
@@ -128,6 +129,7 @@ def twostate_model(
 # Two-state promoter variational guide
 # ------------------------------------------------------------------------------
 
+
 def twostate_guide(
     n_cells: int,
     n_genes: int,
@@ -137,12 +139,12 @@ def twostate_guide(
 ):
     """
     Define the variational distribution for the two-state promoter model.
-    
+
     This guide specifies a mean-field variational family where:
         - k_on follows independent LogNormal distributions for each gene
         - r_m follows independent LogNormal distributions for each gene
         - ratio follows independent LogNormal distributions for each gene
-    
+
     Parameters
     ----------
     n_cells : int
@@ -157,9 +159,9 @@ def twostate_guide(
         Mini-batch size for stochastic optimization
     """
     # Get guide parameters from model config or use defaults
-    k_on_guide_params = model_config.k_on_param_guide or (0.0, 1.0)
+    k_on_guide_params = model_config.k_on_param_guide or (5.0, 2.0)
     r_m_guide_params = model_config.r_m_param_guide or (1.0, 1.0)
-    ratio_guide_params = model_config.ratio_param_guide or (0.0, 1.0)
+    ratio_guide_params = model_config.ratio_param_guide or (5.0, 2.0)
 
     # Register variational parameters for k_on (one per gene)
     k_on_loc = numpyro.param(
@@ -198,6 +200,248 @@ def twostate_guide(
     numpyro.sample("k_on", dist.LogNormal(k_on_loc, k_on_scale))
     numpyro.sample("r_m", dist.LogNormal(r_m_loc, r_m_scale))
     numpyro.sample("ratio", dist.LogNormal(ratio_loc, ratio_scale))
+
+# ------------------------------------------------------------------------------
+# Two-state promoter model with variable capture probability
+# ------------------------------------------------------------------------------
+
+
+def twostate_variable_capture_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Numpyro model for two-state promoter with variable mRNA capture probability.
+
+    This model extends the basic two-state promoter model by including
+    cell-specific capture probabilities that rescale the transcription rate:
+        r_effective = r_m * p_capture
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ModelConfig
+        Configuration object containing prior parameters and model settings
+    counts : array-like, optional
+        Observed counts matrix of shape (n_cells, n_genes).
+        If None, generates samples from the prior.
+    batch_size : int, optional
+        Mini-batch size for stochastic variational inference.
+        If None, uses full dataset.
+
+    Model Structure
+    --------------
+    Global Parameters:
+        - k_on ~ LogNormal(k_on_prior) [one per gene]
+        - r_m ~ LogNormal(r_m_prior) [one per gene]
+        - ratio ~ LogNormal(ratio_prior) [one per gene]
+        Derived:
+        - k_off = r_m / ratio [one per gene]
+
+    Cell-specific Parameters:
+        - p_capture ~ Beta(p_capture_prior) [one per cell]
+        - r_effective = r_m * p_capture [cell-gene specific]
+
+    Likelihood:
+        counts ~ TwoStatePromoter(k_on, k_off, r_effective)
+    """
+    # Get prior parameters from model config or use defaults
+    k_on_prior_params = model_config.k_on_param_prior or (5.0, 2.0)
+    r_m_prior_params = model_config.r_m_param_prior or (1.0, 1.0)
+    ratio_prior_params = model_config.ratio_param_prior or (5.0, 2.0)
+    p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
+
+    # Sample gene-specific k_on parameters
+    k_on = numpyro.sample(
+        "k_on",
+        dist.LogNormal(*k_on_prior_params).expand([n_genes])
+    )
+
+    # Sample gene-specific r_m parameters
+    r_m = numpyro.sample(
+        "r_m",
+        dist.LogNormal(*r_m_prior_params).expand([n_genes])
+    )
+
+    # Sample gene-specific ratio parameters (r_m/k_off)
+    ratio = numpyro.sample(
+        "ratio",
+        dist.LogNormal(*ratio_prior_params).expand([n_genes])
+    )
+
+    # Compute k_off from r_m and ratio
+    k_off = numpyro.deterministic("k_off", r_m / ratio)
+
+    # If we have observed data, condition on it
+    if counts is not None:
+        if batch_size is None:
+            # No batching: sample p_capture for all cells, then sample counts
+            with numpyro.plate("cells", n_cells):
+                # Sample cell-specific capture probability
+                p_capture = numpyro.sample(
+                    "p_capture", dist.Beta(*p_capture_prior_params)
+                )
+                # Reshape p_capture for broadcasting to (n_cells, n_genes)
+                p_capture_reshaped = p_capture[:, None]
+                # Compute effective transcription rate
+                r_effective = numpyro.deterministic(
+                    "r_effective", r_m * p_capture_reshaped
+                )
+                # Sample observed counts
+                numpyro.sample(
+                    "counts",
+                    TwoStatePromoter(k_on, k_off, r_effective).to_event(1),
+                    obs=counts
+                )
+        else:
+            # With batching: sample p_capture and counts for a batch of cells
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                # Sample cell-specific capture probability for the batch
+                p_capture = numpyro.sample(
+                    "p_capture", dist.Beta(*p_capture_prior_params)
+                )
+                # Reshape p_capture for broadcasting to (batch_size, n_genes)
+                p_capture_reshaped = p_capture[:, None]
+                # Compute effective transcription rate
+                r_effective = numpyro.deterministic(
+                    "r_effective", r_m * p_capture_reshaped
+                )
+                # Sample observed counts for the batch
+                numpyro.sample(
+                    "counts",
+                    TwoStatePromoter(k_on, k_off, r_effective).to_event(1),
+                    obs=counts[idx]
+                )
+    else:
+        # No observed counts: sample latent counts for all cells
+        with numpyro.plate("cells", n_cells):
+            # Sample cell-specific capture probability
+            p_capture = numpyro.sample(
+                "p_capture", dist.Beta(*p_capture_prior_params)
+            )
+            # Reshape p_capture for broadcasting to (n_cells, n_genes)
+            p_capture_reshaped = p_capture[:, None]
+            # Compute effective transcription rate
+            r_effective = numpyro.deterministic(
+                "r_effective", r_m * p_capture_reshaped
+            )
+            # Sample latent counts
+            numpyro.sample(
+                "counts",
+                TwoStatePromoter(k_on, k_off, r_effective).to_event(1)
+            )
+
+# ------------------------------------------------------------------------------
+# Two-state promoter variational guide with variable capture
+# ------------------------------------------------------------------------------
+
+
+def twostate_variable_capture_guide(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Define the variational distribution for the two-state promoter model with
+    variable capture probability.
+
+    This guide specifies a mean-field variational family where:
+        - k_on follows independent LogNormal distributions for each gene
+        - r_m follows independent LogNormal distributions for each gene
+        - ratio follows independent LogNormal distributions for each gene
+        - p_capture follows independent Beta distributions for each cell
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ModelConfig
+        Configuration object containing guide parameters and model settings
+    counts : array_like, optional
+        Observed counts matrix of shape (n_cells, n_genes)
+    batch_size : int, optional
+        Mini-batch size for stochastic optimization
+    """
+    # Get guide parameters from model config or use defaults
+    k_on_guide_params = model_config.k_on_param_guide or (5.0, 2.0)
+    r_m_guide_params = model_config.r_m_param_guide or (1.0, 1.0)
+    ratio_guide_params = model_config.ratio_param_guide or (5.0, 2.0)
+    p_capture_guide_params = model_config.p_capture_param_guide or (1.0, 1.0)
+
+    # Register variational parameters for k_on (one per gene)
+    k_on_loc = numpyro.param(
+        "k_on_loc",
+        jnp.full(n_genes, k_on_guide_params[0])
+    )
+    k_on_scale = numpyro.param(
+        "k_on_scale",
+        jnp.full(n_genes, k_on_guide_params[1]),
+        constraint=constraints.positive
+    )
+
+    # Register variational parameters for r_m (one per gene)
+    r_m_loc = numpyro.param(
+        "r_m_loc",
+        jnp.full(n_genes, r_m_guide_params[0])
+    )
+    r_m_scale = numpyro.param(
+        "r_m_scale",
+        jnp.full(n_genes, r_m_guide_params[1]),
+        constraint=constraints.positive
+    )
+
+    # Register variational parameters for ratio (one per gene)
+    ratio_loc = numpyro.param(
+        "ratio_loc",
+        jnp.full(n_genes, ratio_guide_params[0])
+    )
+    ratio_scale = numpyro.param(
+        "ratio_scale",
+        jnp.full(n_genes, ratio_guide_params[1]),
+        constraint=constraints.positive
+    )
+
+    # Set up cell-specific capture probability parameters
+    p_capture_alpha = numpyro.param(
+        "p_capture_alpha",
+        jnp.full(n_cells, p_capture_guide_params[0]),
+        constraint=constraints.positive,
+    )
+    p_capture_beta = numpyro.param(
+        "p_capture_beta",
+        jnp.full(n_cells, p_capture_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample from variational distributions
+    numpyro.sample("k_on", dist.LogNormal(k_on_loc, k_on_scale))
+    numpyro.sample("r_m", dist.LogNormal(r_m_loc, r_m_scale))
+    numpyro.sample("ratio", dist.LogNormal(ratio_loc, ratio_scale))
+
+    # Sample p_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "p_capture",
+                dist.Beta(p_capture_alpha[idx], p_capture_beta[idx]),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -258,7 +502,8 @@ def get_posterior_distributions(
         if split and len(params["ratio_loc"].shape) == 1:
             # Gene-specific ratio parameters
             distributions["ratio"] = [
-                dist.LogNormal(params["ratio_loc"][g], params["ratio_scale"][g])
+                dist.LogNormal(params["ratio_loc"][g],
+                               params["ratio_scale"][g])
                 for g in range(params["ratio_loc"].shape[0])
             ]
         else:
@@ -266,5 +511,19 @@ def get_posterior_distributions(
                 params["ratio_loc"], params["ratio_scale"]
             )
 
-    return distributions
+    # p_capture parameter (Beta distribution) - for variable capture model
+    if "p_capture_alpha" in params and "p_capture_beta" in params:
+        if split and len(params["p_capture_alpha"].shape) == 1:
+            # Cell-specific p_capture parameters
+            distributions["p_capture"] = [
+                dist.Beta(
+                    params["p_capture_alpha"][c], params["p_capture_beta"][c]
+                )
+                for c in range(params["p_capture_alpha"].shape[0])
+            ]
+        else:
+            distributions["p_capture"] = dist.Beta(
+                params["p_capture_alpha"], params["p_capture_beta"]
+            )
 
+    return distributions

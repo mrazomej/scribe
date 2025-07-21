@@ -188,7 +188,8 @@ class ScribeSVIResults:
             elif parameterization in ["standard", "linked"]:
                 # Standard and linked use p_capture_param_prior
                 if self.model_config.p_capture_param_prior is None:
-                    raise ValueError("VCP models require p_capture_param_prior")
+                    raise ValueError(
+                        "VCP models require p_capture_param_prior")
             elif parameterization == "odds_ratio":
                 # Odds_ratio uses phi_capture_param_prior
                 if self.model_config.phi_capture_param_prior is None:
@@ -296,12 +297,17 @@ class ScribeSVIResults:
             from ..models.unconstrained import (
                 get_posterior_distributions as get_dist_fn,
             )
+        elif self.model_config.parameterization == "twostate":
+            from ..models.twostate import (
+                get_posterior_distributions as get_dist_fn,
+            )
         else:
             raise NotImplementedError(
                 f"get_distributions not implemented for '{self.model_config.parameterization}'."
             )
 
-        distributions = get_dist_fn(self.params, self.model_config, split=split)
+        distributions = get_dist_fn(
+            self.params, self.model_config, split=split)
 
         if backend == "scipy":
             # Handle conversion to scipy, accounting for split distributions
@@ -663,7 +669,8 @@ class ScribeSVIResults:
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
         # Handle list/array indexing (by integer indices)
         elif isinstance(index, (list, np.ndarray, jnp.ndarray)) and not (
-            isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool
+            isinstance(index, (jnp.ndarray, np.ndarray)
+                       ) and index.dtype == bool
         ):
             indices = jnp.array(index)
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
@@ -685,7 +692,8 @@ class ScribeSVIResults:
 
         # Create new predictive samples if available
         new_predictive_samples = (
-            self._subset_predictive_samples(self.predictive_samples, bool_index)
+            self._subset_predictive_samples(
+                self.predictive_samples, bool_index)
             if self.predictive_samples is not None
             else None
         )

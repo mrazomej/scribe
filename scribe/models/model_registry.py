@@ -63,8 +63,9 @@ def get_model_and_guide(
             f"Supported parameterizations are: {SUPPORTED_PARAMETERIZATIONS}"
         )
 
-    # Special case: twostate parameterization always uses twostate model
-    if parameterization == "twostate":
+    # Special case: twostate parameterization uses twostate model
+    # But preserve variable capture model type if it was set
+    if parameterization == "twostate" and model_type != "twostate_vcp":
         model_type = "twostate"
 
     # Dynamically import the parameterization module (e.g.,
@@ -83,6 +84,14 @@ def get_model_and_guide(
         base_type = model_type.replace("_mix", "")
         model_name = f"{base_type}_mixture_model"
         guide_name = f"{base_type}_mixture_guide"
+    elif model_type == "twostate" and parameterization == "twostate":
+        # Handle variable capture for two-state models
+        model_name = "twostate_model"
+        guide_name = "twostate_guide"
+    elif model_type == "twostate_vcp" and parameterization == "twostate":
+        # Handle variable capture for two-state models
+        model_name = "twostate_variable_capture_model"
+        guide_name = "twostate_variable_capture_guide"
     else:
         model_name = f"{model_type}_model"
         guide_name = f"{model_type}_guide"

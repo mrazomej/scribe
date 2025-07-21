@@ -87,10 +87,10 @@ class ModelConfig:
     # Two-state promoter parameters - used in twostate parameterization
     k_on_param_prior: Optional[tuple] = None
     k_on_param_guide: Optional[tuple] = None
-    
+
     r_m_param_prior: Optional[tuple] = None
     r_m_param_guide: Optional[tuple] = None
-    
+
     ratio_param_prior: Optional[tuple] = None
     ratio_param_guide: Optional[tuple] = None
 
@@ -114,20 +114,21 @@ class ModelConfig:
     def validate(self):
         """Validate configuration parameters."""
         # Special case: twostate parameterization forces twostate base model
-        if self.parameterization == "twostate":
+        # But preserve variable capture model type if it was set
+        if self.parameterization == "twostate" and self.base_model != "twostate_vcp":
             self.base_model = "twostate"
-            
+
             # Validate that twostate is not used with incompatible model features
             if self.n_components is not None:
                 raise ValueError(
                     "twostate parameterization does not support mixture models. "
                     "Please set mixture_model=False or use a different parameterization."
                 )
-            
+
             # Check if the original base_model (before override) had incompatible features
             # We can't directly check this, but we can check the current base_model
             # after it's been set to "twostate" and warn if other flags were likely set
-            
+
         self._validate_base_model()
         self._validate_parameterization()
         self._validate_mixture_components()
@@ -216,6 +217,7 @@ class ModelConfig:
             "nbvcp_mix",
             "zinbvcp_mix",
             "twostate",
+            "twostate_vcp",
         }
 
         if self.base_model not in valid_base_models:
