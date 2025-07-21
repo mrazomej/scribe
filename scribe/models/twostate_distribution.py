@@ -1,491 +1,209 @@
 """
-Probability functions and distribution class for the two-state promoter model.
+Beta-Poisson distribution implementation for NumPyro.
+
+This module implements the Beta-Poisson compound distribution, which is
+mathematically equivalent to the two-state promoter model.
 """
 
-# Imports for inference
 import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsps
 from jax import random
 import numpyro.distributions as dist
 import numpyro.distributions.constraints as constraints
+from numpyro.distributions.util import (
+    promote_shapes,
+    validate_sample,
+    is_prng_key,
+)
 
 # ------------------------------------------------------------------------------
-# High-precision implementation of the confluent hypergeometric function of the
-# first kind
+# Beta-Poisson distribution
 # ------------------------------------------------------------------------------
 
-def hyp1f1_high_precision(a, b, z):
+
+class BetaPoisson(dist.Distribution):
     """
-    Compute Kummer's confluent hypergeometric function (1F1) in double
-    precision.
-    
-    This function evaluates the confluent hypergeometric function by first
-    casting all inputs to float64 for higher numerical precision, then casting
-    the result back to the original input dtype. This helps avoid numerical
-    instabilities that can occur when computing 1F1 in lower precision.
+    Compound distribution comprising of a Beta-Poisson pair.
+
+    The rate parameter λ = d*p for the Poisson distribution is constructed by:
+        1. Sampling p from Beta(α, β)
+        2. Scaling by dose parameter d
+        3. Using λ = d*p as the Poisson rate
+
+    This is mathematically equivalent to the steady-state two-state promoter
+    model with:
+        - α = k_on / g_m
+        - β = k_off / g_m
+        - d = r_m / g_m
 
     Parameters
     ----------
-    a : jax.numpy.ndarray
-        First parameter of 1F1 (corresponds to 'a' in M(a,b,z))
-    b : jax.numpy.ndarray 
-        Second parameter of 1F1 (corresponds to 'b' in M(a,b,z))
-    z : jax.numpy.ndarray
-        Third parameter of 1F1 (corresponds to 'z' in M(a,b,z))
-
-    Returns
-    -------
-    jax.numpy.ndarray
-        The value of 1F1(a,b,z) computed in float64 precision but cast back to
-        the original dtype of the inputs
-
-    Notes
-    -----
-    This function must be called within a float64-enabled context:
-    
-    >>> with jax.experimental.enable_x64():
-    >>>     result = hyp1f1_high_precision(a, b, z)
+    alpha : float or array_like
+        Shape parameter α > 0 of the Beta distribution
+    beta : float or array_like
+        Shape parameter β > 0 of the Beta distribution
+    dose : float or array_like
+        Dose parameter d > 0 that scales the Beta-distributed rate
+    validate_args : bool, optional
+        Whether to validate arguments
     """
-    # 1) Cast inputs to float64
-    a64 = a.astype(jnp.float64)
-    b64 = b.astype(jnp.float64)
-    z64 = z.astype(jnp.float64)
-    # 2) Evaluate hyp1f1 in float64
-    out64 = jsps.hyp1f1(a64, b64, z64)
-    # 3) Cast result back to the original dtype (typically float32)
-    return out64.astype(a.dtype)
 
-# ------------------------------------------------------------------------------
-# Logarithm of Kummer's confluent hypergeometric function
-# ------------------------------------------------------------------------------
+    # Define constraints for the distribution parameters
+    arg_constraints = {
+        "alpha": constraints.positive,
+        "beta": constraints.positive,
+        "dose": constraints.positive,
+    }
+    # Define the support of the distribution
+    support = constraints.nonnegative_integer
+    pytree_data_fields = ("alpha", "beta", "dose", "_beta_dist")
 
-def log_hyp1f1_jax(
-    x, y, z,
-    transform=True,
-    eps=jnp.finfo(jnp.float32).eps
-):
-    """
-    Compute the logarithm of Kummer's confluent hypergeometric function M(a,b,z)
-    using JAX.
-
-    This function computes ln[M(a,b,z)] through the transformation: 
-        ln[M(a,b,z)] = z + ln[M(b-a,b,-z)]
-
-    This transformation is useful because it improves numerical stability when
-    dealing with large arguments, as the confluent hypergeometric function can
-    grow very rapidly.
-
-    Parameters
-    ----------
-    x : jnp.ndarray
-        First parameter of the hypergeometric function (corresponds to 'a')
-    y : jnp.ndarray 
-        Second parameter of the hypergeometric function (corresponds to 'b')
-    z : jnp.ndarray
-        Third parameter of the hypergeometric function (corresponds to 'z')
-    transform : bool, optional
-        Whether to apply the transformation ln[M(a,b,z)] = z + ln[M(b-a,b,-z)]
-        (default is True)
-    eps : float, optional
-        Small value to avoid taking log of zero (default is
-        jnp.finfo(jnp.float32).eps)
-
-    Returns
-    -------
-    jnp.ndarray
-        The logarithm of the confluent hypergeometric function evaluated at the
-        given parameters: ln[M(x,y,z)]
-
-    Notes
-    -----
-    - The transformation used here is based on Kummer's transformation: 
-        M(a,b,z) = e^z * M(b-a,b,-z)
-    - Taking the logarithm of both sides gives: 
-        ln[M(a,b,z)] = z + ln[M(b-a,b,-z)]
-
-    - This function must be called within a float64-enabled context:
-    
-    >>> with jax.experimental.enable_x64():
-    >>>     result = log_hyp1f1_jax(a, b, z)
-    """
-    # Convert all inputs to arrays
-    x = jnp.asarray(x)
-    y = jnp.asarray(y)
-    z = jnp.asarray(z)
-    
-    # Broadcast to compatible shapes
-    broadcast_shape = jnp.broadcast_shapes(x.shape, y.shape, z.shape)
-    x = jnp.broadcast_to(x, broadcast_shape)
-    y = jnp.broadcast_to(y, broadcast_shape)
-    z = jnp.broadcast_to(z, broadcast_shape)
-    
-    if transform:
-        # Compute hyp1f1 value with transformation
-        hyp1f1_value = hyp1f1_high_precision(y - x, y, -z)
-        # Return the transformed log-hyp1f1 value
-        return z + jnp.log(hyp1f1_value + eps)
-    else:
-        # Compute hyp1f1 value without transformation
-        hyp1f1_value = hyp1f1_high_precision(x, y, z)
-        # Return the log-hyp1f1 value
-        return jnp.log(hyp1f1_value + eps)
-
-# ------------------------------------------------------------------------------
-# Logarithm of the probability mass function for the two-state promoter
-# steady-state mRNA distribution
-# ------------------------------------------------------------------------------
-
-def log_pmf_twostate(
-    mRNA,
-    k_on,
-    k_off,
-    r_m,
-    g_m=1.0,
-    eps=jnp.finfo(jnp.float32).eps
-):
-    """
-    Compute the log probability mass function (PMF) for a two-state promoter
-    model.
-    
-    Parameters
-    ----------
-    mRNA : float or array-like
-        mRNA copy number at which to evaluate the probability
-    k_on : float or array-like
-        Rate of promoter switching from OFF to ON state (units: 1/time)
-    k_off : float or array-like
-        Rate of promoter switching from ON to OFF state (units: 1/time) 
-    r_m : float or array-like
-        Production rate of mRNA when promoter is ON (units: 1/time)
-    g_m : float or array-like, optional
-        mRNA degradation rate (units: 1/time). Default is 1.0
-    eps : float, optional
-        Small value added for numerical stability. Default is JAX float32
-        epsilon
-    
-    Returns
-    -------
-    float or array-like
-        The natural logarithm of the probability mass function evaluated at the
-        given mRNA copy number(s)
-    
-    Notes
-    -----
-    - This function must be called within a float64-enabled context due to the
-    use of the confluent hypergeometric function:
-    
-    >>> with jax.experimental.enable_x64():
-    >>>     result = log_pmf_twostate(mRNA, k_on, k_off, r_m, g_m=g_m, eps=eps)
-    """
-    # Convert inputs to arrays
-    mRNA = jnp.asarray(mRNA)
-    k_on = jnp.asarray(k_on)
-    k_off = jnp.asarray(k_off)
-    r_m = jnp.asarray(r_m)
-    g_m = jnp.asarray(g_m)
-
-    # Get the broadcast shape for all inputs
-    broadcast_shape = jnp.broadcast_shapes(
-        mRNA.shape,
-        k_on.shape,
-        k_off.shape,
-        r_m.shape,
-        g_m.shape
-    )
-    
-    # Broadcast arrays to the common shape
-    mRNA = jnp.broadcast_to(mRNA, broadcast_shape)
-    k_on = jnp.broadcast_to(k_on, broadcast_shape)
-    k_off = jnp.broadcast_to(k_off, broadcast_shape)
-    r_m = jnp.broadcast_to(r_m, broadcast_shape)
-    g_m = jnp.broadcast_to(g_m, broadcast_shape)
-
-    # Compute hypergeometric terms
-    # Note: these are already broadcast from previous steps
-    a = k_on / g_m + mRNA
-    b = (k_off + k_on) / g_m + mRNA
-    c = -r_m / g_m
-    
-    # For bad values, try transformed computation
-    hyp_term = log_hyp1f1_jax(
-        a, b, c, transform=True, eps=eps
-    )
-    
-    # Compute PMF terms
-    lnp = (
-        jsps.gammaln(k_on / g_m + mRNA + eps)
-        - jsps.gammaln(mRNA + 1 + eps)
-        - jsps.gammaln((k_off + k_on) / g_m + mRNA + eps)
-        + jsps.gammaln((k_off + k_on) / g_m + eps)
-        - jsps.gammaln(k_on / g_m + eps)
-        + mRNA * jnp.log(r_m / g_m + eps)
-        + hyp_term
-    )
-
-    return lnp
-
-# ------------------------------------------------------------------------------
-# Sampling from the two-state promoter model
-# ------------------------------------------------------------------------------
-
-def sample_twostate(
-    k_on,
-    k_off,
-    r_m,
-    rng_key,
-    g_m=1.0,
-    max_mrna=20_000,
-    n_samples=1000,
-):
-    """
-    Generate samples from the two-state promoter model's steady-state
-    distribution.
-    
-    Parameters
-    ----------
-    k_on : float or array-like
-        Rate of promoter switching from OFF to ON state
-    k_off : float or array-like
-        Rate of promoter switching from ON to OFF state
-    r_m : float or array-like
-        Production rate of mRNA when promoter is ON
-    rng_key : jax.random.PRNGKey
-        Random number generator key
-    g_m : float or array-like, optional
-        mRNA degradation rate. Default is 1.0
-    max_mrna : int, optional
-        Maximum mRNA count to consider. Default is 20000
-    n_samples : int, optional
-        Number of samples to generate. Default is 1000
-
-    Returns
-    -------
-    jax.numpy.ndarray
-        Array of sampled mRNA counts with shape (n_samples,) or (n_samples,
-        n_genes)
-    
-    Notes
-    -----
-    - This function must be called within a float64-enabled context due to the
-      use of the confluent hypergeometric function:
-    
-    >>> with jax.experimental.enable_x64():
-    >>>     result = sample_twostate(
-    >>>         k_on,
-    >>>         k_off,
-    >>>         r_m,
-    >>>         rng_key,
-    >>>         g_m=g_m,
-    >>>         max_mrna=max_mrna,
-    >>>         n_samples=n_samples
-    >>>     )
-    """
-    # Convert inputs to arrays
-    k_on = jnp.asarray(k_on)
-    k_off = jnp.asarray(k_off)
-    r_m = jnp.asarray(r_m)
-    g_m = jnp.asarray(g_m)
-    
-    # Get broadcast shape of all parameters
-    param_shape = jnp.broadcast_shapes(
-        k_on.shape, k_off.shape, r_m.shape, g_m.shape
-    )
-    
-    # Broadcast parameters to common shape
-    k_on = jnp.broadcast_to(k_on, param_shape)
-    k_off = jnp.broadcast_to(k_off, param_shape)
-    r_m = jnp.broadcast_to(r_m, param_shape)
-    g_m = jnp.broadcast_to(g_m, param_shape)
-    
-    # Create mRNA values array
-    mrna_values = jnp.arange(max_mrna)
-    
-    # Add necessary dimensions for broadcasting with parameters
-    mrna_expanded = mrna_values.reshape((-1,) + (1,) * len(param_shape))
-    
-    # Compute log probabilities
-    log_probs = log_pmf_twostate(
-        mrna_expanded, k_on, k_off, r_m, g_m=g_m
-    )
-    
-    # Replace -inf with very negative number to avoid NaN after exp
-    log_probs = jnp.where(
-        jnp.isfinite(log_probs),
-        log_probs,
-        jnp.finfo(log_probs.dtype).min
-    )
-    
-    # Normalize probabilities in log space
-    log_norm = jsps.logsumexp(log_probs, axis=0)
-    log_pmf = log_probs - log_norm
-    
-    # Convert to probabilities
-    pmf = jnp.exp(log_pmf)
-    
-    # If parameters are scalar, return samples with shape (n_samples,)
-    # Otherwise, return samples with shape (n_samples, n_genes)
-    if not param_shape:
-        return random.choice(
-            rng_key,
-            mrna_values,
-            shape=(n_samples,),
-            p=pmf.squeeze()
+    # Initialize the distribution
+    def __init__(self, alpha, beta, dose, *, validate_args=None):
+        # Store the parameters
+        self.alpha, self.beta, self.dose = promote_shapes(alpha, beta, dose)
+        # Create a Beta distribution object
+        self._beta_dist = dist.Beta(self.alpha, self.beta)
+        # Initialize the distribution
+        super(BetaPoisson, self).__init__(
+            self._beta_dist.batch_shape, validate_args=validate_args
         )
-    
-    # Split key for multiple sampling
-    keys = random.split(rng_key, param_shape[0])
-    
-    # Sample for each set of parameters
-    samples = jax.vmap(lambda key, p: random.choice(
-        key,
-        mrna_values,
-        shape=(n_samples,),
-        p=p
-    ))(keys, pmf.T)
-    
-    return samples.T
+
+    def sample(self, key, sample_shape=()):
+        """Sample from Beta-Poisson using two-step process."""
+        assert is_prng_key(key)
+        key_beta, key_poisson = random.split(key)
+
+        # Sample p from Beta(α, β)
+        p = self._beta_dist.sample(key_beta, sample_shape)
+
+        # Sample from Poisson(d*p)
+        rate = self.dose * p
+        return dist.Poisson(rate).sample(key_poisson)
+
+    @validate_sample
+    def log_prob(self, value):
+        """
+        Compute log probability using the exact Beta-Poisson PMF.
+
+        Uses the derived formula:
+        P(X=x) = [Γ(α+x)/(x!Γ(α))] × [Γ(α+β)/Γ(α+β+x)] × d^x × ₁F₁(α+x, α+β+x, -d)
+        """
+        # Convert value to ensure it's an array
+        value = jnp.asarray(value)
+
+        # Compute log probability components
+        log_prob = (
+            # Γ(α + x) / (x! Γ(α))
+            jsps.gammaln(self.alpha + value)
+            - jsps.gammaln(value + 1)
+            - jsps.gammaln(self.alpha)
+            # Γ(α + β) / Γ(α + β + x)
+            + jsps.gammaln(self.alpha + self.beta)
+            - jsps.gammaln(self.alpha + self.beta + value)
+            # d^x
+            + value * jnp.log(self.dose)
+        )
+
+        # Add hypergeometric function term: ₁F₁(α+x, α+β+x, -d)
+        hyp_args = (
+            self.alpha + value,  # a
+            self.alpha + self.beta + value,  # b
+            self.dose,  # z
+        )
+
+        # Use standard JAX hypergeometric function with current precision
+        hyp_value = jsps.hyp1f1(*hyp_args)
+
+        # Handle infinite values using JAX-compatible operations
+        log_hyp = jnp.where(
+            jnp.isinf(hyp_value),
+            -jnp.inf,
+            jnp.log(hyp_value) - self.dose
+        )
+
+        return log_prob + log_hyp
+
+    @property
+    def mean(self):
+        """Expected value of Beta-Poisson distribution."""
+        # E[X] = E[E[X|p]] = E[d*p] = d*E[p] = d*α/(α+β)
+        return self.dose * self.alpha / (self.alpha + self.beta)
+
+    @property
+    def variance(self):
+        """Variance of Beta-Poisson distribution."""
+        # Var[X] = E[Var[X|p]] + Var[E[X|p]]
+        # = E[d*p] + Var[d*p]
+        # = d*α/(α+β) + d²*Var[p]
+        # = d*α/(α+β) + d²*αβ/[(α+β)²(α+β+1)]
+        beta_mean = self.alpha / (self.alpha + self.beta)
+        beta_var = (self.alpha * self.beta) / (
+            (self.alpha + self.beta) ** 2 * (self.alpha + self.beta + 1)
+        )
+        return self.dose * beta_mean + (self.dose**2) * beta_var
+
 
 # ------------------------------------------------------------------------------
-# NumPyro implementation of the two-state promoter model
+# Two-State Promoter Steady-State distribution
 # ------------------------------------------------------------------------------
 
-class TwoStatePromoter(dist.Distribution):
+
+class TwoStatePromoter(BetaPoisson):
     """
-    A NumPyro distribution representing the steady-state mRNA distribution of a
-    two-state promoter model.
+    Two-State Promoter distribution implemented as a Beta-Poisson.
 
-    This class implements the analytical solution for the probability mass
-    function (PMF) of mRNA counts produced by a gene switching between active
-    and inactive states. The model parameters are:
-        - k_on: Rate of switching from inactive to active state
-        - k_off: Rate of switching from active to inactive state  
-        - r_m: Rate of mRNA production in active state
-        - g_m: Rate of mRNA degradation (default=1.0)
-
-    The PMF is computed using Kummer's confluent hypergeometric function and
-    involves numerical stabilization techniques to handle large parameter
-    values.
+    This provides the same distribution as the original two-state promoter model
+    but with more efficient sampling and a direct connection to the Beta-Poisson
+    literature.
 
     Parameters
     ----------
-    k_on : float or jax.numpy.ndarray
+    k_on : float or array_like
         Rate of promoter switching from OFF to ON state
-    k_off : float or jax.numpy.ndarray
+    k_off : float or array_like
         Rate of promoter switching from ON to OFF state
-    r_m : float or jax.numpy.ndarray
+    r_m : float or array_like
         Production rate of mRNA when promoter is ON
-    g_m : float or jax.numpy.ndarray, optional
+    g_m : float or array_like, optional
         mRNA degradation rate (default=1.0)
     validate_args : bool, optional
-        Whether to validate distribution parameters (default=None)
-
-    Notes
-    -----
-    - Any method for this class must be called within a float64-enabled context
-      due to the use of the confluent hypergeometric function:
-    
-    >>> dist = TwoStatePromoter(
-    >>>     k_on,
-    >>>     k_off,
-    >>>     r_m,
-    >>>     g_m=g_m,
-    >>>     validate_args=validate_args
-    >>> )
-    >>> with jax.experimental.enable_x64():
-    >>>     result = dist.sample(key)
+        Whether to validate arguments
     """
-    # Define the valid parameter constraints for the distribution
+
     arg_constraints = {
         "k_on": constraints.positive,
         "k_off": constraints.positive,
         "r_m": constraints.positive,
         "g_m": constraints.positive,
     }
+    support = constraints.nonnegative_integer
 
-    def __init__(
-            self, k_on, k_off, r_m, g_m=1.0, validate_args=None
-        ):
-        # Store the model parameters as instance attributes
+    def __init__(self, k_on, k_off, r_m, g_m=1.0, *, validate_args=None):
+        # Store biological parameters
         self.k_on = k_on
         self.k_off = k_off
         self.r_m = r_m
         self.g_m = g_m
-        
-        # Determine the batch shape by broadcasting all parameter shapes
-        # together
-        batch_shape = jax.lax.broadcast_shapes(
-            jnp.shape(k_on),
-            jnp.shape(k_off),
-            jnp.shape(r_m),
-            jnp.shape(g_m)
-        )
-        
-        # Initialize the base Distribution class
-        super().__init__(batch_shape=batch_shape, event_shape=(), validate_args=validate_args)
 
-    def log_prob(self, value):
-        """
-        Compute the log probability mass function for given mRNA counts.
+        # Convert to Beta-Poisson parameters
+        alpha = k_on / g_m
+        beta = k_off / g_m
+        dose = r_m / g_m
 
-        Parameters
-        ----------
-        value : int or jax.numpy.ndarray
-            The mRNA count(s) to compute probability for
-
-        Returns
-        -------
-        jax.numpy.ndarray
-            Log probability of observing the given mRNA count(s)
-        """
-        # Call the analytical PMF computation function
-        return log_pmf_twostate(
-            value,
-            self.k_on,
-            self.k_off,
-            self.r_m,
-            g_m=self.g_m,
-        )
+        super().__init__(alpha, beta, dose, validate_args=validate_args)
 
     @property
-    def support(self):
-        """
-        Define the support of the distribution (non-negative integers).
-        
-        Note: NumPyro does not have built-in integer constraints, so we use a
-        custom one.
-        """
-        return constraints.nonnegative_integer
+    def mean(self):
+        """Expected mRNA count in terms of biological parameters."""
+        # E[mRNA] = r_m * k_on / (g_m * (k_on + k_off))
+        return self.r_m * self.k_on / (self.g_m * (self.k_on + self.k_off))
 
-    def sample(self, key, sample_shape=()):
-        """
-        Generate samples from the two-state promoter model using the efficient
-        sampling method.
-
-        Parameters
-        ----------
-        key : jax.random.PRNGKey
-            Random number generator key
-        sample_shape : tuple, optional
-            Shape of samples to generate (default=())
-
-        Returns
-        -------
-        jax.numpy.ndarray
-            Array of sampled mRNA counts with shape: sample_shape + batch_shape
-        """
-        # Calculate total number of samples needed
-        n_samples = jnp.prod(jnp.array(sample_shape))
-        
-        # Generate samples using the efficient method
-        samples = sample_twostate(
-            self.k_on,
-            self.k_off,
-            self.r_m,
-            key,
-            g_m=self.g_m,
-            n_samples=n_samples
-        )
-        
-        # Reshape samples to include sample_shape and batch_shape
-        return samples.reshape(sample_shape + self.batch_shape) 
+    @property
+    def variance(self):
+        """Variance of mRNA count in terms of biological parameters."""
+        mean_val = self.mean
+        # Additional variance due to promoter switching
+        burst_factor = 1 + self.r_m / (self.k_off + self.g_m)
+        return mean_val * burst_factor
