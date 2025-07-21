@@ -7,6 +7,9 @@
 <!-- notes on the Singer dataset -->
 {{< include _singer_dataset.qmd >}}
 
+<!-- notes on MCMC inference -->
+{{< include _singer_mcmc_nbdm.qmd >}}
+
 <!-- notes on variational inference -->
 {{< include _variational_inference_primer.qmd >}}
 
