@@ -6,7 +6,7 @@ treating unconstrained as just another parameterization rather than a separate
 model type.
 """
 
-from typing import Union, Optional, Dict, Any, Type, TYPE_CHECKING
+from typing import Union, Optional, Dict, Any, Type, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from anndata import AnnData
@@ -21,6 +21,7 @@ from .models.model_config import ModelConfig
 # Import inference-specific components
 from .svi import SVIInferenceEngine, SVIResultsFactory
 from .mcmc import MCMCInferenceEngine, MCMCResultsFactory
+from .vae import ScribeVAEResults
 
 
 def run_scribe(
@@ -61,6 +62,10 @@ def run_scribe(
     mu_prior: Optional[tuple] = None,
     phi_prior: Optional[tuple] = None,
     phi_capture_prior: Optional[tuple] = None,
+    # VAE-specific parameters
+    vae_latent_dim: int = 3,
+    vae_hidden_dims: Optional[list] = None,
+    vae_activation: Optional[Callable] = None,
     # General parameters
     seed: int = 42,
 ) -> Any:
@@ -154,6 +159,15 @@ def run_scribe(
     mu_prior, phi_prior, phi_capture_prior : Optional[tuple]
         Additional prior parameters for specific parameterizations
 
+    VAE Parameters:
+    --------------
+    vae_latent_dim : int, default=3
+        Dimension of the VAE latent space
+    vae_hidden_dims : Optional[list], default=None
+        List of hidden layer dimensions (default: [256, 256])
+    vae_activation : Optional[Callable], default=None
+        Activation function for VAE (default: gelu)
+
     General:
     -------
     seed : int, default=42
@@ -196,6 +210,15 @@ def run_scribe(
         inference_method="mcmc",
         parameterization="linked",
         n_samples=1000
+    )
+
+    # VAE with standard parameterization
+    results = run_scribe(
+        counts,
+        inference_method="vae",
+        parameterization="standard",
+        vae_latent_dim=5,
+        vae_hidden_dims=[512, 256]
     )
     """
     # Step 1: Input Processing & Validation
@@ -242,29 +265,47 @@ def run_scribe(
         "component_specific_params": component_specific_params,
     }
 
+    # Add VAE-specific parameters if using VAE inference
+    if inference_method == "vae":
+        model_config_kwargs.update(
+            {
+                "vae_latent_dim": vae_latent_dim,
+                "vae_hidden_dims": vae_hidden_dims,
+                "vae_activation": vae_activation,
+            }
+        )
+
     if parameterization == "unconstrained":
-        model_config_kwargs.update({
-            "p_unconstrained_prior": user_priors.get("p_prior"),
-            "r_unconstrained_prior": user_priors.get("r_prior"),
-            "gate_unconstrained_prior": user_priors.get("gate_prior"),
-            "p_capture_unconstrained_prior": user_priors.get("p_capture_prior"),
-            "mixing_logits_unconstrained_prior": user_priors.get("mixing_prior"),
-        })
+        model_config_kwargs.update(
+            {
+                "p_unconstrained_prior": user_priors.get("p_prior"),
+                "r_unconstrained_prior": user_priors.get("r_prior"),
+                "gate_unconstrained_prior": user_priors.get("gate_prior"),
+                "p_capture_unconstrained_prior": user_priors.get(
+                    "p_capture_prior"
+                ),
+                "mixing_logits_unconstrained_prior": user_priors.get(
+                    "mixing_prior"
+                ),
+            }
+        )
     else:
-        model_config_kwargs.update({
-            "p_param_prior": user_priors.get("p_prior"),
-            "r_param_prior": user_priors.get("r_prior"),
-            "mu_param_prior": user_priors.get("mu_prior"),
-            "phi_param_prior": user_priors.get("phi_prior"),
-            "gate_param_prior": user_priors.get("gate_prior"),
-            "p_capture_param_prior": user_priors.get("p_capture_prior"),
-            "phi_capture_param_prior": user_priors.get("phi_capture_prior"),
-            "mixing_param_prior": user_priors.get("mixing_prior"),
-        })
+        model_config_kwargs.update(
+            {
+                "p_param_prior": user_priors.get("p_prior"),
+                "r_param_prior": user_priors.get("r_prior"),
+                "mu_param_prior": user_priors.get("mu_prior"),
+                "phi_param_prior": user_priors.get("phi_prior"),
+                "gate_param_prior": user_priors.get("gate_prior"),
+                "p_capture_param_prior": user_priors.get("p_capture_prior"),
+                "phi_capture_param_prior": user_priors.get("phi_capture_prior"),
+                "mixing_param_prior": user_priors.get("mixing_prior"),
+            }
+        )
 
     model_config = ModelConfig(**model_config_kwargs)
     model_config.validate()
-    
+
     # Step 4: Run Inference
     if inference_method == "svi":
         results = _run_svi_inference(
@@ -293,8 +334,24 @@ def run_scribe(
             seed=seed,
             mcmc_kwargs=mcmc_kwargs,
         )
+    elif inference_method == "vae":
+        results = _run_vae_inference(
+            model_config=model_config,
+            count_data=count_data,
+            adata=adata,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            optimizer=optimizer,
+            loss=loss,
+            n_steps=n_steps,
+            batch_size=batch_size,
+            stable_update=stable_update,
+            seed=seed,
+        )
     else:
-        raise ValueError("Invalid inference_method. Choose 'svi' or 'mcmc'")
+        raise ValueError(
+            "Invalid inference_method. Choose 'svi', 'mcmc', or 'vae'"
+        )
 
     return results
 
@@ -327,7 +384,7 @@ def _run_svi_inference(
         inference_kwargs["optimizer"] = optimizer
     if loss is not None:
         inference_kwargs["loss"] = loss
-        
+
     svi_results = SVIInferenceEngine.run_inference(**inference_kwargs)
 
     return SVIResultsFactory.create_results(
@@ -379,3 +436,97 @@ def _run_mcmc_inference(
         n_components=model_config.n_components,
         prior_params=model_config.get_active_priors(),
     )
+
+
+def _run_vae_inference(
+    model_config: ModelConfig,
+    count_data: jnp.ndarray,
+    adata: Optional["AnnData"],
+    n_cells: int,
+    n_genes: int,
+    optimizer: Optional[Any],
+    loss: Optional[Any],
+    n_steps: int,
+    batch_size: Optional[int],
+    stable_update: bool,
+    seed: int,
+) -> ScribeVAEResults:
+    """Helper function to run VAE inference."""
+    # For now, VAE inference uses the same SVI engine but with VAE models
+    # This will be enhanced later with dedicated VAE inference
+    inference_kwargs = {
+        "model_config": model_config,
+        "count_data": count_data,
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "n_steps": n_steps,
+        "batch_size": batch_size,
+        "seed": seed,
+        "stable_update": stable_update,
+    }
+    if optimizer is not None:
+        inference_kwargs["optimizer"] = optimizer
+    if loss is not None:
+        inference_kwargs["loss"] = loss
+
+    # Use SVI engine for VAE (VAE is essentially SVI with neural network components)
+    svi_results = SVIInferenceEngine.run_inference(**inference_kwargs)
+
+    # Create base SVI results
+    base_results = SVIResultsFactory.create_results(
+        svi_results=svi_results,
+        adata=adata,
+        model_config=model_config,
+        count_data=count_data,
+        n_cells=n_cells,
+        n_genes=n_genes,
+        model_type=model_config.base_model,
+        n_components=model_config.n_components,
+        prior_params=model_config.get_active_priors(),
+    )
+
+    # Extract VAE model from the trained parameters
+    # This is a simplified approach - in practice, you'd need to extract the VAE
+    # from the trained parameters more carefully
+    vae_model = _extract_vae_from_params(
+        svi_results.params, model_config, n_genes
+    )
+
+    # Create VAE-specific results
+    vae_results = ScribeVAEResults.from_svi_results(
+        svi_results=base_results,
+        vae_model=vae_model,
+        original_counts=count_data,
+    )
+
+    return vae_results
+
+
+def _extract_vae_from_params(
+    params: Dict[str, Any],
+    model_config: ModelConfig,
+    n_genes: int,
+) -> Any:
+    """
+    Extract VAE model from trained parameters.
+
+    This is a placeholder function that would need to be implemented
+    based on how the VAE is stored in the parameters during training.
+    """
+    # For now, create a new VAE with the same configuration
+    # In practice, you'd extract the trained weights from params
+    from .vae.architectures import create_vae
+
+    # Create VAE with the configuration from model_config
+    vae = create_vae(
+        input_dim=n_genes,
+        latent_dim=model_config.vae_latent_dim,
+        hidden_dims=model_config.vae_hidden_dims,
+        activation=model_config.vae_activation,
+    )
+
+    # TODO: Load trained weights into the VAE model
+    # This would involve extracting VAE parameters from params and
+    # setting them in the VAE model
+
+    return vae
