@@ -542,6 +542,7 @@ class ScribeVAEResults(ScribeSVIResults):
                     'latent_dim': self.model_config.vae_latent_dim,
                     'hidden_dims': self.model_config.vae_hidden_dims,
                     'activation': self.model_config.vae_activation,
+                    'output_activation': self.model_config.vae_output_activation,
                 }
             except Exception as e:
                 print(f"Warning: Could not extract VAE state: {e}")
@@ -581,6 +582,7 @@ class ScribeVAEResults(ScribeSVIResults):
             latent_dim=vae_config['latent_dim'],
             hidden_dims=vae_config['hidden_dims'],
             activation=vae_config['activation'],
+            output_activation=vae_config.get('output_activation'),
         )
         
         # Load the trained state using Flax NNX

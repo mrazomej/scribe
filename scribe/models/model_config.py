@@ -103,6 +103,7 @@ class ModelConfig:
     vae_latent_dim: int = 3
     vae_hidden_dims: Optional[List[int]] = None
     vae_activation: Optional[Callable] = None
+    vae_output_activation: Optional[Callable] = None
 
     def validate(self):
         """Validate configuration parameters."""
@@ -233,6 +234,10 @@ class ModelConfig:
                 # Import here to avoid circular imports
                 from flax import nnx
                 self.vae_activation = nnx.gelu
+            if self.vae_output_activation is None:
+                # Import here to avoid circular imports
+                import jax
+                self.vae_output_activation = jax.nn.softplus
 
     def _validate_mixture_components(self):
         """Validate mixture model configuration."""

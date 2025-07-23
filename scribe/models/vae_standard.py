@@ -44,6 +44,7 @@ def nbdm_vae_model(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        output_activation=model_config.vae_output_activation,
     )
 
     # Register encoder and decoder separately as NumPyro modules
@@ -142,6 +143,7 @@ def nbdm_vae_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        output_activation=model_config.vae_output_activation,
     )
 
     # Register encoder as NumPyro module for the guide
@@ -215,6 +217,7 @@ def zinb_vae_model(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        output_activation=model_config.vae_output_activation,
     )
 
     # Register encoder and decoder separately as NumPyro modules
@@ -340,6 +343,7 @@ def zinb_vae_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        output_activation=model_config.vae_output_activation,
     )
 
     # Register encoder as NumPyro module for the guide
