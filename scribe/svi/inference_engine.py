@@ -64,9 +64,19 @@ class SVIInferenceEngine:
             Results from SVI run containing optimized parameters and loss history
         """
         # Get model and guide functions
+        # If using VAE inference, automatically use VAE parameterization
+        if model_config.inference_method == "vae":
+            # Convert standard parameterization to VAE parameterization
+            if model_config.parameterization in ["standard", "linked", "odds_ratio"]:
+                vae_parameterization = f"vae_{model_config.parameterization}"
+            else:
+                vae_parameterization = model_config.parameterization
+        else:
+            vae_parameterization = model_config.parameterization
+            
         model, guide = get_model_and_guide(
             model_config.base_model,
-            parameterization=model_config.parameterization,
+            parameterization=vae_parameterization,
         )
 
         # Create SVI instance
