@@ -25,10 +25,35 @@ def make_nbdm_vae_model_and_guide(
     model_config: ModelConfig,
 ):
     """
-    Factory function that creates encoder/decoder once and returns configured
-    model and guide functions that reuse these modules.
+    Construct and return VAE model and guide functions for the Negative
+    Binomial-Dirichlet Multinomial (NBDM) model, reusing the same encoder and
+    decoder modules throughout the SVI optimization.
 
-    This prevents the modules from being recreated on every SVI step.
+    This factory function instantiates the encoder and decoder neural network
+    modules only once, using the provided model configuration and number of
+    genes. It then returns two functions: a model and a guide, each of which
+    accepts the number of cells, number of genes, model configuration, and
+    optionally count data and batch size. These returned functions internally
+    use the pre-created encoder and decoder modules, ensuring that the neural
+    network parameters are not re-initialized at every SVI step, which is
+    important for correct and efficient variational inference.
+
+    Parameters
+    ----------
+    n_genes : int
+        Number of genes (input dimension for encoder/decoder).
+    model_config : ModelConfig
+        Configuration object specifying VAE architecture and model
+        hyperparameters.
+
+    Returns
+    -------
+    configured_model : Callable
+        A function implementing the NBDM VAE model, using the pre-created
+        decoder.
+    configured_guide : Callable
+        A function implementing the NBDM VAE guide, using the pre-created
+        encoder.
     """
     # Create the modules once
     decoder = create_decoder(
@@ -50,6 +75,26 @@ def make_nbdm_vae_model_and_guide(
     def configured_model(
         n_cells, n_genes, model_config, counts=None, batch_size=None
     ):
+        """
+        Model function for the NBDM VAE, using the shared decoder module.
+
+        Parameters
+        ----------
+        n_cells : int
+            Number of cells in the dataset.
+        n_genes : int
+            Number of genes.
+        model_config : ModelConfig
+            Model configuration object.
+        counts : Optional[jnp.ndarray]
+            Observed count data, if available.
+        batch_size : Optional[int]
+            Batch size for mini-batch training, if applicable.
+
+        Returns
+        -------
+        None
+        """
         return nbdm_vae_model(
             n_cells, n_genes, model_config, decoder, counts, batch_size
         )
@@ -57,6 +102,26 @@ def make_nbdm_vae_model_and_guide(
     def configured_guide(
         n_cells, n_genes, model_config, counts=None, batch_size=None
     ):
+        """
+        Guide function for the NBDM VAE, using the shared encoder module.
+
+        Parameters
+        ----------
+        n_cells : int
+            Number of cells in the dataset.
+        n_genes : int
+            Number of genes.
+        model_config : ModelConfig
+            Model configuration object.
+        counts : Optional[jnp.ndarray]
+            Observed count data, if available.
+        batch_size : Optional[int]
+            Batch size for mini-batch training, if applicable.
+
+        Returns
+        -------
+        None
+        """
         return nbdm_vae_guide(
             n_cells, n_genes, model_config, encoder, counts, batch_size
         )
@@ -69,8 +134,35 @@ def make_zinb_vae_model_and_guide(
     model_config: ModelConfig,
 ):
     """
-    Factory function that creates encoder/decoder once and returns configured
-    ZINB model and guide functions that reuse these modules.
+    Construct and return VAE model and guide functions for the Zero-Inflated
+    Negative Binomial (ZINB) model, reusing the same encoder and decoder modules
+    throughout the SVI optimization.
+
+    This factory function instantiates the encoder and decoder neural network
+    modules only once, using the provided model configuration and number of
+    genes. It then returns two functions: a model and a guide, each of which
+    accepts the number of cells, number of genes, model configuration, and
+    optionally count data and batch size. These returned functions internally
+    use the pre-created encoder and decoder modules, ensuring that the neural
+    network parameters are not re-initialized at every SVI step, which is
+    important for correct and efficient variational inference.
+
+    Parameters
+    ----------
+    n_genes : int
+        Number of genes (input dimension for encoder/decoder).
+    model_config : ModelConfig
+        Configuration object specifying VAE architecture and model
+        hyperparameters.
+
+    Returns
+    -------
+    configured_model : Callable
+        A function implementing the ZINB VAE model, using the pre-created
+        decoder.
+    configured_guide : Callable
+        A function implementing the ZINB VAE guide, using the pre-created
+        encoder.
     """
     # Create the modules once
     decoder = create_decoder(
@@ -92,6 +184,26 @@ def make_zinb_vae_model_and_guide(
     def configured_model(
         n_cells, n_genes, model_config, counts=None, batch_size=None
     ):
+        """
+        Model function for the ZINB VAE, using the shared decoder module.
+
+        Parameters
+        ----------
+        n_cells : int
+            Number of cells in the dataset.
+        n_genes : int
+            Number of genes.
+        model_config : ModelConfig
+            Model configuration object.
+        counts : Optional[jnp.ndarray]
+            Observed count data, if available.
+        batch_size : Optional[int]
+            Batch size for mini-batch training, if applicable.
+
+        Returns
+        -------
+        None
+        """
         return zinb_vae_model(
             n_cells, n_genes, model_config, decoder, counts, batch_size
         )
@@ -99,6 +211,26 @@ def make_zinb_vae_model_and_guide(
     def configured_guide(
         n_cells, n_genes, model_config, counts=None, batch_size=None
     ):
+        """
+        Guide function for the ZINB VAE, using the shared encoder module.
+
+        Parameters
+        ----------
+        n_cells : int
+            Number of cells in the dataset.
+        n_genes : int
+            Number of genes.
+        model_config : ModelConfig
+            Model configuration object.
+        counts : Optional[jnp.ndarray]
+            Observed count data, if available.
+        batch_size : Optional[int]
+            Batch size for mini-batch training, if applicable.
+
+        Returns
+        -------
+        None
+        """
         return zinb_vae_guide(
             n_cells, n_genes, model_config, encoder, counts, batch_size
         )
