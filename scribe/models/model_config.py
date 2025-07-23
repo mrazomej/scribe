@@ -8,6 +8,7 @@ This module provides a single ModelConfig class that handles all parameterizatio
 from typing import Dict, Any, List, Tuple, Optional, Callable
 from dataclasses import dataclass
 import jax.numpy as jnp
+from flax import nnx
 
 
 @dataclass
@@ -237,7 +238,7 @@ class ModelConfig:
             if self.vae_output_activation is None:
                 # Import here to avoid circular imports
                 import jax
-                self.vae_output_activation = jax.nn.softplus
+                self.vae_output_activation = nnx.softplus
 
     def _validate_mixture_components(self):
         """Validate mixture model configuration."""
