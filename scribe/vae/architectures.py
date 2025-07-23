@@ -17,6 +17,7 @@ class VAEConfig:
     latent_dim: int = 3
     hidden_dims: List[int] = None  # List of hidden layer dimensions
     activation: Callable = nnx.gelu
+    output_activation: Callable = jax.nn.softplus  # Output activation for decoder
 
     def __post_init__(self):
         if self.hidden_dims is None:
@@ -132,8 +133,9 @@ class Decoder(nnx.Module):
         for layer in self.decoder_layers:
             h = self.config.activation(layer(h))
 
-        # Output layer (no activation for r parameters)
+        # Output layer with configurable activation for r parameters
         output = self.decoder_output(h)
+        output = self.config.output_activation(output)
 
         return output
 
@@ -254,6 +256,7 @@ def create_vae(
     latent_dim: int = 3,
     hidden_dims: Optional[List[int]] = None,
     activation: Optional[Callable] = None,
+    output_activation: Optional[Callable] = None,
 ) -> VAE:
     """
     Create a default VAE architecture with configurable hidden layers.
@@ -263,18 +266,22 @@ def create_vae(
         latent_dim: Dimension of latent space (default: 3)
         hidden_dims: List of hidden layer dimensions (default: [256, 256])
         activation: Activation function (default: gelu)
+        output_activation: Output activation function (default: softplus)
 
     Returns:
         Configured VAE instance
     """
     if activation is None:
         activation = nnx.gelu
+    if output_activation is None:
+        output_activation = jax.nn.softplus
 
     config = VAEConfig(
         input_dim=input_dim,
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation=activation,
+        output_activation=output_activation,
     )
 
     rngs = nnx.Rngs(params=0)

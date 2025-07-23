@@ -66,6 +66,7 @@ def run_scribe(
     vae_latent_dim: int = 3,
     vae_hidden_dims: Optional[list] = None,
     vae_activation: Optional[Callable] = None,
+    vae_output_activation: Optional[Callable] = None,
     # General parameters
     seed: int = 42,
 ) -> Any:
@@ -272,6 +273,7 @@ def run_scribe(
                 "vae_latent_dim": vae_latent_dim,
                 "vae_hidden_dims": vae_hidden_dims,
                 "vae_activation": vae_activation,
+                "vae_output_activation": vae_output_activation,
             }
         )
 
@@ -523,6 +525,7 @@ def _extract_vae_from_params(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        output_activation=model_config.vae_output_activation,
     )
 
     # TODO: Load trained weights into the VAE model
