@@ -5,7 +5,7 @@ This module provides a single ModelConfig class that handles all parameterizatio
 (standard, linked, odds_ratio, unconstrained) uniformly.
 """
 
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, Callable
 from dataclasses import dataclass
 import jax.numpy as jnp
 
@@ -99,10 +99,16 @@ class ModelConfig:
     mixing_logits_unconstrained_prior: Optional[tuple] = None
     mixing_logits_unconstrained_guide: Optional[tuple] = None
 
+    # VAE parameters (used when inference_method="vae")
+    vae_latent_dim: int = 3
+    vae_hidden_dims: Optional[List[int]] = None
+    vae_activation: Optional[Callable] = None
+
     def validate(self):
         """Validate configuration parameters."""
         self._validate_base_model()
         self._validate_parameterization()
+        self._validate_inference_method()
         self._validate_mixture_components()
         self._set_default_priors()
 
@@ -203,6 +209,30 @@ class ModelConfig:
                 f"Invalid parameterization: {self.parameterization}. "
                 f"Must be one of {valid_parameterizations}"
             )
+
+    def _validate_inference_method(self):
+        """Validate inference method specification."""
+        valid_inference_methods = {
+            "svi",
+            "mcmc",
+            "vae",
+        }
+
+        if self.inference_method not in valid_inference_methods:
+            raise ValueError(
+                f"Invalid inference_method: {self.inference_method}. "
+                f"Must be one of {valid_inference_methods}"
+            )
+
+        # Validate VAE-specific parameters
+        if self.inference_method == "vae":
+            # Set default VAE parameters if not provided
+            if self.vae_hidden_dims is None:
+                self.vae_hidden_dims = [256, 256]  # Default: 2 hidden layers of 256
+            if self.vae_activation is None:
+                # Import here to avoid circular imports
+                from flax import nnx
+                self.vae_activation = nnx.gelu
 
     def _validate_mixture_components(self):
         """Validate mixture model configuration."""

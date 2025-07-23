@@ -17,6 +17,9 @@ SUPPORTED_PARAMETERIZATIONS = [
     "linked",
     "odds_ratio",
     "unconstrained",
+    "vae_standard",
+    "vae_linked",
+    "vae_odds_ratio",
 ]
 
 # Dictionary to cache imported model modules
@@ -41,7 +44,7 @@ def get_model_and_guide(
         "zinb_mix".
     parameterization : str, default="standard"
         The parameterization module to load from (e.g., "standard",
-        "unconstrained").
+        "unconstrained", "vae_standard").
 
     Returns
     -------
@@ -62,38 +65,57 @@ def get_model_and_guide(
             f"Supported parameterizations are: {SUPPORTED_PARAMETERIZATIONS}"
         )
 
+    # Handle VAE parameterizations
+    if parameterization.startswith("vae_"):
+        # Extract the base parameterization (e.g., "standard" from "vae_standard")
+        base_parameterization = parameterization.replace("vae_", "")
+        module_name = f"vae_{base_parameterization}"
+    else:
+        module_name = parameterization
+
     # Dynamically import the parameterization module (e.g.,
-    # scribe.models.standard)
+    # scribe.models.standard or scribe.models.vae_standard)
     try:
         module = importlib.import_module(
-            f".{parameterization}", "scribe.models"
+            f".{module_name}", "scribe.models"
         )
     except ImportError as e:
         raise ValueError(
-            f"Could not import parameterization module '{parameterization}': {e}"
+            f"Could not import parameterization module '{module_name}': {e}"
         )
 
     # Determine the function names based on convention
-    if model_type.endswith("_mix"):
-        base_type = model_type.replace("_mix", "")
-        model_name = f"{base_type}_mixture_model"
-        guide_name = f"{base_type}_mixture_guide"
+    if parameterization.startswith("vae_"):
+        # For VAE models, add "_vae" suffix to function names
+        if model_type.endswith("_mix"):
+            base_type = model_type.replace("_mix", "")
+            model_name = f"{base_type}_mixture_vae_model"
+            guide_name = f"{base_type}_mixture_vae_guide"
+        else:
+            model_name = f"{model_type}_vae_model"
+            guide_name = f"{model_type}_vae_guide"
     else:
-        model_name = f"{model_type}_model"
-        guide_name = f"{model_type}_guide"
+        # Standard naming convention
+        if model_type.endswith("_mix"):
+            base_type = model_type.replace("_mix", "")
+            model_name = f"{base_type}_mixture_model"
+            guide_name = f"{base_type}_mixture_guide"
+        else:
+            model_name = f"{model_type}_model"
+            guide_name = f"{model_type}_guide"
 
     # Retrieve the functions from the module
     model_fn = getattr(module, model_name, None)
     if model_fn is None:
         raise ValueError(
-            f"Model function '{model_name}' not found in module '{parameterization}'"
+            f"Model function '{model_name}' not found in module '{module_name}'"
         )
 
     # Guide functions exist for all parameterizations including unconstrained
     guide_fn = getattr(module, guide_name, None)
     if guide_fn is None:
         raise ValueError(
-            f"Guide function '{guide_name}' not found in module '{parameterization}'"
+            f"Guide function '{guide_name}' not found in module '{module_name}'"
         )
 
     return model_fn, guide_fn
