@@ -12,7 +12,98 @@ from numpyro.contrib.module import nnx_module
 from typing import Dict, Optional
 
 from .model_config import ModelConfig
-from ..vae.architectures import create_encoder, create_decoder
+from ..vae.architectures import create_encoder, create_decoder, Encoder, Decoder
+
+
+# ------------------------------------------------------------------------------
+# VAE Model/Guide Factory Functions
+# ------------------------------------------------------------------------------
+
+
+def make_nbdm_vae_model_and_guide(
+    n_genes: int,
+    model_config: ModelConfig,
+):
+    """
+    Factory function that creates encoder/decoder once and returns configured
+    model and guide functions that reuse these modules.
+
+    This prevents the modules from being recreated on every SVI step.
+    """
+    # Create the modules once
+    decoder = create_decoder(
+        input_dim=n_genes,
+        latent_dim=model_config.vae_latent_dim,
+        hidden_dims=model_config.vae_hidden_dims,
+        activation=model_config.vae_activation,
+        output_activation=model_config.vae_output_activation,
+    )
+
+    encoder = create_encoder(
+        input_dim=n_genes,
+        latent_dim=model_config.vae_latent_dim,
+        hidden_dims=model_config.vae_hidden_dims,
+        activation=model_config.vae_activation,
+    )
+
+    # Return functions that use the pre-created modules
+    def configured_model(
+        n_cells, n_genes, model_config, counts=None, batch_size=None
+    ):
+        return nbdm_vae_model(
+            n_cells, n_genes, model_config, decoder, counts, batch_size
+        )
+
+    def configured_guide(
+        n_cells, n_genes, model_config, counts=None, batch_size=None
+    ):
+        return nbdm_vae_guide(
+            n_cells, n_genes, model_config, encoder, counts, batch_size
+        )
+
+    return configured_model, configured_guide
+
+
+def make_zinb_vae_model_and_guide(
+    n_genes: int,
+    model_config: ModelConfig,
+):
+    """
+    Factory function that creates encoder/decoder once and returns configured
+    ZINB model and guide functions that reuse these modules.
+    """
+    # Create the modules once
+    decoder = create_decoder(
+        input_dim=n_genes,
+        latent_dim=model_config.vae_latent_dim,
+        hidden_dims=model_config.vae_hidden_dims,
+        activation=model_config.vae_activation,
+        output_activation=model_config.vae_output_activation,
+    )
+
+    encoder = create_encoder(
+        input_dim=n_genes,
+        latent_dim=model_config.vae_latent_dim,
+        hidden_dims=model_config.vae_hidden_dims,
+        activation=model_config.vae_activation,
+    )
+
+    # Return functions that use the pre-created modules
+    def configured_model(
+        n_cells, n_genes, model_config, counts=None, batch_size=None
+    ):
+        return zinb_vae_model(
+            n_cells, n_genes, model_config, decoder, counts, batch_size
+        )
+
+    def configured_guide(
+        n_cells, n_genes, model_config, counts=None, batch_size=None
+    ):
+        return zinb_vae_guide(
+            n_cells, n_genes, model_config, encoder, counts, batch_size
+        )
+
+    return configured_model, configured_guide
 
 
 # ------------------------------------------------------------------------------
@@ -24,6 +115,7 @@ def nbdm_vae_model(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
+    decoder: Decoder,  # Pre-created decoder passed as argument
     counts=None,
     batch_size=None,
 ):
@@ -38,16 +130,7 @@ def nbdm_vae_model(
     # Sample global success probability p from Beta prior
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
 
-    # Create decoder for generating r parameters
-    decoder = create_decoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-        output_activation=model_config.vae_output_activation,
-    )
-
-    # Register decoder as NumPyro module
+    # Register the pre-created decoder as NumPyro module
     decoder_module = nnx_module("decoder", decoder)
 
     # Sample counts
@@ -116,6 +199,7 @@ def nbdm_vae_guide(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
+    encoder: Encoder,  # Pre-created encoder passed as argument
     counts=None,
     batch_size=None,
 ):
@@ -136,15 +220,7 @@ def nbdm_vae_guide(
     # Sample p from the Beta distribution parameterized by p_alpha and p_beta
     numpyro.sample("p", dist.Beta(p_alpha, p_beta))
 
-    # Create encoder for encoding
-    encoder = create_encoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-    )
-
-    # Register encoder as NumPyro module for the guide
+    # Register the pre-created encoder as NumPyro module for the guide
     encoder_module = nnx_module("encoder", encoder)
 
     # Sample latent variables using encoder
@@ -191,6 +267,7 @@ def zinb_vae_model(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
+    decoder: Decoder,  # Pre-created decoder passed as argument
     counts=None,
     batch_size=None,
 ):
@@ -209,16 +286,7 @@ def zinb_vae_model(
         "gate", dist.Beta(*gate_prior_params).expand([n_genes])
     )
 
-    # Create decoder for generating r parameters
-    decoder = create_decoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-        output_activation=model_config.vae_output_activation,
-    )
-
-    # Register decoder as NumPyro module
+    # Register the pre-created decoder as NumPyro module
     decoder_module = nnx_module("decoder", decoder)
 
     # If observed counts are provided
@@ -302,6 +370,7 @@ def zinb_vae_guide(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
+    encoder: Encoder,  # Pre-created encoder passed as argument
     counts=None,
     batch_size=None,
 ):
@@ -334,15 +403,7 @@ def zinb_vae_guide(
     )
     numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
-    # Create encoder for encoding
-    encoder = create_encoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-    )
-
-    # Register encoder as NumPyro module for the guide
+    # Register the pre-created encoder as NumPyro module for the guide
     encoder_module = nnx_module("encoder", encoder)
 
     # Sample latent variables using encoder

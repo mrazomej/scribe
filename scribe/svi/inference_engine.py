@@ -64,20 +64,30 @@ class SVIInferenceEngine:
             Results from SVI run containing optimized parameters and loss history
         """
         # Get model and guide functions
-        # If using VAE inference, automatically use VAE parameterization
+        # If using VAE inference, use factory functions to avoid recreating modules
         if model_config.inference_method == "vae":
-            # Convert standard parameterization to VAE parameterization
-            if model_config.parameterization in ["standard", "linked", "odds_ratio"]:
-                vae_parameterization = f"vae_{model_config.parameterization}"
+            if model_config.base_model == "nbdm":
+                from ..models.vae_standard import make_nbdm_vae_model_and_guide
+
+                model, guide = make_nbdm_vae_model_and_guide(
+                    n_genes, model_config
+                )
+            elif model_config.base_model == "zinb":
+                from ..models.vae_standard import make_zinb_vae_model_and_guide
+
+                model, guide = make_zinb_vae_model_and_guide(
+                    n_genes, model_config
+                )
             else:
-                vae_parameterization = model_config.parameterization
+                raise ValueError(
+                    f"VAE inference not supported for model type: {model_config.base_model}"
+                )
         else:
-            vae_parameterization = model_config.parameterization
-            
-        model, guide = get_model_and_guide(
-            model_config.base_model,
-            parameterization=vae_parameterization,
-        )
+            # For non-VAE models, use the standard registry
+            model, guide = get_model_and_guide(
+                model_config.base_model,
+                parameterization=model_config.parameterization,
+            )
 
         # Create SVI instance
         svi = SVI(model, guide, optimizer, loss=loss)
