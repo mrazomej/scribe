@@ -17,7 +17,9 @@ class VAEConfig:
     latent_dim: int = 3
     hidden_dims: List[int] = None  # List of hidden layer dimensions
     activation: Callable = nnx.gelu
-    output_activation: Callable = jax.nn.softplus  # Output activation for decoder
+    output_activation: Callable = (
+        jax.nn.softplus
+    )  # Output activation for decoder
 
     def __post_init__(self):
         if self.hidden_dims is None:
@@ -41,7 +43,7 @@ class Encoder(nnx.Module):
             nnx.Linear(config.input_dim, config.hidden_dims[0], rngs=rngs)
         )
 
-        # Hidden layers 
+        # Hidden layers
         # hidden_dims[0] -> hidden_dims[1] -> ... -> hidden_dims[-1]
         for i in range(len(config.hidden_dims) - 1):
             self.encoder_layers.append(
@@ -246,8 +248,85 @@ class VAE(nnx.Module):
         graphdef, _ = nnx.split(self)
         self.__dict__.update(nnx.merge(graphdef, state).__dict__)
 
+
 # ------------------------------------------------------------------------------
 # Auxiliary functions
+# ------------------------------------------------------------------------------
+
+
+def create_encoder(
+    input_dim: int,
+    latent_dim: int = 3,
+    hidden_dims: Optional[List[int]] = None,
+    activation: Optional[Callable] = None,
+) -> Encoder:
+    """
+    Create a standalone encoder for VAE.
+
+    Args:
+        input_dim: Dimension of input data (number of genes)
+        latent_dim: Dimension of latent space (default: 3)
+        hidden_dims: List of hidden layer dimensions (default: [256, 256])
+        activation: Activation function (default: gelu)
+
+    Returns:
+        Configured Encoder instance
+    """
+    if activation is None:
+        activation = nnx.gelu
+
+    config = VAEConfig(
+        input_dim=input_dim,
+        latent_dim=latent_dim,
+        hidden_dims=hidden_dims,
+        activation=activation,
+        output_activation=nnx.gelu,  # Not used in encoder, but required for config
+    )
+
+    rngs = nnx.Rngs(params=0)
+    return Encoder(config=config, rngs=rngs)
+
+
+# ------------------------------------------------------------------------------
+
+
+def create_decoder(
+    input_dim: int,
+    latent_dim: int = 3,
+    hidden_dims: Optional[List[int]] = None,
+    activation: Optional[Callable] = None,
+    output_activation: Optional[Callable] = None,
+) -> Decoder:
+    """
+    Create a standalone decoder for VAE.
+
+    Args:
+        input_dim: Dimension of input data (number of genes)
+        latent_dim: Dimension of latent space (default: 3)
+        hidden_dims: List of hidden layer dimensions (default: [256, 256])
+        activation: Activation function (default: gelu)
+        output_activation: Output activation function (default: softplus)
+
+    Returns:
+        Configured Decoder instance
+    """
+    if activation is None:
+        activation = nnx.gelu
+    if output_activation is None:
+        output_activation = jax.nn.softplus
+
+    config = VAEConfig(
+        input_dim=input_dim,
+        latent_dim=latent_dim,
+        hidden_dims=hidden_dims,
+        activation=activation,
+        output_activation=output_activation,
+    )
+
+    rngs = nnx.Rngs(params=0)
+    return Decoder(config=config, rngs=rngs)
+
+
 # ------------------------------------------------------------------------------
 
 
