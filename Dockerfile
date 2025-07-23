@@ -1,5 +1,6 @@
 # Use the NVIDIA JAX image as the base
-FROM nvcr.io/nvidia/jax:25.01-py3
+# FROM nvcr.io/nvidia/jax:25.04-py3
+FROM ghcr.io/nvidia/jax:jax-2025-06-18
 
 # Install zsh and other required packages
 RUN apt-get update && apt-get install -y \
