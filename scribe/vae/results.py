@@ -145,7 +145,6 @@ class ScribeVAEResults(ScribeSVIResults):
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
-        training: bool = False,
     ) -> jnp.ndarray:
         """
         Get latent embeddings for cells using the trained VAE.
@@ -164,23 +163,19 @@ class ScribeVAEResults(ScribeSVIResults):
         jnp.ndarray
             Latent embeddings of shape (n_cells, latent_dim)
         """
-        # Validate VAE model is available
-        if self._vae_model is None:
-            raise ValueError(
-                "vae_model is not available. If this object was unpickled, "
-                "the VAE model will be reconstructed automatically when needed."
-            )
+        # Get VAE encoder
+        encoder = self.vae_model.encoder
 
         if batch_size is None:
             # Process all cells at once
-            _, mean, _ = self.vae_model(counts, training=training)
+            mean, _ = encoder(counts)
             return mean
         else:
             # Process in batches
             embeddings = []
             for i in range(0, counts.shape[0], batch_size):
                 batch = counts[i : i + batch_size]
-                _, mean, _ = self.vae_model(batch, training=training)
+                mean, _ = encoder(batch)
                 embeddings.append(mean)
             return jnp.concatenate(embeddings, axis=0)
 
@@ -216,13 +211,16 @@ class ScribeVAEResults(ScribeSVIResults):
         if rng_key is None:
             rng_key = jax.random.key(42)
 
+        # Get VAE encoder
+        encoder = self.vae_model.encoder
+
         # Generate multiple samples
         samples = []
         for i in range(n_samples):
             key = jax.random.fold_in(rng_key, i)
             if batch_size is None:
                 # Process all cells at once
-                _, mean, logvar = self.vae_model(counts, training=True)
+                mean, logvar = encoder(counts)
                 # Sample from latent space
                 std = jnp.exp(0.5 * logvar)
                 eps = jax.random.normal(key, mean.shape)
@@ -233,7 +231,7 @@ class ScribeVAEResults(ScribeSVIResults):
                 batch_samples = []
                 for j in range(0, counts.shape[0], batch_size):
                     batch = counts[j : j + batch_size]
-                    _, mean, logvar = self.vae_model(batch, training=True)
+                    mean, logvar = encoder(batch)
                     # Sample from latent space
                     std = jnp.exp(0.5 * logvar)
                     eps = jax.random.normal(key, mean.shape)
