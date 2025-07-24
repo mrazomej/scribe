@@ -9,6 +9,35 @@ from typing import Tuple, Optional, Callable, List
 from dataclasses import dataclass
 
 
+# ------------------------------------------------------------------------------
+# Dictionary of functions
+# ------------------------------------------------------------------------------
+
+ACTIVATION_FUNCTIONS = {
+    "gelu": nnx.gelu,
+    "relu": nnx.relu,
+    "softplus": nnx.softplus,
+    "sigmoid": nnx.sigmoid,
+    "tanh": nnx.tanh,
+    "elu": nnx.elu,
+    "selu": nnx.selu,
+    "swish": nnx.swish,
+    "hard_swish": nnx.hard_swish,
+}
+
+# Dictionary of input transformations
+INPUT_TRANSFORMATIONS = {
+    "log1p": jnp.log1p,
+    "log": jnp.log,
+    "sqrt": jnp.sqrt,
+    "identity": lambda x: x,
+}
+
+# ------------------------------------------------------------------------------
+# VAEConfig class
+# ------------------------------------------------------------------------------
+
+
 @dataclass
 class VAEConfig:
     """Configuration for VAE architecture."""
@@ -17,11 +46,11 @@ class VAEConfig:
     latent_dim: int = 3
     # List of hidden layer dimensions
     hidden_dims: List[int] = None
-    activation: Callable = nnx.gelu
+    activation: str = "relu"
     # Output activation for decoder
-    output_activation: Callable = jax.nn.softplus
+    output_activation: str = "softplus"
     # Input transformation for encoder (default: log1p for scRNA-seq data)
-    input_transformation: Callable = jnp.log1p
+    input_transformation: str = "log1p"
 
     def __post_init__(self):
         if self.hidden_dims is None:
@@ -76,13 +105,19 @@ class Encoder(nnx.Module):
         Returns:
             Tuple of (mean, log_variance) for latent space
         """
+        # Get activation function
+        activation = ACTIVATION_FUNCTIONS[self.config.activation]
+        input_transformation = INPUT_TRANSFORMATIONS[
+            self.config.input_transformation
+        ]
+
         # Apply configurable input transformation
-        x = self.config.input_transformation(x)
+        x = input_transformation(x)
         
         # Encoder forward pass through all hidden layers
         h = x
         for layer in self.encoder_layers:
-            h = self.config.activation(layer(h))
+            h = activation(layer(h))
 
         # Project to latent space
         mean = self.latent_mean(h)
@@ -136,14 +171,18 @@ class Decoder(nnx.Module):
         Returns:
             Decoded output of shape (batch_size, input_dim)
         """
+        # Get activation function
+        activation = ACTIVATION_FUNCTIONS[self.config.activation]
+        output_activation = ACTIVATION_FUNCTIONS[self.config.output_activation]
+
         # Decoder forward pass through all hidden layers
         h = z
         for layer in self.decoder_layers:
-            h = self.config.activation(layer(h))
+            h = activation(layer(h))
 
         # Output layer with configurable activation for r parameters
         output = self.decoder_output(h)
-        output = self.config.output_activation(output)
+        output = output_activation(output)
 
         return output
 
@@ -228,33 +267,6 @@ class VAE(nnx.Module):
 
         return reconstructed, mean, logvar
 
-    # --------------------------------------------------------------------------
-
-    def get_state(self):
-        """
-        Get the trained state from the VAE model using Flax NNX.
-
-        Returns:
-            nnx.State containing the model state
-        """
-        # Use Flax NNX's split to get the state
-        _, state = nnx.split(self)
-        return state
-
-    # --------------------------------------------------------------------------
-
-    def load_state(self, state):
-        """
-        Load trained state into the VAE model using Flax NNX.
-
-        Args:
-            state: nnx.State containing the model state
-        """
-        # Use Flax NNX's merge to load the state
-        graphdef, _ = nnx.split(self)
-        self.__dict__.update(nnx.merge(graphdef, state).__dict__)
-
-
 # ------------------------------------------------------------------------------
 # Auxiliary functions
 # ------------------------------------------------------------------------------
@@ -264,8 +276,8 @@ def create_encoder(
     input_dim: int,
     latent_dim: int = 3,
     hidden_dims: Optional[List[int]] = None,
-    activation: Optional[Callable] = None,
-    input_transformation: Optional[Callable] = None,
+    activation: Optional[str] = None,
+    input_transformation: Optional[str] = None,
 ) -> Encoder:
     """
     Create a standalone encoder for VAE.
@@ -281,16 +293,16 @@ def create_encoder(
         Configured Encoder instance
     """
     if activation is None:
-        activation = nnx.gelu
+        activation = "relu"
     if input_transformation is None:
-        input_transformation = jnp.log1p
+        input_transformation = "log1p"
 
     config = VAEConfig(
         input_dim=input_dim,
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation=activation,
-        output_activation=nnx.gelu,  # Not used in encoder, but required for config
+        output_activation="softplus",
         input_transformation=input_transformation,
     )
 
@@ -305,9 +317,9 @@ def create_decoder(
     input_dim: int,
     latent_dim: int = 3,
     hidden_dims: Optional[List[int]] = None,
-    activation: Optional[Callable] = None,
-    output_activation: Optional[Callable] = None,
-    input_transformation: Optional[Callable] = None,
+    activation: Optional[str] = None,
+    output_activation: Optional[str] = None,
+    input_transformation: Optional[str] = None,
 ) -> Decoder:
     """
     Create a standalone decoder for VAE.
@@ -324,11 +336,11 @@ def create_decoder(
         Configured Decoder instance
     """
     if activation is None:
-        activation = nnx.gelu
+        activation = "relu"
     if output_activation is None:
-        output_activation = jax.nn.softplus
+        output_activation = "softplus"
     if input_transformation is None:
-        input_transformation = jnp.log1p
+        input_transformation = "log1p"
 
     config = VAEConfig(
         input_dim=input_dim,
@@ -350,9 +362,9 @@ def create_vae(
     input_dim: int,
     latent_dim: int = 3,
     hidden_dims: Optional[List[int]] = None,
-    activation: Optional[Callable] = None,
-    output_activation: Optional[Callable] = None,
-    input_transformation: Optional[Callable] = None,
+    activation: Optional[str] = None,
+    output_activation: Optional[str] = None,
+    input_transformation: Optional[str] = None,
 ) -> VAE:
     """
     Create a default VAE architecture with configurable hidden layers.
@@ -369,11 +381,11 @@ def create_vae(
         Configured VAE instance
     """
     if activation is None:
-        activation = nnx.gelu
+        activation = "relu"
     if output_activation is None:
-        output_activation = jax.nn.softplus
+        output_activation = "softplus"
     if input_transformation is None:
-        input_transformation = jnp.log1p
+        input_transformation = "log1p"
 
     config = VAEConfig(
         input_dim=input_dim,

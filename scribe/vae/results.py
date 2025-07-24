@@ -13,6 +13,7 @@ from jax.nn import sigmoid, softmax
 import pandas as pd
 import numpyro.distributions as dist
 from jax import random, jit, vmap
+from flax import nnx
 
 import numpy as np
 import scipy.stats as stats
@@ -46,8 +47,9 @@ class ScribeVAEResults(ScribeSVIResults):
         Cell embeddings in latent space
     """
 
-    # VAE-specific attributes (using init=False to avoid dataclass field ordering issues)
-    vae_model: VAE = None  # type: ignore
+    # VAE-specific attributes (using init=False to avoid dataclass field
+    # ordering issues)
+    _vae_model: Optional[VAE] = None  # type: ignore
     latent_samples: Optional[jnp.ndarray] = None
     cell_embeddings: Optional[jnp.ndarray] = None
 
@@ -79,6 +81,58 @@ class ScribeVAEResults(ScribeSVIResults):
         return self._model_and_guide()
 
     # --------------------------------------------------------------------------
+    # Reconstruct VAE model
+    # --------------------------------------------------------------------------
+
+    @property
+    def vae_model(self) -> VAE:
+        """
+        Get the VAE model, reconstructing it if necessary.
+        """
+        if self._vae_model is None:
+            # Import functions
+            from .architectures import create_encoder, create_decoder
+            # Create encoder
+            encoder = create_encoder(
+                input_dim=self.n_genes,
+                latent_dim=self.model_config.vae_latent_dim,
+                hidden_dims=self.model_config.vae_hidden_dims,
+                activation=self.model_config.vae_activation,
+                input_transformation=self.model_config.vae_input_transformation,
+            )
+            # Split encoder
+            encoder_graph, encoder_state = nnx.split(encoder)
+            # Replace encoder state with trained state
+            nnx.replace_by_pure_dict(encoder_state, self.params['encoder$params'])
+            # Merge encoder
+            encoder = nnx.merge(encoder_graph, encoder_state)
+
+            # Create decoder
+            decoder = create_decoder(
+                input_dim=self.model_config.vae_latent_dim,
+                latent_dim=self.n_genes,
+                hidden_dims=self.model_config.vae_hidden_dims,
+                activation=self.model_config.vae_activation,
+                output_activation=self.model_config.vae_output_activation,
+            )
+            # Split decoder
+            decoder_graph, decoder_state = nnx.split(decoder)
+            # Replace decoder state with trained state
+            nnx.replace_by_pure_dict(decoder_state, self.params['decoder$params'])
+            # Merge decoder
+            decoder = nnx.merge(decoder_graph, decoder_state)
+            # Define RNGs
+            rngs = nnx.Rngs(params=0)
+            # Create VAE
+            self._vae_model = VAE(
+                encoder=encoder, 
+                decoder=decoder, 
+                config=self.model_config,
+                rngs=rngs,
+            )
+        return self._vae_model
+
+    # --------------------------------------------------------------------------
     # VAE-specific analysis methods
     # --------------------------------------------------------------------------
 
@@ -106,11 +160,10 @@ class ScribeVAEResults(ScribeSVIResults):
             Latent embeddings of shape (n_cells, latent_dim)
         """
         # Validate VAE model is available
-        if self.vae_model is None:
+        if self._vae_model is None:
             raise ValueError(
                 "vae_model is not available. If this object was unpickled, "
-                "call reconstruct_vae_model() first. Note that trained weights "
-                "will not be available."
+                "the VAE model will be reconstructed automatically when needed."
             )
             
         if batch_size is None:
@@ -519,81 +572,6 @@ class ScribeVAEResults(ScribeSVIResults):
         return map_estimates
 
     # --------------------------------------------------------------------------
-    # Pickling support
-    # --------------------------------------------------------------------------
-
-    def __getstate__(self):
-        """
-        Custom pickling method to handle VAE model.
-        
-        We extract the trained parameters from the VAE model and store them
-        separately, then exclude the VAE model itself from pickling.
-        """
-        state = self.__dict__.copy()
-        
-        # Extract VAE state if available
-        if self.vae_model is not None:
-            try:
-                # Get the trained state from the VAE model using Flax NNX
-                vae_state = self.vae_model.get_state()
-                state['_vae_state'] = vae_state
-                state['_vae_config'] = {
-                    'input_dim': self.n_genes,
-                    'latent_dim': self.model_config.vae_latent_dim,
-                    'hidden_dims': self.model_config.vae_hidden_dims,
-                    'activation': self.model_config.vae_activation,
-                    'output_activation': self.model_config.vae_output_activation,
-                }
-            except Exception as e:
-                print(f"Warning: Could not extract VAE state: {e}")
-                state['_vae_state'] = None
-                state['_vae_config'] = None
-        else:
-            state['_vae_state'] = None
-            state['_vae_config'] = None
-        
-        # Remove VAE model from state for pickling
-        state['vae_model'] = None
-        return state
-
-    def __setstate__(self, state):
-        """
-        Custom unpickling method.
-        
-        We reconstruct the VAE model with the trained parameters.
-        """
-        self.__dict__.update(state)
-        
-        # Reconstruct VAE model with trained state
-        if state.get('_vae_state') is not None and state.get('_vae_config') is not None:
-            self._reconstruct_vae_with_state(state['_vae_state'], state['_vae_config'])
-        else:
-            self.vae_model = None
-
-    def _reconstruct_vae_with_state(self, vae_state, vae_config):
-        """
-        Reconstruct VAE model with trained state using Flax NNX.
-        """
-        from .architectures import create_vae
-        
-        # Reconstruct VAE with the same configuration
-        self.vae_model = create_vae(
-            input_dim=vae_config['input_dim'],
-            latent_dim=vae_config['latent_dim'],
-            hidden_dims=vae_config['hidden_dims'],
-            activation=vae_config['activation'],
-            output_activation=vae_config.get('output_activation'),
-        )
-        
-        # Load the trained state using Flax NNX
-        try:
-            self.vae_model.load_state(vae_state)
-            print("Successfully reconstructed VAE model with trained state.")
-        except Exception as e:
-            print(f"Warning: Could not load VAE state: {e}")
-            print("VAE model reconstructed but trained weights are not available.")
-
-    # --------------------------------------------------------------------------
     # Factory methods
     # --------------------------------------------------------------------------
 
@@ -640,8 +618,9 @@ class ScribeVAEResults(ScribeSVIResults):
             n_components=svi_results.n_components,
         )
         
-        # Set VAE model after creation
-        vae_results.vae_model = vae_model
+        # Set VAE model after creation (but don't store it directly to avoid pickling issues)
+        if vae_model is not None:
+            vae_results._vae_model = vae_model
 
         # Store original counts for later use
         if original_counts is not None:

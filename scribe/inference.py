@@ -65,8 +65,8 @@ def run_scribe(
     # VAE-specific parameters
     vae_latent_dim: int = 3,
     vae_hidden_dims: Optional[list] = None,
-    vae_activation: Optional[Callable] = None,
-    vae_output_activation: Optional[Callable] = None,
+    vae_activation: Optional[str] = None,
+    vae_output_activation: Optional[str] = None,
     # General parameters
     seed: int = 42,
 ) -> Any:
@@ -166,8 +166,10 @@ def run_scribe(
         Dimension of the VAE latent space
     vae_hidden_dims : Optional[list], default=None
         List of hidden layer dimensions (default: [256, 256])
-    vae_activation : Optional[Callable], default=None
-        Activation function for VAE (default: gelu)
+    vae_activation : Optional[str], default=None
+        Activation function name for VAE (default: "gelu")
+    vae_output_activation : Optional[str], default=None
+        Output activation function name for VAE decoder (default: "softplus")
 
     General:
     -------
@@ -487,49 +489,15 @@ def _run_vae_inference(
         prior_params=model_config.get_active_priors(),
     )
 
-    # Extract VAE model from the trained parameters
-    # This is a simplified approach - in practice, you'd need to extract the VAE
-    # from the trained parameters more carefully
-    vae_model = _extract_vae_from_params(
-        svi_results.params, model_config, n_genes
-    )
-
-    # Create VAE-specific results
+    # Create VAE-specific results without passing the VAE model
+    # The VAE model will be reconstructed when needed
     vae_results = ScribeVAEResults.from_svi_results(
         svi_results=base_results,
-        vae_model=vae_model,
+        vae_model=None,  # Don't pass VAE model to avoid pickling issues
         original_counts=count_data,
     )
 
     return vae_results
 
 
-def _extract_vae_from_params(
-    params: Dict[str, Any],
-    model_config: ModelConfig,
-    n_genes: int,
-) -> Any:
-    """
-    Extract VAE model from trained parameters.
 
-    This is a placeholder function that would need to be implemented
-    based on how the VAE is stored in the parameters during training.
-    """
-    # For now, create a new VAE with the same configuration
-    # In practice, you'd extract the trained weights from params
-    from .vae.architectures import create_vae
-
-    # Create VAE with the configuration from model_config
-    vae = create_vae(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-        output_activation=model_config.vae_output_activation,
-    )
-
-    # TODO: Load trained weights into the VAE model
-    # This would involve extracting VAE parameters from params and
-    # setting them in the VAE model
-
-    return vae

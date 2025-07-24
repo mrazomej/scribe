@@ -103,8 +103,9 @@ class ModelConfig:
     # VAE parameters (used when inference_method="vae")
     vae_latent_dim: int = 3
     vae_hidden_dims: Optional[List[int]] = None
-    vae_activation: Optional[Callable] = None
-    vae_output_activation: Optional[Callable] = None
+    vae_activation: Optional[str] = None
+    vae_output_activation: Optional[str] = None
+    vae_input_transformation: Optional[str] = None
 
     def validate(self):
         """Validate configuration parameters."""
@@ -232,13 +233,9 @@ class ModelConfig:
             if self.vae_hidden_dims is None:
                 self.vae_hidden_dims = [256, 256]  # Default: 2 hidden layers of 256
             if self.vae_activation is None:
-                # Import here to avoid circular imports
-                from flax import nnx
-                self.vae_activation = nnx.gelu
+                self.vae_activation = "gelu"
             if self.vae_output_activation is None:
-                # Import here to avoid circular imports
-                import jax
-                self.vae_output_activation = nnx.softplus
+                self.vae_output_activation = "softplus"
 
     def _validate_mixture_components(self):
         """Validate mixture model configuration."""
