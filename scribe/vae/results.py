@@ -81,7 +81,7 @@ class ScribeVAEResults(ScribeSVIResults):
         return self._model_and_guide()
 
     # --------------------------------------------------------------------------
-    # Reconstruct VAE model
+    # Reconstruct VAE model from trained parameters
     # --------------------------------------------------------------------------
 
     @property
@@ -155,8 +155,6 @@ class ScribeVAEResults(ScribeSVIResults):
             Count data of shape (n_cells, n_genes)
         batch_size : Optional[int], default=None
             Batch size for processing large datasets
-        training : bool, default=False
-            Whether to use training mode (affects sampling)
 
         Returns
         -------
@@ -240,6 +238,164 @@ class ScribeVAEResults(ScribeSVIResults):
                 samples.append(jnp.concatenate(batch_samples, axis=0))
 
         return jnp.stack(samples, axis=0)
+
+    # --------------------------------------------------------------------------
+
+    def get_posterior_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
+        store_samples: bool = True,
+        canonical: bool = False,
+    ) -> Dict:
+        """
+        Sample parameters from the variational posterior distribution for the
+        VAE.
+
+        This method samples from the variational posterior by drawing from the
+        latent space prior, rather than conditioning on the observed data. As a
+        result, the sampled parameters may not reflect the structure present in
+        the actual data, especially if the cell embeddings exhibit meaningful
+        structure. For most use cases where posterior samples should reflect the
+        observed data, it is recommended to use
+        `get_posterior_samples_from_data` instead.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data of shape (n_cells, n_genes). This argument is accepted
+            for interface compatibility but is not used in this method, as
+            sampling is performed from the prior.
+        rng_key : jax.random.PRNGKey, optional
+            JAX random number generator key. Default is random.PRNGKey(42).
+        n_samples : int, optional
+            Number of posterior samples to generate. Default is 100.
+        store_samples : bool, optional
+            Whether to store the generated posterior samples in the object.
+            Default is True.
+        canonical : bool, optional
+            Whether to convert the samples to canonical form. Default is False.
+
+        Returns
+        -------
+        Dict
+            Dictionary containing samples from the variational posterior
+            distribution. The structure of the dictionary depends on the model
+            and guide used.
+
+        Warnings
+        --------
+        This method samples from the latent space prior, not conditioned on the
+        data. If the cell embeddings have structure, these samples may not be
+        representative. Use `get_posterior_samples_from_data` for
+        data-conditioned posterior samples.
+        """
+        print(
+            "[WARNING] get_posterior_samples is sampling from the latent space "
+            "prior. If there is structure to the embeddings of the cells, this "
+            "may not be a good sample. We recommend using "
+            "get_posterior_samples_from_data instead."
+        )
+        # Get posterior samples
+        posterior_samples = super().get_posterior_samples(
+            rng_key=rng_key, 
+            n_samples=n_samples, 
+            store_samples=store_samples, 
+        )
+
+
+    # --------------------------------------------------------------------------
+
+    def get_posterior_samples_from_data(
+        self,
+        counts: jnp.ndarray,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
+        store_samples: bool = True,
+        canonical: bool = False,
+    ) -> Dict:
+        """
+        Sample parameters from the variational posterior distribution,
+        conditioned on observed data.
+
+        This method generates samples from the variational posterior in a way
+        that is conditioned on the provided count data. It first samples global
+        and cell-level parameters from the variational posterior, then generates
+        latent variable samples (e.g., cell embeddings) using the provided data.
+        These latent samples are passed through the VAE decoder to obtain
+        reconstructed parameters (such as 'r' or 'mu'), which are then
+        substituted into the posterior samples dictionary. The latent samples
+        themselves are also included in the returned dictionary.
+
+        This approach ensures that the posterior samples reflect the structure
+        present in the observed data, rather than being drawn from the latent
+        prior. This is particularly important for downstream analyses or
+        predictive checks that require data-conditioned posterior samples.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Observed count data of shape (n_cells, n_genes) used to generate
+            data-conditioned latent samples.
+        rng_key : jax.random.PRNGKey, optional
+            JAX random number generator key. Default is random.PRNGKey(42).
+        n_samples : int, optional
+            Number of posterior samples to generate. Default is 100.
+        store_samples : bool, optional
+            Whether to store the generated posterior samples in the object.
+            Default is True.
+        canonical : bool, optional
+            Whether to convert the samples to canonical form. Default is False.
+
+        Returns
+        -------
+        Dict
+            Dictionary containing samples from the variational posterior,
+            including reconstructed parameters (e.g., 'r' or 'mu') and latent
+            variables ('z'), all conditioned on the provided data.
+
+        Notes
+        -----
+        - This method is preferred over sampling from the latent prior when
+          posterior samples should reflect the structure of the observed data.
+        - The returned dictionary will contain keys for the reconstructed
+          parameters (such as 'r' or 'mu', depending on the model) and for the
+          latent variables ('z').
+        - If `canonical` is True, the samples will be converted to canonical
+          form using the object's internal method.
+        """
+        # Get posterior samples (global/cell-level parameters)
+        posterior_samples = super().get_posterior_samples(
+            rng_key=rng_key, 
+            n_samples=n_samples, 
+            store_samples=store_samples, 
+        )
+
+        # Generate latent samples conditioned on data
+        latent_samples = self.get_latent_samples(
+            counts, n_samples=n_samples, rng_key=rng_key
+        )
+
+        # Extract decoder from the VAE model
+        decoder = self.vae_model.decoder
+        
+        # Run latent samples through decoder to obtain reconstructed parameters
+        reconstructed = decoder(latent_samples)
+
+        # Substitute reconstructed parameters into posterior samples
+        if 'r' in posterior_samples:
+            posterior_samples['r'] = reconstructed
+        elif 'mu' in posterior_samples:
+            posterior_samples['mu'] = reconstructed
+
+        # Add latent samples to posterior samples
+        posterior_samples['z'] = latent_samples
+
+        # Convert to canonical form if requested
+        if canonical:
+            self._convert_to_canonical()
+
+        return posterior_samples
 
     # --------------------------------------------------------------------------
 
