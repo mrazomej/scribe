@@ -72,7 +72,7 @@ class ScribeVAEResults(ScribeSVIResults):
     def get_model_and_guide(self) -> Tuple[Callable, Optional[Callable]]:
         """
         Get the model and guide functions for this VAE model.
-        
+
         Returns
         -------
         Tuple[Callable, Optional[Callable]]
@@ -92,6 +92,7 @@ class ScribeVAEResults(ScribeSVIResults):
         if self._vae_model is None:
             # Import functions
             from .architectures import create_encoder, create_decoder
+
             # Create encoder
             encoder = create_encoder(
                 input_dim=self.n_genes,
@@ -103,7 +104,9 @@ class ScribeVAEResults(ScribeSVIResults):
             # Split encoder
             encoder_graph, encoder_state = nnx.split(encoder)
             # Replace encoder state with trained state
-            nnx.replace_by_pure_dict(encoder_state, self.params['encoder$params'])
+            nnx.replace_by_pure_dict(
+                encoder_state, self.params["encoder$params"]
+            )
             # Merge encoder
             encoder = nnx.merge(encoder_graph, encoder_state)
 
@@ -118,15 +121,17 @@ class ScribeVAEResults(ScribeSVIResults):
             # Split decoder
             decoder_graph, decoder_state = nnx.split(decoder)
             # Replace decoder state with trained state
-            nnx.replace_by_pure_dict(decoder_state, self.params['decoder$params'])
+            nnx.replace_by_pure_dict(
+                decoder_state, self.params["decoder$params"]
+            )
             # Merge decoder
             decoder = nnx.merge(decoder_graph, decoder_state)
             # Define RNGs
             rngs = nnx.Rngs(params=0)
             # Create VAE
             self._vae_model = VAE(
-                encoder=encoder, 
-                decoder=decoder, 
+                encoder=encoder,
+                decoder=decoder,
                 config=self.model_config,
                 rngs=rngs,
             )
@@ -165,7 +170,7 @@ class ScribeVAEResults(ScribeSVIResults):
                 "vae_model is not available. If this object was unpickled, "
                 "the VAE model will be reconstructed automatically when needed."
             )
-            
+
         if batch_size is None:
             # Process all cells at once
             _, mean, _ = self.vae_model(counts, training=training)
@@ -617,7 +622,7 @@ class ScribeVAEResults(ScribeSVIResults):
             predictive_samples=svi_results.predictive_samples,
             n_components=svi_results.n_components,
         )
-        
+
         # Set VAE model after creation (but don't store it directly to avoid pickling issues)
         if vae_model is not None:
             vae_results._vae_model = vae_model
