@@ -1116,3 +1116,190 @@ class DecoupledPriorDistribution(numpyro.distributions.Distribution):
         }
 
         return z_complex, intermediates
+
+
+# ------------------------------------------------------------------------------
+# dpVAE Class and Factory Function
+# ------------------------------------------------------------------------------
+
+
+class dpVAE(VAE):
+    """
+    VAE with decoupled prior - extends the standard VAE with a learned prior.
+    
+    This class inherits all functionality from the standard VAE but uses a
+    decoupled prior distribution instead of a standard prior. The decoupled
+    prior is implemented using a stack of affine coupling layers that transform
+    a simple base distribution (e.g., standard normal) into a more complex,
+    learned prior distribution.
+    
+    Parameters
+    ----------
+    encoder : Encoder
+        The encoder module
+    decoder : Decoder
+        The decoder module
+    config : VAEConfig
+        Configuration for the VAE architecture
+    decoupled_prior : DecoupledPrior
+        The decoupled prior module containing the coupling layers
+    rngs : nnx.Rngs
+        Random number generators for weight initialization
+    """
+    def __init__(
+        self,
+        encoder: Encoder,
+        decoder: Decoder,
+        config: VAEConfig,
+        decoupled_prior: DecoupledPrior,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        # Initialize the parent VAE class
+        super().__init__(encoder, decoder, config, rngs=rngs)
+        
+        # Store the decoupled prior
+        self.decoupled_prior = decoupled_prior
+
+    def get_decoupled_prior_distribution(self, base_distribution=None):
+        """
+        Create a DecoupledPriorDistribution for use in NumPyro models.
+        
+        Parameters
+        ----------
+        base_distribution : numpyro.distributions.Distribution, optional
+            The base distribution to use. If None, uses a multivariate standard
+            normal distribution.
+            
+        Returns
+        -------
+        DecoupledPriorDistribution
+            A NumPyro distribution that implements the decoupled prior
+        """
+        if base_distribution is None:
+            # Use multivariate standard normal as default base distribution
+            import numpyro.distributions as dist
+            base_distribution = dist.Normal(
+                jnp.zeros(self.config.latent_dim),
+                jnp.ones(self.config.latent_dim)
+            )
+        
+        return DecoupledPriorDistribution(
+            decoupled_prior=self.decoupled_prior,
+            base_distribution=base_distribution
+        )
+
+# ------------------------------------------------------------------------------
+
+def create_dpvae(
+    input_dim: int,
+    latent_dim: int = 3,
+    hidden_dims: Optional[List[int]] = None,
+    activation: Optional[str] = None,
+    output_activation: Optional[str] = None,
+    input_transformation: Optional[str] = None,
+    # Decoupled prior parameters
+    prior_hidden_dims: Optional[List[int]] = None,
+    prior_activation: Optional[str] = None,
+    prior_mask_type: str = "alternating",
+) -> dpVAE:
+    """
+    Create a dpVAE (decoupled prior VAE) with the specified configuration.
+    
+    This function creates a VAE with a learned prior implemented using a stack
+    of affine coupling layers. The prior transforms a simple base distribution
+    (e.g., standard normal) into a more complex, learned prior distribution.
+    
+    Parameters
+    ----------
+    input_dim : int
+        Input dimension (number of genes)
+    latent_dim : int, default=3
+        Latent space dimension
+    hidden_dims : Optional[List[int]], default=None
+        Hidden layer dimensions for encoder/decoder. If None, uses [256, 256]
+    activation : Optional[str], default=None
+        Activation function for encoder/decoder. If None, uses "relu"
+    output_activation : Optional[str], default=None
+        Output activation for decoder. If None, uses "softplus"
+    input_transformation : Optional[str], default=None
+        Input transformation for encoder. If None, uses "log1p"
+    prior_hidden_dims : Optional[List[int]], default=None
+        Hidden layer dimensions for coupling layers. If None, uses [64, 64].
+        The number of coupling layers is determined by the length of this list.
+    prior_activation : Optional[str], default=None
+        Activation function for coupling layers. If None, uses "relu"
+    prior_mask_type : str, default="alternating"
+        Type of masking for coupling layers ("alternating" or "checkerboard")
+        
+    Returns
+    -------
+    dpVAE
+        A dpVAE instance with the specified configuration
+    """
+    # Set default values for encoder/decoder parameters
+    if hidden_dims is None:
+        hidden_dims = [256, 256]
+    if activation is None:
+        activation = "relu"
+    if output_activation is None:
+        output_activation = "softplus"
+    if input_transformation is None:
+        input_transformation = "log1p"
+    
+    # Set default values for prior parameters
+    if prior_hidden_dims is None:
+        prior_hidden_dims = [64, 64]
+    if prior_activation is None:
+        prior_activation = "relu"
+    
+    # Determine number of coupling layers from prior_hidden_dims length
+    prior_num_layers = len(prior_hidden_dims)
+    
+    # Create VAE configuration
+    config = VAEConfig(
+        input_dim=input_dim,
+        latent_dim=latent_dim,
+        hidden_dims=hidden_dims,
+        activation=activation,
+        output_activation=output_activation,
+        input_transformation=input_transformation,
+    )
+    
+    # Create encoder and decoder
+    encoder = create_encoder(
+        input_dim=input_dim,
+        latent_dim=latent_dim,
+        hidden_dims=hidden_dims,
+        activation=activation,
+        input_transformation=input_transformation,
+    )
+    
+    decoder = create_decoder(
+        input_dim=input_dim,
+        latent_dim=latent_dim,
+        hidden_dims=hidden_dims,
+        activation=activation,
+        output_activation=output_activation,
+        input_transformation=input_transformation,
+    )
+    
+    # Create decoupled prior
+    rngs = nnx.Rngs(params=jax.random.PRNGKey(42))  # Use fixed key for reproducibility
+    decoupled_prior = DecoupledPrior(
+        latent_dim=latent_dim,
+        num_layers=prior_num_layers,
+        hidden_dims=prior_hidden_dims,
+        rngs=rngs,
+        activation=prior_activation,
+        mask_type=prior_mask_type,
+    )
+    
+    # Create and return dpVAE
+    return dpVAE(
+        encoder=encoder,
+        decoder=decoder,
+        config=config,
+        decoupled_prior=decoupled_prior,
+        rngs=rngs,
+    )
