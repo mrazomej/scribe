@@ -106,6 +106,12 @@ class ModelConfig:
     vae_activation: Optional[str] = None
     vae_output_activation: Optional[str] = None
     vae_input_transformation: Optional[str] = None
+    
+    # VAE prior configuration
+    vae_prior_type: str = "standard"  # "standard" or "decoupled"
+    vae_prior_hidden_dims: Optional[List[int]] = None  # For decoupled prior
+    vae_prior_activation: Optional[str] = None  # For decoupled prior
+    vae_prior_mask_type: str = "alternating"  # For decoupled prior
 
     def validate(self):
         """Validate configuration parameters."""
@@ -236,6 +242,21 @@ class ModelConfig:
                 self.vae_activation = "gelu"
             if self.vae_output_activation is None:
                 self.vae_output_activation = "softplus"
+            
+            # Validate VAE prior configuration
+            valid_prior_types = {"standard", "decoupled"}
+            if self.vae_prior_type not in valid_prior_types:
+                raise ValueError(
+                    f"Invalid vae_prior_type: {self.vae_prior_type}. "
+                    f"Must be one of {valid_prior_types}"
+                )
+            
+            # Set default decoupled prior parameters if using decoupled prior
+            if self.vae_prior_type == "decoupled":
+                if self.vae_prior_hidden_dims is None:
+                    self.vae_prior_hidden_dims = [64, 64]  # Default: 2 hidden layers of 64
+                if self.vae_prior_activation is None:
+                    self.vae_prior_activation = "relu"
 
     def _validate_mixture_components(self):
         """Validate mixture model configuration."""
@@ -366,5 +387,47 @@ class ModelConfig:
         lines.append(
             f"  Active Parameters: {', '.join(self.get_active_parameters())}"
         )
+        
+        # Add VAE-specific information
+        if self.inference_method == "vae":
+            lines.append(f"  VAE Latent Dim: {self.vae_latent_dim}")
+            lines.append(f"  VAE Hidden Dims: {self.vae_hidden_dims}")
+            lines.append(f"  VAE Prior Type: {self.vae_prior_type}")
+            if self.is_decoupled_prior():
+                lines.append(f"  VAE Prior Hidden Dims: {self.vae_prior_hidden_dims}")
+                lines.append(f"  VAE Prior Activation: {self.vae_prior_activation}")
 
         return "\n".join(lines)
+
+    def get_vae_prior_config(self) -> Dict[str, Any]:
+        """
+        Get VAE prior configuration information.
+        
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing VAE prior configuration
+        """
+        config = {
+            "prior_type": self.vae_prior_type,
+        }
+        
+        if self.vae_prior_type == "decoupled":
+            config.update({
+                "prior_hidden_dims": self.vae_prior_hidden_dims,
+                "prior_activation": self.vae_prior_activation,
+                "prior_mask_type": self.vae_prior_mask_type,
+            })
+        
+        return config
+
+    def is_decoupled_prior(self) -> bool:
+        """
+        Check if this configuration uses a decoupled prior.
+        
+        Returns
+        -------
+        bool
+            True if using decoupled prior, False otherwise
+        """
+        return self.vae_prior_type == "decoupled"
