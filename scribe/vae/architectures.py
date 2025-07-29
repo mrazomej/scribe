@@ -5,7 +5,9 @@ Default VAE architectures for scRNA-seq data using Flax NNX.
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from typing import Tuple, Optional, Callable, List
+import numpyro
+from numpyro.distributions.util import validate_sample
+from typing import Tuple, Optional, Callable, List, Dict
 from dataclasses import dataclass
 
 
@@ -764,15 +766,15 @@ class AffineCouplingLayer(nnx.Module):
 class DecoupledPrior(nnx.Module):
     """
     Stack of K coupling layers implementing the bijective mapping g_η.
-    
+
     This class implements the decoupled prior from the dpVAE paper, which
     uses a stack of affine coupling layers to transform a simple spherical
     prior (e.g., standard normal) into a more complex prior distribution.
-    
+
     The transformation is bijective, allowing both forward (prior -> complex)
     and inverse (complex -> prior) mappings, along with proper log determinant
     computation for the change of variables formula.
-    
+
     Parameters
     ----------
     latent_dim : int
@@ -788,6 +790,7 @@ class DecoupledPrior(nnx.Module):
     rngs : nnx.Rngs
         Random number generators for weight initialization
     """
+
     def __init__(
         self,
         latent_dim: int,
@@ -806,7 +809,7 @@ class DecoupledPrior(nnx.Module):
 
         # Create stack of coupling layers
         self.coupling_layers = []
-        
+
         # Create a new coupling layer for each layer in the stack
         for i in range(num_layers):
             coupling_layer = AffineCouplingLayer(
@@ -928,14 +931,14 @@ class DecoupledPrior(nnx.Module):
     ) -> Tuple[jax.Array, jax.Array]:
         """
         Apply the decoupled prior transformation.
-        
+
         Parameters
         ----------
         z : jax.Array
             Input tensor, shape (..., latent_dim)
         inverse : bool, default=False
             Whether to apply inverse transformation
-            
+
         Returns
         -------
         z_transformed : jax.Array
@@ -947,3 +950,169 @@ class DecoupledPrior(nnx.Module):
             return self.inverse(z)
         else:
             return self.forward(z)
+
+
+# ------------------------------------------------------------------------------
+# NumPyro Distribution for Decoupled Prior
+# ------------------------------------------------------------------------------
+
+
+class DecoupledPriorDistribution(numpyro.distributions.Distribution):
+    """
+    NumPyro distribution implementing the decoupled prior from dpVAE.
+
+    This distribution wraps a simple base distribution (e.g., standard normal)
+    and applies a bijective transformation through a stack of coupling layers.
+    The log_prob is computed using the change of variables formula:
+
+        log p(z') = log p(z) + log |det(J)|
+
+    where z' is the transformed variable, z is the base variable, and J is
+    the Jacobian of the transformation.
+
+    Parameters
+    ----------
+    decoupled_prior : DecoupledPrior
+        The decoupled prior module containing the coupling layers
+    base_distribution : numpyro.distributions.Distribution
+        The base distribution (e.g., Normal(0, 1))
+    validate_args : bool, optional
+        Whether to validate arguments, by default None
+    """
+    def __init__(
+        self,
+        decoupled_prior: DecoupledPrior,
+        base_distribution: numpyro.distributions.Distribution,
+        validate_args: bool = None,
+    ):
+        # Validate inputs
+        if not isinstance(decoupled_prior, DecoupledPrior):
+            raise ValueError(
+                "decoupled_prior must be a DecoupledPrior instance"
+            )
+        if not isinstance(
+            base_distribution, numpyro.distributions.Distribution
+        ):
+            raise ValueError("base_distribution must be a NumPyro Distribution")
+
+        # Store the components
+        self.decoupled_prior = decoupled_prior
+        self.base_distribution = base_distribution
+
+        # Get event shape from base distribution
+        event_shape = base_distribution.event_shape
+        batch_shape = base_distribution.batch_shape
+
+        super().__init__(
+            batch_shape=batch_shape,
+            event_shape=event_shape,
+            validate_args=validate_args,
+        )
+
+    # --------------------------------------------------------------------------
+
+    @validate_sample
+    def log_prob(self, value: jax.Array) -> jax.Array:
+        """
+        Compute the log probability of the transformed value.
+
+        This implements the change of variables formula:
+            log p(z') = log p(z) + log |det(J)|
+
+        where z' is the input value (from complex prior) and z is the
+        corresponding value in the base distribution.
+
+        Parameters
+        ----------
+        value : jax.Array
+            The value from the complex prior distribution, shape
+            (..., event_shape)
+
+        Returns
+        -------
+        jax.Array
+            The log probability, shape (...)
+        """
+        # Transform back to base distribution using inverse transformation
+        z_base, log_det_jacobian = self.decoupled_prior.inverse(value)
+
+        # Get log probability from base distribution
+        base_log_prob = self.base_distribution.log_prob(z_base)
+
+        # Reshape log_det_jacobian to match the shape of base_log_prob
+        log_det_jacobian = log_det_jacobian[..., None]
+
+        # Apply change of variables formula
+        log_prob = base_log_prob + log_det_jacobian
+
+        return log_prob
+
+    # --------------------------------------------------------------------------
+
+    def sample(
+        self, key: jax.Array, sample_shape: Tuple[int, ...] = ()
+    ) -> jax.Array:
+        """
+        Sample from the decoupled prior distribution.
+
+        This samples from the base distribution and then applies the
+        forward transformation through the coupling layers.
+
+        Parameters
+        ----------
+        key : jax.Array
+            Random number generator key
+        sample_shape : Tuple[int, ...], optional
+            Shape of samples to generate, by default ()
+
+        Returns
+        -------
+        jax.Array
+            Samples from the decoupled prior, shape
+            (sample_shape + batch_shape + event_shape)
+        """
+        # Sample from base distribution
+        z_base = self.base_distribution.sample(key, sample_shape)
+
+        # Apply forward transformation to get samples from complex prior
+        z_complex, _ = self.decoupled_prior.forward(z_base)
+
+        return z_complex
+
+    # --------------------------------------------------------------------------
+
+    def sample_with_intermediates(
+        self, key: jax.Array, sample_shape: Tuple[int, ...] = ()
+    ) -> Tuple[jax.Array, Dict]:
+        """
+        Sample from the decoupled prior and return intermediate values.
+
+        This is useful for debugging and understanding the transformation
+        process.
+
+        Parameters
+        ----------
+        key : jax.Array
+            Random number generator key
+        sample_shape : Tuple[int, ...], optional
+            Shape of samples to generate, by default ()
+
+        Returns
+        -------
+        Tuple[jax.Array, Dict]
+            Samples from the decoupled prior and intermediate values
+        """
+        # Sample from base distribution
+        z_base = self.base_distribution.sample(key, sample_shape)
+
+        # Apply forward transformation
+        z_complex, log_det = self.decoupled_prior.forward(z_base)
+
+        # Return samples and intermediate values
+        intermediates = {
+            "z_base": z_base,
+            "z_complex": z_complex,
+            "log_det_jacobian": log_det,
+        }
+
+        return z_complex, intermediates
