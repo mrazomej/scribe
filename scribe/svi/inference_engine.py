@@ -66,22 +66,43 @@ class SVIInferenceEngine:
         # Get model and guide functions
         # If using VAE inference, use factory functions to avoid recreating modules
         if model_config.inference_method == "vae":
-            if model_config.base_model == "nbdm":
-                from ..models.vae_standard import make_nbdm_vae_model_and_guide
+            # Check if using decoupled prior (dpVAE)
+            if model_config.vae_prior_type == "decoupled":
+                if model_config.base_model == "nbdm":
+                    from ..models.dpvae_standard import make_nbdm_dpvae_model_and_guide
 
-                model, guide = make_nbdm_vae_model_and_guide(
-                    n_genes, model_config
-                )
-            elif model_config.base_model == "zinb":
-                from ..models.vae_standard import make_zinb_vae_model_and_guide
+                    model, guide = make_nbdm_dpvae_model_and_guide(
+                        n_genes, model_config
+                    )
+                elif model_config.base_model == "zinb":
+                    from ..models.dpvae_standard import make_zinb_dpvae_model_and_guide
 
-                model, guide = make_zinb_vae_model_and_guide(
-                    n_genes, model_config
-                )
+                    model, guide = make_zinb_dpvae_model_and_guide(
+                        n_genes, model_config
+                    )
+                else:
+                    raise ValueError(
+                        "dpVAE inference not supported for model type: "
+                        f"{model_config.base_model}"
+                    )
             else:
-                raise ValueError(
-                    f"VAE inference not supported for model type: {model_config.base_model}"
-                )
+                # Use standard VAE models
+                if model_config.base_model == "nbdm":
+                    from ..models.vae_standard import make_nbdm_vae_model_and_guide
+
+                    model, guide = make_nbdm_vae_model_and_guide(
+                        n_genes, model_config
+                    )
+                elif model_config.base_model == "zinb":
+                    from ..models.vae_standard import make_zinb_vae_model_and_guide
+
+                    model, guide = make_zinb_vae_model_and_guide(
+                        n_genes, model_config
+                    )
+                else:
+                    raise ValueError(
+                        f"VAE inference not supported for model type: {model_config.base_model}"
+                    )
         else:
             # For non-VAE models, use the standard registry
             model, guide = get_model_and_guide(
