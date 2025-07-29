@@ -451,13 +451,13 @@ class AffineCouplingLayer(nnx.Module):
 
         # Create shared hidden layers
         self.shared_layers = []
-        
+
         # Input layer: masked_dim -> first_hidden_dim
         masked_dim = input_dim // 2
         self.shared_layers.append(
             nnx.Linear(masked_dim, self.hidden_dims[0], rngs=rngs)
         )
-        
+
         # Hidden layers
         for i in range(len(self.hidden_dims) - 1):
             self.shared_layers.append(
@@ -465,11 +465,15 @@ class AffineCouplingLayer(nnx.Module):
                     self.hidden_dims[i], self.hidden_dims[i + 1], rngs=rngs
                 )
             )
-        
+
         # Create separate output heads for shift and scale
         unmasked_dim = input_dim // 2
-        self.shift_head = nnx.Linear(self.hidden_dims[-1], unmasked_dim, rngs=rngs)
-        self.scale_head = nnx.Linear(self.hidden_dims[-1], unmasked_dim, rngs=rngs)
+        self.shift_head = nnx.Linear(
+            self.hidden_dims[-1], unmasked_dim, rngs=rngs
+        )
+        self.scale_head = nnx.Linear(
+            self.hidden_dims[-1], unmasked_dim, rngs=rngs
+        )
 
         # Create binary mask for coupling
         self.mask = self._create_mask()
@@ -592,12 +596,12 @@ class AffineCouplingLayer(nnx.Module):
         """
         # Get activation function
         activation = ACTIVATION_FUNCTIONS[self.activation]
-        
+
         # Forward pass through shared layers (manual iteration like encoder)
         h = x_masked
         for layer in self.shared_layers:
             h = activation(layer(h))
-        
+
         # Apply separate output heads
         shift = self.shift_head(h)
         log_scale = self.scale_head(h)
@@ -668,7 +672,7 @@ class AffineCouplingLayer(nnx.Module):
         """
         Perform the inverse coupling transformation: recovers the original input
         x from the transformed output y.
-        
+
         This method splits the input tensor y into masked and unmasked parts
         according to the current mask, computes the shift and log_scale
         parameters from the masked part, and then applies the inverse affine
@@ -750,3 +754,196 @@ class AffineCouplingLayer(nnx.Module):
             return self.inverse(x)
         else:
             return self.forward(x)
+
+
+# ------------------------------------------------------------------------------
+# Decoupled Prior for dpVAE
+# ------------------------------------------------------------------------------
+
+
+class DecoupledPrior(nnx.Module):
+    """
+    Stack of K coupling layers implementing the bijective mapping g_η.
+    
+    This class implements the decoupled prior from the dpVAE paper, which
+    uses a stack of affine coupling layers to transform a simple spherical
+    prior (e.g., standard normal) into a more complex prior distribution.
+    
+    The transformation is bijective, allowing both forward (prior -> complex)
+    and inverse (complex -> prior) mappings, along with proper log determinant
+    computation for the change of variables formula.
+    
+    Parameters
+    ----------
+    latent_dim : int
+        Dimension of the latent space
+    num_layers : int
+        Number of coupling layers in the stack
+    hidden_dims : List[int]
+        Hidden layer dimensions for each coupling layer
+    activation : str, default="relu"
+        Activation function for the coupling layers
+    mask_type : str, default="alternating"
+        Type of masking for coupling layers
+    rngs : nnx.Rngs
+        Random number generators for weight initialization
+    """
+    def __init__(
+        self,
+        latent_dim: int,
+        num_layers: int,
+        hidden_dims: List[int],
+        rngs: nnx.Rngs,
+        activation: str = "relu",
+        mask_type: str = "alternating",
+    ):
+        # Store parameters
+        self.latent_dim = latent_dim
+        self.num_layers = num_layers
+        self.hidden_dims = hidden_dims
+        self.activation = activation
+        self.mask_type = mask_type
+
+        # Create stack of coupling layers
+        self.coupling_layers = []
+        
+        # Create a new coupling layer for each layer in the stack
+        for i in range(num_layers):
+            coupling_layer = AffineCouplingLayer(
+                input_dim=latent_dim,
+                hidden_dims=hidden_dims,
+                rngs=rngs,
+                activation=activation,
+                mask_type=mask_type,
+            )
+            self.coupling_layers.append(coupling_layer)
+
+    # --------------------------------------------------------------------------
+
+    def forward(self, z: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        """
+        Applies the full stack of affine coupling layers in the forward
+        direction.
+
+        Forward transformation: z ~ p(z) -> z' ~ p(z') with log determinant.
+
+        This method transforms a sample from the simple prior distribution
+        (e.g., standard normal) into a sample from the more complex, learned
+        prior by sequentially applying each AffineCouplingLayer in the stack. It
+        also accumulates the log-determinant of the Jacobian for the entire
+        transformation, which is required for computing the change of variables
+        in the normalizing flow.
+
+        Parameters
+        ----------
+        z : jax.Array
+            Input tensor sampled from the simple prior, shape (..., latent_dim)
+
+        Returns
+        -------
+        z_transformed : jax.Array
+            Output tensor transformed to the complex prior, shape (...,
+            latent_dim)
+        log_det_jacobian : jax.Array
+            Total log-determinant of the full transformation, shape (...,)
+
+        Notes
+        -----
+        The log-determinant is accumulated across all coupling layers and is
+        required for likelihood computation in normalizing flows.
+        """
+        # Initialize the current latent variable with the input
+        z_current = z
+        # Initialize the total log-determinant accumulator
+        total_log_det = 0.0
+
+        # Sequentially apply each coupling layer in the stack
+        for coupling_layer in self.coupling_layers:
+            # Apply the forward transformation of the current coupling layer
+            z_current, log_det = coupling_layer.forward(z_current)
+            # Accumulate the log-determinant from this layer
+            total_log_det += log_det
+
+        # Return the final transformed latent variable and the total
+        # log-determinant
+        return z_current, total_log_det
+
+    # --------------------------------------------------------------------------
+
+    def inverse(self, z_transformed: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        """
+        Applies the inverse transformation of the full stack of affine coupling
+        layers.
+
+        Inverse transformation: z' ~ p(z') -> z ~ p(z) with log determinant.
+
+        This method takes a sample from the complex, learned prior distribution
+        (i.e., after all coupling layers have been applied in the forward
+        direction) and sequentially applies the inverse of each
+        AffineCouplingLayer in the stack, in reverse order. This recovers a
+        sample from the original, simple prior (e.g., standard normal). The
+        method also accumulates the log-determinant of the Jacobian for the
+        entire inverse transformation, which is required for likelihood
+        computations and change-of-variables in normalizing flows.
+
+        Parameters
+        ----------
+        z_transformed : jax.Array
+            Input tensor from the complex prior, shape (..., latent_dim)
+
+        Returns
+        -------
+        z : jax.Array
+            Output tensor transformed back to the simple prior, shape (...,
+            latent_dim)
+        log_det_jacobian : jax.Array
+            Total log-determinant of the inverse transformation, shape (...,)
+
+        Notes
+        -----
+        The log-determinant is accumulated across all coupling layers in the
+        reverse direction. This is essential for computing the correct
+        likelihood under the flow-based prior.
+        """
+        # Initialize the current latent variable with the transformed input
+        z_current = z_transformed
+        # Initialize the total log-determinant accumulator
+        total_log_det = 0.0
+
+        # Sequentially apply the inverse of each coupling layer in reverse order
+        for coupling_layer in reversed(self.coupling_layers):
+            # Apply the inverse transformation of the current coupling layer
+            z_current, log_det = coupling_layer.inverse(z_current)
+            # Accumulate the log-determinant from this layer
+            total_log_det += log_det
+
+        # Return the final recovered latent variable and the total
+        # log-determinant
+        return z_current, total_log_det
+
+    # --------------------------------------------------------------------------
+
+    def __call__(
+        self, z: jax.Array, inverse: bool = False
+    ) -> Tuple[jax.Array, jax.Array]:
+        """
+        Apply the decoupled prior transformation.
+        
+        Parameters
+        ----------
+        z : jax.Array
+            Input tensor, shape (..., latent_dim)
+        inverse : bool, default=False
+            Whether to apply inverse transformation
+            
+        Returns
+        -------
+        z_transformed : jax.Array
+            Transformed tensor, shape (..., latent_dim)
+        log_det_jacobian : jax.Array
+            Log determinant, shape (...)
+        """
+        if inverse:
+            return self.inverse(z)
+        else:
+            return self.forward(z)
