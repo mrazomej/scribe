@@ -109,6 +109,7 @@ class ModelConfig:
     
     # VAE prior configuration
     vae_prior_type: str = "standard"  # "standard" or "decoupled"
+    vae_prior_num_layers: int = 2  # For decoupled prior
     vae_prior_hidden_dims: Optional[List[int]] = None  # For decoupled prior
     vae_prior_activation: Optional[str] = None  # For decoupled prior
     vae_prior_mask_type: str = "alternating"  # For decoupled prior
@@ -395,6 +396,7 @@ class ModelConfig:
             lines.append(f"  VAE Prior Type: {self.vae_prior_type}")
             if self.is_decoupled_prior():
                 lines.append(f"  VAE Prior Hidden Dims: {self.vae_prior_hidden_dims}")
+                lines.append(f"  VAE Prior Num Layers: {self.vae_prior_num_layers}")
                 lines.append(f"  VAE Prior Activation: {self.vae_prior_activation}")
 
         return "\n".join(lines)
@@ -415,6 +417,7 @@ class ModelConfig:
         if self.vae_prior_type == "decoupled":
             config.update({
                 "prior_hidden_dims": self.vae_prior_hidden_dims,
+                "prior_num_layers": self.vae_prior_num_layers,
                 "prior_activation": self.vae_prior_activation,
                 "prior_mask_type": self.vae_prior_mask_type,
             })

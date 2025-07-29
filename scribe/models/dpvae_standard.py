@@ -235,7 +235,7 @@ def make_nbdm_dpvae_model_and_guide(
     rngs = nnx.Rngs(params=jax.random.PRNGKey(42))
     decoupled_prior = DecoupledPrior(
         latent_dim=model_config.vae_latent_dim,
-        num_layers=len(model_config.vae_prior_hidden_dims),
+        num_layers=model_config.vae_prior_num_layers,
         hidden_dims=model_config.vae_prior_hidden_dims,
         rngs=rngs,
         activation=model_config.vae_prior_activation,
@@ -300,7 +300,7 @@ def make_zinb_dpvae_model_and_guide(
     rngs = nnx.Rngs(params=jax.random.PRNGKey(42))
     decoupled_prior = DecoupledPrior(
         latent_dim=model_config.vae_latent_dim,
-        num_layers=len(model_config.vae_prior_hidden_dims),
+        num_layers=model_config.vae_prior_num_layers,
         hidden_dims=model_config.vae_prior_hidden_dims,
         rngs=rngs,
         activation=model_config.vae_prior_activation,

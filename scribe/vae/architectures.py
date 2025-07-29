@@ -1250,6 +1250,7 @@ def create_dpvae(
     input_transformation: Optional[str] = None,
     # Decoupled prior parameters
     prior_hidden_dims: Optional[List[int]] = None,
+    prior_num_layers: Optional[int] = None,
     prior_activation: Optional[str] = None,
     prior_mask_type: str = "alternating",
 ) -> dpVAE:
@@ -1299,12 +1300,11 @@ def create_dpvae(
 
     # Set default values for prior parameters
     if prior_hidden_dims is None:
-        prior_hidden_dims = [64, 64]
+        prior_hidden_dims = [128, 128]
+    if prior_num_layers is None:
+        prior_num_layers = 2
     if prior_activation is None:
         prior_activation = "relu"
-
-    # Determine number of coupling layers from prior_hidden_dims length
-    prior_num_layers = len(prior_hidden_dims)
 
     # Create VAE configuration
     config = VAEConfig(

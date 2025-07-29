@@ -70,6 +70,7 @@ def run_scribe(
     # VAE prior configuration (for dpVAE)
     vae_prior_type: str = "standard",
     vae_prior_hidden_dims: Optional[List[int]] = None,
+    vae_prior_num_layers: Optional[int] = None,
     vae_prior_activation: Optional[str] = None,
     vae_prior_mask_type: str = "alternating",
     # General parameters
@@ -183,6 +184,8 @@ def run_scribe(
     vae_prior_hidden_dims : Optional[List[int]], default=None
         Hidden layer dimensions for decoupled prior coupling layers (default:
         [64, 64])
+    vae_prior_num_layers : Optional[int], default=None
+        Number of coupling layers for decoupled prior (default: 2)
     vae_prior_activation : Optional[str], default=None
         Activation function for decoupled prior coupling layers (default:
         "relu")
@@ -284,6 +287,7 @@ def run_scribe(
                 "vae_output_activation": vae_output_activation,
                 "vae_prior_type": vae_prior_type,
                 "vae_prior_hidden_dims": vae_prior_hidden_dims,
+                "vae_prior_num_layers": vae_prior_num_layers,
                 "vae_prior_activation": vae_prior_activation,
                 "vae_prior_mask_type": vae_prior_mask_type,
             }
