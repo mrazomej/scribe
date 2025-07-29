@@ -6,7 +6,7 @@ treating unconstrained as just another parameterization rather than a separate
 model type.
 """
 
-from typing import Union, Optional, Dict, Any, Type, Callable, TYPE_CHECKING
+from typing import Union, Optional, Dict, Any, Type, Callable, TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     from anndata import AnnData
@@ -67,6 +67,11 @@ def run_scribe(
     vae_hidden_dims: Optional[list] = None,
     vae_activation: Optional[str] = None,
     vae_output_activation: Optional[str] = None,
+    # VAE prior configuration (for dpVAE)
+    vae_prior_type: str = "standard",
+    vae_prior_hidden_dims: Optional[List[int]] = None,
+    vae_prior_activation: Optional[str] = None,
+    vae_prior_mask_type: str = "alternating",
     # General parameters
     seed: int = 42,
 ) -> Any:
@@ -74,10 +79,11 @@ def run_scribe(
     Unified interface for SCRIBE inference with parameterization unification.
 
     This function provides a single entry point for both SVI and MCMC inference
-    methods, treating unconstrained as just another parameterization. This means:
+    methods, treating unconstrained as just another parameterization. This
+    means:
 
-    - You can run MCMC with any parameterization (standard, linked,
-      odds_ratio, unconstrained)
+    - You can run MCMC with any parameterization (standard, linked, odds_ratio,
+      unconstrained)
     - You can run SVI with any parameterization (though guides may not exist for
       all yet)
     - The interface is completely unified and consistent
@@ -103,11 +109,10 @@ def run_scribe(
     Parameterization:
     ----------------
     parameterization : str, default="standard"
-        Model parameterization to use:
-        - "standard": Beta/Gamma or LogNormal distributions for p/r
-        - "linked": Beta/LogNormal for p/mu parameters
-        - "odds_ratio": BetaPrime/LogNormal for phi/mu parameters
-        - "unconstrained": Normal distributions on transformed parameters
+        Model parameterization to use: - "standard": Beta/Gamma or LogNormal
+        distributions for p/r - "linked": Beta/LogNormal for p/mu parameters -
+        "odds_ratio": BetaPrime/LogNormal for phi/mu parameters -
+        "unconstrained": Normal distributions on transformed parameters
 
     Data Processing:
     ---------------
@@ -121,7 +126,8 @@ def run_scribe(
     optimizer : Optional[Any], default=None
         Optimizer for variational inference (defaults to Adam)
     loss : Optional[Any], default=None
-        Loss function for variational inference (defaults to TraceMeanField_ELBO)
+        Loss function for variational inference (defaults to
+        TraceMeanField_ELBO)
     n_steps : int, default=100_000
         Number of optimization steps
     batch_size : Optional[int], default=None
@@ -138,7 +144,8 @@ def run_scribe(
     n_chains : int, default=1
         Number of parallel chains
     mcmc_kwargs : Optional[Dict[str, Any]], default=None
-        Keyword arguments for the MCMC kernel (e.g., target_accept_prob, max_tree_depth)
+        Keyword arguments for the MCMC kernel (e.g., target_accept_prob,
+        max_tree_depth)
 
     Distribution Configuration:
     --------------------------
@@ -170,6 +177,18 @@ def run_scribe(
         Activation function name for VAE (default: "gelu")
     vae_output_activation : Optional[str], default=None
         Output activation function name for VAE decoder (default: "softplus")
+    vae_prior_type : str, default="standard"
+        Type of VAE prior to use: - "standard": Standard normal prior -
+        "decoupled": Decoupled prior using normalizing flows
+    vae_prior_hidden_dims : Optional[List[int]], default=None
+        Hidden layer dimensions for decoupled prior coupling layers (default:
+        [64, 64])
+    vae_prior_activation : Optional[str], default=None
+        Activation function for decoupled prior coupling layers (default:
+        "relu")
+    vae_prior_mask_type : str, default="alternating"
+        Mask type for decoupled prior coupling layers ("alternating" or
+        "checkerboard")
 
     General:
     -------
@@ -188,40 +207,27 @@ def run_scribe(
 
     Examples
     --------
-    # SVI with standard parameterization
-    results = run_scribe(
+    # SVI with standard parameterization results = run_scribe(
         counts, inference_method="svi", parameterization="standard")
 
-    # MCMC with unconstrained parameterization
-    results = run_scribe(
+    # MCMC with unconstrained parameterization results = run_scribe(
         counts, inference_method="mcmc", parameterization="unconstrained")
 
-    # SVI with odds_ratio parameterization for ZINBVCP mixture model
-    results = run_scribe(
-        counts,
-        inference_method="svi",
-        parameterization="odds_ratio",
-        zero_inflated=True,
-        variable_capture=True,
-        mixture_model=True,
+    # SVI with odds_ratio parameterization for ZINBVCP mixture model results =
+    run_scribe(
+        counts, inference_method="svi", parameterization="odds_ratio",
+        zero_inflated=True, variable_capture=True, mixture_model=True,
         n_components=3
     )
 
-    # MCMC with linked parameterization
-    results = run_scribe(
-        counts,
-        inference_method="mcmc",
-        parameterization="linked",
+    # MCMC with linked parameterization results = run_scribe(
+        counts, inference_method="mcmc", parameterization="linked",
         n_samples=1000
     )
 
-    # VAE with standard parameterization
-    results = run_scribe(
-        counts,
-        inference_method="vae",
-        parameterization="standard",
-        vae_latent_dim=5,
-        vae_hidden_dims=[512, 256]
+    # VAE with standard parameterization results = run_scribe(
+        counts, inference_method="vae", parameterization="standard",
+        vae_latent_dim=5, vae_hidden_dims=[512, 256]
     )
     """
     # Step 1: Input Processing & Validation
@@ -276,6 +282,10 @@ def run_scribe(
                 "vae_hidden_dims": vae_hidden_dims,
                 "vae_activation": vae_activation,
                 "vae_output_activation": vae_output_activation,
+                "vae_prior_type": vae_prior_type,
+                "vae_prior_hidden_dims": vae_prior_hidden_dims,
+                "vae_prior_activation": vae_prior_activation,
+                "vae_prior_mask_type": vae_prior_mask_type,
             }
         )
 
