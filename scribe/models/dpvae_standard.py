@@ -57,9 +57,9 @@ def nbdm_dpvae_model(
     base_distribution = dist.Normal(
         jnp.zeros(model_config.vae_latent_dim),
         jnp.ones(model_config.vae_latent_dim),
-    )
+    ).to_event(1)
     decoupled_prior_dist = DecoupledPriorDistribution(
-        decoupled_prior=decoupled_prior_module,
+        decoupled_prior=decoupled_prior,  # Use original module, not wrapper
         base_distribution=base_distribution,
     )
 
@@ -140,9 +140,9 @@ def zinb_dpvae_model(
     base_distribution = dist.Normal(
         jnp.zeros(model_config.vae_latent_dim),
         jnp.ones(model_config.vae_latent_dim),
-    )
+    ).to_event(1)
     decoupled_prior_dist = DecoupledPriorDistribution(
-        decoupled_prior=decoupled_prior_module,
+        decoupled_prior=decoupled_prior,  # Use original module, not wrapper
         base_distribution=base_distribution,
     )
 
@@ -266,7 +266,6 @@ def make_nbdm_dpvae_model_and_guide(
             n_genes,
             model_config,
             encoder,
-            decoupled_prior,
             counts,
             batch_size,
         )
@@ -332,7 +331,6 @@ def make_zinb_dpvae_model_and_guide(
             n_genes,
             model_config,
             encoder,
-            decoupled_prior,
             counts,
             batch_size,
         )
