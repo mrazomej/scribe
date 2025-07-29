@@ -113,7 +113,7 @@ class Encoder(nnx.Module):
 
         # Apply configurable input transformation
         x = input_transformation(x)
-        
+
         # Encoder forward pass through all hidden layers
         h = x
         for layer in self.encoder_layers:
@@ -267,6 +267,7 @@ class VAE(nnx.Module):
 
         return reconstructed, mean, logvar
 
+
 # ------------------------------------------------------------------------------
 # Auxiliary functions
 # ------------------------------------------------------------------------------
@@ -404,3 +405,348 @@ def create_vae(
 
     # Create and return VAE
     return VAE(encoder=encoder, decoder=decoder, config=config, rngs=rngs)
+
+
+# ------------------------------------------------------------------------------
+# Affine Coupling Layer for Normalizing Flows
+# ------------------------------------------------------------------------------
+
+
+class AffineCouplingLayer(nnx.Module):
+    """
+    Single invertible affine coupling block implementing Real NVP.
+
+    This implements the affine coupling transformation from Real NVP:
+    - Forward: y₂ = x₂ ⊙ exp(s(x₁)) + t(x₁), y₁ = x₁
+    - Inverse: x₂ = (y₂ - t(y₁)) ⊙ exp(-s(y₁)), x₁ = y₁
+    - Log det jacobian: sum(s(x₁))
+
+    where ⊙ denotes element-wise multiplication.
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of the input vector
+    hidden_dims : List[int]
+        Hidden layer dimensions for the shift and scale networks
+    activation : str, default="relu"
+        Activation function for hidden layers
+    mask_type : str, default="alternating"
+        Type of masking: "alternating" or "checkerboard"
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dims: List[int],
+        rngs: nnx.Rngs,
+        activation: str = "relu",
+        mask_type: str = "alternating",
+    ):
+        # Store parameters
+        self.input_dim = input_dim
+        self.hidden_dims = hidden_dims
+        self.activation = activation
+        self.mask_type = mask_type
+
+        # Create shared hidden layers
+        self.shared_layers = []
+        
+        # Input layer: masked_dim -> first_hidden_dim
+        masked_dim = input_dim // 2
+        self.shared_layers.append(
+            nnx.Linear(masked_dim, self.hidden_dims[0], rngs=rngs)
+        )
+        
+        # Hidden layers
+        for i in range(len(self.hidden_dims) - 1):
+            self.shared_layers.append(
+                nnx.Linear(
+                    self.hidden_dims[i], self.hidden_dims[i + 1], rngs=rngs
+                )
+            )
+        
+        # Create separate output heads for shift and scale
+        unmasked_dim = input_dim // 2
+        self.shift_head = nnx.Linear(self.hidden_dims[-1], unmasked_dim, rngs=rngs)
+        self.scale_head = nnx.Linear(self.hidden_dims[-1], unmasked_dim, rngs=rngs)
+
+        # Create binary mask for coupling
+        self.mask = self._create_mask()
+
+    # --------------------------------------------------------------------------
+
+    def _create_mask(self) -> jax.Array:
+        """
+        Create binary mask for coupling transformation.
+
+        The mask determines which input dimensions are masked (fixed) and which
+        are transformed in each coupling layer. Supported mask types:
+
+        - "alternating": Creates a 1D alternating mask pattern [1, 0, 1, 0, ...]
+          across the input dimensions. Odd-indexed elements are masked (1),
+          even-indexed are unmasked (0). This is commonly used for 1D data.
+
+        - "checkerboard": Intended for 2D data, creates a checkerboard pattern.
+          For 1D data, this reduces to the same alternating pattern as above.
+
+        Returns
+        -------
+        mask : jax.Array
+            Binary mask array of shape (input_dim,), with 1s for masked and 0s
+            for unmasked dimensions.
+
+        Raises
+        ------
+        ValueError
+            If an unknown mask_type is provided.
+        """
+        if self.mask_type == "alternating":
+            # Alternating pattern: [1, 0, 1, 0, ...]
+            mask = jnp.arange(self.input_dim) % 2
+        elif self.mask_type == "checkerboard":
+            # Checkerboard pattern for 2D data
+            # For 1D data, this reduces to alternating
+            mask = jnp.arange(self.input_dim) % 2
+        else:
+            raise ValueError(f"Unknown mask_type: {self.mask_type}")
+
+        return mask
+
+    # --------------------------------------------------------------------------
+
+    def _get_masked_unmasked(self, x: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        """
+        Split the input tensor into masked and unmasked parts according to the
+        current mask.
+
+        This function uses the binary mask stored in self.mask to separate the
+        input tensor `x` into two parts:
+            - The masked part, which consists of the elements of `x` at
+              positions where the mask is 1.
+            - The unmasked part, which consists of the elements of `x` at
+              positions where the mask is 0.
+
+        This is useful for coupling layers in normalizing flows, where only a
+        subset of the input is transformed at each step, and the rest is left
+        unchanged.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Input tensor of shape (..., input_dim), where input_dim matches the
+            length of self.mask.
+
+        Returns
+        -------
+        x_masked : jax.Array
+            Tensor containing the masked elements of `x`, shape (...,
+            num_masked).
+        x_unmasked : jax.Array
+            Tensor containing the unmasked elements of `x`, shape (...,
+            num_unmasked).
+        """
+        # Find indices where mask is 1 (masked positions)
+        masked_indices = jnp.where(self.mask == 1)[0]
+        # Find indices where mask is 0 (unmasked positions)
+        unmasked_indices = jnp.where(self.mask == 0)[0]
+
+        # Select masked elements from input tensor using advanced indexing
+        x_masked = x[..., masked_indices]
+        # Select unmasked elements from input tensor using advanced indexing
+        x_unmasked = x[..., unmasked_indices]
+
+        # Return the tuple of masked and unmasked tensors
+        return x_masked, x_unmasked
+
+    # --------------------------------------------------------------------------
+
+    def _get_shift_log_scale(
+        self, x_masked: jax.Array
+    ) -> Tuple[jax.Array, jax.Array]:
+        """
+        Compute the shift and log_scale parameters for the affine coupling
+        transformation.
+
+        This method takes the masked part of the input tensor and passes it
+        through a shared neural network, then through separate output heads
+        (self.shift_head and self.scale_head) to produce the shift and log_scale
+        parameters required for the affine transformation of the unmasked part.
+
+        Parameters
+        ----------
+        x_masked : jax.Array
+            The masked part of the input tensor, of shape (..., num_masked),
+            where num_masked is the number of masked features as determined by
+            the mask.
+
+        Returns
+        -------
+        shift : jax.Array
+            The shift parameter for the affine transformation, of shape (...,
+            unmasked_dim), where unmasked_dim is typically half of the input
+            dimension.
+        log_scale : jax.Array
+            The log scale parameter for the affine transformation, of shape
+            (..., unmasked_dim).
+        """
+        # Get activation function
+        activation = ACTIVATION_FUNCTIONS[self.activation]
+        
+        # Forward pass through shared layers (manual iteration like encoder)
+        h = x_masked
+        for layer in self.shared_layers:
+            h = activation(layer(h))
+        
+        # Apply separate output heads
+        shift = self.shift_head(h)
+        log_scale = self.scale_head(h)
+
+        return shift, log_scale
+
+    # --------------------------------------------------------------------------
+
+    def forward(self, x: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        """
+        Applies the forward affine coupling transformation to the input tensor.
+
+        This method splits the input tensor into masked and unmasked parts
+        according to the coupling mask, computes the shift and log_scale
+        parameters from the masked part, and then applies an affine
+        transformation to the unmasked part. The masked part remains unchanged.
+        The method then reconstructs the full output tensor and computes the
+        log-determinant of the Jacobian for the transformation.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Input tensor of shape (..., input_dim), where input_dim is the total
+            number of features.
+
+        Returns
+        -------
+        y : jax.Array
+            Output tensor of the same shape as x, after applying the coupling
+            transformation.
+        log_det_jacobian : jax.Array
+            Log-determinant of the Jacobian of the transformation, shape (...,).
+        """
+        # Split the input tensor into masked and unmasked parts using the mask
+        x_masked, x_unmasked = self._get_masked_unmasked(x)
+
+        # Compute the shift and log_scale parameters from the masked part
+        shift, log_scale = self._get_shift_log_scale(x_masked)
+
+        # Apply the affine transformation to the unmasked part: scale and shift
+        y_unmasked = x_unmasked * jnp.exp(log_scale) + shift
+
+        # The masked part remains unchanged in the output
+        y_masked = x_masked
+
+        # Initialize an output tensor of zeros with the same shape as the input
+        y = jnp.zeros_like(x)
+
+        # Get the indices for masked and unmasked features
+        masked_indices = jnp.where(self.mask == 1)[0]
+        unmasked_indices = jnp.where(self.mask == 0)[0]
+
+        # Set the masked part in the output tensor
+        y = y.at[..., masked_indices].set(y_masked)
+        # Set the transformed unmasked part in the output tensor
+        y = y.at[..., unmasked_indices].set(y_unmasked)
+
+        # Compute the log-determinant of the Jacobian (sum over log_scale for
+        # each sample)
+        log_det_jacobian = jnp.sum(log_scale, axis=-1)
+
+        # Return the transformed tensor and the log-determinant
+        return y, log_det_jacobian
+
+    # --------------------------------------------------------------------------
+
+    def inverse(self, y: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        """
+        Perform the inverse coupling transformation: recovers the original input
+        x from the transformed output y.
+        
+        This method splits the input tensor y into masked and unmasked parts
+        according to the current mask, computes the shift and log_scale
+        parameters from the masked part, and then applies the inverse affine
+        transformation to the unmasked part. The masked part remains unchanged.
+        The method reconstructs the full tensor x and computes the
+        log-determinant of the inverse Jacobian, which is the negative of the
+        forward log-determinant.
+
+        Parameters
+        ----------
+        y : jax.Array
+            Input tensor of shape (..., input_dim), where input_dim is the total
+            number of features.
+
+        Returns
+        -------
+        x : jax.Array
+            Inverse transformed tensor of the same shape as y (original input
+            before coupling transformation).
+        log_det_jacobian : jax.Array
+            Log-determinant of the inverse Jacobian (negative of the forward
+            log-determinant), shape (...,).
+        """
+        # Split the input tensor y into masked and unmasked parts using the mask
+        y_masked, y_unmasked = self._get_masked_unmasked(y)
+
+        # Compute the shift and log_scale parameters from the masked part
+        shift, log_scale = self._get_shift_log_scale(y_masked)
+
+        # Apply the inverse affine transformation to the unmasked part:
+        # (y_unmasked - shift) * exp(-log_scale)
+        x_unmasked = (y_unmasked - shift) * jnp.exp(-log_scale)
+
+        # The masked part remains unchanged in the inverse transformation
+        x_masked = y_masked
+
+        # Initialize an output tensor of zeros with the same shape as y
+        x = jnp.zeros_like(y)
+
+        # Get the indices for masked and unmasked features
+        masked_indices = jnp.where(self.mask == 1)[0]
+        unmasked_indices = jnp.where(self.mask == 0)[0]
+
+        # Set the masked part in the output tensor
+        x = x.at[..., masked_indices].set(x_masked)
+        # Set the inverse-transformed unmasked part in the output tensor
+        x = x.at[..., unmasked_indices].set(x_unmasked)
+
+        # Compute the log-determinant of the inverse Jacobian (negative sum over
+        # log_scale for each sample)
+        log_det_jacobian = -jnp.sum(log_scale, axis=-1)
+
+        # Return the inverse-transformed tensor and the log-determinant
+        return x, log_det_jacobian
+
+    # --------------------------------------------------------------------------
+
+    def __call__(
+        self, x: jax.Array, inverse: bool = False
+    ) -> Tuple[jax.Array, jax.Array]:
+        """
+        Apply the coupling transformation.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Input tensor
+        inverse : bool, default=False
+            Whether to apply inverse transformation
+
+        Returns
+        -------
+        transformed : jax.Array
+            Transformed tensor
+        log_det_jacobian : jax.Array
+            Log determinant of the Jacobian
+        """
+        if inverse:
+            return self.inverse(x)
+        else:
+            return self.forward(x)
