@@ -297,10 +297,10 @@ def nbdm_vae_model(
                 )
 
                 # Use decoder to generate mu parameters from latent space
-                mu_params = decoder_module(z)
+                mu = numpyro.deterministic("mu", decoder_module(z))
 
                 # Compute r using the odds ratio parameterization
-                r = numpyro.deterministic("r", mu_params * phi)
+                r = numpyro.deterministic("r", mu * phi)
 
                 # Define base distribution with VAE-generated r
                 base_dist = dist.NegativeBinomialLogits(
@@ -321,10 +321,10 @@ def nbdm_vae_model(
                 )
 
                 # Use decoder to generate mu parameters from latent space
-                mu_params = decoder_module(z)
+                mu = numpyro.deterministic("mu", decoder_module(z))
 
                 # Compute r using the odds ratio parameterization
-                r = numpyro.deterministic("r", mu_params * phi)
+                r = numpyro.deterministic("r", mu * phi)
 
                 # Define base distribution with VAE-generated r
                 base_dist = dist.NegativeBinomialLogits(
@@ -343,10 +343,10 @@ def nbdm_vae_model(
             )
 
             # Use decoder to generate mu parameters from latent space
-            mu_params = decoder_module(z)
+            mu = numpyro.deterministic("mu", decoder_module(z))
 
             # Compute r using the odds ratio parameterization
-            r = numpyro.deterministic("r", mu_params * phi)
+            r = numpyro.deterministic("r", mu * phi)
 
             # Define base distribution with VAE-generated r
             base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(
@@ -383,7 +383,8 @@ def nbdm_vae_guide(
     phi_beta = numpyro.param(
         "phi_beta", phi_prior_params[1], constraint=constraints.positive
     )
-    # Sample phi from the BetaPrime distribution parameterized by phi_alpha and phi_beta
+    # Sample phi from the BetaPrime distribution parameterized by phi_alpha and
+    # phi_beta
     numpyro.sample("phi", BetaPrime(phi_alpha, phi_beta))
 
     # Register the pre-created encoder as NumPyro module for the guide
@@ -396,7 +397,7 @@ def nbdm_vae_guide(
             with numpyro.plate("cells", n_cells):
                 # Use encoder to get mean and log variance for latent space
                 z_mean, z_logvar = encoder_module(counts)
-                z_std = jnp.exp(0.5 * z_logvar)
+                z_std = jnp.exp(z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
@@ -408,20 +409,20 @@ def nbdm_vae_guide(
                 # Use encoder to get mean and log variance for latent space
                 batch_data = counts[idx]
                 z_mean, z_logvar = encoder_module(batch_data)
-                z_std = jnp.exp(0.5 * z_logvar)
+                z_std = jnp.exp(z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
     else:
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
-            # Generate dummy data for encoder
-            dummy_data = jnp.zeros((n_cells, n_genes))
-            z_mean, z_logvar = encoder_module(dummy_data)
-            z_std = jnp.exp(0.5 * z_logvar)
+            # Extract latent dimension from model config
+            latent_dim = model_config.vae_latent_dim
 
             # Sample from variational distribution
-            numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+            numpyro.sample(
+                "z", dist.Normal(0, 1).expand([latent_dim]).to_event(1)
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -471,15 +472,16 @@ def zinb_vae_model(
                 )
 
                 # Use decoder to generate mu parameters from latent space
-                mu_params = decoder_module(z)
+                mu = numpyro.deterministic("mu", decoder_module(z))
 
                 # Compute r using the odds ratio parameterization
-                r = numpyro.deterministic("r", mu_params * phi)
+                r = numpyro.deterministic("r", mu * phi)
 
                 # Construct the base Negative Binomial distribution using r and
                 # phi
                 base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
-                # Construct the zero-inflated distribution using the base NB and gate
+                # Construct the zero-inflated distribution using the base NB and
+                # gate
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
                 ).to_event(1)
@@ -507,7 +509,8 @@ def zinb_vae_model(
                 # Construct the base Negative Binomial distribution using r and
                 # phi
                 base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
-                # Construct the zero-inflated distribution using the base NB and gate
+                # Construct the zero-inflated distribution using the base NB and
+                # gate
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
                 ).to_event(1)
@@ -525,10 +528,10 @@ def zinb_vae_model(
             )
 
             # Use decoder to generate mu parameters from latent space
-            mu_params = decoder_module(z)
+            mu = numpyro.deterministic("mu", decoder_module(z))
 
             # Compute r using the odds ratio parameterization
-            r = numpyro.deterministic("r", mu_params * phi)
+            r = numpyro.deterministic("r", mu * phi)
 
             # Construct the base Negative Binomial distribution using r and phi
             base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
@@ -593,7 +596,7 @@ def zinb_vae_guide(
             with numpyro.plate("cells", n_cells):
                 # Use encoder to get mean and log variance for latent space
                 z_mean, z_logvar = encoder_module(counts)
-                z_std = jnp.exp(0.5 * z_logvar)
+                z_std = jnp.exp(z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
@@ -605,7 +608,7 @@ def zinb_vae_guide(
                 # Use encoder to get mean and log variance for latent space
                 batch_data = counts[idx]
                 z_mean, z_logvar = encoder_module(batch_data)
-                z_std = jnp.exp(0.5 * z_logvar)
+                z_std = jnp.exp(z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
@@ -615,10 +618,15 @@ def zinb_vae_guide(
             # Generate dummy data for encoder
             dummy_data = jnp.zeros((n_cells, n_genes))
             z_mean, z_logvar = encoder_module(dummy_data)
-            z_std = jnp.exp(0.5 * z_logvar)
+            z_std = jnp.exp(z_logvar)
 
             # Sample from variational distribution
             numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+
+
+# ------------------------------------------------------------------------------
+# Posterior Distributions for VAE-based models with odds ratio parameterization
+# ------------------------------------------------------------------------------
 
 
 def get_posterior_distributions(
