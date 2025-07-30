@@ -1000,7 +1000,11 @@ class ScribeSVIResults:
         from ..models.model_registry import get_model_and_guide
 
         parameterization = self.model_config.parameterization or ""
-        return get_model_and_guide(self.model_type, parameterization)
+        inference_method = self.model_config.inference_method or ""
+        prior_type = self.model_config.vae_prior_type or ""
+        return get_model_and_guide(
+            self.model_type, parameterization, inference_method, prior_type
+        )
 
     # --------------------------------------------------------------------------
     # Get parameterization

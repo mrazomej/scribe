@@ -17,9 +17,12 @@ SUPPORTED_PARAMETERIZATIONS = [
     "linked",
     "odds_ratio",
     "unconstrained",
-    "vae_standard",
-    "vae_linked",
-    "vae_odds_ratio",
+]
+
+# List of supported inference methods
+SUPPORTED_INFERENCE_METHODS = [
+    "svi",
+    "vae",
 ]
 
 # Dictionary to cache imported model modules
@@ -27,7 +30,10 @@ _model_module_cache = {}
 
 
 def get_model_and_guide(
-    model_type: str, parameterization: str = "standard"
+    model_type: str,
+    parameterization: str = "standard",
+    inference_method: str = "svi",
+    prior_type: Optional[str] = None,
 ) -> Tuple[Callable, Optional[Callable]]:
     """
     Get model and guide functions for a specified model type and
@@ -44,7 +50,12 @@ def get_model_and_guide(
         "zinb_mix".
     parameterization : str, default="standard"
         The parameterization module to load from (e.g., "standard",
-        "unconstrained", "vae_standard").
+        "unconstrained").
+    inference_method : str, default="svi"
+        The inference method to use. Examples: "svi", "vae".
+    prior_type : str, default=None
+        Exclusively used for VAE inference. The prior type to use.
+        Examples: "standard", "decoupled".
 
     Returns
     -------
@@ -65,16 +76,27 @@ def get_model_and_guide(
             f"Supported parameterizations are: {SUPPORTED_PARAMETERIZATIONS}"
         )
 
-    # Handle VAE parameterizations
-    if parameterization.startswith("vae_"):
-        # Extract the base parameterization (e.g., "standard" from "vae_standard")
-        base_parameterization = parameterization.replace("vae_", "")
-        module_name = f"vae_{base_parameterization}"
-    else:
-        module_name = parameterization
+    # Check if inference method is supported
+    if inference_method not in SUPPORTED_INFERENCE_METHODS:
+        raise ValueError(
+            f"Unsupported inference method: {inference_method}. "
+            f"Supported inference methods are: {SUPPORTED_INFERENCE_METHODS}"
+        )
 
-    # Dynamically import the parameterization module (e.g.,
-    # scribe.models.standard or scribe.models.vae_standard)
+    # Dynamically import the parameterization module
+    if inference_method == "svi":
+        module_name = f"{parameterization}"
+    elif inference_method == "vae":
+        if prior_type == "standard":
+            module_name = f"vae_{parameterization}"
+        elif prior_type == "decoupled":
+            module_name = f"dpvae_{parameterization}"
+        else:
+            raise ValueError(
+                f"Unsupported prior type: {prior_type}. "
+                f"Supported prior types are: {SUPPORTED_PRIOR_TYPES}"
+            )
+
     try:
         module = importlib.import_module(
             f".{module_name}", "scribe.models"
@@ -85,15 +107,18 @@ def get_model_and_guide(
         )
 
     # Determine the function names based on convention
-    if parameterization.startswith("vae_"):
-        # For VAE models, add "_vae" suffix to function names
-        if model_type.endswith("_mix"):
-            base_type = model_type.replace("_mix", "")
-            model_name = f"{base_type}_mixture_vae_model"
-            guide_name = f"{base_type}_mixture_vae_guide"
-        else:
+    if inference_method == "vae":
+        if prior_type == "standard":
             model_name = f"{model_type}_vae_model"
             guide_name = f"{model_type}_vae_guide"
+        elif prior_type == "decoupled":
+            model_name = f"{model_type}_dpvae_model"
+            guide_name = f"{model_type}_vae_guide"
+        else:
+            raise ValueError(
+                f"Unsupported prior type: {prior_type}. "
+                f"Supported prior types are: {SUPPORTED_PRIOR_TYPES}"
+            )
     else:
         # Standard naming convention
         if model_type.endswith("_mix"):
