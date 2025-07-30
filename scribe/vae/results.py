@@ -263,45 +263,7 @@ class ScribeVAEResults(ScribeSVIResults):
         return distributions
 
     # --------------------------------------------------------------------------
-    # VAE-specific analysis methods
-    # --------------------------------------------------------------------------
-
-    def get_latent_embeddings(
-        self,
-        counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
-    ) -> jnp.ndarray:
-        """
-        Get latent embeddings for cells using the trained VAE.
-
-        Parameters
-        ----------
-        counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
-        batch_size : Optional[int], default=None
-            Batch size for processing large datasets
-
-        Returns
-        -------
-        jnp.ndarray
-            Latent embeddings of shape (n_cells, latent_dim)
-        """
-        # Get VAE encoder
-        encoder = self.vae_model.encoder
-
-        if batch_size is None:
-            # Process all cells at once
-            mean, _ = encoder(counts)
-            return mean
-        else:
-            # Process in batches
-            embeddings = []
-            for i in range(0, counts.shape[0], batch_size):
-                batch = counts[i : i + batch_size]
-                mean, _ = encoder(batch)
-                embeddings.append(mean)
-            return jnp.concatenate(embeddings, axis=0)
-
+    # VAE-specific sampling methods
     # --------------------------------------------------------------------------
 
     def get_latent_samples(
@@ -505,7 +467,7 @@ class ScribeVAEResults(ScribeSVIResults):
 
             # Sample all samples at once
             posterior_samples["z"] = decoupled_prior_dist.sample(
-                rng_key, sample_shape=(n_samples, self.n_cells)
+                rng_key, sample_shape=(n_samples,)
             )
 
         # Run z samples through the decoder
@@ -671,6 +633,46 @@ class ScribeVAEResults(ScribeSVIResults):
         return predictive_samples
 
     # --------------------------------------------------------------------------
+    # VAE-specific analysis methods
+    # --------------------------------------------------------------------------
+
+    def get_latent_embeddings(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+    ) -> jnp.ndarray:
+        """
+        Get latent embeddings for cells using the trained VAE.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count data of shape (n_cells, n_genes)
+        batch_size : Optional[int], default=None
+            Batch size for processing large datasets
+
+        Returns
+        -------
+        jnp.ndarray
+            Latent embeddings of shape (n_cells, latent_dim)
+        """
+        # Get VAE encoder
+        encoder = self.vae_model.encoder
+
+        if batch_size is None:
+            # Process all cells at once
+            mean, _ = encoder(counts)
+            return mean
+        else:
+            # Process in batches
+            embeddings = []
+            for i in range(0, counts.shape[0], batch_size):
+                batch = counts[i : i + batch_size]
+                mean, _ = encoder(batch)
+                embeddings.append(mean)
+            return jnp.concatenate(embeddings, axis=0)
+
+    # --------------------------------------------------------------------------
 
     def cluster_cells(
         self,
@@ -802,68 +804,6 @@ class ScribeVAEResults(ScribeSVIResults):
         }
 
     # --------------------------------------------------------------------------
-
-    def visualize_latent_space(
-        self,
-        counts: jnp.ndarray,
-        method: str = "tsne",
-        n_components: int = 2,
-        batch_size: Optional[int] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """
-        Create low-dimensional visualization of the latent space.
-
-        Parameters
-        ----------
-        counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
-        method : str, default="tsne"
-            Dimensionality reduction method. Options: "tsne", "umap", "pca"
-        n_components : int, default=2
-            Number of components for visualization
-        batch_size : Optional[int], default=None
-            Batch size for processing large datasets
-        **kwargs
-            Additional arguments for dimensionality reduction algorithms
-
-        Returns
-        -------
-        Dict[str, Any]
-            Dictionary containing visualization results:
-            - 'coordinates': 2D coordinates for plotting
-            - 'method': Dimensionality reduction method used
-            - 'embeddings': Original latent embeddings
-        """
-        # Get latent embeddings
-        embeddings = self.get_latent_embeddings(counts, batch_size=batch_size)
-
-        if method == "tsne":
-            from sklearn.manifold import TSNE
-
-            reducer = TSNE(n_components=n_components, random_state=42, **kwargs)
-            coordinates = reducer.fit_transform(embeddings)
-
-        elif method == "umap":
-            from umap import UMAP
-
-            reducer = UMAP(n_components=n_components, random_state=42, **kwargs)
-            coordinates = reducer.fit_transform(embeddings)
-
-        elif method == "pca":
-            from sklearn.decomposition import PCA
-
-            reducer = PCA(n_components=n_components, **kwargs)
-            coordinates = reducer.fit_transform(embeddings)
-
-        else:
-            raise ValueError(f"Unknown visualization method: {method}")
-
-        return {
-            "coordinates": coordinates,
-            "method": method,
-            "embeddings": embeddings,
-        }
 
     def get_gene_importance(
         self,
