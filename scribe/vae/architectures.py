@@ -1053,18 +1053,16 @@ class DecoupledPriorDistribution(numpyro.distributions.Distribution):
         jax.Array
             The log probability, shape (...)
         """
-        # Get the actual decoupled prior module (handle NumPyro module wrappers)
+        # Handle both NumPyro module wrapper and direct nnx module
         if hasattr(self.decoupled_prior, "func") and hasattr(
             self.decoupled_prior, "args"
         ):
-            # NumPyro module wrapper - the actual module is in the first
-            # argument
-            decoupled_prior = self.decoupled_prior.args[0]
+            # NumPyro module wrapper
+            # it's a callable that takes (input, inverse=True)
+            z_base, log_det_jacobian = self.decoupled_prior(value, inverse=True)
         else:
-            decoupled_prior = self.decoupled_prior
-
-        # Transform back to base distribution using inverse transformation
-        z_base, log_det_jacobian = decoupled_prior.inverse(value)
+            # Direct nnx module - call the inverse method directly
+            z_base, log_det_jacobian = self.decoupled_prior.inverse(value)
 
         # Get log probability from base distribution
         base_log_prob = self.base_distribution.log_prob(z_base)
@@ -1099,20 +1097,19 @@ class DecoupledPriorDistribution(numpyro.distributions.Distribution):
             Samples from the decoupled prior, shape
             (sample_shape + batch_shape + event_shape)
         """
-        # Get the actual decoupled prior module (handle NumPyro module wrappers)
-        if hasattr(self.decoupled_prior, "func") and hasattr(
-            self.decoupled_prior, "args"
-        ):
-            # NumPyro module wrapper - the actual module is in the first argument
-            decoupled_prior = self.decoupled_prior.args[0]
-        else:
-            decoupled_prior = self.decoupled_prior
-
         # Sample from base distribution
         z_base = self.base_distribution.sample(key, sample_shape)
 
         # Apply forward transformation to get samples from complex prior
-        z_complex, _ = decoupled_prior.forward(z_base)
+        # Handle both NumPyro module wrapper and direct nnx module
+        if hasattr(self.decoupled_prior, "func") and hasattr(
+            self.decoupled_prior, "args"
+        ):
+            # NumPyro module wrapper - it's a callable
+            z_complex, _ = self.decoupled_prior(z_base)
+        else:
+            # Direct nnx module - call the forward method directly
+            z_complex, _ = self.decoupled_prior.forward(z_base)
 
         return z_complex
 
@@ -1139,20 +1136,19 @@ class DecoupledPriorDistribution(numpyro.distributions.Distribution):
         Tuple[jax.Array, Dict]
             Samples from the decoupled prior and intermediate values
         """
-        # Get the actual decoupled prior module (handle NumPyro module wrappers)
-        if hasattr(self.decoupled_prior, "func") and hasattr(
-            self.decoupled_prior, "args"
-        ):
-            # NumPyro module wrapper - the actual module is in the first argument
-            decoupled_prior = self.decoupled_prior.args[0]
-        else:
-            decoupled_prior = self.decoupled_prior
-
         # Sample from base distribution
         z_base = self.base_distribution.sample(key, sample_shape)
 
         # Apply forward transformation
-        z_complex, log_det = decoupled_prior.forward(z_base)
+        # Handle both NumPyro module wrapper and direct nnx module
+        if hasattr(self.decoupled_prior, "func") and hasattr(
+            self.decoupled_prior, "args"
+        ):
+            # NumPyro module wrapper - it's a callable
+            z_complex, log_det = self.decoupled_prior(z_base)
+        else:
+            # Direct nnx module - call the forward method directly
+            z_complex, log_det = self.decoupled_prior.forward(z_base)
 
         # Return samples and intermediate values
         intermediates = {
