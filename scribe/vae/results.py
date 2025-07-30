@@ -21,7 +21,13 @@ import scipy.stats as stats
 # Import base results class
 from ..svi.results import ScribeSVIResults
 from ..models.model_config import ModelConfig
-from .architectures import VAE, VAEConfig
+from .architectures import (
+    VAE,
+    VAEConfig,
+    dpVAE,
+    DecoupledPrior,
+    DecoupledPriorDistribution,
+)
 
 try:
     from anndata import AnnData
@@ -36,22 +42,26 @@ class ScribeVAEResults(ScribeSVIResults):
 
     This class extends ScribeSVIResults to include VAE-specific functionality
     such as latent space analysis, cell clustering, and VAE model access.
+    Supports both standard VAE and dpVAE (decoupled prior VAE) models.
 
     Attributes
     ----------
-    vae_model : VAE
-        The trained VAE model used for inference
+    vae_model : Union[VAE, dpVAE]
+        The trained VAE or dpVAE model used for inference
     latent_samples : Optional[jnp.ndarray]
         Samples from the latent space for analysis
     cell_embeddings : Optional[jnp.ndarray]
         Cell embeddings in latent space
+    prior_type : str
+        Type of prior used: "standard" for VAE or "decoupled" for dpVAE
     """
 
     # VAE-specific attributes (using init=False to avoid dataclass field
     # ordering issues)
-    _vae_model: Optional[VAE] = None  # type: ignore
+    _vae_model: Optional[Union[VAE, dpVAE]] = None  # type: ignore
     latent_samples: Optional[jnp.ndarray] = None
     cell_embeddings: Optional[jnp.ndarray] = None
+    prior_type: str = "standard"
 
     def __post_init__(self):
         """Validate VAE-specific configuration."""
@@ -64,6 +74,11 @@ class ScribeVAEResults(ScribeSVIResults):
                 f"Model config inference_method must be 'vae', "
                 f"got '{self.model_config.inference_method}'"
             )
+
+        # Determine if this is a dpVAE based on model config
+        # Check if prior-specific parameters are present
+        if self.model_config.vae_prior_type == "decoupled":
+            self.prior_type = "decoupled"
 
     # --------------------------------------------------------------------------
     # Model and guide access
@@ -85,13 +100,17 @@ class ScribeVAEResults(ScribeSVIResults):
     # --------------------------------------------------------------------------
 
     @property
-    def vae_model(self) -> VAE:
+    def vae_model(self) -> Union[VAE, dpVAE]:
         """
         Get the VAE model, reconstructing it if necessary.
         """
         if self._vae_model is None:
             # Import functions
-            from .architectures import create_encoder, create_decoder
+            from .architectures import (
+                create_encoder,
+                create_decoder,
+                DecoupledPrior,
+            )
 
             # Create encoder
             encoder = create_encoder(
@@ -126,16 +145,121 @@ class ScribeVAEResults(ScribeSVIResults):
             )
             # Merge decoder
             decoder = nnx.merge(decoder_graph, decoder_state)
+
             # Define RNGs
             rngs = nnx.Rngs(params=0)
-            # Create VAE
-            self._vae_model = VAE(
-                encoder=encoder,
-                decoder=decoder,
-                config=self.model_config,
-                rngs=rngs,
+
+            # Create VAE config
+            vae_config = VAEConfig(
+                input_dim=self.n_genes,
+                latent_dim=self.model_config.vae_latent_dim,
+                hidden_dims=self.model_config.vae_hidden_dims,
+                activation=self.model_config.vae_activation,
             )
+
+            if self.prior_type == "decoupled":
+                # Create decoupled prior for dpVAE
+                decoupled_prior = DecoupledPrior(
+                    latent_dim=self.model_config.vae_latent_dim,
+                    num_layers=self.model_config.vae_prior_num_layers,
+                    hidden_dims=self.model_config.vae_prior_hidden_dims,
+                    rngs=rngs,
+                    activation=self.model_config.vae_prior_activation,
+                    mask_type=self.model_config.vae_prior_mask_type,
+                )
+                # Split decoupled prior
+                prior_graph, prior_state = nnx.split(decoupled_prior)
+                # Replace prior state with trained state
+                nnx.replace_by_pure_dict(
+                    prior_state, self.params["decoupled_prior$params"]
+                )
+                # Merge decoupled prior
+                decoupled_prior = nnx.merge(prior_graph, prior_state)
+
+                # Create dpVAE
+                self._vae_model = dpVAE(
+                    encoder=encoder,
+                    decoder=decoder,
+                    config=vae_config,
+                    decoupled_prior=decoupled_prior,
+                    rngs=rngs,
+                )
+            else:
+                # Create standard VAE
+                self._vae_model = VAE(
+                    encoder=encoder,
+                    decoder=decoder,
+                    config=vae_config,
+                    rngs=rngs,
+                )
         return self._vae_model
+
+    # --------------------------------------------------------------------------
+
+    def get_distributions(self) -> Dict[str, Any]:
+        """
+        Get the variational distributions for all parameters.
+
+        This method now delegates to the model-specific `get_posterior_distributions`
+        function associated with the parameterization.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary mapping parameter names to their distributions.
+
+        Raises
+        ------
+        ValueError
+            If backend is not supported.
+        """
+        # Dynamically import the correct posterior distribution function
+        if self.model_config.parameterization == "standard":
+            if self.prior_type == "standard":
+                from ..models.vae_standard import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.prior_type == "decoupled":
+                from ..models.dpvae_standard import (
+                get_posterior_distributions as get_dist_fn,
+            )
+        elif self.model_config.parameterization == "linked":
+            if self.prior_type == "standard":
+                from ..models.vae_linked import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.prior_type == "decoupled":
+                from ..models.dpvae_linked import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+        elif self.model_config.parameterization == "odds_ratio":
+            if self.prior_type == "standard":
+                from ..models.vae_odds_ratio import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.prior_type == "decoupled":
+                from ..models.dpvae_odds_ratio import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+        elif self.model_config.parameterization == "unconstrained":
+            if self.prior_type == "standard":
+                from ..models.vae_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.prior_type == "decoupled":
+                from ..models.dpvae_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+        else:
+            raise NotImplementedError(
+                f"get_distributions not implemented for '{self.model_config.parameterization}'."
+            )
+
+        distributions = get_dist_fn(
+            self.params, self.model_config, self.vae_model
+        )
+
+        return distributions
 
     # --------------------------------------------------------------------------
     # VAE-specific analysis methods
@@ -181,14 +305,77 @@ class ScribeVAEResults(ScribeSVIResults):
 
     def get_latent_samples(
         self,
+        n_samples: int = 100,
+        rng_key: Optional[jax.random.PRNGKey] = None,
+        store_samples: bool = True,
+    ) -> jnp.ndarray:
+        """
+        Get multiple samples from the latent space prior for uncertainty
+        quantification.
+
+        This method samples from the prior distribution rather than conditioning
+        on data. For standard VAE, it samples from a standard normal prior.
+        For dpVAE, it samples from the learned decoupled prior distribution.
+
+        Parameters
+        ----------
+        n_samples : int, default=100
+            Number of samples to generate
+        rng_key : Optional[jax.random.PRNGKey], default=None
+            Random key for sampling
+        store_samples : bool, default=True
+            Whether to store the generated latent samples in the object.
+            Default is True.
+
+        Returns
+        -------
+        jnp.ndarray
+            Latent samples of shape (n_samples, latent_dim)
+        """
+        if rng_key is None:
+            rng_key = jax.random.key(42)
+
+        if self.prior_type == "standard":
+            # For standard VAE: sample from standard normal prior
+            # Sample all samples at once
+            samples_array = jax.random.normal(
+                rng_key, shape=(n_samples, self.model_config.vae_latent_dim)
+            )
+
+        elif self.prior_type == "decoupled":
+            # For dpVAE: sample from the learned decoupled prior
+            # Get the decoupled prior distribution
+            decoupled_prior_dist = (
+                self.vae_model.get_decoupled_prior_distribution()
+            )
+
+            # Sample all samples at once
+            samples_array = decoupled_prior_dist.sample(
+                rng_key, sample_shape=(n_samples,)
+            )
+
+        # Store samples if requested
+        if store_samples:
+            self.latent_samples = samples_array
+
+        return samples_array
+
+    # --------------------------------------------------------------------------
+
+    def get_latent_samples_conditioned_on_data(
+        self,
         counts: jnp.ndarray,
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         rng_key: Optional[jax.random.PRNGKey] = None,
+        store_samples: bool = True,
     ) -> jnp.ndarray:
         """
-        Get multiple samples from the latent space for uncertainty
-        quantification.
+        Get multiple samples from the latent space conditioned on observed data.
+
+        This method samples from the posterior distribution by first encoding
+        the data to get mean and variance, then sampling from the resulting
+        distribution.
 
         Parameters
         ----------
@@ -200,6 +387,9 @@ class ScribeVAEResults(ScribeSVIResults):
             Batch size for processing large datasets
         rng_key : Optional[jax.random.PRNGKey], default=None
             Random key for sampling
+        store_samples : bool, default=True
+            Whether to store the generated latent samples in the object.
+            Default is True.
 
         Returns
         -------
@@ -237,7 +427,13 @@ class ScribeVAEResults(ScribeSVIResults):
                     batch_samples.append(z)
                 samples.append(jnp.concatenate(batch_samples, axis=0))
 
-        return jnp.stack(samples, axis=0)
+        samples_array = jnp.stack(samples, axis=0)
+
+        # Store samples if requested
+        if store_samples:
+            self.latent_samples = samples_array
+
+        return samples_array
 
     # --------------------------------------------------------------------------
 
@@ -292,21 +488,20 @@ class ScribeVAEResults(ScribeSVIResults):
         """
         print(
             "[WARNING] get_posterior_samples is sampling from the latent space "
-            "prior. If there is structure to the embeddings of the cells, this "
-            "may not be a good sample. We recommend using "
-            "get_posterior_samples_from_data instead."
+            "prior distribution. If there is structure to the embeddings of the "
+            "cells, this may not be a good sample. We recommend using "
+            "get_posterior_samples_from_data instead for data-conditioned samples."
         )
         # Get posterior samples
         posterior_samples = super().get_posterior_samples(
-            rng_key=rng_key, 
-            n_samples=n_samples, 
-            store_samples=store_samples, 
+            rng_key=rng_key,
+            n_samples=n_samples,
+            store_samples=store_samples,
         )
-
 
     # --------------------------------------------------------------------------
 
-    def get_posterior_samples_from_data(
+    def get_posterior_samples_conditioned_on_data(
         self,
         counts: jnp.ndarray,
         rng_key: random.PRNGKey = random.PRNGKey(42),
@@ -321,11 +516,12 @@ class ScribeVAEResults(ScribeSVIResults):
         This method generates samples from the variational posterior in a way
         that is conditioned on the provided count data. It first samples global
         and cell-level parameters from the variational posterior, then generates
-        latent variable samples (e.g., cell embeddings) using the provided data.
-        These latent samples are passed through the VAE decoder to obtain
-        reconstructed parameters (such as 'r' or 'mu'), which are then
-        substituted into the posterior samples dictionary. The latent samples
-        themselves are also included in the returned dictionary.
+        latent variable samples (e.g., cell embeddings) by encoding the provided
+        data and sampling from the resulting posterior distribution. These latent
+        samples are passed through the VAE decoder to obtain reconstructed
+        parameters (such as 'r' or 'mu'), which are then substituted into the
+        posterior samples dictionary. The latent samples themselves are also
+        included in the returned dictionary.
 
         This approach ensures that the posterior samples reflect the structure
         present in the observed data, rather than being drawn from the latent
@@ -366,30 +562,34 @@ class ScribeVAEResults(ScribeSVIResults):
         """
         # Get posterior samples (global/cell-level parameters)
         posterior_samples = super().get_posterior_samples(
-            rng_key=rng_key, 
-            n_samples=n_samples, 
-            store_samples=store_samples, 
+            rng_key=rng_key,
+            n_samples=n_samples,
+            store_samples=store_samples,
         )
 
         # Generate latent samples conditioned on data
-        latent_samples = self.get_latent_samples(
+        latent_samples = self.get_latent_samples_conditioned_on_data(
             counts, n_samples=n_samples, rng_key=rng_key
         )
 
+        # Store latent samples if requested
+        if store_samples:
+            self.latent_samples = latent_samples
+
         # Extract decoder from the VAE model
         decoder = self.vae_model.decoder
-        
+
         # Run latent samples through decoder to obtain reconstructed parameters
         reconstructed = decoder(latent_samples)
 
         # Substitute reconstructed parameters into posterior samples
-        if 'r' in posterior_samples:
-            posterior_samples['r'] = reconstructed
-        elif 'mu' in posterior_samples:
-            posterior_samples['mu'] = reconstructed
+        if "r" in posterior_samples:
+            posterior_samples["r"] = reconstructed
+        elif "mu" in posterior_samples:
+            posterior_samples["mu"] = reconstructed
 
         # Add latent samples to posterior samples
-        posterior_samples['z'] = latent_samples
+        posterior_samples["z"] = latent_samples
 
         # Convert to canonical form if requested
         if canonical:
@@ -738,7 +938,7 @@ class ScribeVAEResults(ScribeSVIResults):
     def from_svi_results(
         cls,
         svi_results: ScribeSVIResults,
-        vae_model: VAE,
+        vae_model: Union[VAE, dpVAE],
         original_counts: Optional[jnp.ndarray] = None,
     ) -> "ScribeVAEResults":
         """
@@ -748,8 +948,8 @@ class ScribeVAEResults(ScribeSVIResults):
         ----------
         svi_results : ScribeSVIResults
             Base SVI results
-        vae_model : VAE
-            Trained VAE model
+        vae_model : Union[VAE, dpVAE]
+            Trained VAE or dpVAE model
         original_counts : Optional[jnp.ndarray], default=None
             Original count data used for training
 
@@ -758,6 +958,13 @@ class ScribeVAEResults(ScribeSVIResults):
         ScribeVAEResults
             VAE-specific results object
         """
+        # Determine the prior type based on model type or config
+        prior_type = "standard"
+        if hasattr(svi_results.model_config, "vae_prior_hidden_dims"):
+            prior_type = "decoupled"
+        elif isinstance(vae_model, dpVAE):
+            prior_type = "decoupled"
+
         # Create VAE results with all SVI attributes
         vae_results = cls(
             params=svi_results.params,
@@ -775,6 +982,7 @@ class ScribeVAEResults(ScribeSVIResults):
             posterior_samples=svi_results.posterior_samples,
             predictive_samples=svi_results.predictive_samples,
             n_components=svi_results.n_components,
+            prior_type=prior_type,
         )
 
         # Set VAE model after creation (but don't store it directly to avoid pickling issues)
