@@ -397,7 +397,7 @@ def nbdm_vae_guide(
             with numpyro.plate("cells", n_cells):
                 # Use encoder to get mean and log variance for latent space
                 z_mean, z_logvar = encoder_module(counts)
-                z_std = jnp.exp(z_logvar)
+                z_std = jnp.exp(0.5 * z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
@@ -409,7 +409,7 @@ def nbdm_vae_guide(
                 # Use encoder to get mean and log variance for latent space
                 batch_data = counts[idx]
                 z_mean, z_logvar = encoder_module(batch_data)
-                z_std = jnp.exp(z_logvar)
+                z_std = jnp.exp(0.5 * z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
@@ -596,7 +596,7 @@ def zinb_vae_guide(
             with numpyro.plate("cells", n_cells):
                 # Use encoder to get mean and log variance for latent space
                 z_mean, z_logvar = encoder_module(counts)
-                z_std = jnp.exp(z_logvar)
+                z_std = jnp.exp(0.5 * z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
@@ -608,7 +608,7 @@ def zinb_vae_guide(
                 # Use encoder to get mean and log variance for latent space
                 batch_data = counts[idx]
                 z_mean, z_logvar = encoder_module(batch_data)
-                z_std = jnp.exp(z_logvar)
+                z_std = jnp.exp(0.5 * z_logvar)
 
                 # Sample from variational distribution
                 numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
@@ -618,7 +618,7 @@ def zinb_vae_guide(
             # Generate dummy data for encoder
             dummy_data = jnp.zeros((n_cells, n_genes))
             z_mean, z_logvar = encoder_module(dummy_data)
-            z_std = jnp.exp(z_logvar)
+            z_std = jnp.exp(0.5 * z_logvar)
 
             # Sample from variational distribution
             numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
