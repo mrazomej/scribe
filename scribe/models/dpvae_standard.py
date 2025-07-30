@@ -60,7 +60,7 @@ def nbdm_dpvae_model(
         jnp.ones(model_config.vae_latent_dim),
     ).to_event(1)
     decoupled_prior_dist = DecoupledPriorDistribution(
-        decoupled_prior=decoupled_prior,  # Use original module, not wrapper
+        decoupled_prior=decoupled_prior_module,  # Use original module, not wrapper
         base_distribution=base_distribution,
     )
 
@@ -73,9 +73,6 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Decode z to get r parameters
-                r_params = decoder_module(z)
-
-                # Use decoder to generate r parameters from latent space
                 r_params = decoder_module(z)
 
                 # Define base distribution with VAE-generated r
@@ -143,7 +140,7 @@ def zinb_dpvae_model(
         jnp.ones(model_config.vae_latent_dim),
     ).to_event(1)
     decoupled_prior_dist = DecoupledPriorDistribution(
-        decoupled_prior=decoupled_prior,  # Use original module, not wrapper
+        decoupled_prior=decoupled_prior_module,  # Use wrapped module
         base_distribution=base_distribution,
     )
 
