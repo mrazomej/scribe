@@ -983,7 +983,7 @@ class ScribeSVIResults:
             prior_params=self.prior_params,
             obs=self.obs,
             var=self.var,
-            uns=self.uns,
+            uns=self.uns,       
             n_obs=self.n_obs,
             n_vars=self.n_vars,
             posterior_samples=new_posterior_samples,
