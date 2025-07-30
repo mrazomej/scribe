@@ -28,6 +28,7 @@ from .architectures import (
     DecoupledPrior,
     DecoupledPriorDistribution,
 )
+from ..sampling import sample_variational_posterior
 
 try:
     from anndata import AnnData
@@ -449,12 +450,7 @@ class ScribeVAEResults(ScribeSVIResults):
         VAE.
 
         This method samples from the variational posterior by drawing from the
-        latent space prior, rather than conditioning on the observed data. As a
-        result, the sampled parameters may not reflect the structure present in
-        the actual data, especially if the cell embeddings exhibit meaningful
-        structure. For most use cases where posterior samples should reflect the
-        observed data, it is recommended to use
-        `get_posterior_samples_from_data` instead.
+        latent space prior.
 
         Parameters
         ----------
@@ -478,26 +474,61 @@ class ScribeVAEResults(ScribeSVIResults):
             Dictionary containing samples from the variational posterior
             distribution. The structure of the dictionary depends on the model
             and guide used.
-
-        Warnings
-        --------
-        This method samples from the latent space prior, not conditioned on the
-        data. If the cell embeddings have structure, these samples may not be
-        representative. Use `get_posterior_samples_from_data` for
-        data-conditioned posterior samples.
         """
-        print(
-            "[WARNING] get_posterior_samples is sampling from the latent space "
-            "prior distribution. If there is structure to the embeddings of the "
-            "cells, this may not be a good sample. We recommend using "
-            "get_posterior_samples_from_data instead for data-conditioned samples."
+        # Get the guide function
+        _, guide = self._model_and_guide()
+
+        if guide is None:
+            raise ValueError(
+                f"Could not find a guide for model '{self.model_type}'."
+            )
+
+        # Prepare base model arguments
+        model_args = {
+            "n_cells": self.n_cells,
+            "n_genes": self.n_genes,
+            "model_config": self.model_config,
+            "encoder": self.vae_model.encoder,
+        }
+
+        # Sample from posterior
+        posterior_samples = sample_variational_posterior(
+            guide, self.params, model_args, rng_key=rng_key, n_samples=n_samples
         )
-        # Get posterior samples
-        posterior_samples = super().get_posterior_samples(
-            rng_key=rng_key,
-            n_samples=n_samples,
-            store_samples=store_samples,
-        )
+
+        # For dpVAE: sample from the learned decoupled prior
+        if self.prior_type == "decoupled":
+            # Get the decoupled prior distribution
+            decoupled_prior_dist = (
+                self.vae_model.get_decoupled_prior_distribution()
+            )
+
+            # Sample all samples at once
+            posterior_samples["z"] = decoupled_prior_dist.sample(
+                rng_key, sample_shape=(n_samples, self.n_cells)
+            )
+
+        # Run z samples through the decoder
+        decoded_samples = self.vae_model.decoder(posterior_samples["z"])
+
+        # Store decoded samples with right keys
+        if self.model_config.parameterization == "standard":
+            posterior_samples["r"] = decoded_samples
+        elif self.model_config.parameterization == "linked":
+            posterior_samples["mu"] = decoded_samples
+        elif self.model_config.parameterization == "odds_ratio":
+            posterior_samples["mu"] = decoded_samples
+
+        # Store samples if requested
+        if store_samples:
+            self.posterior_samples = posterior_samples
+
+        # Convert to canonical form if requested
+        if canonical:
+            self._convert_to_canonical()
+
+        return posterior_samples
+        
 
     # --------------------------------------------------------------------------
 
