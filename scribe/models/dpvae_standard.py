@@ -24,6 +24,7 @@ from ..vae.architectures import (
     Decoder,
     DecoupledPrior,
     DecoupledPriorDistribution,
+    dpVAE,
 )
 
 
@@ -336,3 +337,62 @@ def make_zinb_dpvae_model_and_guide(
         )
 
     return configured_model, configured_guide
+
+# ------------------------------------------------------------------------------
+# Get posterior distributions for SVI results
+# ------------------------------------------------------------------------------
+
+
+def get_posterior_distributions(
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    vae_model: dpVAE,
+) -> Dict[str, dist.Distribution]:
+    """
+    Constructs and returns a dictionary of posterior distributions from
+    estimated parameters for the dpVAE-standard parameterization.
+
+    This function builds the appropriate `numpyro` distributions based on the
+    guide parameters found in the `params` dictionary. All distributions are
+    returned as batch distributions (no splitting or per-component/gene lists).
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        A dictionary of estimated parameters from the variational guide.
+    vae_model : dpVAE
+        The VAE model object.
+
+    Returns
+    -------
+    Dict[str, dist.Distribution]
+        Dictionary mapping parameter names to their posterior distributions.
+    """
+    distributions = {}
+
+    # p parameter (Beta distribution)
+    if "p_alpha" in params and "p_beta" in params:
+        distributions["p"] = dist.Beta(params["p_alpha"], params["p_beta"])
+
+    # gate parameter (Beta distribution)
+    if "gate_alpha" in params and "gate_beta" in params:
+        distributions["gate"] = dist.Beta(
+            params["gate_alpha"], params["gate_beta"]
+        )
+
+    # p_capture parameter (Beta distribution)
+    if "p_capture_alpha" in params and "p_capture_beta" in params:
+        distributions["p_capture"] = dist.Beta(
+            params["p_capture_alpha"], params["p_capture_beta"]
+        )
+
+    # mixing_weights parameter (Dirichlet distribution)
+    if "mixing_concentrations" in params:
+        mixing_dist = dist.Dirichlet(params["mixing_concentrations"])
+        distributions["mixing_weights"] = mixing_dist
+
+    # Get the decoupled prior distribution
+    decoupled_prior_dist = vae_model.get_decoupled_prior_distribution()
+    distributions["z"] = decoupled_prior_dist
+
+    return distributions

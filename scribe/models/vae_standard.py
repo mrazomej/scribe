@@ -12,7 +12,13 @@ from numpyro.contrib.module import nnx_module
 from typing import Dict, Optional
 
 from .model_config import ModelConfig
-from ..vae.architectures import create_encoder, create_decoder, Encoder, Decoder
+from ..vae.architectures import (
+    create_encoder,
+    create_decoder,
+    Encoder,
+    Decoder,
+    VAE,
+)
 
 
 # ------------------------------------------------------------------------------
@@ -571,3 +577,59 @@ def zinb_vae_guide(
 
             # Sample from variational distribution
             numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+
+def get_posterior_distributions(
+    params: Dict[str, jnp.ndarray],
+    model_config: ModelConfig,
+    vae_model: VAE,
+) -> Dict[str, dist.Distribution]:
+    """
+    Constructs and returns a dictionary of posterior distributions from
+    estimated parameters for the dpVAE-standard parameterization.
+
+    This function builds the appropriate `numpyro` distributions based on the
+    guide parameters found in the `params` dictionary. All distributions are
+    returned as batch distributions (no splitting or per-component/gene lists).
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        A dictionary of estimated parameters from the variational guide.
+    vae_model : VAE
+        The VAE model object.
+
+    Returns
+    -------
+    Dict[str, dist.Distribution]
+        Dictionary mapping parameter names to their posterior distributions.
+    """
+    distributions = {}
+
+    # p parameter (Beta distribution)
+    if "p_alpha" in params and "p_beta" in params:
+        distributions["p"] = dist.Beta(params["p_alpha"], params["p_beta"])
+
+    # gate parameter (Beta distribution)
+    if "gate_alpha" in params and "gate_beta" in params:
+        distributions["gate"] = dist.Beta(
+            params["gate_alpha"], params["gate_beta"]
+        )
+
+    # p_capture parameter (Beta distribution)
+    if "p_capture_alpha" in params and "p_capture_beta" in params:
+        distributions["p_capture"] = dist.Beta(
+            params["p_capture_alpha"], params["p_capture_beta"]
+        )
+
+    # mixing_weights parameter (Dirichlet distribution)
+    if "mixing_concentrations" in params:
+        mixing_dist = dist.Dirichlet(params["mixing_concentrations"])
+        distributions["mixing_weights"] = mixing_dist
+
+    # Get the decoupled prior distribution
+    distributions["z"] = dist.Normal(
+        jnp.zeros(model_config.vae_latent_dim),
+        jnp.ones(model_config.vae_latent_dim),
+    )
+
+    return distributions
