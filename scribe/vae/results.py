@@ -28,7 +28,7 @@ from .architectures import (
     DecoupledPrior,
     DecoupledPriorDistribution,
 )
-from ..sampling import sample_variational_posterior
+from ..sampling import sample_variational_posterior, generate_predictive_samples
 
 try:
     from anndata import AnnData
@@ -548,11 +548,11 @@ class ScribeVAEResults(ScribeSVIResults):
         that is conditioned on the provided count data. It first samples global
         and cell-level parameters from the variational posterior, then generates
         latent variable samples (e.g., cell embeddings) by encoding the provided
-        data and sampling from the resulting posterior distribution. These latent
-        samples are passed through the VAE decoder to obtain reconstructed
-        parameters (such as 'r' or 'mu'), which are then substituted into the
-        posterior samples dictionary. The latent samples themselves are also
-        included in the returned dictionary.
+        data and sampling from the resulting posterior distribution. These
+        latent samples are passed through the VAE decoder to obtain
+        reconstructed parameters (such as 'r' or 'mu'), which are then
+        substituted into the posterior samples dictionary. The latent samples
+        themselves are also included in the returned dictionary.
 
         This approach ensures that the posterior samples reflect the structure
         present in the observed data, rather than being drawn from the latent
@@ -627,6 +627,48 @@ class ScribeVAEResults(ScribeSVIResults):
             self._convert_to_canonical()
 
         return posterior_samples
+
+    # --------------------------------------------------------------------------
+    
+    def get_predictive_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        batch_size: Optional[int] = None,
+        store_samples: bool = True,
+    ) -> jnp.ndarray:
+        """Generate predictive samples using posterior parameter samples."""
+        # Get the model and guide functions
+        model, _ = self._model_and_guide()
+
+        # Prepare base model arguments
+        model_args = {
+            "n_cells": self.n_cells,
+            "n_genes": self.n_genes,
+            "model_config": self.model_config,
+            "decoder": self.vae_model.decoder,
+            "decoupled_prior": self.vae_model.decoupled_prior,
+        }
+
+        # Check if posterior samples exist
+        if self.posterior_samples is None:
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
+
+        # Generate predictive samples
+        predictive_samples = generate_predictive_samples(
+            model,
+            self.posterior_samples,
+            model_args,
+            rng_key=rng_key,
+            batch_size=batch_size,
+        )
+
+        # Store samples if requested
+        if store_samples:
+            self.predictive_samples = predictive_samples
+
+        return predictive_samples
 
     # --------------------------------------------------------------------------
 
