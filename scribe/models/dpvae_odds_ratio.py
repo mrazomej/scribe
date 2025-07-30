@@ -64,7 +64,7 @@ def nbdm_dpvae_model(
         jnp.ones(model_config.vae_latent_dim),
     ).to_event(1)
     decoupled_prior_dist = DecoupledPriorDistribution(
-        decoupled_prior=decoupled_prior,  # Use original module, not wrapper
+        decoupled_prior=decoupled_prior_module,
         base_distribution=base_distribution,
     )
 
@@ -76,10 +76,10 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu_params = decoder_module(z)
+                mu = numpyro.deterministic("mu", decoder_module(z))
 
                 # Compute r using the odds ratio parameterization
-                r = numpyro.deterministic("r", mu_params * phi)
+                r = numpyro.deterministic("r", mu * phi)
 
                 # Define base distribution with VAE-generated r
                 base_dist = dist.NegativeBinomialLogits(
@@ -94,10 +94,10 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu_params = decoder_module(z)
+                mu = numpyro.deterministic("mu", decoder_module(z))
 
                 # Compute r using the odds ratio parameterization
-                r = numpyro.deterministic("r", mu_params * phi)
+                r = numpyro.deterministic("r", mu * phi)
 
                 # Sample observed counts
                 batch_counts = counts[idx] if counts is not None else None
@@ -113,10 +113,10 @@ def nbdm_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            mu_params = decoder_module(z)
+            mu = numpyro.deterministic("mu", decoder_module(z))
 
             # Compute r using the odds ratio parameterization
-            r = numpyro.deterministic("r", mu_params * phi)
+            r = numpyro.deterministic("r", mu * phi)
 
             # Define base distribution with VAE-generated r
             base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(
@@ -167,7 +167,7 @@ def zinb_dpvae_model(
         jnp.ones(model_config.vae_latent_dim),
     ).to_event(1)
     decoupled_prior_dist = DecoupledPriorDistribution(
-        decoupled_prior=decoupled_prior,  # Use original module, not wrapper
+        decoupled_prior=decoupled_prior_module,
         base_distribution=base_distribution,
     )
 
@@ -180,10 +180,10 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu_params = decoder_module(z)
+                mu = numpyro.deterministic("mu", decoder_module(z))
 
                 # Compute r using the odds ratio parameterization
-                r = numpyro.deterministic("r", mu_params * phi)
+                r = numpyro.deterministic("r", mu * phi)
 
                 # Construct the base Negative Binomial distribution using r and
                 # phi
@@ -204,10 +204,10 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu_params = decoder_module(z)
+                mu = numpyro.deterministic("mu", decoder_module(z))
 
                 # Compute r using the odds ratio parameterization
-                r = numpyro.deterministic("r", mu_params * phi)
+                r = numpyro.deterministic("r", mu * phi)
 
                 # Construct the base Negative Binomial distribution using r and
                 # phi
@@ -226,10 +226,10 @@ def zinb_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            mu_params = decoder_module(z)
+            mu = numpyro.deterministic("mu", decoder_module(z))
 
             # Compute r using the odds ratio parameterization
-            r = numpyro.deterministic("r", mu_params * phi)
+            r = numpyro.deterministic("r", mu * phi)
 
             # Construct the base Negative Binomial distribution using r and phi
             base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
