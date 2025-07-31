@@ -433,8 +433,8 @@ class AffineCouplingLayer(nnx.Module):
         Hidden layer dimensions for the shift and scale networks
     activation : str, default="relu"
         Activation function for hidden layers
-    mask_type : str, default="alternating"
-        Type of masking: "alternating" or "checkerboard"
+    mask_type : str, default="alternating_even"
+        Type of masking: "alternating_even" or "alternating_odd"
     """
 
     def __init__(
@@ -443,7 +443,7 @@ class AffineCouplingLayer(nnx.Module):
         hidden_dims: List[int],
         rngs: nnx.Rngs,
         activation: str = "relu",
-        mask_type: str = "alternating",
+        mask_type: str = "alternating_even",
     ):
         # Store parameters
         self.input_dim = input_dim
@@ -451,11 +451,17 @@ class AffineCouplingLayer(nnx.Module):
         self.activation = activation
         self.mask_type = mask_type
 
+        # Create binary mask for coupling - stored at initialization
+        self.mask = self._create_mask()
+        
+        # Compute actual masked and unmasked dimensions from the mask
+        masked_dim = int(jnp.sum(self.mask))
+        unmasked_dim = input_dim - masked_dim
+
         # Create shared hidden layers
         self.shared_layers = []
 
         # Input layer: masked_dim -> first_hidden_dim
-        masked_dim = input_dim // 2
         self.shared_layers.append(
             nnx.Linear(masked_dim, self.hidden_dims[0], rngs=rngs)
         )
@@ -469,16 +475,12 @@ class AffineCouplingLayer(nnx.Module):
             )
 
         # Create separate output heads for shift and scale
-        unmasked_dim = input_dim // 2
         self.shift_head = nnx.Linear(
             self.hidden_dims[-1], unmasked_dim, rngs=rngs
         )
         self.scale_head = nnx.Linear(
             self.hidden_dims[-1], unmasked_dim, rngs=rngs
         )
-
-        # Create binary mask for coupling
-        self.mask = self._create_mask()
 
     # --------------------------------------------------------------------------
 
@@ -489,12 +491,12 @@ class AffineCouplingLayer(nnx.Module):
         The mask determines which input dimensions are masked (fixed) and which
         are transformed in each coupling layer. Supported mask types:
 
-        - "alternating": Creates a 1D alternating mask pattern [1, 0, 1, 0, ...]
-          across the input dimensions. Odd-indexed elements are masked (1),
-          even-indexed are unmasked (0). This is commonly used for 1D data.
-
-        - "checkerboard": Intended for 2D data, creates a checkerboard pattern.
-          For 1D data, this reduces to the same alternating pattern as above.
+        - "alternating_even": Creates mask [1, 0, 1, 0, ...] where even-indexed
+          elements (0, 2, 4, ...) are masked (1) and odd-indexed are unmasked
+          (0)
+        - "alternating_odd": Creates mask [0, 1, 0, 1, ...] where odd-indexed
+          elements (1, 3, 5, ...) are masked (1) and even-indexed are unmasked
+          (0)
 
         Returns
         -------
@@ -507,13 +509,12 @@ class AffineCouplingLayer(nnx.Module):
         ValueError
             If an unknown mask_type is provided.
         """
-        if self.mask_type == "alternating":
-            # Alternating pattern: [1, 0, 1, 0, ...]
+        if self.mask_type == "alternating_even":
+            # Even-indexed elements masked: [1, 0, 1, 0, ...]
             mask = jnp.arange(self.input_dim) % 2
-        elif self.mask_type == "checkerboard":
-            # Checkerboard pattern for 2D data
-            # For 1D data, this reduces to alternating
-            mask = jnp.arange(self.input_dim) % 2
+        elif self.mask_type == "alternating_odd":
+            # Odd-indexed elements masked: [0, 1, 0, 1, ...]
+            mask = 1 - (jnp.arange(self.input_dim) % 2)
         else:
             raise ValueError(f"Unknown mask_type: {self.mask_type}")
 
@@ -533,10 +534,6 @@ class AffineCouplingLayer(nnx.Module):
             - The unmasked part, which consists of the elements of `x` at
               positions where the mask is 0.
 
-        This is useful for coupling layers in normalizing flows, where only a
-        subset of the input is transformed at each step, and the rest is left
-        unchanged.
-
         Parameters
         ----------
         x : jax.Array
@@ -553,32 +550,27 @@ class AffineCouplingLayer(nnx.Module):
             num_unmasked).
         """
         # Use static indexing based on mask pattern to avoid JAX tracing issues
-        # For alternating mask, we know the pattern: [1, 0, 1, 0, ...] or [0, 1, 0, 1, ...]
-        # We'll use integer indexing instead of boolean indexing
-        
-        # Get the dimension of the input tensor
         input_dim = x.shape[-1]
         
-        # Create static indices based on the mask pattern
-        # For alternating mask, we can use static slicing
-        # Since we can't access self.mask[0] during tracing, we'll use a fixed pattern
-        # For alternating mask, we'll assume the pattern starts with the first element masked
-        # This is consistent with how the mask is created in _create_mask()
-        if self.mask_type == "alternating":
-            # For alternating mask, assume pattern starts with first element masked
-            # This is the most common pattern: [1, 0, 1, 0, ...]
+        if self.mask_type == "alternating_even":
+            # Even-indexed elements masked: [1, 0, 1, 0, ...]
+            # For 3D: indices [0, 2] are masked, [1] is unmasked
+            # But mask is [0, 1, 0] so indices [1] are masked, [0, 2] are unmasked
+            masked_indices = jnp.arange(1, input_dim, 2)
+            unmasked_indices = jnp.arange(0, input_dim, 2)
+        elif self.mask_type == "alternating_odd":
+            # Odd-indexed elements masked: [0, 1, 0, 1, ...]
+            # For 3D: indices [1] are masked, [0, 2] are unmasked
+            # But mask is [1, 0, 1] so indices [0, 2] are masked, [1] is unmasked
             masked_indices = jnp.arange(0, input_dim, 2)
             unmasked_indices = jnp.arange(1, input_dim, 2)
         else:
-            # For other mask types, use the same pattern for now
-            masked_indices = jnp.arange(0, input_dim, 2)
-            unmasked_indices = jnp.arange(1, input_dim, 2)
+            raise ValueError(f"Unknown mask_type: {self.mask_type}")
         
         # Select masked and unmasked elements using integer indexing
         x_masked = x[..., masked_indices]
         x_unmasked = x[..., unmasked_indices]
 
-        # Return the tuple of masked and unmasked tensors
         return x_masked, x_unmasked
 
     # --------------------------------------------------------------------------
@@ -668,15 +660,19 @@ class AffineCouplingLayer(nnx.Module):
         # Initialize an output tensor of zeros with the same shape as the input
         y = jnp.zeros_like(x)
 
-        # Get the indices for masked and unmasked features using static indexing
+        # Reconstruct the full tensor using static indexing
         input_dim = x.shape[-1]
-        # Use fixed pattern for alternating mask (first element masked)
-        masked_indices = jnp.arange(0, input_dim, 2)
-        unmasked_indices = jnp.arange(1, input_dim, 2)
-
-        # Set the masked part in the output tensor
+        
+        if self.mask_type == "alternating_even":
+            masked_indices = jnp.arange(1, input_dim, 2)
+            unmasked_indices = jnp.arange(0, input_dim, 2)
+        elif self.mask_type == "alternating_odd":
+            masked_indices = jnp.arange(0, input_dim, 2)
+            unmasked_indices = jnp.arange(1, input_dim, 2)
+        else:
+            raise ValueError(f"Unknown mask_type: {self.mask_type}")
+        
         y = y.at[..., masked_indices].set(y_masked)
-        # Set the transformed unmasked part in the output tensor
         y = y.at[..., unmasked_indices].set(y_unmasked)
 
         # Compute the log-determinant of the Jacobian (sum over log_scale for
@@ -732,15 +728,19 @@ class AffineCouplingLayer(nnx.Module):
         # Initialize an output tensor of zeros with the same shape as y
         x = jnp.zeros_like(y)
 
-        # Get the indices for masked and unmasked features using static indexing
+        # Reconstruct the full tensor using static indexing
         input_dim = y.shape[-1]
-        # Use fixed pattern for alternating mask (first element masked)
-        masked_indices = jnp.arange(0, input_dim, 2)
-        unmasked_indices = jnp.arange(1, input_dim, 2)
-
-        # Set the masked part in the output tensor
+        
+        if self.mask_type == "alternating_even":
+            masked_indices = jnp.arange(1, input_dim, 2)
+            unmasked_indices = jnp.arange(0, input_dim, 2)
+        elif self.mask_type == "alternating_odd":
+            masked_indices = jnp.arange(0, input_dim, 2)
+            unmasked_indices = jnp.arange(1, input_dim, 2)
+        else:
+            raise ValueError(f"Unknown mask_type: {self.mask_type}")
+        
         x = x.at[..., masked_indices].set(x_masked)
-        # Set the inverse-transformed unmasked part in the output tensor
         x = x.at[..., unmasked_indices].set(x_unmasked)
 
         # Compute the log-determinant of the inverse Jacobian (negative sum over
@@ -806,7 +806,8 @@ class DecoupledPrior(nnx.Module):
     activation : str, default="relu"
         Activation function for the coupling layers
     mask_type : str, default="alternating"
-        Type of masking for coupling layers
+        Type of masking for coupling layers. If "alternating", layers will
+        alternate between "alternating_even" and "alternating_odd" masks.
     rngs : nnx.Rngs
         Random number generators for weight initialization
     """
@@ -832,12 +833,22 @@ class DecoupledPrior(nnx.Module):
 
         # Create a new coupling layer for each layer in the stack
         for i in range(num_layers):
+            # Determine mask type for this layer
+            if mask_type == "alternating":
+                # Alternate between even and odd masks
+                layer_mask_type = (
+                    "alternating_even" if i % 2 == 0 else "alternating_odd"
+                )
+            else:
+                # Use the specified mask type for all layers
+                layer_mask_type = mask_type
+
             coupling_layer = AffineCouplingLayer(
                 input_dim=latent_dim,
                 hidden_dims=hidden_dims,
                 rngs=rngs,
                 activation=activation,
-                mask_type=mask_type,
+                mask_type=layer_mask_type,
             )
             self.coupling_layers.append(coupling_layer)
 
@@ -1025,7 +1036,7 @@ class DecoupledPriorDistribution(numpyro.distributions.Distribution):
             event_shape=event_shape,
             validate_args=validate_args,
         )
-        
+
         # Set the support to be the same as the base distribution
         self.support = base_distribution.support
 
@@ -1277,7 +1288,9 @@ def create_dpvae(
     prior_activation : Optional[str], default=None
         Activation function for coupling layers. If None, uses "relu"
     prior_mask_type : str, default="alternating"
-        Type of masking for coupling layers ("alternating" or "checkerboard")
+        Type of masking for coupling layers. If "alternating", layers will
+        alternate between "alternating_even" and "alternating_odd" masks.
+        Can also specify "alternating_even" or "alternating_odd" for all layers.
 
     Returns
     -------
