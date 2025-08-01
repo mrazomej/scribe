@@ -72,20 +72,17 @@ def twostate_model(
 
     # Sample gene-specific k_on parameters
     k_on = numpyro.sample(
-        "k_on",
-        dist.LogNormal(*k_on_prior_params).expand([n_genes])
+        "k_on", dist.LogNormal(*k_on_prior_params).expand([n_genes])
     )
 
     # Sample gene-specific r_m parameters
     r_m = numpyro.sample(
-        "r_m",
-        dist.LogNormal(*r_m_prior_params).expand([n_genes])
+        "r_m", dist.LogNormal(*r_m_prior_params).expand([n_genes])
     )
 
     # Sample gene-specific ratio parameters (r_m/k_off)
     ratio = numpyro.sample(
-        "ratio",
-        dist.LogNormal(*ratio_prior_params).expand([n_genes])
+        "ratio", dist.LogNormal(*ratio_prior_params).expand([n_genes])
     )
 
     # Compute k_off from r_m and ratio
@@ -101,29 +98,27 @@ def twostate_model(
                 numpyro.sample(
                     "counts",
                     TwoStatePromoter(k_on, k_off, r_m).to_event(1),
-                    obs=counts
+                    obs=counts,
                 )
         else:
             # Define plate for cells with batching
             with numpyro.plate(
-                "cells",
-                n_cells,
-                subsample_size=batch_size
+                "cells", n_cells, subsample_size=batch_size
             ) as idx:
                 # Likelihood for the counts - one for each cell
                 numpyro.sample(
                     "counts",
                     TwoStatePromoter(k_on, k_off, r_m).to_event(1),
-                    obs=counts[idx]
+                    obs=counts[idx],
                 )
     else:
         # Predictive model (no obs)
         with numpyro.plate("cells", n_cells):
             # Sample from two-state promoter distribution
             numpyro.sample(
-                "counts",
-                TwoStatePromoter(k_on, k_off, r_m).to_event(1)
+                "counts", TwoStatePromoter(k_on, k_off, r_m).to_event(1)
             )
+
 
 # ------------------------------------------------------------------------------
 # Two-state promoter variational guide
@@ -165,41 +160,37 @@ def twostate_guide(
 
     # Register variational parameters for k_on (one per gene)
     k_on_loc = numpyro.param(
-        "k_on_loc",
-        jnp.full(n_genes, k_on_guide_params[0])
+        "k_on_loc", jnp.full(n_genes, k_on_guide_params[0])
     )
     k_on_scale = numpyro.param(
         "k_on_scale",
         jnp.full(n_genes, k_on_guide_params[1]),
-        constraint=constraints.positive
+        constraint=constraints.positive,
     )
 
     # Register variational parameters for r_m (one per gene)
-    r_m_loc = numpyro.param(
-        "r_m_loc",
-        jnp.full(n_genes, r_m_guide_params[0])
-    )
+    r_m_loc = numpyro.param("r_m_loc", jnp.full(n_genes, r_m_guide_params[0]))
     r_m_scale = numpyro.param(
         "r_m_scale",
         jnp.full(n_genes, r_m_guide_params[1]),
-        constraint=constraints.positive
+        constraint=constraints.positive,
     )
 
     # Register variational parameters for ratio (one per gene)
     ratio_loc = numpyro.param(
-        "ratio_loc",
-        jnp.full(n_genes, ratio_guide_params[0])
+        "ratio_loc", jnp.full(n_genes, ratio_guide_params[0])
     )
     ratio_scale = numpyro.param(
         "ratio_scale",
         jnp.full(n_genes, ratio_guide_params[1]),
-        constraint=constraints.positive
+        constraint=constraints.positive,
     )
 
     # Sample from variational distributions
     numpyro.sample("k_on", dist.LogNormal(k_on_loc, k_on_scale))
     numpyro.sample("r_m", dist.LogNormal(r_m_loc, r_m_scale))
     numpyro.sample("ratio", dist.LogNormal(ratio_loc, ratio_scale))
+
 
 # ------------------------------------------------------------------------------
 # Two-state promoter model with variable capture probability
@@ -259,20 +250,17 @@ def twostate_variable_capture_model(
 
     # Sample gene-specific k_on parameters
     k_on = numpyro.sample(
-        "k_on",
-        dist.LogNormal(*k_on_prior_params).expand([n_genes])
+        "k_on", dist.LogNormal(*k_on_prior_params).expand([n_genes])
     )
 
     # Sample gene-specific r_m parameters
     r_m = numpyro.sample(
-        "r_m",
-        dist.LogNormal(*r_m_prior_params).expand([n_genes])
+        "r_m", dist.LogNormal(*r_m_prior_params).expand([n_genes])
     )
 
     # Sample gene-specific ratio parameters (r_m/k_off)
     ratio = numpyro.sample(
-        "ratio",
-        dist.LogNormal(*ratio_prior_params).expand([n_genes])
+        "ratio", dist.LogNormal(*ratio_prior_params).expand([n_genes])
     )
 
     # Compute k_off from r_m and ratio
@@ -297,7 +285,7 @@ def twostate_variable_capture_model(
                 numpyro.sample(
                     "counts",
                     TwoStatePromoter(k_on, k_off, r_effective).to_event(1),
-                    obs=counts
+                    obs=counts,
                 )
         else:
             # With batching: sample p_capture and counts for a batch of cells
@@ -318,7 +306,7 @@ def twostate_variable_capture_model(
                 numpyro.sample(
                     "counts",
                     TwoStatePromoter(k_on, k_off, r_effective).to_event(1),
-                    obs=counts[idx]
+                    obs=counts[idx],
                 )
     else:
         # No observed counts: sample latent counts for all cells
@@ -335,9 +323,9 @@ def twostate_variable_capture_model(
             )
             # Sample latent counts
             numpyro.sample(
-                "counts",
-                TwoStatePromoter(k_on, k_off, r_effective).to_event(1)
+                "counts", TwoStatePromoter(k_on, k_off, r_effective).to_event(1)
             )
+
 
 # ------------------------------------------------------------------------------
 # Two-state promoter variational guide with variable capture
@@ -382,35 +370,30 @@ def twostate_variable_capture_guide(
 
     # Register variational parameters for k_on (one per gene)
     k_on_loc = numpyro.param(
-        "k_on_loc",
-        jnp.full(n_genes, k_on_guide_params[0])
+        "k_on_loc", jnp.full(n_genes, k_on_guide_params[0])
     )
     k_on_scale = numpyro.param(
         "k_on_scale",
         jnp.full(n_genes, k_on_guide_params[1]),
-        constraint=constraints.positive
+        constraint=constraints.positive,
     )
 
     # Register variational parameters for r_m (one per gene)
-    r_m_loc = numpyro.param(
-        "r_m_loc",
-        jnp.full(n_genes, r_m_guide_params[0])
-    )
+    r_m_loc = numpyro.param("r_m_loc", jnp.full(n_genes, r_m_guide_params[0]))
     r_m_scale = numpyro.param(
         "r_m_scale",
         jnp.full(n_genes, r_m_guide_params[1]),
-        constraint=constraints.positive
+        constraint=constraints.positive,
     )
 
     # Register variational parameters for ratio (one per gene)
     ratio_loc = numpyro.param(
-        "ratio_loc",
-        jnp.full(n_genes, ratio_guide_params[0])
+        "ratio_loc", jnp.full(n_genes, ratio_guide_params[0])
     )
     ratio_scale = numpyro.param(
         "ratio_scale",
         jnp.full(n_genes, ratio_guide_params[1]),
-        constraint=constraints.positive
+        constraint=constraints.positive,
     )
 
     # Set up cell-specific capture probability parameters
@@ -448,6 +431,7 @@ def twostate_variable_capture_guide(
 # Get posterior distributions for SVI results
 # ------------------------------------------------------------------------------
 
+
 def get_posterior_distributions(
     params: Dict[str, jnp.ndarray],
     model_config: ModelConfig,
@@ -457,7 +441,7 @@ def get_posterior_distributions(
     Constructs and returns a dictionary of posterior distributions from
     estimated parameters for the two-state promoter model.
 
-    This function builds the appropriate `numpyro` distributions based on the 
+    This function builds the appropriate `numpyro` distributions based on the
     guide parameters found in the `params` dictionary.
 
     Args:
@@ -502,8 +486,7 @@ def get_posterior_distributions(
         if split and len(params["ratio_loc"].shape) == 1:
             # Gene-specific ratio parameters
             distributions["ratio"] = [
-                dist.LogNormal(params["ratio_loc"][g],
-                               params["ratio_scale"][g])
+                dist.LogNormal(params["ratio_loc"][g], params["ratio_scale"][g])
                 for g in range(params["ratio_loc"].shape[0])
             ]
         else:
@@ -527,3 +510,189 @@ def get_posterior_distributions(
             )
 
     return distributions
+
+
+# ------------------------------------------------------------------------------
+# Hierarchical Two-state promoter model (avoids ₁F₁)
+# ------------------------------------------------------------------------------
+
+
+def twostate_hierarchical_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Hierarchical Numpyro model for two-state promoter data that avoids ₁F₁.
+
+    Instead of using the analytical TwoStatePromoter distribution, this model
+    uses the hierarchical structure:
+
+        1. Sample biological parameters: k_on, r_m, ratio (same as before)
+        2. Convert to Beta-Poisson parameters: α=k_on, β=k_off, d=r_m
+        3. For each cell, sample latent rates: p ~ Beta(α, β)
+        4. Sample counts: x ~ Poisson(d * p)
+
+    This replaces analytical marginalization with Monte Carlo marginalization
+    through SVI, avoiding the numerical issues with ₁F₁.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ModelConfig
+        Configuration object containing prior parameters and model settings
+    counts : array-like, optional
+        Observed counts matrix of shape (n_cells, n_genes). If None, generates
+        samples from the prior.
+    batch_size : int, optional
+        Mini-batch size for stochastic variational inference. If None, uses full
+        dataset.
+    """
+    # Get prior parameters from model config or use defaults
+    k_on_prior_params = model_config.k_on_param_prior or (5.0, 2.0)
+    r_m_prior_params = model_config.r_m_param_prior or (1.0, 1.0)
+    ratio_prior_params = model_config.ratio_param_prior or (5.0, 2.0)
+
+    # Sample gene-specific biological parameters (same as original model)
+    k_on = numpyro.sample(
+        "k_on", dist.LogNormal(*k_on_prior_params).expand([n_genes])
+    )
+
+    r_m = numpyro.sample(
+        "r_m", dist.LogNormal(*r_m_prior_params).expand([n_genes])
+    )
+
+    ratio = numpyro.sample(
+        "ratio", dist.LogNormal(*ratio_prior_params).expand([n_genes])
+    )
+
+    # Compute derived parameters
+    k_off = numpyro.deterministic("k_off", r_m / ratio)
+
+    # Hierarchical sampling structure
+    if counts is not None:
+        if batch_size is None:
+            # Full dataset
+            with numpyro.plate("cells", n_cells):
+                # For each cell, sample latent rate parameters p ~ Beta(α, β)
+                # Shape: (n_genes,) per cell, so full shape is (n_cells, n_genes)
+                p = numpyro.sample("p", dist.Beta(k_on, k_off).to_event(1))
+
+                # Sample observed counts: x ~ Poisson(dose * p)
+                numpyro.sample("counts", dist.Poisson(r_m * p).to_event(1), obs=counts)
+        else:
+            # Mini-batch
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                # Sample latent rates for the batch
+                p = numpyro.sample("p", dist.Beta(k_on, k_off).to_event(1))
+
+                # Sample observed counts for the batch
+                numpyro.sample(
+                    "counts", dist.Poisson(r_m * p).to_event(1), obs=counts[idx]
+                )
+    else:
+        # Predictive sampling (no observations)
+        with numpyro.plate("cells", n_cells):
+            p = numpyro.sample("p", dist.Beta(k_on, k_off).to_event(1))
+            numpyro.sample("counts", dist.Poisson(r_m * p).to_event(1))
+
+
+# ------------------------------------------------------------------------------
+# Hierarchical Two-state promoter variational guide
+# ------------------------------------------------------------------------------
+
+
+def twostate_hierarchical_guide(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Variational guide for the hierarchical two-state promoter model.
+
+    This guide parameterizes:
+    1. Global parameters: k_on, r_m, ratio (same as original)
+    2. Local parameters: p (latent rates for each cell and gene)
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset
+    n_genes : int
+        Number of genes in the dataset
+    model_config : ModelConfig
+        Configuration object containing guide parameters and model settings
+    counts : array_like, optional
+        Observed counts matrix of shape (n_cells, n_genes)
+    batch_size : int, optional
+        Mini-batch size for stochastic optimization
+    """
+    # Get guide parameters from model config or use defaults
+    k_on_guide_params = model_config.k_on_param_guide or (5.0, 2.0)
+    r_m_guide_params = model_config.r_m_param_guide or (1.0, 1.0)
+    ratio_guide_params = model_config.ratio_param_guide or (5.0, 2.0)
+
+    # -------------------------------------------------------------------------
+    # Global parameters (same as original guide)
+    # -------------------------------------------------------------------------
+
+    # Variational parameters for k_on
+    k_on_loc = numpyro.param(
+        "k_on_loc", jnp.full(n_genes, k_on_guide_params[0])
+    )
+    k_on_scale = numpyro.param(
+        "k_on_scale",
+        jnp.full(n_genes, k_on_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Variational parameters for r_m
+    r_m_loc = numpyro.param("r_m_loc", jnp.full(n_genes, r_m_guide_params[0]))
+    r_m_scale = numpyro.param(
+        "r_m_scale",
+        jnp.full(n_genes, r_m_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Variational parameters for ratio
+    ratio_loc = numpyro.param(
+        "ratio_loc", jnp.full(n_genes, ratio_guide_params[0])
+    )
+    ratio_scale = numpyro.param(
+        "ratio_scale",
+        jnp.full(n_genes, ratio_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample global parameters
+    k_on = numpyro.sample("k_on", dist.LogNormal(k_on_loc, k_on_scale))
+    r_m = numpyro.sample("r_m", dist.LogNormal(r_m_loc, r_m_scale))
+    ratio = numpyro.sample("ratio", dist.LogNormal(ratio_loc, ratio_scale))
+
+    # Compute derived parameters for the latent variable guide
+    k_off = r_m / ratio
+
+    # -------------------------------------------------------------------------
+    # Local latent parameters p (the key addition)
+    # -------------------------------------------------------------------------
+
+    if batch_size is None:
+        # Full dataset: sample latent rates for all cells
+        with numpyro.plate("cells", n_cells):
+            # Sample latent rates for this cell using the same parameters as the model
+            numpyro.sample("p", dist.Beta(k_on, k_off).to_event(1))
+
+    else:
+        # Mini-batch: sample latent rates for the batch
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            # Sample latent rates for this cell using the same parameters as the model
+            numpyro.sample("p", dist.Beta(k_on, k_off).to_event(1))
