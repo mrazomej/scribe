@@ -15,7 +15,11 @@ from typing import Dict, Optional
 
 # Import model config
 from .model_config import ModelConfig
-from .twostate_distribution import TwoStatePromoter
+from .twostate_distribution import (
+    TwoStatePromoter,
+    TwoStatePromoterQuadrature,
+    TwoStatePromoterMC,
+)
 
 # ------------------------------------------------------------------------------
 # Two-state promoter model
