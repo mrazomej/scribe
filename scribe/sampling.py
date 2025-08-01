@@ -89,6 +89,8 @@ def generate_predictive_samples(
         posterior_samples,
         # Take the number of samples from the first parameter
         num_samples=next(iter(posterior_samples.values())).shape[0],
+        # Include deterministic parameters in the predictive distribution
+        exclude_deterministic=False,
     )
 
     # Generate predictive samples
