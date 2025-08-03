@@ -475,11 +475,14 @@ class ScribeVAEResults(ScribeSVIResults):
 
         # Store decoded samples with right keys
         if self.model_config.parameterization == "standard":
-            posterior_samples["r"] = decoded_samples
+            posterior_samples["log_r"] = decoded_samples
+            posterior_samples["r"] = jnp.exp(decoded_samples)
         elif self.model_config.parameterization == "linked":
-            posterior_samples["mu"] = decoded_samples
+            posterior_samples["log_mu"] = decoded_samples
+            posterior_samples["mu"] = jnp.exp(decoded_samples)
         elif self.model_config.parameterization == "odds_ratio":
-            posterior_samples["mu"] = decoded_samples
+            posterior_samples["log_mu"] = decoded_samples
+            posterior_samples["mu"] = jnp.exp(decoded_samples)
 
         # Store samples if requested
         if store_samples:
