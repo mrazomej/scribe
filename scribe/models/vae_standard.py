@@ -285,10 +285,11 @@ def nbdm_vae_model(
                 )
 
                 # Use decoder to generate r parameters from latent space
-                r_params = decoder_module(z)
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
 
                 # Define base distribution with VAE-generated r
-                base_dist = dist.NegativeBinomialProbs(r_params, p).to_event(1)
+                base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
                 numpyro.sample("counts", base_dist, obs=counts)
         else:
             # With batching: sample counts for a subset of cells
@@ -304,10 +305,11 @@ def nbdm_vae_model(
                 )
 
                 # Use decoder to generate r parameters from latent space
-                r_params = decoder_module(z)
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
 
                 # Define base distribution with VAE-generated r
-                base_dist = dist.NegativeBinomialProbs(r_params, p).to_event(1)
+                base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
                 numpyro.sample("counts", base_dist, obs=counts[idx])
     else:
         # Without counts: for prior predictive sampling
@@ -321,10 +323,11 @@ def nbdm_vae_model(
             )
 
             # Use decoder to generate r parameters from latent space
-            r_params = decoder_module(z)
+            log_r = numpyro.deterministic("log_r", decoder_module(z))
+            r = numpyro.deterministic("r", jnp.exp(log_r))
 
             # Define base distribution with VAE-generated r
-            base_dist = dist.NegativeBinomialProbs(r_params, p).to_event(1)
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             numpyro.sample("counts", base_dist)
 
 

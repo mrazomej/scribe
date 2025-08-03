@@ -304,7 +304,8 @@ def nbdm_vae_model(
                 )
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -326,7 +327,8 @@ def nbdm_vae_model(
                 )
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -346,7 +348,8 @@ def nbdm_vae_model(
             )
 
             # Use decoder to generate mu parameters from latent space
-            mu = numpyro.deterministic("mu", decoder_module(z))
+            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+            mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
             # Compute r using the linked parameterization
             r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -471,7 +474,8 @@ def zinb_vae_model(
                 )
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -500,7 +504,8 @@ def zinb_vae_model(
                 )
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -527,7 +532,8 @@ def zinb_vae_model(
             )
 
             # Use decoder to generate mu parameters from latent space
-            mu = numpyro.deterministic("mu", decoder_module(z))
+            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+            mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
             # Compute r using the linked parameterization
             r = numpyro.deterministic("r", mu * (1 - p) / p)
