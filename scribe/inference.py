@@ -50,9 +50,6 @@ def run_scribe(
     n_warmup: int = 1_000,
     n_chains: int = 1,
     mcmc_kwargs: Optional[Dict[str, Any]] = None,
-    # Distribution configuration
-    r_distribution: Optional[Type[dist.Distribution]] = None,
-    mu_distribution: Optional[Type[dist.Distribution]] = None,
     # Prior configuration
     r_prior: Optional[tuple] = None,
     p_prior: Optional[tuple] = None,
