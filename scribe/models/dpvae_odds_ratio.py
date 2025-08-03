@@ -76,7 +76,8 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the odds ratio parameterization
                 r = numpyro.deterministic("r", mu * phi)
@@ -94,7 +95,8 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the odds ratio parameterization
                 r = numpyro.deterministic("r", mu * phi)
@@ -113,7 +115,8 @@ def nbdm_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            mu = numpyro.deterministic("mu", decoder_module(z))
+            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+            mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
             # Compute r using the odds ratio parameterization
             r = numpyro.deterministic("r", mu * phi)
@@ -180,7 +183,8 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the odds ratio parameterization
                 r = numpyro.deterministic("r", mu * phi)
@@ -204,7 +208,8 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                mu = numpyro.deterministic("mu", decoder_module(z))
+                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the odds ratio parameterization
                 r = numpyro.deterministic("r", mu * phi)
@@ -226,7 +231,8 @@ def zinb_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            mu = numpyro.deterministic("mu", decoder_module(z))
+            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+            mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
             # Compute r using the odds ratio parameterization
             r = numpyro.deterministic("r", mu * phi)

@@ -20,7 +20,6 @@ from .vae_standard import nbdm_vae_guide, zinb_vae_guide
 from ..vae.architectures import (
     create_encoder,
     create_decoder,
-    Encoder,
     Decoder,
     DecoupledPrior,
     DecoupledPriorDistribution,
@@ -60,7 +59,7 @@ def nbdm_dpvae_model(
         jnp.ones(model_config.vae_latent_dim),
     ).to_event(1)
     decoupled_prior_dist = DecoupledPriorDistribution(
-        decoupled_prior=decoupled_prior_module,  # Use original module, not wrapper
+        decoupled_prior=decoupled_prior_module,
         base_distribution=base_distribution,
     )
 
@@ -73,10 +72,11 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Decode z to get r parameters
-                r_params = decoder_module(z)
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
 
                 # Define base distribution with VAE-generated r
-                base_dist = dist.NegativeBinomialProbs(r_params, p).to_event(1)
+                base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
                 numpyro.sample("counts", base_dist, obs=counts)
         else:
             with numpyro.plate(
@@ -86,13 +86,14 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Decode z to get r parameters
-                r_params = decoder_module(z)
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
 
                 # Sample observed counts
                 batch_counts = counts[idx] if counts is not None else None
                 numpyro.sample(
                     "counts",
-                    dist.NegativeBinomialProbs(r_params, p).to_event(1),
+                    dist.NegativeBinomialProbs(r, p).to_event(1),
                     obs=batch_counts,
                 )
     else:
@@ -102,10 +103,11 @@ def nbdm_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate r parameters from latent space
-            r_params = decoder_module(z)
+            log_r = numpyro.deterministic("log_r", decoder_module(z))
+            r = numpyro.deterministic("r", jnp.exp(log_r))
 
             # Define base distribution with VAE-generated r
-            base_dist = dist.NegativeBinomialProbs(r_params, p).to_event(1)
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             numpyro.sample("counts", base_dist)
 
 # ------------------------------------------------------------------------------
@@ -153,10 +155,11 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate r parameters from latent space
-                r_params = decoder_module(z)
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
 
                 # Construct the base Negative Binomial distribution using r and p
-                base_dist = dist.NegativeBinomialProbs(r_params, p)
+                base_dist = dist.NegativeBinomialProbs(r, p)
                 # Construct the zero-inflated distribution using the base NB and gate
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
@@ -172,10 +175,11 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate r parameters from latent space
-                r_params = decoder_module(z)
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
 
                 # Construct the base Negative Binomial distribution using r and p
-                base_dist = dist.NegativeBinomialProbs(r_params, p)
+                base_dist = dist.NegativeBinomialProbs(r, p)
                 # Construct the zero-inflated distribution using the base NB and gate
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
@@ -189,10 +193,11 @@ def zinb_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate r parameters from latent space
-            r_params = decoder_module(z)
+            log_r = numpyro.deterministic("log_r", decoder_module(z))
+            r = numpyro.deterministic("r", jnp.exp(log_r))
 
             # Construct the base Negative Binomial distribution using r and p
-            base_dist = dist.NegativeBinomialProbs(r_params, p)
+            base_dist = dist.NegativeBinomialProbs(r, p)
             # Construct the zero-inflated distribution using the base NB and gate
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
                 1
