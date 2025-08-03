@@ -6,7 +6,16 @@ treating unconstrained as just another parameterization rather than a separate
 model type.
 """
 
-from typing import Union, Optional, Dict, Any, Type, Callable, TYPE_CHECKING, List
+from typing import (
+    Union,
+    Optional,
+    Dict,
+    Any,
+    Type,
+    Callable,
+    TYPE_CHECKING,
+    List,
+)
 
 if TYPE_CHECKING:
     from anndata import AnnData
@@ -500,15 +509,27 @@ def _run_vae_inference(
         prior_params=model_config.get_active_priors(),
     )
 
+    # Compute standardization statistics for dpVAE models
+    standardize_mean = None
+    standardize_std = None
+
+    if model_config.vae_prior_type == "decoupled":
+        from scribe.vae.architectures import compute_standardization_stats
+
+        # Apply input transformation first (same as encoder)
+        transformed_data = jnp.log1p(count_data)
+        standardize_mean, standardize_std = compute_standardization_stats(
+            transformed_data
+        )
+
     # Create VAE-specific results without passing the VAE model
     # The VAE model will be reconstructed when needed
     vae_results = ScribeVAEResults.from_svi_results(
         svi_results=base_results,
         vae_model=None,  # Don't pass VAE model to avoid pickling issues
         original_counts=count_data,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     return vae_results
-
-
-

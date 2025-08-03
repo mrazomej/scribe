@@ -50,6 +50,78 @@ INPUT_TRANSFORMATIONS = {
 }
 
 # ------------------------------------------------------------------------------
+# Standardization functions
+# ------------------------------------------------------------------------------
+
+
+def compute_standardization_stats(
+    data: jnp.ndarray,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Compute mean and std for z-standardization per gene.
+
+    Parameters
+    ----------
+    data : jnp.ndarray
+        Input data of shape (n_cells, n_genes)
+
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+        Tuple of (mean, std) arrays, each of shape (n_genes,)
+    """
+    return jnp.mean(data, axis=0), jnp.std(data, axis=0)
+
+
+def standardize_data(
+    data: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray
+) -> jnp.ndarray:
+    """
+    Z-standardize data using pre-computed statistics.
+
+    Parameters
+    ----------
+    data : jnp.ndarray
+        Input data of shape (batch_size, n_genes)
+    mean : jnp.ndarray
+        Mean values per gene, shape (n_genes,)
+    std : jnp.ndarray
+        Standard deviation values per gene, shape (n_genes,)
+
+    Returns
+    -------
+    jnp.ndarray
+        Standardized data of same shape as input
+    """
+    return (data - mean) / (
+        std + 1e-8
+    )  # Add small epsilon for numerical stability
+
+
+def destandardize_data(
+    data: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray
+) -> jnp.ndarray:
+    """
+    Reverse z-standardization.
+
+    Parameters
+    ----------
+    data : jnp.ndarray
+        Standardized data of shape (batch_size, n_genes)
+    mean : jnp.ndarray
+        Mean values per gene, shape (n_genes,)
+    std : jnp.ndarray
+        Standard deviation values per gene, shape (n_genes,)
+
+    Returns
+    -------
+    jnp.ndarray
+        Destandardized data of same shape as input
+    """
+    return data * (std + 1e-8) + mean
+
+
+# ------------------------------------------------------------------------------
 # VAEConfig class
 # ------------------------------------------------------------------------------
 
@@ -67,6 +139,9 @@ class VAEConfig:
     output_activation: str = "softplus"
     # Input transformation for encoder (default: log1p for scRNA-seq data)
     input_transformation: str = "log1p"
+    # Standardization parameters
+    standardize_mean: Optional[jnp.ndarray] = None
+    standardize_std: Optional[jnp.ndarray] = None
 
     def __post_init__(self):
         if self.hidden_dims is None:
@@ -129,6 +204,15 @@ class Encoder(nnx.Module):
 
         # Apply configurable input transformation
         x = input_transformation(x)
+
+        # Apply standardization if enabled
+        if (
+            self.config.standardize_mean is not None
+            and self.config.standardize_std is not None
+        ):
+            x = standardize_data(
+                x, self.config.standardize_mean, self.config.standardize_std
+            )
 
         # Encoder forward pass through all hidden layers
         h = x
@@ -198,6 +282,17 @@ class Decoder(nnx.Module):
 
         # Output layer with configurable activation for r parameters
         output = self.decoder_output(h)
+
+        # Apply destandardization if enabled
+        if (
+            self.config.standardize_mean is not None
+            and self.config.standardize_std is not None
+        ):
+            output = destandardize_data(
+                output,
+                self.config.standardize_mean,
+                self.config.standardize_std,
+            )
 
         return output
 
@@ -294,6 +389,8 @@ def create_encoder(
     hidden_dims: Optional[List[int]] = None,
     activation: Optional[str] = None,
     input_transformation: Optional[str] = None,
+    standardize_mean: Optional[jnp.ndarray] = None,
+    standardize_std: Optional[jnp.ndarray] = None,
 ) -> Encoder:
     """
     Create a standalone encoder for VAE.
@@ -304,6 +401,8 @@ def create_encoder(
         hidden_dims: List of hidden layer dimensions (default: [256, 256])
         activation: Activation function (default: gelu)
         input_transformation: Input transformation function (default: log1p)
+        standardize_mean: Mean values for standardization (default: None)
+        standardize_std: Standard deviation values for standardization (default: None)
 
     Returns:
         Configured Encoder instance
@@ -320,6 +419,8 @@ def create_encoder(
         activation=activation,
         output_activation="softplus",
         input_transformation=input_transformation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     rngs = nnx.Rngs(params=0)
@@ -336,6 +437,8 @@ def create_decoder(
     activation: Optional[str] = None,
     output_activation: Optional[str] = None,
     input_transformation: Optional[str] = None,
+    standardize_mean: Optional[jnp.ndarray] = None,
+    standardize_std: Optional[jnp.ndarray] = None,
 ) -> Decoder:
     """
     Create a standalone decoder for VAE.
@@ -347,6 +450,8 @@ def create_decoder(
         activation: Activation function (default: gelu)
         output_activation: Output activation function (default: softplus)
         input_transformation: Input transformation function (default: log1p)
+        standardize_mean: Mean values for standardization (default: None)
+        standardize_std: Standard deviation values for standardization (default: None)
 
     Returns:
         Configured Decoder instance
@@ -365,6 +470,8 @@ def create_decoder(
         activation=activation,
         output_activation=output_activation,
         input_transformation=input_transformation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     rngs = nnx.Rngs(params=0)
@@ -381,6 +488,8 @@ def create_vae(
     activation: Optional[str] = None,
     output_activation: Optional[str] = None,
     input_transformation: Optional[str] = None,
+    standardize_mean: Optional[jnp.ndarray] = None,
+    standardize_std: Optional[jnp.ndarray] = None,
 ) -> VAE:
     """
     Create a default VAE architecture with configurable hidden layers.
@@ -392,6 +501,8 @@ def create_vae(
         activation: Activation function (default: gelu)
         output_activation: Output activation function (default: softplus)
         input_transformation: Input transformation function (default: log1p)
+        standardize_mean: Mean values for standardization (default: None)
+        standardize_std: Standard deviation values for standardization (default: None)
 
     Returns:
         Configured VAE instance
@@ -410,6 +521,8 @@ def create_vae(
         activation=activation,
         output_activation=output_activation,
         input_transformation=input_transformation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     rngs = nnx.Rngs(params=0)
@@ -466,7 +579,7 @@ class AffineCouplingLayer(nnx.Module):
 
         # Create binary mask for coupling - stored at initialization
         self.mask = self._create_mask()
-        
+
         # Compute actual masked and unmasked dimensions from the mask
         masked_dim = int(jnp.sum(self.mask))
         unmasked_dim = input_dim - masked_dim
@@ -564,7 +677,7 @@ class AffineCouplingLayer(nnx.Module):
         """
         # Use static indexing based on mask pattern to avoid JAX tracing issues
         input_dim = x.shape[-1]
-        
+
         if self.mask_type == "alternating_even":
             # Even-indexed elements masked: [1, 0, 1, 0, ...]
             # For 3D: indices [0, 2] are masked, [1] is unmasked
@@ -579,7 +692,7 @@ class AffineCouplingLayer(nnx.Module):
             unmasked_indices = jnp.arange(1, input_dim, 2)
         else:
             raise ValueError(f"Unknown mask_type: {self.mask_type}")
-        
+
         # Select masked and unmasked elements using integer indexing
         x_masked = x[..., masked_indices]
         x_unmasked = x[..., unmasked_indices]
@@ -675,7 +788,7 @@ class AffineCouplingLayer(nnx.Module):
 
         # Reconstruct the full tensor using static indexing
         input_dim = x.shape[-1]
-        
+
         if self.mask_type == "alternating_even":
             masked_indices = jnp.arange(1, input_dim, 2)
             unmasked_indices = jnp.arange(0, input_dim, 2)
@@ -684,7 +797,7 @@ class AffineCouplingLayer(nnx.Module):
             unmasked_indices = jnp.arange(1, input_dim, 2)
         else:
             raise ValueError(f"Unknown mask_type: {self.mask_type}")
-        
+
         y = y.at[..., masked_indices].set(y_masked)
         y = y.at[..., unmasked_indices].set(y_unmasked)
 
@@ -743,7 +856,7 @@ class AffineCouplingLayer(nnx.Module):
 
         # Reconstruct the full tensor using static indexing
         input_dim = y.shape[-1]
-        
+
         if self.mask_type == "alternating_even":
             masked_indices = jnp.arange(1, input_dim, 2)
             unmasked_indices = jnp.arange(0, input_dim, 2)
@@ -752,7 +865,7 @@ class AffineCouplingLayer(nnx.Module):
             unmasked_indices = jnp.arange(1, input_dim, 2)
         else:
             raise ValueError(f"Unknown mask_type: {self.mask_type}")
-        
+
         x = x.at[..., masked_indices].set(x_masked)
         x = x.at[..., unmasked_indices].set(x_unmasked)
 
@@ -1268,6 +1381,8 @@ def create_dpvae(
     activation: Optional[str] = None,
     output_activation: Optional[str] = None,
     input_transformation: Optional[str] = None,
+    standardize_mean: Optional[jnp.ndarray] = None,
+    standardize_std: Optional[jnp.ndarray] = None,
     # Decoupled prior parameters
     prior_hidden_dims: Optional[List[int]] = None,
     prior_num_layers: Optional[int] = None,
@@ -1295,6 +1410,10 @@ def create_dpvae(
         Output activation for decoder. If None, uses "softplus"
     input_transformation : Optional[str], default=None
         Input transformation for encoder. If None, uses "log1p"
+    standardize_mean : Optional[jnp.ndarray], default=None
+        Mean values for standardization (default: None)
+    standardize_std : Optional[jnp.ndarray], default=None
+        Standard deviation values for standardization (default: None)
     prior_hidden_dims : Optional[List[int]], default=None
         Hidden layer dimensions for coupling layers. If None, uses [64, 64].
         The number of coupling layers is determined by the length of this list.
@@ -1336,6 +1455,8 @@ def create_dpvae(
         activation=activation,
         output_activation=output_activation,
         input_transformation=input_transformation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     # Create encoder and decoder
@@ -1345,6 +1466,8 @@ def create_dpvae(
         hidden_dims=hidden_dims,
         activation=activation,
         input_transformation=input_transformation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     decoder = create_decoder(
@@ -1354,6 +1477,8 @@ def create_dpvae(
         activation=activation,
         output_activation=output_activation,
         input_transformation=input_transformation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     # Create decoupled prior

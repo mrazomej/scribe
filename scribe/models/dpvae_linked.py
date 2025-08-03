@@ -85,7 +85,29 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                # The decoder output is standardized, so we need to de-standardize it
+                log_mu_standardized = numpyro.deterministic(
+                    "log_mu_standardized", decoder_module(z)
+                )
+
+                # De-standardize the output if standardization was used
+                if (
+                    hasattr(decoder_module, "standardize_mean")
+                    and decoder_module.standardize_mean is not None
+                ):
+                    from ..vae.architectures import destandardize_data
+
+                    log_mu = numpyro.deterministic(
+                        "log_mu",
+                        destandardize_data(
+                            log_mu_standardized,
+                            decoder_module.standardize_mean,
+                            decoder_module.standardize_std,
+                        ),
+                    )
+                else:
+                    log_mu = log_mu_standardized
+
                 mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
@@ -102,7 +124,29 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                # The decoder output is standardized, so we need to de-standardize it
+                log_mu_standardized = numpyro.deterministic(
+                    "log_mu_standardized", decoder_module(z)
+                )
+
+                # De-standardize the output if standardization was used
+                if (
+                    hasattr(decoder_module, "standardize_mean")
+                    and decoder_module.standardize_mean is not None
+                ):
+                    from ..vae.architectures import destandardize_data
+
+                    log_mu = numpyro.deterministic(
+                        "log_mu",
+                        destandardize_data(
+                            log_mu_standardized,
+                            decoder_module.standardize_mean,
+                            decoder_module.standardize_std,
+                        ),
+                    )
+                else:
+                    log_mu = log_mu_standardized
+
                 mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
@@ -122,7 +166,29 @@ def nbdm_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+            # The decoder output is standardized, so we need to de-standardize it
+            log_mu_standardized = numpyro.deterministic(
+                "log_mu_standardized", decoder_module(z)
+            )
+
+            # De-standardize the output if standardization was used
+            if (
+                hasattr(decoder_module, "standardize_mean")
+                and decoder_module.standardize_mean is not None
+            ):
+                from ..vae.architectures import destandardize_data
+
+                log_mu = numpyro.deterministic(
+                    "log_mu",
+                    destandardize_data(
+                        log_mu_standardized,
+                        decoder_module.standardize_mean,
+                        decoder_module.standardize_std,
+                    ),
+                )
+            else:
+                log_mu = log_mu_standardized
+
             mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
             # Compute r using the linked parameterization
@@ -189,7 +255,29 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                # The decoder output is standardized, so we need to de-standardize it
+                log_mu_standardized = numpyro.deterministic(
+                    "log_mu_standardized", decoder_module(z)
+                )
+
+                # De-standardize the output if standardization was used
+                if (
+                    hasattr(decoder_module, "standardize_mean")
+                    and decoder_module.standardize_mean is not None
+                ):
+                    from ..vae.architectures import destandardize_data
+
+                    log_mu = numpyro.deterministic(
+                        "log_mu",
+                        destandardize_data(
+                            log_mu_standardized,
+                            decoder_module.standardize_mean,
+                            decoder_module.standardize_std,
+                        ),
+                    )
+                else:
+                    log_mu = log_mu_standardized
+
                 mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
@@ -214,7 +302,29 @@ def zinb_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                # The decoder output is standardized, so we need to de-standardize it
+                log_mu_standardized = numpyro.deterministic(
+                    "log_mu_standardized", decoder_module(z)
+                )
+
+                # De-standardize the output if standardization was used
+                if (
+                    hasattr(decoder_module, "standardize_mean")
+                    and decoder_module.standardize_mean is not None
+                ):
+                    from ..vae.architectures import destandardize_data
+
+                    log_mu = numpyro.deterministic(
+                        "log_mu",
+                        destandardize_data(
+                            log_mu_standardized,
+                            decoder_module.standardize_mean,
+                            decoder_module.standardize_std,
+                        ),
+                    )
+                else:
+                    log_mu = log_mu_standardized
+
                 mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
@@ -237,7 +347,29 @@ def zinb_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+            # The decoder output is standardized, so we need to de-standardize it
+            log_mu_standardized = numpyro.deterministic(
+                "log_mu_standardized", decoder_module(z)
+            )
+
+            # De-standardize the output if standardization was used
+            if (
+                hasattr(decoder_module, "standardize_mean")
+                and decoder_module.standardize_mean is not None
+            ):
+                from ..vae.architectures import destandardize_data
+
+                log_mu = numpyro.deterministic(
+                    "log_mu",
+                    destandardize_data(
+                        log_mu_standardized,
+                        decoder_module.standardize_mean,
+                        decoder_module.standardize_std,
+                    ),
+                )
+            else:
+                log_mu = log_mu_standardized
+
             mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
             # Compute r using the linked parameterization
@@ -262,11 +394,36 @@ def zinb_dpvae_model(
 def make_nbdm_dpvae_model_and_guide(
     n_genes: int,
     model_config: ModelConfig,
+    training_data: Optional[jnp.ndarray] = None,
 ):
     """
-    FIXED: Construct and return dpVAE model and guide functions for NBDM model
-    with linked parameterization.
+    Construct and return dpVAE model and guide functions for NBDM model
+    with linked parameterization and standardization.
+
+    Parameters
+    ----------
+    n_genes : int
+        Number of genes
+    model_config : ModelConfig
+        Model configuration
+    training_data : Optional[jnp.ndarray], default=None
+        Training data for computing standardization statistics.
+        If provided, standardization will be enabled.
     """
+    # Compute standardization statistics if training data is provided
+    standardize_mean = None
+    standardize_std = None
+
+    if training_data is not None:
+        from ..vae.architectures import compute_standardization_stats
+
+        # Apply input transformation first (same as encoder)
+        input_transformation = "log1p"  # Default transformation
+        transformed_data = jnp.log1p(training_data)
+        standardize_mean, standardize_std = compute_standardization_stats(
+            transformed_data
+        )
+
     # Create the encoder and decoder modules once
     decoder = create_decoder(
         input_dim=n_genes,
@@ -274,6 +431,8 @@ def make_nbdm_dpvae_model_and_guide(
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
         output_activation=model_config.vae_output_activation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     encoder = create_encoder(
@@ -281,6 +440,8 @@ def make_nbdm_dpvae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     # Create the decoupled prior module
@@ -333,11 +494,36 @@ def make_nbdm_dpvae_model_and_guide(
 def make_zinb_dpvae_model_and_guide(
     n_genes: int,
     model_config: ModelConfig,
+    training_data: Optional[jnp.ndarray] = None,
 ):
     """
-    FIXED: Construct and return dpVAE model and guide functions for ZINB model
-    with linked parameterization.
+    Construct and return dpVAE model and guide functions for ZINB model
+    with linked parameterization and standardization.
+
+    Parameters
+    ----------
+    n_genes : int
+        Number of genes
+    model_config : ModelConfig
+        Model configuration
+    training_data : Optional[jnp.ndarray], default=None
+        Training data for computing standardization statistics.
+        If provided, standardization will be enabled.
     """
+    # Compute standardization statistics if training data is provided
+    standardize_mean = None
+    standardize_std = None
+
+    if training_data is not None:
+        from ..vae.architectures import compute_standardization_stats
+
+        # Apply input transformation first (same as encoder)
+        input_transformation = "log1p"  # Default transformation
+        transformed_data = jnp.log1p(training_data)
+        standardize_mean, standardize_std = compute_standardization_stats(
+            transformed_data
+        )
+
     # Create the encoder and decoder modules once
     decoder = create_decoder(
         input_dim=n_genes,
@@ -345,6 +531,8 @@ def make_zinb_dpvae_model_and_guide(
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
         output_activation=model_config.vae_output_activation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     encoder = create_encoder(
@@ -352,6 +540,8 @@ def make_zinb_dpvae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=standardize_mean,
+        standardize_std=standardize_std,
     )
 
     # Create the decoupled prior module
@@ -455,4 +645,4 @@ def get_posterior_distributions(
     decoupled_prior_dist = vae_model.get_decoupled_prior_distribution()
     distributions["z"] = decoupled_prior_dist
 
-    return distributions 
+    return distributions

@@ -25,6 +25,12 @@ SUPPORTED_INFERENCE_METHODS = [
     "vae",
 ]
 
+# List of supported prior types for VAE
+SUPPORTED_PRIOR_TYPES = [
+    "standard",
+    "decoupled",
+]
+
 # Dictionary to cache imported model modules
 _model_module_cache = {}
 
@@ -98,9 +104,7 @@ def get_model_and_guide(
             )
 
     try:
-        module = importlib.import_module(
-            f".{module_name}", "scribe.models"
-        )
+        module = importlib.import_module(f".{module_name}", "scribe.models")
     except ImportError as e:
         raise ValueError(
             f"Could not import parameterization module '{module_name}': {e}"
@@ -109,11 +113,11 @@ def get_model_and_guide(
     # Determine the function names based on convention
     if inference_method == "vae":
         if prior_type == "standard":
-            model_name = f"{model_type}_vae_model"
-            guide_name = f"{model_type}_vae_guide"
+            model_name = f"make_{model_type}_vae_model_and_guide"
+            guide_name = None  # Factory function returns both model and guide
         elif prior_type == "decoupled":
-            model_name = f"{model_type}_dpvae_model"
-            guide_name = f"{model_type}_vae_guide"
+            model_name = f"make_{model_type}_dpvae_model_and_guide"
+            guide_name = None  # Factory function returns both model and guide
         else:
             raise ValueError(
                 f"Unsupported prior type: {prior_type}. "
@@ -136,14 +140,18 @@ def get_model_and_guide(
             f"Model function '{model_name}' not found in module '{module_name}'"
         )
 
-    # Guide functions exist for all parameterizations including unconstrained
-    guide_fn = getattr(module, guide_name, None)
-    if guide_fn is None:
-        raise ValueError(
-            f"Guide function '{guide_name}' not found in module '{module_name}'"
-        )
-
-    return model_fn, guide_fn
+    # For VAE inference, the factory function returns both model and guide
+    if inference_method == "vae":
+        return model_fn, None
+    else:
+        # Guide functions exist for all parameterizations including
+        # unconstrained
+        guide_fn = getattr(module, guide_name, None)
+        if guide_fn is None:
+            raise ValueError(
+                f"Guide function '{guide_name}' not found in module '{module_name}'"
+            )
+        return model_fn, guide_fn
 
 
 # ------------------------------------------------------------------------------
@@ -180,9 +188,7 @@ def get_log_likelihood_fn(model_type: str) -> Callable:
             ".log_likelihood", "scribe.models"
         )
     except ImportError as e:
-        raise ImportError(
-            f"Could not import log_likelihood module: {e}"
-        )
+        raise ImportError(f"Could not import log_likelihood module: {e}")
 
     # Determine the function name based on convention
     if model_type.endswith("_mix"):
