@@ -63,6 +63,9 @@ class ScribeVAEResults(ScribeSVIResults):
     latent_samples: Optional[jnp.ndarray] = None
     cell_embeddings: Optional[jnp.ndarray] = None
     prior_type: str = "standard"
+    # Standardization statistics
+    standardize_mean: Optional[jnp.ndarray] = None
+    standardize_std: Optional[jnp.ndarray] = None
 
     def __post_init__(self):
         """Validate VAE-specific configuration."""
@@ -89,12 +92,67 @@ class ScribeVAEResults(ScribeSVIResults):
         """
         Get the model and guide functions for this VAE model.
 
+        For VAE models, this returns the actual model and guide functions
+        (not the factory functions) that can be used for sampling.
+
         Returns
         -------
         Tuple[Callable, Optional[Callable]]
             A tuple containing (model_function, guide_function)
         """
-        return self._model_and_guide()
+        # For VAE models, we need to get the actual model and guide functions
+        # from the appropriate module, not the factory functions
+        if self.model_config.parameterization == "standard":
+            if self.prior_type == "standard":
+                if self.model_type == "nbdm":
+                    from ..models.vae_standard import nbdm_vae_model, nbdm_vae_guide
+                    return nbdm_vae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.vae_standard import zinb_vae_model, zinb_vae_guide
+                    return zinb_vae_model, zinb_vae_guide
+            elif self.prior_type == "decoupled":
+                if self.model_type == "nbdm":
+                    from ..models.dpvae_standard import nbdm_dpvae_model, nbdm_vae_guide
+                    return nbdm_dpvae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.dpvae_standard import zinb_dpvae_model, zinb_vae_guide
+                    return zinb_dpvae_model, zinb_vae_guide
+        elif self.model_config.parameterization == "linked":
+            if self.prior_type == "standard":
+                if self.model_type == "nbdm":
+                    from ..models.vae_linked import nbdm_vae_model, nbdm_vae_guide
+                    return nbdm_vae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.vae_linked import zinb_vae_model, zinb_vae_guide
+                    return zinb_vae_model, zinb_vae_guide
+            elif self.prior_type == "decoupled":
+                if self.model_type == "nbdm":
+                    from ..models.dpvae_linked import nbdm_dpvae_model, nbdm_vae_guide
+                    return nbdm_dpvae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.dpvae_linked import zinb_dpvae_model, zinb_vae_guide
+                    return zinb_dpvae_model, zinb_vae_guide
+        elif self.model_config.parameterization == "odds_ratio":
+            if self.prior_type == "standard":
+                if self.model_type == "nbdm":
+                    from ..models.vae_odds_ratio import nbdm_vae_model, nbdm_vae_guide
+                    return nbdm_vae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.vae_odds_ratio import zinb_vae_model, zinb_vae_guide
+                    return zinb_vae_model, zinb_vae_guide
+            elif self.prior_type == "decoupled":
+                if self.model_type == "nbdm":
+                    from ..models.dpvae_odds_ratio import nbdm_dpvae_model, nbdm_vae_guide
+                    return nbdm_dpvae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.dpvae_odds_ratio import zinb_dpvae_model, zinb_vae_guide
+                    return zinb_dpvae_model, zinb_vae_guide
+        else:
+            raise NotImplementedError(
+                f"get_model_and_guide not implemented for '{self.model_config.parameterization}'."
+            )
+
+        raise ValueError(f"Unknown model type: {self.model_type}")
 
     # --------------------------------------------------------------------------
     # Reconstruct VAE model from trained parameters
@@ -120,6 +178,8 @@ class ScribeVAEResults(ScribeSVIResults):
                 hidden_dims=self.model_config.vae_hidden_dims,
                 activation=self.model_config.vae_activation,
                 input_transformation=self.model_config.vae_input_transformation,
+                standardize_mean=self.standardize_mean,
+                standardize_std=self.standardize_std,
             )
             # Split encoder
             encoder_graph, encoder_state = nnx.split(encoder)
@@ -137,6 +197,8 @@ class ScribeVAEResults(ScribeSVIResults):
                 hidden_dims=self.model_config.vae_hidden_dims,
                 activation=self.model_config.vae_activation,
                 output_activation=self.model_config.vae_output_activation,
+                standardize_mean=self.standardize_mean,
+                standardize_std=self.standardize_std,
             )
             # Split decoder
             decoder_graph, decoder_state = nnx.split(decoder)
@@ -156,6 +218,8 @@ class ScribeVAEResults(ScribeSVIResults):
                 latent_dim=self.model_config.vae_latent_dim,
                 hidden_dims=self.model_config.vae_hidden_dims,
                 activation=self.model_config.vae_activation,
+                standardize_mean=self.standardize_mean,
+                standardize_std=self.standardize_std,
             )
 
             if self.prior_type == "decoupled":
@@ -438,7 +502,7 @@ class ScribeVAEResults(ScribeSVIResults):
             and guide used.
         """
         # Get the guide function
-        _, guide = self._model_and_guide()
+        _, guide = self.get_model_and_guide()
 
         if guide is None:
             raise ValueError(
@@ -603,7 +667,7 @@ class ScribeVAEResults(ScribeSVIResults):
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
         # Get the model and guide functions
-        model, _ = self._model_and_guide()
+        model, _ = self.get_model_and_guide()
 
         # Prepare base model arguments
         model_args = {
@@ -956,6 +1020,8 @@ class ScribeVAEResults(ScribeSVIResults):
         svi_results: ScribeSVIResults,
         vae_model: Union[VAE, dpVAE],
         original_counts: Optional[jnp.ndarray] = None,
+        standardize_mean: Optional[jnp.ndarray] = None,
+        standardize_std: Optional[jnp.ndarray] = None,
     ) -> "ScribeVAEResults":
         """
         Create VAE results from existing SVI results.
@@ -999,6 +1065,8 @@ class ScribeVAEResults(ScribeSVIResults):
             predictive_samples=svi_results.predictive_samples,
             n_components=svi_results.n_components,
             prior_type=prior_type,
+            standardize_mean=standardize_mean,
+            standardize_std=standardize_std,
         )
 
         # Set VAE model after creation (but don't store it directly to avoid pickling issues)
