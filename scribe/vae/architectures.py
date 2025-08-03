@@ -16,15 +16,29 @@ from dataclasses import dataclass
 # ------------------------------------------------------------------------------
 
 ACTIVATION_FUNCTIONS = {
-    "gelu": nnx.gelu,
-    "relu": nnx.relu,
-    "softplus": nnx.softplus,
-    "sigmoid": nnx.sigmoid,
-    "tanh": nnx.tanh,
+    "celu": nnx.celu,
     "elu": nnx.elu,
-    "selu": nnx.selu,
-    "swish": nnx.swish,
+    "gelu": nnx.gelu,
+    "glu": nnx.glu,
+    "hard_sigmoid": nnx.hard_sigmoid,
+    "hard_silu": nnx.hard_silu,
     "hard_swish": nnx.hard_swish,
+    "hard_tanh": nnx.hard_tanh,
+    "leaky_relu": nnx.leaky_relu,
+    "log_sigmoid": nnx.log_sigmoid,
+    "log_softmax": nnx.log_softmax,
+    "logsumexp": nnx.logsumexp,
+    "one_hot": nnx.one_hot,
+    "relu": nnx.relu,
+    "relu6": nnx.relu6,
+    "selu": nnx.selu,
+    "sigmoid": nnx.sigmoid,
+    "silu": nnx.silu,
+    "soft_sign": nnx.soft_sign,
+    "softmax": nnx.softmax,
+    "softplus": nnx.softplus,
+    "standardize": nnx.standardize,
+    "swish": nnx.swish,
 }
 
 # Dictionary of input transformations
@@ -184,7 +198,6 @@ class Decoder(nnx.Module):
 
         # Output layer with configurable activation for r parameters
         output = self.decoder_output(h)
-        output = output_activation(output)
 
         return output
 
