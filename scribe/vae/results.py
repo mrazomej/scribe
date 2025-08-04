@@ -105,51 +105,100 @@ class ScribeVAEResults(ScribeSVIResults):
         if self.model_config.parameterization == "standard":
             if self.prior_type == "standard":
                 if self.model_type == "nbdm":
-                    from ..models.vae_standard import nbdm_vae_model, nbdm_vae_guide
+                    from ..models.vae_standard import (
+                        nbdm_vae_model,
+                        nbdm_vae_guide,
+                    )
+
                     return nbdm_vae_model, nbdm_vae_guide
                 elif self.model_type == "zinb":
-                    from ..models.vae_standard import zinb_vae_model, zinb_vae_guide
+                    from ..models.vae_standard import (
+                        zinb_vae_model,
+                        zinb_vae_guide,
+                    )
+
                     return zinb_vae_model, zinb_vae_guide
             elif self.prior_type == "decoupled":
                 if self.model_type == "nbdm":
-                    from ..models.dpvae_standard import nbdm_dpvae_model, nbdm_vae_guide
+                    from ..models.vae_standard import (
+                        nbdm_dpvae_model,
+                        nbdm_vae_guide,
+                    )
+
                     return nbdm_dpvae_model, nbdm_vae_guide
                 elif self.model_type == "zinb":
-                    from ..models.dpvae_standard import zinb_dpvae_model, zinb_vae_guide
+                    from ..models.vae_standard import (
+                        zinb_dpvae_model,
+                        zinb_vae_guide,
+                    )
+
                     return zinb_dpvae_model, zinb_vae_guide
         elif self.model_config.parameterization == "linked":
             if self.prior_type == "standard":
                 if self.model_type == "nbdm":
-                    from ..models.vae_linked import nbdm_vae_model, nbdm_vae_guide
+                    from ..models.vae_linked import (
+                        nbdm_vae_model,
+                        nbdm_vae_guide,
+                    )
+
                     return nbdm_vae_model, nbdm_vae_guide
                 elif self.model_type == "zinb":
-                    from ..models.vae_linked import zinb_vae_model, zinb_vae_guide
+                    from ..models.vae_linked import (
+                        zinb_vae_model,
+                        zinb_vae_guide,
+                    )
+
                     return zinb_vae_model, zinb_vae_guide
             elif self.prior_type == "decoupled":
                 if self.model_type == "nbdm":
-                    from ..models.dpvae_linked import nbdm_dpvae_model, nbdm_vae_guide
+                    from ..models.vae_linked import (
+                        nbdm_dpvae_model,
+                        nbdm_vae_guide,
+                    )
+
                     return nbdm_dpvae_model, nbdm_vae_guide
                 elif self.model_type == "zinb":
-                    from ..models.dpvae_linked import zinb_dpvae_model, zinb_vae_guide
+                    from ..models.vae_linked import (
+                        zinb_dpvae_model,
+                        zinb_vae_guide,
+                    )
+
                     return zinb_dpvae_model, zinb_vae_guide
         elif self.model_config.parameterization == "odds_ratio":
             if self.prior_type == "standard":
                 if self.model_type == "nbdm":
-                    from ..models.vae_odds_ratio import nbdm_vae_model, nbdm_vae_guide
+                    from ..models.vae_odds_ratio import (
+                        nbdm_vae_model,
+                        nbdm_vae_guide,
+                    )
+
                     return nbdm_vae_model, nbdm_vae_guide
                 elif self.model_type == "zinb":
-                    from ..models.vae_odds_ratio import zinb_vae_model, zinb_vae_guide
+                    from ..models.vae_odds_ratio import (
+                        zinb_vae_model,
+                        zinb_vae_guide,
+                    )
+
                     return zinb_vae_model, zinb_vae_guide
             elif self.prior_type == "decoupled":
                 if self.model_type == "nbdm":
-                    from ..models.dpvae_odds_ratio import nbdm_dpvae_model, nbdm_vae_guide
+                    from ..models.vae_odds_ratio import (
+                        nbdm_dpvae_model,
+                        nbdm_vae_guide,
+                    )
+
                     return nbdm_dpvae_model, nbdm_vae_guide
                 elif self.model_type == "zinb":
-                    from ..models.dpvae_odds_ratio import zinb_dpvae_model, zinb_vae_guide
+                    from ..models.vae_odds_ratio import (
+                        zinb_dpvae_model,
+                        zinb_vae_guide,
+                    )
+
                     return zinb_dpvae_model, zinb_vae_guide
         else:
             raise NotImplementedError(
-                f"get_model_and_guide not implemented for '{self.model_config.parameterization}'."
+                f"get_model_and_guide not implemented for "
+                f"'{self.model_config.parameterization}'."
             )
 
         raise ValueError(f"Unknown model type: {self.model_type}")
@@ -264,8 +313,9 @@ class ScribeVAEResults(ScribeSVIResults):
         """
         Get the variational distributions for all parameters.
 
-        This method now delegates to the model-specific `get_posterior_distributions`
-        function associated with the parameterization.
+        This method now delegates to the model-specific
+        `get_posterior_distributions` function associated with the
+        parameterization.
 
         Returns
         -------
@@ -279,44 +329,25 @@ class ScribeVAEResults(ScribeSVIResults):
         """
         # Dynamically import the correct posterior distribution function
         if self.model_config.parameterization == "standard":
-            if self.prior_type == "standard":
-                from ..models.vae_standard import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.prior_type == "decoupled":
-                from ..models.dpvae_standard import (
+            from ..models.vae_standard import (
                 get_posterior_distributions as get_dist_fn,
             )
         elif self.model_config.parameterization == "linked":
-            if self.prior_type == "standard":
-                from ..models.vae_linked import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.prior_type == "decoupled":
-                from ..models.dpvae_linked import (
-                    get_posterior_distributions as get_dist_fn,
-                )
+            from ..models.vae_linked import (
+                get_posterior_distributions as get_dist_fn,
+            )
         elif self.model_config.parameterization == "odds_ratio":
-            if self.prior_type == "standard":
-                from ..models.vae_odds_ratio import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.prior_type == "decoupled":
-                from ..models.dpvae_odds_ratio import (
-                    get_posterior_distributions as get_dist_fn,
-                )
+            from ..models.vae_odds_ratio import (
+                get_posterior_distributions as get_dist_fn,
+            )
         elif self.model_config.parameterization == "unconstrained":
-            if self.prior_type == "standard":
-                from ..models.vae_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.prior_type == "decoupled":
-                from ..models.dpvae_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
+            from ..models.vae_unconstrained import (
+                get_posterior_distributions as get_dist_fn,
+            )
         else:
             raise NotImplementedError(
-                f"get_distributions not implemented for '{self.model_config.parameterization}'."
+                f"get_distributions not implemented for "
+                f"'{self.model_config.parameterization}'."
             )
 
         distributions = get_dist_fn(
@@ -340,8 +371,8 @@ class ScribeVAEResults(ScribeSVIResults):
         quantification.
 
         This method samples from the prior distribution rather than conditioning
-        on data. For standard VAE, it samples from a standard normal prior.
-        For dpVAE, it samples from the learned decoupled prior distribution.
+        on data. For standard VAE, it samples from a standard normal prior. For
+        dpVAE, it samples from the learned decoupled prior distribution.
 
         Parameters
         ----------
@@ -350,8 +381,8 @@ class ScribeVAEResults(ScribeSVIResults):
         rng_key : Optional[jax.random.PRNGKey], default=None
             Random key for sampling
         store_samples : bool, default=True
-            Whether to store the generated latent samples in the object.
-            Default is True.
+            Whether to store the generated latent samples in the object. Default
+            is True.
 
         Returns
         -------
@@ -556,7 +587,6 @@ class ScribeVAEResults(ScribeSVIResults):
             self._convert_to_canonical()
 
         return posterior_samples
-        
 
     # --------------------------------------------------------------------------
 
@@ -657,7 +687,7 @@ class ScribeVAEResults(ScribeSVIResults):
         return posterior_samples
 
     # --------------------------------------------------------------------------
-    
+
     def get_predictive_samples(
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
