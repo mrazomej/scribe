@@ -34,7 +34,6 @@ def vae_config():
         latent_dim=3,
         hidden_dims=[64, 32],
         activation="relu",
-        output_activation="softplus",
         input_transformation="log1p"
     )
 
@@ -279,7 +278,6 @@ def test_different_activations(rng_key):
             latent_dim=latent_dim,
             hidden_dims=hidden_dims,
             activation=activation,
-            output_activation="softplus",
             input_transformation="log1p"
         )
         

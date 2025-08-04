@@ -104,7 +104,6 @@ class ModelConfig:
     vae_latent_dim: int = 3
     vae_hidden_dims: Optional[List[int]] = None
     vae_activation: Optional[str] = None
-    vae_output_activation: Optional[str] = None
     vae_input_transformation: Optional[str] = None
     
     # VAE prior configuration
@@ -238,11 +237,9 @@ class ModelConfig:
         if self.inference_method == "vae":
             # Set default VAE parameters if not provided
             if self.vae_hidden_dims is None:
-                self.vae_hidden_dims = [256, 256]  # Default: 2 hidden layers of 256
+                self.vae_hidden_dims = [128, 128, 128]
             if self.vae_activation is None:
-                self.vae_activation = "gelu"
-            if self.vae_output_activation is None:
-                self.vae_output_activation = "softplus"
+                self.vae_activation = "relu"
             
             # Validate VAE prior configuration
             valid_prior_types = {"standard", "decoupled"}
