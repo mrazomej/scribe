@@ -84,140 +84,133 @@ def run_scribe(
     """
     Unified interface for SCRIBE inference with parameterization unification.
 
-    This function provides a single entry point for both SVI and MCMC inference
-    methods, treating unconstrained as just another parameterization. This
-    means:
+    This function provides a single entry point for SVI, MCMC, and VAE inference
+    methods, treating "unconstrained" as just another parameterization. 
 
-    - You can run MCMC with any parameterization (standard, linked, odds_ratio,
-      unconstrained)
-    - You can run SVI with any parameterization (though guides may not exist for
-      all yet)
-    - The interface is completely unified and consistent
+    Supported inference methods:
+        - "svi": Stochastic Variational Inference
+        - "mcmc": Markov Chain Monte Carlo
+        - "vae": Variational Autoencoder (VAE/dpVAE)
+
+    Supported parameterizations:
+        - "standard": Beta/LogNormal for p/r
+        - "linked": Beta/LogNormal for p/mu
+        - "odds_ratio": BetaPrime/LogNormal for phi/mu
+        - "unconstrained": Normal on transformed parameters
 
     Parameters
     ----------
     counts : Union[jnp.ndarray, AnnData]
-        Count matrix or AnnData object containing single-cell RNA-seq counts
+        Count matrix or AnnData object containing single-cell RNA-seq counts.
     inference_method : str, default="svi"
-        Inference method to use ("svi" or "mcmc")
+        Inference method to use ("svi", "mcmc", or "vae").
 
-    Model Configuration:
+    Model Configuration
     -------------------
     zero_inflated : bool, default=False
-        Whether to use zero-inflated model (ZINB vs NB)
+        Use zero-inflated model (ZINB vs NB).
     variable_capture : bool, default=False
-        Whether to model variable capture probability
+        Model variable capture probability.
     mixture_model : bool, default=False
-        Whether to use mixture model for cell heterogeneity
+        Use mixture model for cell heterogeneity.
     n_components : Optional[int], default=None
-        Number of mixture components (required if mixture_model=True)
+        Number of mixture components (required if mixture_model=True).
+    component_specific_params : bool, default=False
+        Whether mixture components have their own parameters.
 
-    Parameterization:
+    Parameterization
     ----------------
     parameterization : str, default="standard"
-        Model parameterization to use: - "standard": Beta/Gamma or LogNormal
-        distributions for p/r - "linked": Beta/LogNormal for p/mu parameters -
-        "odds_ratio": BetaPrime/LogNormal for phi/mu parameters -
-        "unconstrained": Normal distributions on transformed parameters
+        Model parameterization ("standard", "linked", "odds_ratio",
+        "unconstrained").
 
-    Data Processing:
+    Data Processing
     ---------------
     cells_axis : int, default=0
-        Axis for cells in count matrix (0=rows, 1=columns)
+        Axis for cells in count matrix (0=rows, 1=columns).
     layer : Optional[str], default=None
-        Layer in AnnData to use for counts. If None, uses .X
+        Layer in AnnData to use for counts. If None, uses .X.
 
-    SVI Parameters:
+    SVI Parameters
     --------------
     optimizer : Optional[Any], default=None
-        Optimizer for variational inference (defaults to Adam)
+        Optimizer for variational inference (defaults to Adam).
     loss : Optional[Any], default=None
         Loss function for variational inference (defaults to
-        TraceMeanField_ELBO)
+        TraceMeanField_ELBO).
     n_steps : int, default=100_000
-        Number of optimization steps
+        Number of optimization steps.
     batch_size : Optional[int], default=None
-        Mini-batch size. If None, uses full dataset
+        Mini-batch size. If None, uses full dataset.
     stable_update : bool, default=True
-        Whether to use numerically stable parameter updates
+        Use numerically stable parameter updates.
 
-    MCMC Parameters:
+    MCMC Parameters
     ---------------
     n_samples : int, default=2_000
-        Number of MCMC samples
+        Number of MCMC samples.
     n_warmup : int, default=1_000
-        Number of warmup samples
+        Number of warmup samples.
     n_chains : int, default=1
-        Number of parallel chains
+        Number of parallel chains.
     mcmc_kwargs : Optional[Dict[str, Any]], default=None
-        Keyword arguments for the MCMC kernel (e.g., target_accept_prob,
-        max_tree_depth)
+        Additional keyword arguments for the MCMC kernel.
 
-    Distribution Configuration:
-    --------------------------
-    r_distribution : Optional[Type[dist.Distribution]]
-        Distribution for r parameter (when needed)
-    mu_distribution : Optional[Type[dist.Distribution]]
-        Distribution for mu parameter (when needed)
-
-    Prior Configuration:
+    Prior Configuration
     -------------------
     r_prior, p_prior, gate_prior, p_capture_prior : Optional[tuple]
-        Prior parameters as (param1, param2) tuples
-            - For unconstrained: (loc, scale) for Normal distributions on
-              transformed
-            parameters - For constrained: Parameters for respective
-            distributions (Beta, Gamma, etc.)
+        Prior parameters as (param1, param2) tuples. - For unconstrained: (loc,
+        scale) for Normal on transformed parameters. - For constrained:
+        Parameters for respective distributions (Beta, Gamma, etc.).
     mixing_prior : Optional[Any]
-        Prior for mixture components (array-like or scalar)
+        Prior for mixture components (array-like or scalar).
     mu_prior, phi_prior, phi_capture_prior : Optional[tuple]
-        Additional prior parameters for specific parameterizations
+        Additional prior parameters for specific parameterizations.
 
-    VAE Parameters:
+    VAE Parameters
     --------------
     vae_latent_dim : int, default=3
-        Dimension of the VAE latent space
+        Dimension of the VAE latent space.
     vae_hidden_dims : Optional[list], default=None
-        List of hidden layer dimensions (default: [256, 256])
+        List of hidden layer dimensions (default: [256, 256]).
     vae_activation : Optional[str], default=None
-        Activation function name for VAE (default: "gelu")
+        Activation function name for VAE (default: "gelu").
     vae_prior_type : str, default="standard"
-        Type of VAE prior to use: - "standard": Standard normal prior -
-        "decoupled": Decoupled prior using normalizing flows
+        Type of VAE prior ("standard" or "decoupled").
     vae_prior_hidden_dims : Optional[List[int]], default=None
         Hidden layer dimensions for decoupled prior coupling layers (default:
-        [64, 64])
+        [64, 64]).
     vae_prior_num_layers : Optional[int], default=None
-        Number of coupling layers for decoupled prior (default: 2)
+        Number of coupling layers for decoupled prior (default: 2).
     vae_prior_activation : Optional[str], default=None
         Activation function for decoupled prior coupling layers (default:
-        "relu")
+        "relu").
     vae_prior_mask_type : str, default="alternating"
         Mask type for decoupled prior coupling layers ("alternating" or
-        "checkerboard")
+        "checkerboard").
 
-    General:
+    General
     -------
     seed : int, default=42
-        Random seed for reproducibility
+        Random seed for reproducibility.
 
     Returns
     -------
-    Union[ScribeSVIResults, ScribeMCMCResults]
-        Results object containing inference results and diagnostics
+    Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
+        Results object containing inference results and diagnostics.
 
     Raises
     ------
     ValueError
-        If configuration is invalid or required parameters are missing
+        If configuration is invalid or required parameters are missing.
 
     Examples
     --------
-    # SVI with standard parameterization results = run_scribe(
-        counts, inference_method="svi", parameterization="standard")
+    # SVI with standard parameterization results = run_scribe(counts,
+    inference_method="svi", parameterization="standard")
 
-    # MCMC with unconstrained parameterization results = run_scribe(
-        counts, inference_method="mcmc", parameterization="unconstrained")
+    # MCMC with unconstrained parameterization results = run_scribe(counts,
+    inference_method="mcmc", parameterization="unconstrained")
 
     # SVI with odds_ratio parameterization for ZINBVCP mixture model results =
     run_scribe(
@@ -375,6 +368,10 @@ def run_scribe(
 
     return results
 
+# ------------------------------------------------------------------------------
+# SVI Inference
+# ------------------------------------------------------------------------------
+
 
 def _run_svi_inference(
     model_config: ModelConfig,
@@ -420,6 +417,11 @@ def _run_svi_inference(
     )
 
 
+# ------------------------------------------------------------------------------
+# MCMC Inference
+# ------------------------------------------------------------------------------
+
+
 def _run_mcmc_inference(
     model_config: ModelConfig,
     count_data: jnp.ndarray,
@@ -458,6 +460,11 @@ def _run_mcmc_inference(
     )
 
 
+# ------------------------------------------------------------------------------
+# VAE Inference
+# ------------------------------------------------------------------------------
+
+
 def _run_vae_inference(
     model_config: ModelConfig,
     count_data: jnp.ndarray,
@@ -489,7 +496,8 @@ def _run_vae_inference(
     if loss is not None:
         inference_kwargs["loss"] = loss
 
-    # Use SVI engine for VAE (VAE is essentially SVI with neural network components)
+    # Use SVI engine for VAE (VAE is essentially SVI with neural network
+    # components)
     svi_results = SVIInferenceEngine.run_inference(**inference_kwargs)
 
     # Create base SVI results
