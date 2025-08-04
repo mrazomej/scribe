@@ -36,6 +36,7 @@ _model_module_cache = {}
 
 # ------------------------------------------------------------------------------
 
+
 def get_model_and_guide(
     model_type: str,
     parameterization: str = "standard",
@@ -43,38 +44,37 @@ def get_model_and_guide(
     prior_type: Optional[str] = None,
 ) -> Tuple[Callable, Optional[Callable]]:
     """
-    Get model and guide functions for a specified model type and
-    parameterization.
+    Retrieve the model and guide functions for a specified model type,
+    parameterization, inference method, and (optionally) prior type.
 
-    This function dynamically loads the required parameterization module from
-    `scribe.models` and retrieves the corresponding model and guide functions
-    based on a naming convention (e.g., `nbdm_model`, `nbdm_guide`).
+    This function dynamically imports the appropriate parameterization module
+    from `scribe.models` and locates the model and guide functions according to
+    a naming convention. For VAE inference, the returned function is a factory
+    that produces both model and guide; for SVI, both model and guide functions
+    are returned separately.
 
     Parameters
     ----------
     model_type : str
-        The type of model to retrieve functions for. Examples: "nbdm",
-        "zinb_mix".
+        The type of model to retrieve (e.g., "nbdm", "zinb_mix").
     parameterization : str, default="standard"
-        The parameterization module to load from (e.g., "standard",
-        "unconstrained").
+        The parameterization module to use (e.g., "standard", "unconstrained").
     inference_method : str, default="svi"
-        The inference method to use. Examples: "svi", "vae".
-    prior_type : str, default=None
-        Exclusively used for VAE inference. The prior type to use.
-        Examples: "standard", "decoupled".
+        The inference method to use ("svi" or "vae").
+    prior_type : str, optional
+        The prior type to use for VAE inference ("standard" or "decoupled").
 
     Returns
     -------
     Tuple[Callable, Optional[Callable]]
-        A tuple containing (model_function, guide_function). The guide function
-        is None for unconstrained parameterizations.
+        A tuple containing the model function and the guide function (or None if
+        not applicable).
 
     Raises
     ------
     ValueError
-        If the parameterization module or the model/guide functions cannot be
-        found.
+        If the parameterization, inference method, prior type, or required
+        functions are not found.
     """
     # Check if parameterization is supported
     if parameterization not in SUPPORTED_PARAMETERIZATIONS:
@@ -150,7 +150,8 @@ def get_model_and_guide(
         guide_fn = getattr(module, guide_name, None)
         if guide_fn is None:
             raise ValueError(
-                f"Guide function '{guide_name}' not found in module '{module_name}'"
+                f"Guide function '{guide_name}' "
+                f"not found in module '{module_name}'"
             )
         return model_fn, guide_fn
 
