@@ -90,42 +90,34 @@ def get_model_and_guide(
             f"Supported inference methods are: {SUPPORTED_INFERENCE_METHODS}"
         )
 
-    # Dynamically import the parameterization module
-    if inference_method == "svi":
-        module_name = f"{parameterization}"
-    elif inference_method == "vae":
-        if prior_type == "standard":
-            module_name = f"vae_{parameterization}"
-        elif prior_type == "decoupled":
-            module_name = f"dpvae_{parameterization}"
-        else:
-            raise ValueError(
-                f"Unsupported prior type: {prior_type}. "
-                f"Supported prior types are: {SUPPORTED_PRIOR_TYPES}"
-            )
-
-    try:
-        module = importlib.import_module(f".{module_name}", "scribe.models")
-    except ImportError as e:
-        raise ValueError(
-            f"Could not import parameterization module '{module_name}': {e}"
-        )
-
-    # Determine the function names based on convention
+    # For VAE inference, use the centralized factory
     if inference_method == "vae":
-        if prior_type == "standard":
-            model_name = f"make_{model_type}_vae_model_and_guide"
-            guide_name = None  # Factory function returns both model and guide
-        elif prior_type == "decoupled":
-            model_name = f"make_{model_type}_dpvae_model_and_guide"
-            guide_name = None  # Factory function returns both model and guide
-        else:
-            raise ValueError(
-                f"Unsupported prior type: {prior_type}. "
-                f"Supported prior types are: {SUPPORTED_PRIOR_TYPES}"
+        from .vae_core import make_vae_model_and_guide
+        
+        # Create a factory function that calls the centralized factory
+        def vae_factory(n_genes, model_config):
+            return make_vae_model_and_guide(
+                model_type=model_type,
+                n_genes=n_genes,
+                model_config=model_config,
+                parameterization=parameterization,
+                prior_type=prior_type or "standard"
             )
+        
+        return vae_factory, None
     else:
-        # Standard naming convention
+        # For non-VAE models, use the standard registry
+        # Dynamically import the parameterization module
+        module_name = f"{parameterization}"
+        
+        try:
+            module = importlib.import_module(f".{module_name}", "scribe.models")
+        except ImportError as e:
+            raise ValueError(
+                f"Could not import parameterization module '{module_name}': {e}"
+            )
+
+        # Determine the function names based on convention
         if model_type.endswith("_mix"):
             base_type = model_type.replace("_mix", "")
             model_name = f"{base_type}_mixture_model"
@@ -134,17 +126,14 @@ def get_model_and_guide(
             model_name = f"{model_type}_model"
             guide_name = f"{model_type}_guide"
 
-    # Retrieve the functions from the module
-    model_fn = getattr(module, model_name, None)
-    if model_fn is None:
-        raise ValueError(
-            f"Model function '{model_name}' not found in module '{module_name}'"
-        )
+        # Retrieve the functions from the module
+        model_fn = getattr(module, model_name, None)
+        if model_fn is None:
+            raise ValueError(
+                f"Model function '{model_name}' "
+                f"not found in module '{module_name}'"
+            )
 
-    # For VAE inference, the factory function returns both model and guide
-    if inference_method == "vae":
-        return model_fn, None
-    else:
         # Guide functions exist for all parameterizations including
         # unconstrained
         guide_fn = getattr(module, guide_name, None)

@@ -13,273 +13,12 @@ from typing import Dict, Optional
 
 from .model_config import ModelConfig
 from ..vae.architectures import (
-    create_encoder,
-    create_decoder,
     Encoder,
     Decoder,
     VAE,
+    DecoupledPrior,
+    DecoupledPriorDistribution,
 )
-
-
-# ------------------------------------------------------------------------------
-# VAE Model/Guide Factory Functions
-# ------------------------------------------------------------------------------
-
-
-def make_nbdm_vae_model_and_guide(
-    n_genes: int,
-    model_config: ModelConfig,
-):
-    """
-    Construct and return VAE model and guide functions for the Negative
-    Binomial-Dirichlet Multinomial (NBDM) model, reusing the same encoder and
-    decoder modules throughout the SVI optimization.
-
-    This factory function instantiates the encoder and decoder neural network
-    modules only once, using the provided model configuration and number of
-    genes. It then returns two functions: a model and a guide, each of which
-    accepts the number of cells, number of genes, model configuration, and
-    optionally count data and batch size. These returned functions internally
-    use the pre-created encoder and decoder modules, ensuring that the neural
-    network parameters are not re-initialized at every SVI step, which is
-    important for correct and efficient variational inference.
-
-    Parameters
-    ----------
-    n_genes : int
-        Number of genes (input dimension for encoder/decoder).
-    model_config : ModelConfig
-        Configuration object specifying VAE architecture and model
-        hyperparameters.
-
-    Returns
-    -------
-    configured_model : Callable
-        A function implementing the NBDM VAE model, using the pre-created
-        decoder.
-    configured_guide : Callable
-        A function implementing the NBDM VAE guide, using the pre-created
-        encoder.
-    """
-    # Create the modules once
-    decoder = create_decoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-        standardize_mean=(
-            model_config.standardize_mean
-            if hasattr(model_config, "standardize_mean")
-            else None
-        ),
-        standardize_std=(
-            model_config.standardize_std
-            if hasattr(model_config, "standardize_std")
-            else None
-        ),
-    )
-
-    encoder = create_encoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-        standardize_mean=(
-            model_config.standardize_mean
-            if hasattr(model_config, "standardize_mean")
-            else None
-        ),
-        standardize_std=(
-            model_config.standardize_std
-            if hasattr(model_config, "standardize_std")
-            else None
-        ),
-    )
-
-    # Return functions that use the pre-created modules
-    def configured_model(
-        n_cells, n_genes, model_config, counts=None, batch_size=None
-    ):
-        """
-        Model function for the NBDM VAE, using the shared decoder module.
-
-        Parameters
-        ----------
-        n_cells : int
-            Number of cells in the dataset.
-        n_genes : int
-            Number of genes.
-        model_config : ModelConfig
-            Model configuration object.
-        counts : Optional[jnp.ndarray]
-            Observed count data, if available.
-        batch_size : Optional[int]
-            Batch size for mini-batch training, if applicable.
-
-        Returns
-        -------
-        None
-        """
-        return nbdm_vae_model(
-            n_cells, n_genes, model_config, decoder, counts, batch_size
-        )
-
-    def configured_guide(
-        n_cells, n_genes, model_config, counts=None, batch_size=None
-    ):
-        """
-        Guide function for the NBDM VAE, using the shared encoder module.
-
-        Parameters
-        ----------
-        n_cells : int
-            Number of cells in the dataset.
-        n_genes : int
-            Number of genes.
-        model_config : ModelConfig
-            Model configuration object.
-        counts : Optional[jnp.ndarray]
-            Observed count data, if available.
-        batch_size : Optional[int]
-            Batch size for mini-batch training, if applicable.
-
-        Returns
-        -------
-        None
-        """
-        return nbdm_vae_guide(
-            n_cells, n_genes, model_config, encoder, counts, batch_size
-        )
-
-    return configured_model, configured_guide
-
-
-def make_zinb_vae_model_and_guide(
-    n_genes: int,
-    model_config: ModelConfig,
-):
-    """
-    Construct and return VAE model and guide functions for the Zero-Inflated
-    Negative Binomial (ZINB) model, reusing the same encoder and decoder modules
-    throughout the SVI optimization.
-
-    This factory function instantiates the encoder and decoder neural network
-    modules only once, using the provided model configuration and number of
-    genes. It then returns two functions: a model and a guide, each of which
-    accepts the number of cells, number of genes, model configuration, and
-    optionally count data and batch size. These returned functions internally
-    use the pre-created encoder and decoder modules, ensuring that the neural
-    network parameters are not re-initialized at every SVI step, which is
-    important for correct and efficient variational inference.
-
-    Parameters
-    ----------
-    n_genes : int
-        Number of genes (input dimension for encoder/decoder).
-    model_config : ModelConfig
-        Configuration object specifying VAE architecture and model
-        hyperparameters.
-
-    Returns
-    -------
-    configured_model : Callable
-        A function implementing the ZINB VAE model, using the pre-created
-        decoder.
-    configured_guide : Callable
-        A function implementing the ZINB VAE guide, using the pre-created
-        encoder.
-    """
-    # Create the modules once
-    decoder = create_decoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-        standardize_mean=(
-            model_config.standardize_mean
-            if hasattr(model_config, "standardize_mean")
-            else None
-        ),
-        standardize_std=(
-            model_config.standardize_std
-            if hasattr(model_config, "standardize_std")
-            else None
-        ),
-    )
-
-    encoder = create_encoder(
-        input_dim=n_genes,
-        latent_dim=model_config.vae_latent_dim,
-        hidden_dims=model_config.vae_hidden_dims,
-        activation=model_config.vae_activation,
-        standardize_mean=(
-            model_config.standardize_mean
-            if hasattr(model_config, "standardize_mean")
-            else None
-        ),
-        standardize_std=(
-            model_config.standardize_std
-            if hasattr(model_config, "standardize_std")
-            else None
-        ),
-    )
-
-    # Return functions that use the pre-created modules
-    def configured_model(
-        n_cells, n_genes, model_config, counts=None, batch_size=None
-    ):
-        """
-        Model function for the ZINB VAE, using the shared decoder module.
-
-        Parameters
-        ----------
-        n_cells : int
-            Number of cells in the dataset.
-        n_genes : int
-            Number of genes.
-        model_config : ModelConfig
-            Model configuration object.
-        counts : Optional[jnp.ndarray]
-            Observed count data, if available.
-        batch_size : Optional[int]
-            Batch size for mini-batch training, if applicable.
-
-        Returns
-        -------
-        None
-        """
-        return zinb_vae_model(
-            n_cells, n_genes, model_config, decoder, counts, batch_size
-        )
-
-    def configured_guide(
-        n_cells, n_genes, model_config, counts=None, batch_size=None
-    ):
-        """
-        Guide function for the ZINB VAE, using the shared encoder module.
-
-        Parameters
-        ----------
-        n_cells : int
-            Number of cells in the dataset.
-        n_genes : int
-            Number of genes.
-        model_config : ModelConfig
-            Model configuration object.
-        counts : Optional[jnp.ndarray]
-            Observed count data, if available.
-        batch_size : Optional[int]
-            Batch size for mini-batch training, if applicable.
-
-        Returns
-        -------
-        None
-        """
-        return zinb_vae_guide(
-            n_cells, n_genes, model_config, encoder, counts, batch_size
-        )
-
-    return configured_model, configured_guide
 
 
 # ------------------------------------------------------------------------------
@@ -619,6 +358,192 @@ def zinb_vae_guide(
             # Sample from variational distribution
             numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
 
+
+# ------------------------------------------------------------------------------
+# dpVAE Model Functions (for decoupled prior)
+# ------------------------------------------------------------------------------
+
+
+def nbdm_dpvae_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    decoder: Decoder,
+    decoupled_prior: DecoupledPrior,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Generative model for NBDM dpVAE.
+
+    KEY DIFFERENCE: Uses DecoupledPriorDistribution as the prior for z.
+    """
+    # Sample global parameters
+    p = numpyro.sample("p", dist.Beta(1.0, 1.0))
+
+    # Register the decoder and decoupled prior as NumPyro modules
+    decoder_module = nnx_module("decoder", decoder)
+    decoupled_prior_module = nnx_module("decoupled_prior", decoupled_prior)
+
+    # Create the decoupled prior distribution
+    base_distribution = dist.Normal(
+        jnp.zeros(model_config.vae_latent_dim),
+        jnp.ones(model_config.vae_latent_dim),
+    ).to_event(1)
+    decoupled_prior_dist = DecoupledPriorDistribution(
+        decoupled_prior=decoupled_prior_module,
+        base_distribution=base_distribution,
+    )
+
+    # Sample latent variables and generate observations
+    if counts is not None:
+        if batch_size is None:
+            with numpyro.plate("cells", n_cells):
+                # Sample z from decoupled prior (KEY DIFFERENCE from standard
+                # VAE)
+                z = numpyro.sample("z", decoupled_prior_dist)
+
+                # Decode z to get r parameters
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
+
+                # Define base distribution with VAE-generated r
+                base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+                numpyro.sample("counts", base_dist, obs=counts)
+        else:
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                # Sample z from decoupled prior
+                z = numpyro.sample("z", decoupled_prior_dist)
+
+                # Decode z to get r parameters
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
+
+                # Sample observed counts
+                batch_counts = counts[idx] if counts is not None else None
+                numpyro.sample(
+                    "counts",
+                    dist.NegativeBinomialProbs(r, p).to_event(1),
+                    obs=batch_counts,
+                )
+    else:
+        # Without counts: for prior predictive sampling
+        with numpyro.plate("cells", n_cells):
+            # Sample from latent space prior
+            z = numpyro.sample("z", decoupled_prior_dist)
+
+            # Use decoder to generate r parameters from latent space
+            log_r = numpyro.deterministic("log_r", decoder_module(z))
+            r = numpyro.deterministic("r", jnp.exp(log_r))
+
+            # Define base distribution with VAE-generated r
+            base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+            numpyro.sample("counts", base_dist)
+
+# ------------------------------------------------------------------------------
+# ZINB dpVAE Model
+# ------------------------------------------------------------------------------
+
+
+def zinb_dpvae_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    decoder: Decoder,
+    decoupled_prior: DecoupledPrior,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Generative model for ZINB dpVAE.
+
+    KEY DIFFERENCE: Uses DecoupledPriorDistribution as the prior for z.
+    """
+    # Sample global parameters
+    p = numpyro.sample("p", dist.Beta(1.0, 1.0))
+    gate = numpyro.sample("gate", dist.Beta(1.0, 1.0).expand((n_genes,)))
+
+    # Register the decoder and decoupled prior as NumPyro modules
+    decoder_module = nnx_module("decoder", decoder)
+    decoupled_prior_module = nnx_module("decoupled_prior", decoupled_prior)
+
+    # Create the decoupled prior distribution
+    base_distribution = dist.Normal(
+        jnp.zeros(model_config.vae_latent_dim),
+        jnp.ones(model_config.vae_latent_dim),
+    ).to_event(1)
+    decoupled_prior_dist = DecoupledPriorDistribution(
+        decoupled_prior=decoupled_prior_module,  # Use wrapped module
+        base_distribution=base_distribution,
+    )
+
+    # If observed counts are provided
+    if counts is not None:
+        # If no batching, use a plate over all cells
+        if batch_size is None:
+            with numpyro.plate("cells", n_cells):
+                # Sample from latent space prior
+                z = numpyro.sample("z", decoupled_prior_dist)
+
+                # Use decoder to generate r parameters from latent space
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
+
+                # Construct the base Negative Binomial distribution using r and
+                # p
+                base_dist = dist.NegativeBinomialProbs(r, p)
+                # Construct the zero-inflated distribution using the base NB and
+                # gate
+                zinb = dist.ZeroInflatedDistribution(
+                    base_dist, gate=gate
+                ).to_event(1)
+                # Sample observed counts from the zero-inflated NB distribution
+                numpyro.sample("counts", zinb, obs=counts)
+        else:
+            # If batching, use a plate with subsampling and get indices
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                # Sample from latent space prior
+                z = numpyro.sample("z", decoupled_prior_dist)
+
+                # Use decoder to generate r parameters from latent space
+                log_r = numpyro.deterministic("log_r", decoder_module(z))
+                r = numpyro.deterministic("r", jnp.exp(log_r))
+
+                # Construct the base Negative Binomial distribution using r and
+                # p
+                base_dist = dist.NegativeBinomialProbs(r, p)
+                # Construct the zero-inflated distribution using the base NB and
+                # gate
+                zinb = dist.ZeroInflatedDistribution(
+                    base_dist, gate=gate
+                ).to_event(1)
+                # Sample observed counts for the batch indices
+                numpyro.sample("counts", zinb, obs=counts[idx])
+    else:
+        # If no observed counts, just sample from the prior predictive
+        with numpyro.plate("cells", n_cells):
+            # Sample from latent space prior
+            z = numpyro.sample("z", decoupled_prior_dist)
+
+            # Use decoder to generate r parameters from latent space
+            log_r = numpyro.deterministic("log_r", decoder_module(z))
+            r = numpyro.deterministic("r", jnp.exp(log_r))
+
+            # Construct the base Negative Binomial distribution using r and p
+            base_dist = dist.NegativeBinomialProbs(r, p)
+            # Construct the zero-inflated distribution using the base NB and
+            # gate
+            zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
+                1
+            )
+            # Sample counts (not observed)
+            numpyro.sample("counts", zinb)
+
+# ------------------------------------------------------------------------------
 
 def get_posterior_distributions(
     params: Dict[str, jnp.ndarray],
