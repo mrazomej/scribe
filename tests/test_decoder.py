@@ -34,7 +34,6 @@ def decoder_config():
         latent_dim=3,
         hidden_dims=[64, 32],
         activation="relu",
-        output_activation="softplus",
         input_transformation="log1p"
     )
 
@@ -113,63 +112,6 @@ def test_call_method_consistency(decoder, test_input):
 
 
 # ------------------------------------------------------------------------------
-# Output Activation Tests
-# ------------------------------------------------------------------------------
-
-def test_output_activation_softplus(decoder, test_input):
-    """Test that softplus activation is applied correctly."""
-    # Get the output activation from the decoder
-    output_activation = decoder.config.output_activation
-    assert output_activation == "softplus"
-    
-    # The activation should be applied in the decode method
-    output = decoder.decode(test_input)
-    
-    # Check that outputs are positive (softplus ensures this)
-    assert jnp.all(output >= 0)
-    assert jnp.all(jnp.isfinite(output))
-
-
-def test_different_output_activations(rng_key):
-    """Test decoder with different output activation functions."""
-    input_dim = 10
-    latent_dim = 3
-    hidden_dims = [64, 32]
-    
-    output_activations = ["softplus", "sigmoid", "relu", "tanh"]
-    
-    for output_activation in output_activations:
-        config = VAEConfig(
-            input_dim=input_dim,
-            latent_dim=latent_dim,
-            hidden_dims=hidden_dims,
-            activation="relu",
-            output_activation=output_activation,
-            input_transformation="log1p"
-        )
-        
-        rngs = nnx.Rngs(params=rng_key)
-        decoder = Decoder(config=config, rngs=rngs)
-        
-        # Test input
-        z = jax.random.normal(jax.random.PRNGKey(123), (2, latent_dim))
-        output = decoder(z)
-        
-        assert output.shape == (2, input_dim)
-        assert jnp.all(jnp.isfinite(output))
-        
-        # Check specific activation properties
-        if output_activation == "softplus":
-            assert jnp.all(output >= 0)
-        elif output_activation == "sigmoid":
-            assert jnp.all(output >= 0) and jnp.all(output <= 1)
-        elif output_activation == "relu":
-            assert jnp.all(output >= 0)
-        elif output_activation == "tanh":
-            assert jnp.all(output >= -1) and jnp.all(output <= 1)
-
-
-# ------------------------------------------------------------------------------
 # Activation Function Tests
 # ------------------------------------------------------------------------------
 
@@ -187,7 +129,6 @@ def test_different_activations(rng_key):
             latent_dim=latent_dim,
             hidden_dims=hidden_dims,
             activation=activation,
-            output_activation="softplus",
             input_transformation="log1p"
         )
         
@@ -224,7 +165,6 @@ def test_different_hidden_dims(rng_key):
             latent_dim=latent_dim,
             hidden_dims=hidden_dims,
             activation="relu",
-            output_activation="softplus",
             input_transformation="log1p"
         )
         
@@ -252,7 +192,6 @@ def test_different_latent_dims(rng_key):
             latent_dim=latent_dim,
             hidden_dims=hidden_dims,
             activation="relu",
-            output_activation="softplus",
             input_transformation="log1p"
         )
         
@@ -280,7 +219,6 @@ def test_different_input_dims(rng_key):
             latent_dim=latent_dim,
             hidden_dims=hidden_dims,
             activation="relu",
-            output_activation="softplus",
             input_transformation="log1p"
         )
         
@@ -406,7 +344,6 @@ def test_decoder_symmetry_with_encoder(rng_key):
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation="relu",
-        output_activation="softplus",
         input_transformation="log1p"
     )
     

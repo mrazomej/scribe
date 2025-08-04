@@ -368,13 +368,12 @@ def make_nbdm_dpvae_model_and_guide(
             transformed_data
         )
 
-    # Create the encoder and decoder modules once
+    # Create the modules once
     decoder = create_decoder(
         input_dim=n_genes,
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
-        output_activation=model_config.vae_output_activation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
     )
@@ -474,7 +473,6 @@ def make_zinb_dpvae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
-        output_activation=model_config.vae_output_activation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
     )

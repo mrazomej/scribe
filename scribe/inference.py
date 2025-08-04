@@ -72,7 +72,6 @@ def run_scribe(
     vae_latent_dim: int = 3,
     vae_hidden_dims: Optional[list] = None,
     vae_activation: Optional[str] = None,
-    vae_output_activation: Optional[str] = None,
     # VAE prior configuration (for dpVAE)
     vae_prior_type: str = "standard",
     vae_prior_hidden_dims: Optional[List[int]] = None,
@@ -182,8 +181,6 @@ def run_scribe(
         List of hidden layer dimensions (default: [256, 256])
     vae_activation : Optional[str], default=None
         Activation function name for VAE (default: "gelu")
-    vae_output_activation : Optional[str], default=None
-        Output activation function name for VAE decoder (default: "softplus")
     vae_prior_type : str, default="standard"
         Type of VAE prior to use: - "standard": Standard normal prior -
         "decoupled": Decoupled prior using normalizing flows
@@ -290,7 +287,6 @@ def run_scribe(
                 "vae_latent_dim": vae_latent_dim,
                 "vae_hidden_dims": vae_hidden_dims,
                 "vae_activation": vae_activation,
-                "vae_output_activation": vae_output_activation,
                 "vae_prior_type": vae_prior_type,
                 "vae_prior_hidden_dims": vae_prior_hidden_dims,
                 "vae_prior_num_layers": vae_prior_num_layers,

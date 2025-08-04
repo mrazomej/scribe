@@ -78,8 +78,6 @@ class VAEConfig:
     activation : str, default="relu"
         Name of the activation function to use in hidden layers. Must be a key
         in ACTIVATION_FUNCTIONS.
-    output_activation : str, default="softplus"
-        Name of the activation function to use in the decoder output layer.
     input_transformation : str, default="log1p"
         Name of the transformation to apply to input data before encoding.
         Common choices for count data include "log1p", "log", "sqrt", or
@@ -104,8 +102,6 @@ class VAEConfig:
     # List of hidden layer dimensions
     hidden_dims: List[int] = None
     activation: str = "relu"
-    # Output activation for decoder
-    output_activation: str = "softplus"
     # Input transformation for encoder (default: log1p for scRNA-seq data)
     input_transformation: str = "log1p"
     # Standardization parameters
@@ -320,14 +316,13 @@ class Decoder(nnx.Module):
         """
         # Get activation function
         activation = ACTIVATION_FUNCTIONS[self.config.activation]
-        output_activation = ACTIVATION_FUNCTIONS[self.config.output_activation]
 
         # Decoder forward pass through all hidden layers
         h = z
         for layer in self.decoder_layers:
             h = activation(layer(h))
 
-        # Output layer with configurable activation for r parameters
+        # Output layer (no activation applied)
         output = self.decoder_output(h)
 
         # Apply destandardization if enabled
@@ -464,7 +459,6 @@ def create_encoder(
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation=activation,
-        output_activation="softplus",
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
@@ -482,7 +476,6 @@ def create_decoder(
     latent_dim: int = 3,
     hidden_dims: Optional[List[int]] = None,
     activation: Optional[str] = None,
-    output_activation: Optional[str] = None,
     input_transformation: Optional[str] = None,
     standardize_mean: Optional[jnp.ndarray] = None,
     standardize_std: Optional[jnp.ndarray] = None,
@@ -495,7 +488,6 @@ def create_decoder(
         latent_dim: Dimension of latent space (default: 3)
         hidden_dims: List of hidden layer dimensions (default: [256, 256])
         activation: Activation function (default: gelu)
-        output_activation: Output activation function (default: softplus)
         input_transformation: Input transformation function (default: log1p)
         standardize_mean: Mean values for standardization (default: None)
         standardize_std: Standard deviation values for standardization (default: None)
@@ -505,8 +497,6 @@ def create_decoder(
     """
     if activation is None:
         activation = "relu"
-    if output_activation is None:
-        output_activation = "softplus"
     if input_transformation is None:
         input_transformation = "log1p"
 
@@ -515,7 +505,6 @@ def create_decoder(
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation=activation,
-        output_activation=output_activation,
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
@@ -533,7 +522,6 @@ def create_vae(
     latent_dim: int = 3,
     hidden_dims: Optional[List[int]] = None,
     activation: Optional[str] = None,
-    output_activation: Optional[str] = None,
     input_transformation: Optional[str] = None,
     standardize_mean: Optional[jnp.ndarray] = None,
     standardize_std: Optional[jnp.ndarray] = None,
@@ -546,7 +534,6 @@ def create_vae(
         latent_dim: Dimension of latent space (default: 3)
         hidden_dims: List of hidden layer dimensions (default: [256, 256])
         activation: Activation function (default: gelu)
-        output_activation: Output activation function (default: softplus)
         input_transformation: Input transformation function (default: log1p)
         standardize_mean: Mean values for standardization (default: None)
         standardize_std: Standard deviation values for standardization (default: None)
@@ -556,8 +543,6 @@ def create_vae(
     """
     if activation is None:
         activation = "relu"
-    if output_activation is None:
-        output_activation = "softplus"
     if input_transformation is None:
         input_transformation = "log1p"
 
@@ -566,7 +551,6 @@ def create_vae(
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation=activation,
-        output_activation=output_activation,
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
@@ -1426,7 +1410,6 @@ def create_dpvae(
     latent_dim: int = 3,
     hidden_dims: Optional[List[int]] = None,
     activation: Optional[str] = None,
-    output_activation: Optional[str] = None,
     input_transformation: Optional[str] = None,
     standardize_mean: Optional[jnp.ndarray] = None,
     standardize_std: Optional[jnp.ndarray] = None,
@@ -1453,8 +1436,6 @@ def create_dpvae(
         Hidden layer dimensions for encoder/decoder. If None, uses [256, 256]
     activation : Optional[str], default=None
         Activation function for encoder/decoder. If None, uses "relu"
-    output_activation : Optional[str], default=None
-        Output activation for decoder. If None, uses "softplus"
     input_transformation : Optional[str], default=None
         Input transformation for encoder. If None, uses "log1p"
     standardize_mean : Optional[jnp.ndarray], default=None
@@ -1481,8 +1462,6 @@ def create_dpvae(
         hidden_dims = [256, 256]
     if activation is None:
         activation = "relu"
-    if output_activation is None:
-        output_activation = "softplus"
     if input_transformation is None:
         input_transformation = "log1p"
 
@@ -1500,7 +1479,6 @@ def create_dpvae(
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation=activation,
-        output_activation=output_activation,
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
@@ -1522,7 +1500,6 @@ def create_dpvae(
         latent_dim=latent_dim,
         hidden_dims=hidden_dims,
         activation=activation,
-        output_activation=output_activation,
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,

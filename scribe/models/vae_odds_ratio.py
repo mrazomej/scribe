@@ -68,7 +68,6 @@ def make_nbdm_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
-        output_activation=model_config.vae_output_activation,
     )
 
     encoder = create_encoder(
@@ -184,7 +183,6 @@ def make_zinb_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
-        output_activation=model_config.vae_output_activation,
     )
 
     encoder = create_encoder(

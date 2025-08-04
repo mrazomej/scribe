@@ -196,7 +196,6 @@ class ScribeVAEResults(ScribeSVIResults):
                 latent_dim=self.n_genes,
                 hidden_dims=self.model_config.vae_hidden_dims,
                 activation=self.model_config.vae_activation,
-                output_activation=self.model_config.vae_output_activation,
                 standardize_mean=self.standardize_mean,
                 standardize_std=self.standardize_std,
             )
