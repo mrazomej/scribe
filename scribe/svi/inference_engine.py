@@ -73,13 +73,11 @@ class SVIInferenceEngine:
                 prior_type=model_config.vae_prior_type,
             )
 
-            # For dpVAE models, we need to pass training data to the factory
-            # functions The registry returns factory functions that need to be
-            # called with training data
-            if model_config.vae_prior_type == "decoupled":
-                model, guide = model(
-                    n_genes, model_config, training_data=count_data
-                )
+            # For VAE models, the registry returns factory functions that need
+            # to be called to get the actual model and guide functions
+            if model is not None:
+                # Call the factory function to get the actual model and guide
+                model, guide = model(n_genes, model_config)
         else:
             # For non-VAE models, use the standard registry
             model, guide = get_model_and_guide(

@@ -78,6 +78,8 @@ def run_scribe(
     vae_prior_num_layers: Optional[int] = None,
     vae_prior_activation: Optional[str] = None,
     vae_prior_mask_type: str = "alternating",
+    # VAE data preprocessing
+    vae_standardize: bool = False,
     # General parameters
     seed: int = 42,
 ) -> Any:
@@ -188,6 +190,10 @@ def run_scribe(
     vae_prior_mask_type : str, default="alternating"
         Mask type for decoupled prior coupling layers ("alternating" or
         "checkerboard").
+    vae_standardize : bool, default=False
+        Whether to standardize the count data for VAE models. If True, applies
+        z-standardization to the input data before encoding and reverses it
+        after decoding. Recommended for count data with large dynamic range.
 
     General
     -------
@@ -285,6 +291,7 @@ def run_scribe(
                 "vae_prior_num_layers": vae_prior_num_layers,
                 "vae_prior_activation": vae_prior_activation,
                 "vae_prior_mask_type": vae_prior_mask_type,
+                "vae_standardize": vae_standardize,
             }
         )
 
@@ -513,11 +520,8 @@ def _run_vae_inference(
         prior_params=model_config.get_active_priors(),
     )
 
-    # Compute standardization statistics for dpVAE models
-    standardize_mean = None
-    standardize_std = None
-
-    if model_config.vae_prior_type == "decoupled":
+    # Compute standardization statistics if requested by user
+    if model_config.vae_standardize:
         from scribe.vae.architectures import compute_standardization_stats
 
         # Apply input transformation first (same as encoder)
@@ -525,6 +529,13 @@ def _run_vae_inference(
         standardize_mean, standardize_std = compute_standardization_stats(
             transformed_data
         )
+        
+        # Store standardization parameters in model config
+        model_config.standardize_mean = standardize_mean
+        model_config.standardize_std = standardize_std
+    else:
+        standardize_mean = None
+        standardize_std = None
 
     # Create VAE-specific results without passing the VAE model
     # The VAE model will be reconstructed when needed
