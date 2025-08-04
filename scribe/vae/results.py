@@ -403,7 +403,7 @@ class ScribeVAEResults(ScribeSVIResults):
             # For dpVAE: sample from the learned decoupled prior
             # Get the decoupled prior distribution
             decoupled_prior_dist = (
-                self.vae_model.get_decoupled_prior_distribution()
+                self.vae_model.get_prior_distribution()
             )
 
             # Sample all samples at once
@@ -556,7 +556,7 @@ class ScribeVAEResults(ScribeSVIResults):
         if self.prior_type == "decoupled":
             # Get the decoupled prior distribution
             decoupled_prior_dist = (
-                self.vae_model.get_decoupled_prior_distribution()
+                self.vae_model.get_prior_distribution()
             )
 
             # Sample all samples at once

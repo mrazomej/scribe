@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from flax import nnx
 import numpyro
 from numpyro.distributions.util import validate_sample
+import numpyro.distributions as dist
 from typing import Tuple, Optional, Callable, List, Dict
 from dataclasses import dataclass
 
@@ -419,6 +420,16 @@ class VAE(nnx.Module):
 
         return reconstructed, mean, logvar
 
+    # --------------------------------------------------------------------------
+
+    def get_prior_distribution(self) -> dist.Distribution:
+        """
+        Get the prior distribution for the VAE.
+        """
+        return dist.Normal(
+            jnp.zeros(self.config.latent_dim),
+            jnp.ones(self.config.latent_dim),
+        )
 
 # ------------------------------------------------------------------------------
 # Auxiliary functions
@@ -1372,7 +1383,7 @@ class dpVAE(VAE):
         # Store the decoupled prior
         self.decoupled_prior = decoupled_prior
 
-    def get_decoupled_prior_distribution(self, base_distribution=None):
+    def get_prior_distribution(self, base_distribution=None):
         """
         Create a DecoupledPriorDistribution for use in NumPyro models.
 
@@ -1389,8 +1400,6 @@ class dpVAE(VAE):
         """
         if base_distribution is None:
             # Use multivariate standard normal as default base distribution
-            import numpyro.distributions as dist
-
             base_distribution = dist.Normal(
                 jnp.zeros(self.config.latent_dim),
                 jnp.ones(self.config.latent_dim),
