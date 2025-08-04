@@ -85,29 +85,11 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                # The decoder output is standardized, so we need to de-standardize it
-                log_mu_standardized = numpyro.deterministic(
-                    "log_mu_standardized", decoder_module(z)
+                log_mu = numpyro.deterministic(
+                    "log_mu", decoder_module(z)
                 )
 
-                # De-standardize the output if standardization was used
-                if (
-                    hasattr(decoder_module, "standardize_mean")
-                    and decoder_module.standardize_mean is not None
-                ):
-                    from ..vae.architectures import destandardize_data
-
-                    log_mu = numpyro.deterministic(
-                        "log_mu",
-                        destandardize_data(
-                            log_mu_standardized,
-                            decoder_module.standardize_mean,
-                            decoder_module.standardize_std,
-                        ),
-                    )
-                else:
-                    log_mu = log_mu_standardized
-
+                # Compute mu from log_mu
                 mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
@@ -115,6 +97,7 @@ def nbdm_dpvae_model(
 
                 # Define base distribution with VAE-generated r
                 base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
+                # Sample counts from the base distribution
                 numpyro.sample("counts", base_dist, obs=counts)
         else:
             with numpyro.plate(
@@ -124,35 +107,17 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                # The decoder output is standardized, so we need to de-standardize it
-                log_mu_standardized = numpyro.deterministic(
-                    "log_mu_standardized", decoder_module(z)
+                log_mu = numpyro.deterministic(
+                    "log_mu", decoder_module(z)
                 )
 
-                # De-standardize the output if standardization was used
-                if (
-                    hasattr(decoder_module, "standardize_mean")
-                    and decoder_module.standardize_mean is not None
-                ):
-                    from ..vae.architectures import destandardize_data
-
-                    log_mu = numpyro.deterministic(
-                        "log_mu",
-                        destandardize_data(
-                            log_mu_standardized,
-                            decoder_module.standardize_mean,
-                            decoder_module.standardize_std,
-                        ),
-                    )
-                else:
-                    log_mu = log_mu_standardized
-
+                # Compute mu from log_mu
                 mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
 
-                # Sample observed counts
+                # Sample observed counts from the base distribution
                 batch_counts = counts[idx] if counts is not None else None
                 numpyro.sample(
                     "counts",
@@ -166,28 +131,7 @@ def nbdm_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            # The decoder output is standardized, so we need to de-standardize it
-            log_mu_standardized = numpyro.deterministic(
-                "log_mu_standardized", decoder_module(z)
-            )
-
-            # De-standardize the output if standardization was used
-            if (
-                hasattr(decoder_module, "standardize_mean")
-                and decoder_module.standardize_mean is not None
-            ):
-                from ..vae.architectures import destandardize_data
-
-                log_mu = numpyro.deterministic(
-                    "log_mu",
-                    destandardize_data(
-                        log_mu_standardized,
-                        decoder_module.standardize_mean,
-                        decoder_module.standardize_std,
-                    ),
-                )
-            else:
-                log_mu = log_mu_standardized
+            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
 
             mu = numpyro.deterministic("mu", jnp.exp(log_mu))
 
