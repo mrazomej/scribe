@@ -89,7 +89,7 @@ def test_dpvae_creation(dpvae):
     assert hasattr(dpvae, 'config')
     assert hasattr(dpvae, 'rngs')
     assert hasattr(dpvae, 'decoupled_prior')
-    assert hasattr(dpvae, 'get_decoupled_prior_distribution')
+    assert hasattr(dpvae, 'get_prior_distribution')
 
 
 def test_dpvae_architecture(dpvae, dpvae_config):
@@ -162,23 +162,23 @@ def test_dpvae_forward_pass_eval_mode(dpvae, test_input):
 # Decoupled Prior Distribution Tests
 # ------------------------------------------------------------------------------
 
-def test_get_decoupled_prior_distribution(dpvae):
-    """Test the get_decoupled_prior_distribution method."""
+def test_get_prior_distribution(dpvae):
+    """Test the get_prior_distribution method."""
     # Get distribution with default base distribution
-    distribution = dpvae.get_decoupled_prior_distribution()
+    distribution = dpvae.get_prior_distribution()
     
     assert isinstance(distribution, DecoupledPriorDistribution)
     assert distribution.decoupled_prior == dpvae.decoupled_prior
     assert isinstance(distribution.base_distribution, dist.Normal)
 
 
-def test_get_decoupled_prior_distribution_custom_base(dpvae):
-    """Test the get_decoupled_prior_distribution method with custom base distribution."""
+def test_get_prior_distribution_custom_base(dpvae):
+    """Test the get_prior_distribution method with custom base distribution."""
     # Create custom base distribution
     custom_base = dist.StudentT(df=3.0, loc=0.0, scale=1.0)
     
     # Get distribution with custom base
-    distribution = dpvae.get_decoupled_prior_distribution(custom_base)
+    distribution = dpvae.get_prior_distribution(custom_base)
     
     assert isinstance(distribution, DecoupledPriorDistribution)
     assert distribution.decoupled_prior == dpvae.decoupled_prior
@@ -187,7 +187,7 @@ def test_get_decoupled_prior_distribution_custom_base(dpvae):
 
 def test_decoupled_prior_distribution_sampling(dpvae):
     """Test sampling from the decoupled prior distribution."""
-    distribution = dpvae.get_decoupled_prior_distribution()
+    distribution = dpvae.get_prior_distribution()
     
     key = jax.random.PRNGKey(456)
     sample_shape = (5,)
@@ -204,7 +204,7 @@ def test_decoupled_prior_distribution_sampling(dpvae):
 
 def test_decoupled_prior_distribution_log_prob(dpvae):
     """Test log probability computation for the decoupled prior distribution."""
-    distribution = dpvae.get_decoupled_prior_distribution()
+    distribution = dpvae.get_prior_distribution()
     
     # Generate some test samples
     key = jax.random.PRNGKey(789)

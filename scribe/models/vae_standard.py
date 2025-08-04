@@ -594,9 +594,6 @@ def get_posterior_distributions(
         distributions["mixing_weights"] = mixing_dist
 
     # Get the decoupled prior distribution
-    distributions["z"] = dist.Normal(
-        jnp.zeros(model_config.vae_latent_dim),
-        jnp.ones(model_config.vae_latent_dim),
-    )
+    distributions["z"] = vae_model.get_prior_distribution()
 
     return distributions
