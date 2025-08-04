@@ -50,6 +50,78 @@ INPUT_TRANSFORMATIONS = {
 }
 
 # ------------------------------------------------------------------------------
+# VAEConfig class
+# ------------------------------------------------------------------------------
+
+
+@dataclass
+class VAEConfig:
+    """
+    Configuration dataclass for Variational Autoencoder (VAE) architectures.
+
+    This class encapsulates all hyperparameters and options required to
+    construct a VAE model, including encoder/decoder architecture, activation
+    functions, input/output transformations, and data standardization
+    statistics.
+
+    Attributes
+    ----------
+    input_dim : int
+        The dimensionality of the input data (e.g., number of genes for
+        scRNA-seq).
+    latent_dim : int, default=3
+        The dimensionality of the latent space (number of latent variables).
+    hidden_dims : List[int], optional
+        List specifying the number of units in each hidden layer of the
+        encoder/decoder. If not provided, defaults to two hidden layers of 256
+        units each.
+    activation : str, default="relu"
+        Name of the activation function to use in hidden layers. Must be a key
+        in ACTIVATION_FUNCTIONS.
+    output_activation : str, default="softplus"
+        Name of the activation function to use in the decoder output layer.
+    input_transformation : str, default="log1p"
+        Name of the transformation to apply to input data before encoding.
+        Common choices for count data include "log1p", "log", "sqrt", or
+        "identity".
+    standardize_mean : Optional[jnp.ndarray], default=None
+        Per-feature (e.g., per-gene) mean for z-standardization. If provided,
+        used to standardize input/output.
+    standardize_std : Optional[jnp.ndarray], default=None
+        Per-feature (e.g., per-gene) standard deviation for z-standardization.
+        If provided, used to standardize input/output.
+
+    Notes
+    -----
+    - This configuration is typically passed to VAE model/guide constructors to
+      ensure consistent architecture and preprocessing.
+    - Standardization parameters are optional, but recommended for stable
+      training, especially when using count data with large dynamic range.
+    """
+
+    input_dim: int
+    latent_dim: int = 3
+    # List of hidden layer dimensions
+    hidden_dims: List[int] = None
+    activation: str = "relu"
+    # Output activation for decoder
+    output_activation: str = "softplus"
+    # Input transformation for encoder (default: log1p for scRNA-seq data)
+    input_transformation: str = "log1p"
+    # Standardization parameters
+    standardize_mean: Optional[jnp.ndarray] = None
+    standardize_std: Optional[jnp.ndarray] = None
+
+    def __post_init__(self):
+        """
+        Post-initialization to set default hidden_dims if not provided.
+
+        If hidden_dims is None, sets it to [256, 256] (two hidden layers of 256 units each).
+        """
+        if self.hidden_dims is None:
+            self.hidden_dims = [256, 256]
+
+# ------------------------------------------------------------------------------
 # Standardization functions
 # ------------------------------------------------------------------------------
 
@@ -72,6 +144,7 @@ def compute_standardization_stats(
     """
     return jnp.mean(data, axis=0), jnp.std(data, axis=0)
 
+# ------------------------------------------------------------------------------
 
 def standardize_data(
     data: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray
@@ -97,6 +170,8 @@ def standardize_data(
         std + 1e-8
     )  # Add small epsilon for numerical stability
 
+# ------------------------------------------------------------------------------
+
 
 def destandardize_data(
     data: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray
@@ -119,34 +194,6 @@ def destandardize_data(
         Destandardized data of same shape as input
     """
     return data * (std + 1e-8) + mean
-
-
-# ------------------------------------------------------------------------------
-# VAEConfig class
-# ------------------------------------------------------------------------------
-
-
-@dataclass
-class VAEConfig:
-    """Configuration for VAE architecture."""
-
-    input_dim: int
-    latent_dim: int = 3
-    # List of hidden layer dimensions
-    hidden_dims: List[int] = None
-    activation: str = "relu"
-    # Output activation for decoder
-    output_activation: str = "softplus"
-    # Input transformation for encoder (default: log1p for scRNA-seq data)
-    input_transformation: str = "log1p"
-    # Standardization parameters
-    standardize_mean: Optional[jnp.ndarray] = None
-    standardize_std: Optional[jnp.ndarray] = None
-
-    def __post_init__(self):
-        if self.hidden_dims is None:
-            # Default: 2 hidden layers of 256
-            self.hidden_dims = [256, 256]
 
 
 # ------------------------------------------------------------------------------
