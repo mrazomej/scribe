@@ -112,6 +112,13 @@ class ModelConfig:
     vae_prior_hidden_dims: Optional[List[int]] = None  # For decoupled prior
     vae_prior_activation: Optional[str] = None  # For decoupled prior
     vae_prior_mask_type: str = "alternating"  # For decoupled prior
+    
+    # VAE data preprocessing
+    vae_standardize: bool = False  # Whether to standardize input data
+    
+    # VAE standardization parameters (computed from data)
+    standardize_mean: Optional[jnp.ndarray] = None
+    standardize_std: Optional[jnp.ndarray] = None
 
     def validate(self):
         """Validate configuration parameters."""

@@ -68,6 +68,16 @@ def make_nbdm_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     encoder = create_encoder(
@@ -75,6 +85,16 @@ def make_nbdm_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     # Return functions that use the pre-created modules
@@ -183,6 +203,16 @@ def make_zinb_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     encoder = create_encoder(
@@ -190,6 +220,16 @@ def make_zinb_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     # Return functions that use the pre-created modules

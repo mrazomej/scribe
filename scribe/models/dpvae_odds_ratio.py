@@ -261,12 +261,22 @@ def make_nbdm_dpvae_model_and_guide(
     FIXED: Construct and return dpVAE model and guide functions for NBDM model
     with odds ratio parameterization.
     """
-    # Create the encoder and decoder modules once
+    # Create the modules once
     decoder = create_decoder(
         input_dim=n_genes,
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     encoder = create_encoder(
@@ -274,13 +284,29 @@ def make_nbdm_dpvae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     # Create the decoupled prior module
     rngs = nnx.Rngs(params=jax.random.PRNGKey(42))
+    
+    # Ensure num_layers has a default value
+    num_layers = model_config.vae_prior_num_layers
+    if num_layers is None:
+        num_layers = 2  # Default value
+    
     decoupled_prior = DecoupledPrior(
         latent_dim=model_config.vae_latent_dim,
-        num_layers=model_config.vae_prior_num_layers,
+        num_layers=num_layers,
         hidden_dims=model_config.vae_prior_hidden_dims,
         rngs=rngs,
         activation=model_config.vae_prior_activation,
@@ -331,12 +357,22 @@ def make_zinb_dpvae_model_and_guide(
     FIXED: Construct and return dpVAE model and guide functions for ZINB model
     with odds ratio parameterization.
     """
-    # Create the encoder and decoder modules once
+    # Create the modules once
     decoder = create_decoder(
         input_dim=n_genes,
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     encoder = create_encoder(
@@ -344,6 +380,16 @@ def make_zinb_dpvae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     # Create the decoupled prior module

@@ -67,6 +67,16 @@ def make_nbdm_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     encoder = create_encoder(
@@ -74,6 +84,16 @@ def make_nbdm_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     # Return functions that use the pre-created modules
@@ -175,6 +195,16 @@ def make_zinb_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     encoder = create_encoder(
@@ -182,6 +212,16 @@ def make_zinb_vae_model_and_guide(
         latent_dim=model_config.vae_latent_dim,
         hidden_dims=model_config.vae_hidden_dims,
         activation=model_config.vae_activation,
+        standardize_mean=(
+            model_config.standardize_mean
+            if hasattr(model_config, "standardize_mean")
+            else None
+        ),
+        standardize_std=(
+            model_config.standardize_std
+            if hasattr(model_config, "standardize_std")
+            else None
+        ),
     )
 
     # Return functions that use the pre-created modules
@@ -346,7 +386,7 @@ def nbdm_vae_guide(
     Mean-field variational guide for the VAE-based NBDM model.
     """
     # Define guide parameters for p
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
 
     # Register p_alpha as a variational parameter with positivity constraint
     p_alpha = numpyro.param(
@@ -578,6 +618,7 @@ def zinb_vae_guide(
 
             # Sample from variational distribution
             numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+
 
 def get_posterior_distributions(
     params: Dict[str, jnp.ndarray],
