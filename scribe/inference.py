@@ -11,8 +11,6 @@ from typing import (
     Optional,
     Dict,
     Any,
-    Type,
-    Callable,
     TYPE_CHECKING,
     List,
 )
@@ -21,7 +19,6 @@ if TYPE_CHECKING:
     from anndata import AnnData
 
 import jax.numpy as jnp
-import numpyro.distributions as dist
 
 # Import shared components
 from .core import InputProcessor
