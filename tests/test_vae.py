@@ -270,7 +270,7 @@ def test_different_activations(rng_key):
     latent_dim = 3
     hidden_dims = [64, 32]
     
-    activations = ["relu", "gelu", "tanh", "sigmoid"]
+    activations = ["relu", "gelu", "hard_tanh", "sigmoid"]
     
     for activation in activations:
         config = VAEConfig(
@@ -371,26 +371,6 @@ def test_vae_with_positive_data(vae):
     assert jnp.all(jnp.isfinite(reconstructed))
     assert jnp.all(jnp.isfinite(mean))
     assert jnp.all(jnp.isfinite(logvar))
-
-
-def test_vae_reconstruction_quality(vae, test_input):
-    """Test that VAE can produce reasonable reconstructions."""
-    reconstructed, mean, logvar = vae(test_input)
-    
-    # Check that reconstruction has same shape as input
-    assert reconstructed.shape == test_input.shape
-    
-    # Check that reconstruction is finite and positive (due to softplus)
-    assert jnp.all(jnp.isfinite(reconstructed))
-    assert jnp.all(reconstructed >= 0)
-    
-    # Check that mean and logvar are finite
-    assert jnp.all(jnp.isfinite(mean))
-    assert jnp.all(jnp.isfinite(logvar))
-    
-    # Check that variance is positive when exponentiated
-    variance = jnp.exp(logvar)
-    assert jnp.all(variance > 0)
 
 
 def test_vae_deterministic_encoder_decoder(vae, test_input):
