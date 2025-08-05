@@ -595,6 +595,7 @@ class ScribeVAEResults(ScribeSVIResults):
         counts: jnp.ndarray,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
+        batch_size: Optional[int] = None,
         store_samples: bool = True,
         canonical: bool = False,
     ) -> Dict:
@@ -626,6 +627,8 @@ class ScribeVAEResults(ScribeSVIResults):
             JAX random number generator key. Default is random.PRNGKey(42).
         n_samples : int, optional
             Number of posterior samples to generate. Default is 100.
+        batch_size : Optional[int], default=None
+            Batch size for processing large datasets
         store_samples : bool, optional
             Whether to store the generated posterior samples in the object.
             Default is True.
@@ -672,7 +675,10 @@ class ScribeVAEResults(ScribeSVIResults):
 
         # Generate latent samples conditioned on data
         posterior_samples["z"] = self.get_latent_samples_conditioned_on_data(
-            counts, n_samples=n_samples, rng_key=rng_key
+            counts,
+            n_samples=n_samples,
+            rng_key=rng_key,
+            batch_size=batch_size,
         )
 
         # Run latent samples through decoder to obtain reconstructed parameters
@@ -1133,3 +1139,159 @@ class ScribeVAEResults(ScribeSVIResults):
             vae_results._original_counts = original_counts
 
         return vae_results
+
+    # --------------------------------------------------------------------------
+    # VAE-specific indexing functionality
+    # --------------------------------------------------------------------------
+
+    def __getitem__(self, index):
+        """
+        Enable indexing of ScribeVAEResults object with VAE decoder
+        modification.
+        
+        This extends the parent indexing to also modify the VAE decoder to
+        output only the selected genes, making all VAE calculations much more
+        manageable.
+        """
+        # First, get the subset using parent indexing
+        subset_results = super().__getitem__(index)
+        
+        # Create a new VAE model with modified decoder
+        subset_results._vae_model = self._create_indexed_vae_model(index)
+        
+        return subset_results
+
+    def _create_indexed_vae_model(self, index):
+        """
+        Create a new VAE model with decoder modified to output only indexed
+        genes.
+        
+        Parameters
+        ----------
+        index : Union[int, slice, list, np.ndarray, jnp.ndarray]
+            Index specifying which genes to keep
+            
+        Returns
+        -------
+        Union[VAE, dpVAE]
+            New VAE model with modified decoder
+        """
+        # Convert index to boolean mask for consistency
+        if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
+            bool_index = index
+        elif isinstance(index, int):
+            bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            bool_index = bool_index.at[index].set(True)
+        elif isinstance(index, slice):
+            indices = jnp.arange(self.n_genes)[index]
+            bool_index = jnp.zeros(self.n_genes, dtype=bool)
+            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
+        elif isinstance(index, (list, np.ndarray, jnp.ndarray)) and not (
+            isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool
+        ):
+            indices = jnp.array(index)
+            bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
+        else:
+            raise TypeError(f"Unsupported index type: {type(index)}")
+        
+        # Get the number of selected genes
+        n_selected_genes = int(bool_index.sum())
+        
+        # Get the original VAE model
+        original_vae = self.vae_model
+        
+        # Create modified decoder
+        modified_decoder = self._create_indexed_decoder(bool_index, n_selected_genes)
+        
+        # Create new VAE config with modified input_dim
+        vae_config = VAEConfig(
+            input_dim=n_selected_genes,  # Modified for subset
+            latent_dim=self.model_config.vae_latent_dim,
+            hidden_dims=self.model_config.vae_hidden_dims,
+            activation=self.model_config.vae_activation,
+            standardize_mean=self.standardize_mean[bool_index] if self.standardize_mean is not None else None,
+            standardize_std=self.standardize_std[bool_index] if self.standardize_std is not None else None,
+        )
+        
+        # Create new VAE with same encoder and prior, but modified decoder
+        if self.prior_type == "decoupled":
+            # For dpVAE, we need to create a new instance with the modified
+            # decoder
+            from .architectures import dpVAE
+            return dpVAE(
+                encoder=original_vae.encoder,
+                decoder=modified_decoder,
+                config=vae_config,
+                decoupled_prior=original_vae.decoupled_prior,
+                rngs=original_vae.rngs,
+            )
+        else:
+            # For standard VAE
+            from .architectures import VAE
+            return VAE(
+                encoder=original_vae.encoder,
+                decoder=modified_decoder,
+                config=vae_config,
+                rngs=original_vae.rngs,
+            )
+
+    def _create_indexed_decoder(self, bool_index, n_selected_genes):
+        """
+        Create a new decoder with output layer modified for gene subset.
+        
+        Parameters
+        ----------
+        bool_index : jnp.ndarray
+            Boolean mask indicating which genes to keep
+        n_selected_genes : int
+            Number of selected genes
+            
+        Returns
+        -------
+        Decoder
+            New decoder with modified output layer
+        """
+        from .architectures import Decoder, VAEConfig
+        
+        # Create a temporary config for the decoder
+        temp_config = VAEConfig(
+            input_dim=n_selected_genes,
+            latent_dim=self.model_config.vae_latent_dim,
+            hidden_dims=self.model_config.vae_hidden_dims,
+            activation=self.model_config.vae_activation,
+            standardize_mean=self.standardize_mean[bool_index] if self.standardize_mean is not None else None,
+            standardize_std=self.standardize_std[bool_index] if self.standardize_std is not None else None,
+        )
+        
+        # Create new decoder with same hidden layers but modified output
+        decoder = Decoder(temp_config, rngs=nnx.Rngs(params=0))
+        
+        # Split decoder to access its state
+        decoder_graph, decoder_state = nnx.split(decoder)
+        
+        # Copy hidden layer parameters from original decoder
+        original_decoder_state = self.params["decoder$params"]
+        
+        # Copy all hidden layer parameters (they remain the same)
+        for key in original_decoder_state:
+            if key.startswith("decoder_layers"):
+                decoder_state[key] = original_decoder_state[key]
+        
+        # Modify the output layer parameters
+        original_kernel = original_decoder_state["decoder_output"]["kernel"]
+        original_bias = original_decoder_state["decoder_output"]["bias"]
+        
+        # Extract subset of weights and bias
+        subset_kernel = original_kernel[:, bool_index]
+        subset_bias = original_bias[bool_index]
+        
+        # Set the modified output layer parameters
+        decoder_state["decoder_output"]["kernel"] = subset_kernel
+        decoder_state["decoder_output"]["bias"] = subset_bias
+        
+        # Merge decoder
+        decoder = nnx.merge(decoder_graph, decoder_state)
+        
+        return decoder
+
+    # --------------------------------------------------------------------------
