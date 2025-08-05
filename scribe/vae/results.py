@@ -649,36 +649,62 @@ class ScribeVAEResults(ScribeSVIResults):
         - If `canonical` is True, the samples will be converted to canonical
           form using the object's internal method.
         """
-        # Get posterior samples (global/cell-level parameters)
-        posterior_samples = super().get_posterior_samples(
-            rng_key=rng_key,
-            n_samples=n_samples,
-            store_samples=store_samples,
+        # Get the guide function
+        _, guide = self.get_model_and_guide()
+
+        if guide is None:
+            raise ValueError(
+                f"Could not find a guide for model '{self.model_type}'."
+            )
+
+        # Prepare base model arguments
+        model_args = {
+            "n_cells": self.n_cells,
+            "n_genes": self.n_genes,
+            "model_config": self.model_config,
+            "encoder": self.vae_model.encoder,
+        }
+
+        # Sample from posterior
+        posterior_samples = sample_variational_posterior(
+            guide, self.params, model_args, rng_key=rng_key, n_samples=n_samples
         )
 
         # Generate latent samples conditioned on data
-        latent_samples = self.get_latent_samples_conditioned_on_data(
+        posterior_samples["z"] = self.get_latent_samples_conditioned_on_data(
             counts, n_samples=n_samples, rng_key=rng_key
         )
 
-        # Store latent samples if requested
-        if store_samples:
-            self.latent_samples = latent_samples
-
-        # Extract decoder from the VAE model
-        decoder = self.vae_model.decoder
-
         # Run latent samples through decoder to obtain reconstructed parameters
-        reconstructed = decoder(latent_samples)
+        decoded_samples = self.vae_model.decoder(posterior_samples["z"])
 
-        # Substitute reconstructed parameters into posterior samples
-        if "r" in posterior_samples:
-            posterior_samples["r"] = reconstructed
-        elif "mu" in posterior_samples:
-            posterior_samples["mu"] = reconstructed
+        # Store decoded samples with right keys
+        if self.model_config.parameterization == "standard":
+            # Get the log-transformed r values
+            posterior_samples["log_r"] = decoded_samples
+            # Get the r values
+            posterior_samples["r"] = jnp.exp(decoded_samples)
+            # Make p samples compatible in shape with r samples
+            posterior_samples["p"] = posterior_samples["p"][:, None]
+        elif self.model_config.parameterization == "linked":
+            # Get the log-transformed mu values
+            posterior_samples["log_mu"] = decoded_samples
+            # Get the mu values
+            posterior_samples["mu"] = jnp.exp(decoded_samples)
+            # Make p samples compatible in shape with r samples
+            posterior_samples["p"] = posterior_samples["p"][:, None]
 
-        # Add latent samples to posterior samples
-        posterior_samples["z"] = latent_samples
+        elif self.model_config.parameterization == "odds_ratio":
+            # Get the log-transformed mu values
+            posterior_samples["log_mu"] = decoded_samples
+            # Get the mu values
+            posterior_samples["mu"] = jnp.exp(decoded_samples)
+            # Make phi samples compatible in shape with r samples
+            posterior_samples["phi"] = posterior_samples["phi"][:, None]
+
+        # Store samples if requested
+        if store_samples:
+            self.posterior_samples = posterior_samples
 
         # Convert to canonical form if requested
         if canonical:
