@@ -477,9 +477,7 @@ def nbvcp_vae_model(
             # Reshape p_capture for broadcasting to (n_cells, n_genes)
             p_capture_reshaped = p_capture[:, None]
             # Compute effective success probability p_hat for each cell/gene
-            p_hat = (
-                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
-            )
+            p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
 
             # Define base distribution with VAE-generated r
             base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
@@ -582,6 +580,7 @@ def nbvcp_vae_guide(
                 "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
             )
 
+
 # ==============================================================================
 # dpVAE Model Functions (for decoupled prior)
 # ==============================================================================
@@ -589,6 +588,7 @@ def nbvcp_vae_guide(
 # ------------------------------------------------------------------------------
 # NBDM dpVAE Model
 # ------------------------------------------------------------------------------
+
 
 def nbdm_dpvae_model(
     n_cells: int,
@@ -670,6 +670,7 @@ def nbdm_dpvae_model(
             # Define base distribution with VAE-generated r
             base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
             numpyro.sample("counts", base_dist)
+
 
 # ------------------------------------------------------------------------------
 # ZINB dpVAE Model
@@ -772,9 +773,11 @@ def zinb_dpvae_model(
             # Sample counts (not observed)
             numpyro.sample("counts", zinb)
 
+
 # ------------------------------------------------------------------------------
 # NBVCP dpVAE Model
 # ------------------------------------------------------------------------------
+
 
 def nbvcp_dpvae_model(
     n_cells: int,
@@ -883,14 +886,11 @@ def nbvcp_dpvae_model(
             # Reshape p_capture for broadcasting to (n_cells, n_genes)
             p_capture_reshaped = p_capture[:, None]
             # Compute effective success probability p_hat for each cell/gene
-            p_hat = (
-                p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
-            )
+            p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
 
             # Define base distribution with VAE-generated r
             base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
             numpyro.sample("counts", base_dist)
-
 
 
 # ==============================================================================
