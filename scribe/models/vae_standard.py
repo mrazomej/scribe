@@ -168,13 +168,13 @@ def nbdm_vae_guide(
     else:
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
-            # Generate dummy data for encoder
-            dummy_data = jnp.zeros((n_cells, n_genes))
-            z_mean, z_logvar = encoder_module(dummy_data)
-            z_std = jnp.exp(0.5 * z_logvar)
-
-            # Sample from variational distribution
-            numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+            # Sample from latent space prior
+            numpyro.sample(
+                "z",
+                dist.Normal(0, 1)
+                .expand([model_config.vae_latent_dim])
+                .to_event(1),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -356,13 +356,13 @@ def zinb_vae_guide(
     else:
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
-            # Generate dummy data for encoder
-            dummy_data = jnp.zeros((n_cells, n_genes))
-            z_mean, z_logvar = encoder_module(dummy_data)
-            z_std = jnp.exp(0.5 * z_logvar)
-
-            # Sample from variational distribution
-            numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+            # Sample from latent space prior
+            numpyro.sample(
+                "z",
+                dist.Normal(0, 1)
+                .expand([model_config.vae_latent_dim])
+                .to_event(1),
+            )
 
 
 # ------------------------------------------------------------------------------
@@ -505,6 +505,7 @@ def nbvcp_vae_guide(
     """
     # Define guide parameters for p
     p_prior_params = model_config.p_param_guide or (1.0, 1.0)
+    p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
 
     # Register p_alpha as a variational parameter with positivity constraint
     p_alpha = numpyro.param(
@@ -566,22 +567,16 @@ def nbvcp_vae_guide(
     else:
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
-            # Generate dummy data for encoder
-            dummy_data = jnp.zeros((n_cells, n_genes))
-            z_mean, z_logvar, p_logalpha, p_logbeta = encoder_module(dummy_data)
-            z_std = jnp.exp(0.5 * z_logvar)
-
-            # Sample from variational distribution
-            numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+            # Sample from latent space prior
+            numpyro.sample(
+                "z",
+                dist.Normal(0, 1)
+                .expand([model_config.vae_latent_dim])
+                .to_event(1),
+            )
 
             # Sample cell-specific capture probability from Beta prior
-            numpyro.sample(
-                "p_capture", 
-                dist.Beta(
-                    jnp.exp(p_logalpha.squeeze(-1)), 
-                    jnp.exp(p_logbeta.squeeze(-1))
-                )
-            )
+            numpyro.sample("p_capture", dist.Beta(*p_capture_prior_params))
 
 
 # ==============================================================================
