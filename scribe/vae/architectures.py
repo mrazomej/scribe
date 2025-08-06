@@ -8,7 +8,7 @@ from flax import nnx
 import numpyro
 from numpyro.distributions.util import validate_sample
 import numpyro.distributions as dist
-from typing import Tuple, Optional, Callable, List, Dict
+from typing import Tuple, Optional, List, Dict, Union
 from dataclasses import dataclass
 
 
@@ -89,6 +89,10 @@ class VAEConfig:
     standardize_std : Optional[jnp.ndarray], default=None
         Per-feature (e.g., per-gene) standard deviation for z-standardization.
         If provided, used to standardize input/output.
+    variable_capture : bool, default=False
+        Whether to use variable capture probability (VCP) model. If True,
+        encoder will output logalpha and logbeta parameters in addition to
+        mean and logvar.
 
     Notes
     -----
@@ -108,15 +112,19 @@ class VAEConfig:
     # Standardization parameters
     standardize_mean: Optional[jnp.ndarray] = None
     standardize_std: Optional[jnp.ndarray] = None
+    # Variable capture indicator
+    variable_capture: bool = False
 
     def __post_init__(self):
         """
         Post-initialization to set default hidden_dims if not provided.
 
-        If hidden_dims is None, sets it to [256, 256] (two hidden layers of 256 units each).
+        If hidden_dims is None, sets it to [256, 256] (two hidden layers of 256
+        units each).
         """
         if self.hidden_dims is None:
             self.hidden_dims = [256, 256]
+
 
 # ------------------------------------------------------------------------------
 # Standardization functions
@@ -141,7 +149,9 @@ def compute_standardization_stats(
     """
     return jnp.mean(data, axis=0), jnp.std(data, axis=0)
 
+
 # ------------------------------------------------------------------------------
+
 
 def standardize_data(
     data: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray
@@ -166,6 +176,7 @@ def standardize_data(
     return (data - mean) / (
         std + 1e-8
     )  # Add small epsilon for numerical stability
+
 
 # ------------------------------------------------------------------------------
 
@@ -274,6 +285,113 @@ class Encoder(nnx.Module):
 
 
 # ------------------------------------------------------------------------------
+# EncoderVCP class (for VCP models)
+# ------------------------------------------------------------------------------
+
+
+class EncoderVCP(Encoder):
+    """Encoder for VAE VCP models."""
+
+    def __init__(self, config: VAEConfig, *, rngs: nnx.Rngs):
+        # Build encoder layers dynamically based on config
+        self.encoder_layers = []
+
+        # First layer: input_dim -> first hidden_dim
+        self.encoder_layers.append(
+            nnx.Linear(config.input_dim, config.hidden_dims[0], rngs=rngs)
+        )
+
+        # Hidden layers
+        # hidden_dims[0] -> hidden_dims[1] -> ... -> hidden_dims[-1]
+        for i in range(len(config.hidden_dims) - 1):
+            self.encoder_layers.append(
+                nnx.Linear(
+                    config.hidden_dims[i], config.hidden_dims[i + 1], rngs=rngs
+                )
+            )
+
+        # Latent space projections (mean and log variance)
+        last_hidden_dim = config.hidden_dims[-1]
+        self.latent_mean = nnx.Linear(
+            last_hidden_dim, config.latent_dim, rngs=rngs
+        )
+        self.latent_logvar = nnx.Linear(
+            last_hidden_dim, config.latent_dim, rngs=rngs
+        )
+
+        # VCP parameters
+        self.vcp_logalpha = nnx.Linear(last_hidden_dim, 1, rngs=rngs)
+        self.vcp_logbeta = nnx.Linear(last_hidden_dim, 1, rngs=rngs)
+
+        self.config = config
+
+    def encode(
+        self, x: jax.Array
+    ) -> Tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+        """
+        Encodes input data into the latent space and computes variable capture
+        probability (VCP) parameters.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Input data of shape (batch_size, input_dim).
+
+        Returns
+        -------
+        mean : jax.Array
+            Mean of the approximate posterior for the latent variables (shape:
+            [batch_size, latent_dim]).
+        logvar : jax.Array
+            Log-variance of the approximate posterior for the latent variables
+            (shape: [batch_size, latent_dim]).
+        logalpha : jax.Array
+            Log-alpha parameter for the Beta distribution of the variable
+            capture probability (shape: [batch_size, latent_dim]).
+        logbeta : jax.Array
+            Log-beta parameter for the Beta distribution of the variable capture
+            probability (shape: [batch_size, latent_dim]).
+        """
+        # Get activation function
+        activation = ACTIVATION_FUNCTIONS[self.config.activation]
+        input_transformation = INPUT_TRANSFORMATIONS[
+            self.config.input_transformation
+        ]
+
+        # Apply configurable input transformation
+        x = input_transformation(x)
+
+        # Apply standardization if enabled
+        if (
+            self.config.standardize_mean is not None
+            and self.config.standardize_std is not None
+        ):
+            x = standardize_data(
+                x, self.config.standardize_mean, self.config.standardize_std
+            )
+
+        # Encoder forward pass through all hidden layers
+        h = x
+        for layer in self.encoder_layers:
+            h = activation(layer(h))
+
+        # Project to latent space
+        mean = self.latent_mean(h)
+        logvar = self.latent_logvar(h)
+
+        # VCP parameters
+        logalpha = self.vcp_logalpha(h)
+        logbeta = self.vcp_logbeta(h)
+
+        return mean, logvar, logalpha, logbeta
+
+    def __call__(
+        self, x: jax.Array
+    ) -> Tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+        return self.encode(x)
+
+
+# ------------------------------------------------------------------------------
 # Decoder class
 # ------------------------------------------------------------------------------
 
@@ -358,7 +476,7 @@ class VAE(nnx.Module):
 
     def __init__(
         self,
-        encoder: Encoder,
+        encoder: Union[Encoder, EncoderVCP],
         decoder: Decoder,
         config: VAEConfig,
         *,
@@ -410,7 +528,10 @@ class VAE(nnx.Module):
             Tuple of (reconstructed_x, mean, logvar)
         """
         # Encode
-        mean, logvar = self.encoder.encode(x)
+        if isinstance(self.encoder, EncoderVCP):
+            mean, logvar, logalpha, logbeta = self.encoder.encode(x)
+        else:
+            mean, logvar = self.encoder.encode(x)
 
         # Sample from latent space
         z = self.reparameterize(mean, logvar, training)
@@ -418,7 +539,10 @@ class VAE(nnx.Module):
         # Decode
         reconstructed = self.decoder.decode(z)
 
-        return reconstructed, mean, logvar
+        if isinstance(self.encoder, EncoderVCP):
+            return reconstructed, mean, logvar, logalpha, logbeta
+        else:
+            return reconstructed, mean, logvar
 
     # --------------------------------------------------------------------------
 
@@ -430,6 +554,7 @@ class VAE(nnx.Module):
             jnp.zeros(self.config.latent_dim),
             jnp.ones(self.config.latent_dim),
         )
+
 
 # ------------------------------------------------------------------------------
 # Auxiliary functions
@@ -444,21 +569,32 @@ def create_encoder(
     input_transformation: Optional[str] = None,
     standardize_mean: Optional[jnp.ndarray] = None,
     standardize_std: Optional[jnp.ndarray] = None,
-) -> Encoder:
+    variable_capture: bool = False,
+) -> Union[Encoder, EncoderVCP]:
     """
-    Create a standalone encoder for VAE.
+    Create a standalone encoder module for a VAE.
 
-    Args:
-        input_dim: Dimension of input data (number of genes)
-        latent_dim: Dimension of latent space (default: 3)
-        hidden_dims: List of hidden layer dimensions (default: [256, 256])
-        activation: Activation function (default: gelu)
-        input_transformation: Input transformation function (default: log1p)
-        standardize_mean: Mean values for standardization (default: None)
-        standardize_std: Standard deviation values for standardization (default: None)
+    Parameters
+    ----------
+    input_dim : int
+        Number of input features (e.g., number of genes).
+    latent_dim : int, optional
+        Dimension of the latent space (default: 3).
+    hidden_dims : list of int, optional
+        List specifying the size of each hidden layer (default: [256, 256]).
+    activation : str, optional
+        Name of the activation function to use (default: "relu").
+    input_transformation : str, optional
+        Name of the input transformation function to apply (default: "log1p").
+    standardize_mean : jnp.ndarray, optional
+        Mean values for input standardization (default: None).
+    standardize_std : jnp.ndarray, optional
+        Standard deviation values for input standardization (default: None).
 
-    Returns:
-        Configured Encoder instance
+    Returns
+    -------
+    Encoder
+        Configured Encoder instance.
     """
     if activation is None:
         activation = "relu"
@@ -473,10 +609,14 @@ def create_encoder(
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
+        variable_capture=variable_capture,
     )
 
     rngs = nnx.Rngs(params=0)
-    return Encoder(config=config, rngs=rngs)
+    if variable_capture:
+        return EncoderVCP(config=config, rngs=rngs)
+    else:
+        return Encoder(config=config, rngs=rngs)
 
 
 # ------------------------------------------------------------------------------
@@ -490,21 +630,38 @@ def create_decoder(
     input_transformation: Optional[str] = None,
     standardize_mean: Optional[jnp.ndarray] = None,
     standardize_std: Optional[jnp.ndarray] = None,
+    variable_capture: bool = False,
 ) -> Decoder:
     """
-    Create a standalone decoder for VAE.
+    Construct a standalone decoder module for a Variational Autoencoder (VAE).
 
-    Args:
-        input_dim: Dimension of input data (number of genes)
-        latent_dim: Dimension of latent space (default: 3)
-        hidden_dims: List of hidden layer dimensions (default: [256, 256])
-        activation: Activation function (default: gelu)
-        input_transformation: Input transformation function (default: log1p)
-        standardize_mean: Mean values for standardization (default: None)
-        standardize_std: Standard deviation values for standardization (default: None)
+    Parameters
+    ----------
+    input_dim : int
+        Number of output features to reconstruct (e.g., number of genes).
+    latent_dim : int, optional
+        Dimensionality of the latent space (default: 3).
+    hidden_dims : list of int, optional
+        List specifying the number of units in each hidden layer of the decoder
+        (default: [256, 256]).
+    activation : str, optional
+        Name of the activation function to use in hidden layers (default:
+        "relu"). Must be a key in ACTIVATION_FUNCTIONS.
+    input_transformation : str, optional
+        Name of the transformation to apply to the decoder input (default:
+        "log1p"). Must be a key in INPUT_TRANSFORMATIONS.
+    standardize_mean : jnp.ndarray, optional
+        Per-feature mean for z-standardization (default: None).
+    standardize_std : jnp.ndarray, optional
+        Per-feature standard deviation for z-standardization (default: None).
+    variable_capture: bool, optional
+        Whether to use variable capture probability (VCP) model (default:
+        False). Note: This is only relevant for the encoder.
 
-    Returns:
-        Configured Decoder instance
+    Returns
+    -------
+    Decoder
+        Configured Decoder instance.
     """
     if activation is None:
         activation = "relu"
@@ -519,6 +676,7 @@ def create_decoder(
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
+        variable_capture=variable_capture,
     )
 
     rngs = nnx.Rngs(params=0)
@@ -536,21 +694,37 @@ def create_vae(
     input_transformation: Optional[str] = None,
     standardize_mean: Optional[jnp.ndarray] = None,
     standardize_std: Optional[jnp.ndarray] = None,
+    variable_capture: bool = False,
 ) -> VAE:
     """
-    Create a default VAE architecture with configurable hidden layers.
+    Construct a default VAE architecture with configurable encoder and decoder.
 
-    Args:
-        input_dim: Dimension of input data (number of genes)
-        latent_dim: Dimension of latent space (default: 3)
-        hidden_dims: List of hidden layer dimensions (default: [256, 256])
-        activation: Activation function (default: gelu)
-        input_transformation: Input transformation function (default: log1p)
-        standardize_mean: Mean values for standardization (default: None)
-        standardize_std: Standard deviation values for standardization (default: None)
+    Parameters
+    ----------
+    input_dim : int
+        Number of input features (e.g., number of genes).
+    latent_dim : int, optional
+        Dimensionality of the latent space (default: 3).
+    hidden_dims : list of int, optional
+        List specifying the number of units in each hidden layer (default: [256, 256]).
+    activation : str, optional
+        Name of the activation function to use in hidden layers (default: "relu").
+        Must be a key in ACTIVATION_FUNCTIONS.
+    input_transformation : str, optional
+        Name of the transformation to apply to input data (default: "log1p").
+        Must be a key in INPUT_TRANSFORMATIONS.
+    standardize_mean : jnp.ndarray, optional
+        Per-feature mean for z-standardization (default: None).
+    standardize_std : jnp.ndarray, optional
+        Per-feature standard deviation for z-standardization (default: None).
+    variable_capture: bool, optional
+        Whether to use variable capture probability (VCP) model (default:
+        False). Note: This is only relevant for the encoder.
 
-    Returns:
-        Configured VAE instance
+    Returns
+    -------
+    VAE
+        Configured VAE instance with encoder and decoder.
     """
     if activation is None:
         activation = "relu"
@@ -565,12 +739,16 @@ def create_vae(
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
+        variable_capture=variable_capture,
     )
 
     rngs = nnx.Rngs(params=0)
 
     # Create encoder and decoder
-    encoder = Encoder(config=config, rngs=rngs)
+    if variable_capture:
+        encoder = EncoderVCP(config=config, rngs=rngs)
+    else:
+        encoder = Encoder(config=config, rngs=rngs)
     decoder = Decoder(config=config, rngs=rngs)
 
     # Create and return VAE
@@ -1370,7 +1548,7 @@ class dpVAE(VAE):
 
     def __init__(
         self,
-        encoder: Encoder,
+        encoder: Union[Encoder, EncoderVCP],
         decoder: Decoder,
         config: VAEConfig,
         decoupled_prior: DecoupledPrior,
@@ -1422,6 +1600,7 @@ def create_dpvae(
     input_transformation: Optional[str] = None,
     standardize_mean: Optional[jnp.ndarray] = None,
     standardize_std: Optional[jnp.ndarray] = None,
+    variable_capture: bool = False,
     # Decoupled prior parameters
     prior_hidden_dims: Optional[List[int]] = None,
     prior_num_layers: Optional[int] = None,
@@ -1451,6 +1630,9 @@ def create_dpvae(
         Mean values for standardization (default: None)
     standardize_std : Optional[jnp.ndarray], default=None
         Standard deviation values for standardization (default: None)
+    variable_capture: bool, optional
+        Whether to use variable capture probability (VCP) model (default:
+        False). Note: This is only relevant for the encoder.
     prior_hidden_dims : Optional[List[int]], default=None
         Hidden layer dimensions for coupling layers. If None, uses [64, 64].
         The number of coupling layers is determined by the length of this list.
@@ -1491,6 +1673,7 @@ def create_dpvae(
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
+        variable_capture=variable_capture,
     )
 
     # Create encoder and decoder
@@ -1502,6 +1685,7 @@ def create_dpvae(
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
+        variable_capture=variable_capture,
     )
 
     decoder = create_decoder(
@@ -1512,6 +1696,7 @@ def create_dpvae(
         input_transformation=input_transformation,
         standardize_mean=standardize_mean,
         standardize_std=standardize_std,
+        variable_capture=variable_capture,
     )
 
     # Create decoupled prior
