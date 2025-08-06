@@ -78,6 +78,9 @@ def make_vae_model_and_guide(
         ),
     )
 
+    # Determine if variable capture should be enabled based on model type
+    variable_capture = (model_type == "nbvcp")
+
     # Create the encoder module for the inference model
     encoder = create_encoder(
         input_dim=n_genes,
@@ -95,6 +98,7 @@ def make_vae_model_and_guide(
             if hasattr(model_config, "standardize_std")
             else None
         ),
+        variable_capture=variable_capture,
     )
 
     # Initialize decoupled prior if required by prior_type
