@@ -21,6 +21,7 @@ from typing import Dict, Optional
 from .model_config import ModelConfig
 from ..vae.architectures import (
     Encoder,
+    EncoderVCP,
     Decoder,
     VAE,
     DecoupledPrior,
@@ -560,42 +561,13 @@ def nbvcp_vae_guide(
     # Register the pre-created encoder as NumPyro module for the guide
     encoder_module = nnx_module("encoder", encoder)
 
-    # Set up cell-specific capture probability parameters
-    p_capture_alpha = numpyro.param(
-        "p_capture_alpha",
-        jnp.full(n_cells, p_capture_prior_params[0]),
-        constraint=constraints.positive,
-    )
-    p_capture_beta = numpyro.param(
-        "p_capture_beta",
-        jnp.full(n_cells, p_capture_prior_params[1]),
-        constraint=constraints.positive,
-    )
-
     # Sample latent variables using encoder
     if counts is not None:
         if batch_size is None:
             # Without batching: sample latent variables for all cells
             with numpyro.plate("cells", n_cells):
                 # Use encoder to get mean and log variance for latent space
-                z_mean, z_logvar = encoder_module(counts)
-                z_std = jnp.exp(0.5 * z_logvar)
-
-                # Sample from variational distribution
-                numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
-
-                # Sample cell-specific capture probability from Beta prior
-                numpyro.sample(
-                    "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
-                )
-        else:
-            # With batching: sample latent variables for a subset of cells
-            with numpyro.plate(
-                "cells", n_cells, subsample_size=batch_size
-            ) as idx:
-                # Use encoder to get mean and log variance for latent space
-                batch_data = counts[idx]
-                z_mean, z_logvar = encoder_module(batch_data)
+                z_mean, z_logvar, p_logalpha, p_logbeta = encoder_module(counts)
                 z_std = jnp.exp(0.5 * z_logvar)
 
                 # Sample from variational distribution
@@ -604,23 +576,47 @@ def nbvcp_vae_guide(
                 # Sample cell-specific capture probability from Beta prior
                 numpyro.sample(
                     "p_capture",
-                    dist.Beta(p_capture_alpha[idx], p_capture_beta[idx]),
+                    dist.Beta(
+                        jnp.exp(p_logalpha.squeeze(-1)), 
+                        jnp.exp(p_logbeta.squeeze(-1))
+                    )
+                )
+        else:
+            # With batching: sample latent variables for a subset of cells
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                # Use encoder to get mean and log variance for latent space
+                batch_data = counts[idx]
+                z_mean, z_logvar, p_logalpha, p_logbeta = encoder_module(
+                    batch_data
+                )
+                z_std = jnp.exp(0.5 * z_logvar)
+
+                # Sample from variational distribution
+                numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+
+                # Sample cell-specific capture probability from Beta prior
+                numpyro.sample(
+                    "p_capture",
+                    dist.Beta(
+                        jnp.exp(p_logalpha.squeeze(-1)), 
+                        jnp.exp(p_logbeta.squeeze(-1))
+                    ),
                 )
     else:
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
-            # Generate dummy data for encoder
-            dummy_data = jnp.zeros((n_cells, n_genes))
-            z_mean, z_logvar = encoder_module(dummy_data)
-            z_std = jnp.exp(0.5 * z_logvar)
-
-            # Sample from variational distribution
-            numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+            # Sample from latent space prior
+            numpyro.sample(
+                "z",
+                dist.Normal(0, 1)
+                .expand([model_config.vae_latent_dim])
+                .to_event(1),
+            )
 
             # Sample cell-specific capture probability from Beta prior
-            numpyro.sample(
-                "p_capture", dist.Beta(p_capture_alpha, p_capture_beta)
-            )
+            numpyro.sample("p_capture", dist.Beta(*p_capture_prior_params))
 
 
 # ==============================================================================

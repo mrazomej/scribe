@@ -573,25 +573,15 @@ def nbvcp_vae_guide(
     # Register the pre-created encoder as NumPyro module for the guide
     encoder_module = nnx_module("encoder", encoder)
 
-    # Set up cell-specific capture probability parameters
-    phi_capture_alpha = numpyro.param(
-        "phi_capture_alpha",
-        jnp.full(n_cells, phi_capture_prior_params[0]),
-        constraint=constraints.positive,
-    )
-    phi_capture_beta = numpyro.param(
-        "phi_capture_beta",
-        jnp.full(n_cells, phi_capture_prior_params[1]),
-        constraint=constraints.positive,
-    )
-
     # Sample latent variables using encoder
     if counts is not None:
         if batch_size is None:
             # Without batching: sample latent variables for all cells
             with numpyro.plate("cells", n_cells):
                 # Use encoder to get mean and log variance for latent space
-                z_mean, z_logvar = encoder_module(counts)
+                z_mean, z_logvar, phi_logalpha, phi_logbeta = encoder_module(
+                    counts
+                )
                 z_std = jnp.exp(0.5 * z_logvar)
 
                 # Sample from variational distribution
@@ -600,7 +590,10 @@ def nbvcp_vae_guide(
                 # Sample cell-specific capture probability from BetaPrime prior
                 numpyro.sample(
                     "phi_capture",
-                    BetaPrime(phi_capture_alpha, phi_capture_beta),
+                    BetaPrime(
+                        jnp.exp(phi_logalpha.squeeze(-1)), 
+                        jnp.exp(phi_logbeta.squeeze(-1))
+                    ),
                 )
         else:
             # With batching: sample latent variables for a subset of cells
@@ -609,7 +602,9 @@ def nbvcp_vae_guide(
             ) as idx:
                 # Use encoder to get mean and log variance for latent space
                 batch_data = counts[idx]
-                z_mean, z_logvar = encoder_module(batch_data)
+                z_mean, z_logvar, phi_logalpha, phi_logbeta = encoder_module(
+                    batch_data
+                )
                 z_std = jnp.exp(0.5 * z_logvar)
 
                 # Sample from variational distribution
@@ -618,22 +613,26 @@ def nbvcp_vae_guide(
                 # Sample cell-specific capture probability from BetaPrime prior
                 numpyro.sample(
                     "phi_capture",
-                    BetaPrime(phi_capture_alpha[idx], phi_capture_beta[idx]),
+                    BetaPrime(
+                        jnp.exp(phi_logalpha.squeeze(-1)), 
+                        jnp.exp(phi_logbeta.squeeze(-1))
+                    ),
                 )
     else:
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
-            # Generate dummy data for encoder
-            dummy_data = jnp.zeros((n_cells, n_genes))
-            z_mean, z_logvar = encoder_module(dummy_data)
-            z_std = jnp.exp(0.5 * z_logvar)
-
-            # Sample from variational distribution
-            numpyro.sample("z", dist.Normal(z_mean, z_std).to_event(1))
+            # Sample from latent space prior
+            numpyro.sample(
+                "z",
+                dist.Normal(0, 1)
+                .expand([model_config.vae_latent_dim])
+                .to_event(1),
+            )
 
             # Sample cell-specific capture probability from BetaPrime prior
             numpyro.sample(
-                "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
+                "phi_capture",
+                BetaPrime(*phi_capture_prior_params),
             )
 
 
@@ -876,9 +875,11 @@ def nbvcp_dpvae_model(
     batch_size=None,
 ):
     """
-    VAE-based Numpyro model for Negative Binomial with variable mRNA capture probability.
+    VAE-based Numpyro model for Negative Binomial with variable mRNA capture
+    probability.
 
-    The VAE generates mu parameters for each cell while keeping phi interpretable.
+    The VAE generates mu parameters for each cell while keeping phi
+    interpretable.
     The relationship r = mu * phi links the parameters.
     """
     # Define prior parameters
