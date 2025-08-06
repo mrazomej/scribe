@@ -136,6 +136,9 @@ def make_vae_model_and_guide(
         elif model_type == "zinb":
             model_fn = param_module.zinb_vae_model
             guide_fn = param_module.zinb_vae_guide
+        elif model_type == "nbvcp":
+            model_fn = param_module.nbvcp_vae_model
+            guide_fn = param_module.nbvcp_vae_guide
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
     else:  # prior_type == "decoupled"
@@ -147,6 +150,9 @@ def make_vae_model_and_guide(
         elif model_type == "zinb":
             model_fn = param_module.zinb_dpvae_model
             guide_fn = param_module.zinb_vae_guide  # Guide is shared for dpVAE
+        elif model_type == "nbvcp":
+            model_fn = param_module.nbvcp_dpvae_model
+            guide_fn = param_module.nbvcp_vae_guide  # Guide is shared for dpVAE
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
