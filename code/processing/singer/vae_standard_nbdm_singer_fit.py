@@ -22,7 +22,10 @@ import scribe
 model_type = "nbdm"
 
 # Define parameterization type
-parameterization = "odds_ratio"
+parameterization = "standard"
+
+# Define latent dimension
+latent_dim = 2
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -61,25 +64,22 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"svi_{parameterization.replace('_', '-')}_" \
-        f"{model_type}_" \
-        f"" \
+        f"vae_{parameterization}_{model_type}_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
+        f"{latent_dim}latentdim_" \
         f"{n_steps}steps.pkl"
 
 if not os.path.exists(file_name):
     # Run SVI
-    svi_results = scribe.run_scribe(
-        inference_method="mcmc",
-        mixture_model=True,
-        n_components=2,
+    vae_results = scribe.run_scribe(
+        inference_method="vae",
         counts=data,
         n_steps=n_steps,
         parameterization=parameterization,
-        phi_prior=(3, 2),
+        vae_latent_dim=latent_dim,
     )
-    # Save MCMC results
+    # Save VAE results
     with open(file_name, "wb") as f:
-        pickle.dump(svi_results, f)
+        pickle.dump(vae_results, f)
 # %% ---------------------------------------------------------------------------

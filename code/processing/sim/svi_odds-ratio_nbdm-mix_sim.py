@@ -1,0 +1,225 @@
+# %% ---------------------------------------------------------------------------
+# Import base libraries
+import os
+import pickle
+
+# Import JAX-related libraries
+import jax
+from jax import random
+import jax.numpy as jnp
+
+# Import Pyro-related libraries
+import numpyro.distributions as dist
+
+# Import numpy for array manipulation
+import numpy as np
+
+# Import scribe
+import scribe
+
+# %% ---------------------------------------------------------------------------
+
+print("Setting up the simulation...")
+
+# Define model type
+model_type = "nbdm_mix"
+
+# Define parameterization
+parameterization = "odds_ratio"
+
+# Define output directory
+OUTPUT_DIR = f"{scribe.utils.git_root()}/output/sim/{model_type}"
+
+# Define figure directory
+FIG_DIR = f"{scribe.utils.git_root()}/fig/sim/{model_type}"
+
+# Create output directory if it doesn't exist
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# %% ---------------------------------------------------------------------------
+
+print("Drawing true parameters...")
+
+# Setup the PRNG key
+rng_key = random.PRNGKey(42)  # Set random seed
+
+# Define number of cells
+n_cells = 10_000
+
+# Define number of components
+n_components = 2
+
+# Define number of shared genes
+n_shared_genes = 18_000
+
+# Define number of unique genes
+n_unique_genes = 2_000
+
+# Define number of genes
+n_genes = n_shared_genes + n_unique_genes
+
+# Define batch size for memory-efficient sampling
+batch_size_max = 4096
+
+# Define number of steps for scribe
+n_steps = 50_000
+
+# Define parameters for prior
+r_mu = 0
+r_sigma = 1
+r_prior = (r_mu, r_sigma)
+
+# Define prior for p parameter
+p_prior = (1, 1)
+
+# Split keys for different random operations
+key1, key2, key3, key4, key5 = random.split(rng_key, 5)
+
+# Sample true r parameters using JAX's random
+r_true_shared = dist.LogNormal(r_mu, r_sigma).sample(
+    key1, sample_shape=(n_shared_genes,)
+)
+
+# Sample true r parameters for unique genes for the first cell type
+r_true_unique_comp0 = dist.LogNormal(r_mu, r_sigma).sample(
+    key2, sample_shape=(n_unique_genes,)
+)
+
+# Sample deltas for unique genes for the second cell type
+# Use LogNormal to ensure deltas are positive
+delta_mu = 0  # mean of log(delta)
+delta_sigma = 0.5  # standard deviation of log(delta)
+r_true_unique_deltas = dist.LogNormal(delta_mu, delta_sigma).sample(
+    key3, sample_shape=(n_unique_genes,)
+)
+
+# Calculate r parameters for the second cell type: r_comp1 = r_comp0 * delta
+r_true_unique_comp1 = r_true_unique_comp0 * r_true_unique_deltas
+
+# Combine shared and unique r parameters into matrix of
+# shape (n_components, n_genes + n_unique_genes)
+r_true = jnp.vstack(
+    [
+        jnp.concatenate([r_true_shared, r_true_unique_comp0]),  # First component
+        jnp.concatenate([r_true_shared, r_true_unique_comp1]),  # Second component
+    ]
+)
+
+# Sample true p parameter using JAX's random
+p_true_shared = 1 - dist.Beta(p_prior[0], p_prior[1]).sample(key4)
+
+# Define mixing prior
+mixing_prior = (1, 1)
+
+# Define true mixing weights
+mixing_weights_true = [0.75, 0.25]
+
+# %% ---------------------------------------------------------------------------
+
+print("Sampling counts...")
+
+# Define output file name
+output_file = (
+    f"{OUTPUT_DIR}/"
+    f"data_{n_cells}cells_"
+    f"{n_genes}genes_"
+    f"{n_shared_genes}shared_"
+    f"{n_unique_genes}unique_"
+    f"{n_components:02d}components.pkl"
+)
+
+# Check if output file already exists
+if not os.path.exists(output_file):
+    # Sample component assignments
+    component_assignments = random.categorical(
+        key5, jnp.array(mixing_weights_true), shape=(n_cells,)
+    )
+
+    # Initialize array to store counts (using numpy for memory efficiency)
+    counts_true = np.zeros((n_cells, n_genes))
+
+    # Sample in batches
+    for i in range(0, n_cells, batch_size_max):
+        # Get batch size for this iteration
+        current_batch_size = min(batch_size_max, n_cells - i)
+
+        print(f"Sampling from cell index {i} to {i+current_batch_size}...")
+
+        # Get component assignments for this batch
+        batch_components = component_assignments[i : i + current_batch_size]
+
+        # Create new key for this batch
+        key6, subkey = random.split(key5)
+
+        # Sample for each component separately to reduce memory usage
+        for comp in range(n_components):
+            # Get indices for this component in the current batch
+            comp_mask = batch_components == comp
+            if not np.any(comp_mask):
+                continue
+
+            # Sample only for cells belonging to this component
+            batch_samples = dist.NegativeBinomialProbs(
+                r_true[comp], p_true_shared
+            ).sample(subkey, sample_shape=(comp_mask.sum(),))
+
+            # Store batch samples
+            counts_true[i : i + current_batch_size][comp_mask] = np.array(
+                batch_samples
+            )
+
+    # Save true values and parameters to file
+    with open(output_file, "wb") as f:
+        pickle.dump(
+            {
+                "counts": np.array(counts_true),
+                "r": np.array(r_true),
+                "p": np.array(p_true_shared),
+                "mixing_weights": np.array(mixing_weights_true),
+                "component_assignments": np.array(component_assignments),
+            },
+            f,
+        )
+
+# %% ---------------------------------------------------------------------------
+
+# Load true values and parameters from file
+with open(output_file, "rb") as f:
+    data = pickle.load(f)
+
+# %% ---------------------------------------------------------------------------
+
+print("Running scribe...")
+
+# Define file name
+file_name = (
+    f"{OUTPUT_DIR}/"
+    f"svi_{parameterization}_"
+    f"{model_type}_"
+    f"{n_cells}cells_"
+    f"{n_genes}genes_"
+    f"{n_shared_genes}shared_"
+    f"{n_unique_genes}unique_"
+    f"{n_components:02d}components_"
+    f"{batch_size_max}batch_"
+    f"{n_steps}steps.pkl"
+)
+
+# Check if the file exists
+if not os.path.exists(file_name):
+    # Run scribe
+    scribe_results = scribe.run_scribe(
+        counts=jnp.array(data["counts"]),
+        inference_method="svi",
+        parameterization=parameterization,
+        mixture_model=True,
+        n_components=n_components,
+        n_steps=n_steps,
+        batch_size=batch_size_max if n_cells > batch_size_max else None,
+    )
+
+    # Save the results, the true values, and the counts
+    with open(file_name, "wb") as f:
+        pickle.dump(scribe_results, f)
+
+# %% ---------------------------------------------------------------------------
