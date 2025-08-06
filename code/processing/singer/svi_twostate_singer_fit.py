@@ -19,10 +19,10 @@ import scribe
 
 # %% ---------------------------------------------------------------------------
 # Define model type
-model_type = "nbdm"
+model_type = "twostate"
 
 # Define parameterization type
-parameterization = "odds_ratio"
+parameterization = "twostate"
 
 # Define data directory
 DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
@@ -71,9 +71,7 @@ file_name = f"{OUTPUT_DIR}/" \
 if not os.path.exists(file_name):
     # Run SVI
     svi_results = scribe.run_scribe(
-        inference_method="mcmc",
-        mixture_model=True,
-        n_components=2,
+        inference_method="svi",
         counts=data,
         n_steps=n_steps,
         parameterization=parameterization,
