@@ -118,6 +118,13 @@ class ScribeVAEResults(ScribeSVIResults):
                     )
 
                     return zinb_vae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_standard import (
+                        nbvcp_vae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_vae_model, nbvcp_vae_guide
             elif self.prior_type == "decoupled":
                 if self.model_type == "nbdm":
                     from ..models.vae_standard import (
@@ -133,6 +140,13 @@ class ScribeVAEResults(ScribeSVIResults):
                     )
 
                     return zinb_dpvae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_standard import (
+                        nbvcp_dpvae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_dpvae_model, nbvcp_vae_guide
         elif self.model_config.parameterization == "linked":
             if self.prior_type == "standard":
                 if self.model_type == "nbdm":
@@ -149,6 +163,13 @@ class ScribeVAEResults(ScribeSVIResults):
                     )
 
                     return zinb_vae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_linked import (
+                        nbvcp_vae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_vae_model, nbvcp_vae_guide
             elif self.prior_type == "decoupled":
                 if self.model_type == "nbdm":
                     from ..models.vae_linked import (
@@ -164,6 +185,13 @@ class ScribeVAEResults(ScribeSVIResults):
                     )
 
                     return zinb_dpvae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_linked import (
+                        nbvcp_dpvae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_dpvae_model, nbvcp_vae_guide
         elif self.model_config.parameterization == "odds_ratio":
             if self.prior_type == "standard":
                 if self.model_type == "nbdm":
@@ -180,6 +208,13 @@ class ScribeVAEResults(ScribeSVIResults):
                     )
 
                     return zinb_vae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_odds_ratio import (
+                        nbvcp_vae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_vae_model, nbvcp_vae_guide
             elif self.prior_type == "decoupled":
                 if self.model_type == "nbdm":
                     from ..models.vae_odds_ratio import (
@@ -195,6 +230,13 @@ class ScribeVAEResults(ScribeSVIResults):
                     )
 
                     return zinb_dpvae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_odds_ratio import (
+                        nbvcp_dpvae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_dpvae_model, nbvcp_vae_guide
         else:
             raise NotImplementedError(
                 f"get_model_and_guide not implemented for "
