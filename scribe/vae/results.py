@@ -2,32 +2,20 @@
 VAE-specific results class for SCRIBE inference.
 """
 
-from typing import Dict, Optional, Union, Callable, Tuple, Any, List
-from dataclasses import dataclass, replace
-import warnings
+from typing import Dict, Optional, Union, Callable, Tuple, Any
+from dataclasses import dataclass
 
 import jax
+from jax import random
 import jax.numpy as jnp
-import jax.scipy as jsp
-from jax.nn import sigmoid, softmax
-import pandas as pd
-import numpyro.distributions as dist
-from jax import random, jit, vmap
 from flax import nnx
+from numpyro.distributions import Beta
 
 import numpy as np
-import scipy.stats as stats
 
 # Import base results class
 from ..svi.results import ScribeSVIResults
-from ..models.model_config import ModelConfig
-from .architectures import (
-    VAE,
-    VAEConfig,
-    dpVAE,
-    DecoupledPrior,
-    DecoupledPriorDistribution,
-)
+from .architectures import VAE, VAEConfig, dpVAE, Encoder, EncoderVCP
 from ..sampling import sample_variational_posterior, generate_predictive_samples
 
 try:
@@ -262,6 +250,9 @@ class ScribeVAEResults(ScribeSVIResults):
                 DecoupledPrior,
             )
 
+            # Define if VAE has variable capture
+            variable_capture = self.model_type == "nbvcp"
+
             # Create encoder
             encoder = create_encoder(
                 input_dim=self.n_genes,
@@ -271,6 +262,7 @@ class ScribeVAEResults(ScribeSVIResults):
                 input_transformation=self.model_config.vae_input_transformation,
                 standardize_mean=self.standardize_mean,
                 standardize_std=self.standardize_std,
+                variable_capture=variable_capture,
             )
             # Split encoder
             encoder_graph, encoder_state = nnx.split(encoder)
@@ -289,6 +281,7 @@ class ScribeVAEResults(ScribeSVIResults):
                 activation=self.model_config.vae_activation,
                 standardize_mean=self.standardize_mean,
                 standardize_std=self.standardize_std,
+                variable_capture=variable_capture,
             )
             # Split decoder
             decoder_graph, decoder_state = nnx.split(decoder)
@@ -310,6 +303,7 @@ class ScribeVAEResults(ScribeSVIResults):
                 activation=self.model_config.vae_activation,
                 standardize_mean=self.standardize_mean,
                 standardize_std=self.standardize_std,
+                variable_capture=variable_capture,
             )
 
             if self.prior_type == "decoupled":
@@ -434,24 +428,11 @@ class ScribeVAEResults(ScribeSVIResults):
         if rng_key is None:
             rng_key = jax.random.key(42)
 
-        if self.prior_type == "standard":
-            # For standard VAE: sample from standard normal prior
-            # Sample all samples at once
-            samples_array = jax.random.normal(
-                rng_key, shape=(n_samples, self.model_config.vae_latent_dim)
-            )
+        # Get the prior distribution
+        prior_dist = self.vae_model.get_prior_distribution()
 
-        elif self.prior_type == "decoupled":
-            # For dpVAE: sample from the learned decoupled prior
-            # Get the decoupled prior distribution
-            decoupled_prior_dist = (
-                self.vae_model.get_prior_distribution()
-            )
-
-            # Sample all samples at once
-            samples_array = decoupled_prior_dist.sample(
-                rng_key, sample_shape=(n_samples,)
-            )
+        # Sample all samples at once
+        samples_array = prior_dist.sample(rng_key, sample_shape=(n_samples,))
 
         # Store samples if requested
         if store_samples:
@@ -470,30 +451,37 @@ class ScribeVAEResults(ScribeSVIResults):
         store_samples: bool = True,
     ) -> jnp.ndarray:
         """
-        Get multiple samples from the latent space conditioned on observed data.
+        Generate multiple samples from the latent space posterior conditioned on
+        observed data.
 
-        This method samples from the posterior distribution by first encoding
-        the data to get mean and variance, then sampling from the resulting
-        distribution.
+        This method encodes the observed count data using the VAE encoder to
+        obtain the mean and log-variance of the approximate posterior for each
+        cell. It then draws samples from the resulting Gaussian posterior for
+        each cell, repeating this process `n_samples` times to quantify
+        uncertainty in the latent space.
+
+        If a batch size is provided, the data is processed in batches to reduce
+        memory usage for large datasets.
 
         Parameters
         ----------
         counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
+            Array of observed count data with shape (n_cells, n_genes).
         n_samples : int, default=100
-            Number of samples to generate
+            Number of posterior samples to generate.
         batch_size : Optional[int], default=None
-            Batch size for processing large datasets
+            If provided, process the data in batches of this size.
         rng_key : Optional[jax.random.PRNGKey], default=None
-            Random key for sampling
+            JAX random key for reproducible sampling. If None, a default key is
+            used.
         store_samples : bool, default=True
-            Whether to store the generated latent samples in the object.
-            Default is True.
+            Whether to store the generated latent samples in the object
+            attribute `self.latent_samples`.
 
         Returns
         -------
         jnp.ndarray
-            Latent samples of shape (n_samples, n_cells, latent_dim)
+            Array of latent samples with shape (n_samples, n_cells, latent_dim).
         """
         if rng_key is None:
             rng_key = jax.random.key(42)
@@ -502,37 +490,121 @@ class ScribeVAEResults(ScribeSVIResults):
         encoder = self.vae_model.encoder
 
         # Generate multiple samples
-        samples = []
+        z_samples = []
         for i in range(n_samples):
             key = jax.random.fold_in(rng_key, i)
             if batch_size is None:
-                # Process all cells at once
-                mean, logvar = encoder(counts)
+                if isinstance(encoder, EncoderVCP):
+                    mean, logvar, _, _ = encoder(counts)
+                else:
+                    # Process all cells at once
+                    mean, logvar = encoder(counts)
                 # Sample from latent space
                 std = jnp.exp(0.5 * logvar)
                 eps = jax.random.normal(key, mean.shape)
                 z = mean + eps * std
-                samples.append(z)
+                z_samples.append(z)
             else:
                 # Process in batches
                 batch_samples = []
                 for j in range(0, counts.shape[0], batch_size):
                     batch = counts[j : j + batch_size]
-                    mean, logvar = encoder(batch)
+                    if isinstance(encoder, EncoderVCP):
+                        mean, logvar, _, _ = encoder(batch)
+                    else:
+                        mean, logvar = encoder(batch)
                     # Sample from latent space
                     std = jnp.exp(0.5 * logvar)
                     eps = jax.random.normal(key, mean.shape)
                     z = mean + eps * std
                     batch_samples.append(z)
-                samples.append(jnp.concatenate(batch_samples, axis=0))
+                z_samples.append(jnp.concatenate(batch_samples, axis=0))
 
-        samples_array = jnp.stack(samples, axis=0)
+        z_samples_array = jnp.stack(z_samples, axis=0)
 
         # Store samples if requested
         if store_samples:
-            self.latent_samples = samples_array
+            self.latent_samples = z_samples_array
 
-        return samples_array
+        return z_samples_array
+
+    # --------------------------------------------------------------------------
+
+    def get_p_capture_samples_conditioned_on_data(
+        self,
+        counts: jnp.ndarray,
+        n_samples: int = 100,
+        batch_size: Optional[int] = None,
+        rng_key: Optional[jax.random.PRNGKey] = None,
+    ) -> jnp.ndarray:
+        """
+        Generate multiple samples of the p_capture parameter conditioned on
+        observed data.
+
+        This method is only applicable for models using the EncoderVCP encoder,
+        which parameterizes a Beta distribution for the p_capture variable. For
+        each sample, the encoder is used to obtain the log-alpha and log-beta
+        parameters for each cell, and a sample is drawn from the corresponding
+        Beta distribution. This is repeated `n_samples` times to quantify
+        uncertainty in p_capture.
+
+        If a batch size is provided, the data is processed in batches to reduce
+        memory usage for large datasets.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Array of observed count data with shape (n_cells, n_genes).
+        n_samples : int, default=100
+            Number of posterior samples to generate.
+        batch_size : Optional[int], default=None
+            If provided, process the data in batches of this size.
+        rng_key : Optional[jax.random.PRNGKey], default=None
+            JAX random key for reproducible sampling. If None, a default key is
+            used.
+
+        Returns
+        -------
+        jnp.ndarray or None
+            Array of p_capture samples with shape (n_samples, n_cells) if
+            EncoderVCP is used, otherwise None.
+        """
+        if rng_key is None:
+            rng_key = jax.random.key(42)
+
+        # Get VAE encoder
+        encoder = self.vae_model.encoder
+
+        if isinstance(encoder, EncoderVCP):
+            # Generate multiple samples
+            p_capture_samples = []
+            for i in range(n_samples):
+                key = jax.random.fold_in(rng_key, i)
+                if batch_size is None:
+                    # Process all cells at once
+                    _, _, logalpha, logbeta = encoder(counts)
+                    # Sample from p_capture
+                    p_capture = Beta(logalpha, logbeta).sample(key)
+                    p_capture_samples.append(p_capture)
+                else:
+                    # Process in batches
+                    batch_samples = []
+                    for j in range(0, counts.shape[0], batch_size):
+                        batch = counts[j : j + batch_size]
+                        _, _, logalpha, logbeta = encoder(batch)
+                        # Sample from latent space
+                        p_capture = Beta(logalpha, logbeta).sample(key)
+                        batch_samples.append(p_capture)
+                    # Append batch samples
+                    p_capture_samples.append(
+                        jnp.concatenate(batch_samples, axis=0)
+                    )
+
+            p_capture_samples_array = jnp.stack(p_capture_samples, axis=0)
+
+            return p_capture_samples_array.squeeze(-1)
+        else:
+            return None
 
     # --------------------------------------------------------------------------
 
@@ -597,9 +669,7 @@ class ScribeVAEResults(ScribeSVIResults):
         # For dpVAE: sample from the learned decoupled prior
         if self.prior_type == "decoupled":
             # Get the decoupled prior distribution
-            decoupled_prior_dist = (
-                self.vae_model.get_prior_distribution()
-            )
+            decoupled_prior_dist = self.vae_model.get_prior_distribution()
 
             # Sample all samples at once
             posterior_samples["z"] = decoupled_prior_dist.sample(
@@ -723,6 +793,16 @@ class ScribeVAEResults(ScribeSVIResults):
             batch_size=batch_size,
         )
 
+        # Generate p_capture samples conditioned on data
+        posterior_samples["p_capture"] = (
+            self.get_p_capture_samples_conditioned_on_data(
+                counts,
+                n_samples=n_samples,
+                rng_key=rng_key,
+                batch_size=batch_size,
+            )
+        )
+
         # Run latent samples through decoder to obtain reconstructed parameters
         decoded_samples = self.vae_model.decoder(posterior_samples["z"])
 
@@ -831,258 +911,22 @@ class ScribeVAEResults(ScribeSVIResults):
 
         if batch_size is None:
             # Process all cells at once
-            mean, _ = encoder(counts)
+            if isinstance(encoder, EncoderVCP):
+                mean, _, _, _ = encoder(counts)
+            else:
+                mean, _ = encoder(counts)
             return mean
         else:
             # Process in batches
             embeddings = []
             for i in range(0, counts.shape[0], batch_size):
                 batch = counts[i : i + batch_size]
-                mean, _ = encoder(batch)
+                if isinstance(encoder, EncoderVCP):
+                    mean, _, _, _ = encoder(batch)
+                else:
+                    mean, _ = encoder(batch)
                 embeddings.append(mean)
             return jnp.concatenate(embeddings, axis=0)
-
-    # --------------------------------------------------------------------------
-
-    def cluster_cells(
-        self,
-        counts: jnp.ndarray,
-        n_clusters: int = 5,
-        method: str = "kmeans",
-        batch_size: Optional[int] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """
-        Cluster cells based on their latent representations.
-
-        Parameters
-        ----------
-        counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
-        n_clusters : int, default=5
-            Number of clusters to create
-        method : str, default="kmeans"
-            Clustering method. Options: "kmeans", "hierarchical", "dbscan"
-        batch_size : Optional[int], default=None
-            Batch size for processing large datasets
-        **kwargs
-            Additional arguments for clustering algorithms
-
-        Returns
-        -------
-        Dict[str, Any]
-            Dictionary containing clustering results:
-            - 'labels': Cluster assignments for each cell
-            - 'centroids': Cluster centroids in latent space
-            - 'embeddings': Cell embeddings in latent space
-            - 'method': Clustering method used
-        """
-        # Get latent embeddings
-        embeddings = self.get_latent_embeddings(counts, batch_size=batch_size)
-
-        if method == "kmeans":
-            from sklearn.cluster import KMeans
-
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42, **kwargs)
-            labels = kmeans.fit_predict(embeddings)
-            centroids = kmeans.cluster_centers_
-
-        elif method == "hierarchical":
-            from sklearn.cluster import AgglomerativeClustering
-
-            clustering = AgglomerativeClustering(
-                n_clusters=n_clusters, **kwargs
-            )
-            labels = clustering.fit_predict(embeddings)
-            # Compute centroids manually
-            centroids = np.array(
-                [
-                    embeddings[labels == i].mean(axis=0)
-                    for i in range(n_clusters)
-                ]
-            )
-
-        elif method == "dbscan":
-            from sklearn.cluster import DBSCAN
-
-            clustering = DBSCAN(**kwargs)
-            labels = clustering.fit_predict(embeddings)
-            # Handle noise points (label = -1)
-            unique_labels = np.unique(labels[labels != -1])
-            centroids = np.array(
-                [
-                    embeddings[labels == label].mean(axis=0)
-                    for label in unique_labels
-                ]
-            )
-
-        else:
-            raise ValueError(f"Unknown clustering method: {method}")
-
-        return {
-            "labels": labels,
-            "centroids": centroids,
-            "embeddings": embeddings,
-            "method": method,
-        }
-
-    # --------------------------------------------------------------------------
-
-    def compute_latent_statistics(
-        self,
-        counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
-    ) -> Dict[str, jnp.ndarray]:
-        """
-        Compute statistics of the latent space.
-
-        Parameters
-        ----------
-        counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
-        batch_size : Optional[int], default=None
-            Batch size for processing large datasets
-
-        Returns
-        -------
-        Dict[str, jnp.ndarray]
-            Dictionary containing latent space statistics:
-            - 'mean': Mean of each latent dimension
-            - 'std': Standard deviation of each latent dimension
-            - 'min': Minimum of each latent dimension
-            - 'max': Maximum of each latent dimension
-            - 'correlation_matrix': Correlation matrix between latent dimensions
-        """
-        # Get latent embeddings
-        embeddings = self.get_latent_embeddings(counts, batch_size=batch_size)
-
-        # Compute statistics
-        mean = jnp.mean(embeddings, axis=0)
-        std = jnp.std(embeddings, axis=0)
-        min_val = jnp.min(embeddings, axis=0)
-        max_val = jnp.max(embeddings, axis=0)
-
-        # Compute correlation matrix
-        correlation_matrix = jnp.corrcoef(embeddings.T)
-
-        return {
-            "mean": mean,
-            "std": std,
-            "min": min_val,
-            "max": max_val,
-            "correlation_matrix": correlation_matrix,
-        }
-
-    # --------------------------------------------------------------------------
-
-    def get_gene_importance(
-        self,
-        counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
-    ) -> jnp.ndarray:
-        """
-        Compute gene importance based on VAE decoder weights.
-
-        This method analyzes the decoder weights to understand which genes
-        are most important for reconstructing the data from the latent space.
-
-        Parameters
-        ----------
-        counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
-        batch_size : Optional[int], default=None
-            Batch size for processing large datasets
-
-        Returns
-        -------
-        jnp.ndarray
-            Gene importance scores of shape (n_genes,)
-        """
-        # Get the decoder output layer weights
-        decoder_weights = self.vae_model.decoder.decoder_output.weight.value
-
-        # Compute importance as the sum of squared weights for each gene
-        # This measures how much each gene contributes to the reconstruction
-        importance = jnp.sum(decoder_weights**2, axis=0)
-
-        return importance
-
-    # --------------------------------------------------------------------------
-
-    def reconstruct_data(
-        self,
-        counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
-        training: bool = False,
-    ) -> jnp.ndarray:
-        """
-        Reconstruct data using the trained VAE.
-
-        Parameters
-        ----------
-        counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
-        batch_size : Optional[int], default=None
-            Batch size for processing large datasets
-        training : bool, default=False
-            Whether to use training mode (affects sampling)
-
-        Returns
-        -------
-        jnp.ndarray
-            Reconstructed data of shape (n_cells, n_genes)
-        """
-        if batch_size is None:
-            # Process all cells at once
-            reconstructed, _, _ = self.vae_model(counts, training=training)
-            return reconstructed
-        else:
-            # Process in batches
-            reconstructions = []
-            for i in range(0, counts.shape[0], batch_size):
-                batch = counts[i : i + batch_size]
-                reconstructed, _, _ = self.vae_model(batch, training=training)
-                reconstructions.append(reconstructed)
-            return jnp.concatenate(reconstructions, axis=0)
-
-    # --------------------------------------------------------------------------
-
-    def compute_reconstruction_error(
-        self,
-        counts: jnp.ndarray,
-        batch_size: Optional[int] = None,
-        metric: str = "mse",
-    ) -> float:
-        """
-        Compute reconstruction error between original and reconstructed data.
-
-        Parameters
-        ----------
-        counts : jnp.ndarray
-            Count data of shape (n_cells, n_genes)
-        batch_size : Optional[int], default=None
-            Batch size for processing large datasets
-        metric : str, default="mse"
-            Error metric. Options: "mse", "mae", "rmse"
-
-        Returns
-        -------
-        float
-            Reconstruction error
-        """
-        # Reconstruct data
-        reconstructed = self.reconstruct_data(counts, batch_size=batch_size)
-
-        if metric == "mse":
-            error = jnp.mean((counts - reconstructed) ** 2)
-        elif metric == "mae":
-            error = jnp.mean(jnp.abs(counts - reconstructed))
-        elif metric == "rmse":
-            error = jnp.sqrt(jnp.mean((counts - reconstructed) ** 2))
-        else:
-            raise ValueError(f"Unknown error metric: {metric}")
-
-        return float(error)
 
     # --------------------------------------------------------------------------
     # Override parent methods for VAE-specific behavior
@@ -1190,29 +1034,29 @@ class ScribeVAEResults(ScribeSVIResults):
         """
         Enable indexing of ScribeVAEResults object with VAE decoder
         modification.
-        
+
         This extends the parent indexing to also modify the VAE decoder to
         output only the selected genes, making all VAE calculations much more
         manageable.
         """
         # First, get the subset using parent indexing
         subset_results = super().__getitem__(index)
-        
+
         # Create a new VAE model with modified decoder
         subset_results._vae_model = self._create_indexed_vae_model(index)
-        
+
         return subset_results
 
     def _create_indexed_vae_model(self, index):
         """
         Create a new VAE model with decoder modified to output only indexed
         genes.
-        
+
         Parameters
         ----------
         index : Union[int, slice, list, np.ndarray, jnp.ndarray]
             Index specifying which genes to keep
-            
+
         Returns
         -------
         Union[VAE, dpVAE]
@@ -1235,31 +1079,42 @@ class ScribeVAEResults(ScribeSVIResults):
             bool_index = jnp.isin(jnp.arange(self.n_genes), indices)
         else:
             raise TypeError(f"Unsupported index type: {type(index)}")
-        
+
         # Get the number of selected genes
         n_selected_genes = int(bool_index.sum())
-        
+
         # Get the original VAE model
         original_vae = self.vae_model
-        
+
         # Create modified decoder
-        modified_decoder = self._create_indexed_decoder(bool_index, n_selected_genes)
-        
+        modified_decoder = self._create_indexed_decoder(
+            bool_index, n_selected_genes
+        )
+
         # Create new VAE config with modified input_dim
         vae_config = VAEConfig(
             input_dim=n_selected_genes,  # Modified for subset
             latent_dim=self.model_config.vae_latent_dim,
             hidden_dims=self.model_config.vae_hidden_dims,
             activation=self.model_config.vae_activation,
-            standardize_mean=self.standardize_mean[bool_index] if self.standardize_mean is not None else None,
-            standardize_std=self.standardize_std[bool_index] if self.standardize_std is not None else None,
+            standardize_mean=(
+                self.standardize_mean[bool_index]
+                if self.standardize_mean is not None
+                else None
+            ),
+            standardize_std=(
+                self.standardize_std[bool_index]
+                if self.standardize_std is not None
+                else None
+            ),
         )
-        
+
         # Create new VAE with same encoder and prior, but modified decoder
         if self.prior_type == "decoupled":
             # For dpVAE, we need to create a new instance with the modified
             # decoder
             from .architectures import dpVAE
+
             return dpVAE(
                 encoder=original_vae.encoder,
                 decoder=modified_decoder,
@@ -1270,6 +1125,7 @@ class ScribeVAEResults(ScribeSVIResults):
         else:
             # For standard VAE
             from .architectures import VAE
+
             return VAE(
                 encoder=original_vae.encoder,
                 decoder=modified_decoder,
@@ -1280,60 +1136,68 @@ class ScribeVAEResults(ScribeSVIResults):
     def _create_indexed_decoder(self, bool_index, n_selected_genes):
         """
         Create a new decoder with output layer modified for gene subset.
-        
+
         Parameters
         ----------
         bool_index : jnp.ndarray
             Boolean mask indicating which genes to keep
         n_selected_genes : int
             Number of selected genes
-            
+
         Returns
         -------
         Decoder
             New decoder with modified output layer
         """
         from .architectures import Decoder, VAEConfig
-        
+
         # Create a temporary config for the decoder
         temp_config = VAEConfig(
             input_dim=n_selected_genes,
             latent_dim=self.model_config.vae_latent_dim,
             hidden_dims=self.model_config.vae_hidden_dims,
             activation=self.model_config.vae_activation,
-            standardize_mean=self.standardize_mean[bool_index] if self.standardize_mean is not None else None,
-            standardize_std=self.standardize_std[bool_index] if self.standardize_std is not None else None,
+            standardize_mean=(
+                self.standardize_mean[bool_index]
+                if self.standardize_mean is not None
+                else None
+            ),
+            standardize_std=(
+                self.standardize_std[bool_index]
+                if self.standardize_std is not None
+                else None
+            ),
         )
-        
+
         # Create new decoder with same hidden layers but modified output
         decoder = Decoder(temp_config, rngs=nnx.Rngs(params=0))
-        
+
         # Split decoder to access its state
         decoder_graph, decoder_state = nnx.split(decoder)
-        
+
         # Copy hidden layer parameters from original decoder
         original_decoder_state = self.params["decoder$params"]
-        
+
         # Copy all hidden layer parameters (they remain the same)
         for key in original_decoder_state:
             if key.startswith("decoder_layers"):
                 decoder_state[key] = original_decoder_state[key]
-        
+
         # Modify the output layer parameters
         original_kernel = original_decoder_state["decoder_output"]["kernel"]
         original_bias = original_decoder_state["decoder_output"]["bias"]
-        
+
         # Extract subset of weights and bias
         subset_kernel = original_kernel[:, bool_index]
         subset_bias = original_bias[bool_index]
-        
+
         # Set the modified output layer parameters
         decoder_state["decoder_output"]["kernel"] = subset_kernel
         decoder_state["decoder_output"]["bias"] = subset_bias
-        
+
         # Merge decoder
         decoder = nnx.merge(decoder_graph, decoder_state)
-        
+
         return decoder
 
     # --------------------------------------------------------------------------
