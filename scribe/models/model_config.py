@@ -106,6 +106,10 @@ class ModelConfig:
     vae_activation: Optional[str] = None
     vae_input_transformation: Optional[str] = None
     
+    # VAE VCP encoder parameters (for variable capture models)
+    vae_vcp_hidden_dims: Optional[List[int]] = None
+    vae_vcp_activation: Optional[str] = None
+    
     # VAE prior configuration
     vae_prior_type: str = "standard"  # "standard" or "decoupled"
     vae_prior_num_layers: int = 2  # For decoupled prior
@@ -247,6 +251,13 @@ class ModelConfig:
                 self.vae_hidden_dims = [128, 128, 128]
             if self.vae_activation is None:
                 self.vae_activation = "relu"
+            
+            # Set default VCP encoder parameters if using variable capture
+            if self.uses_variable_capture():
+                if self.vae_vcp_hidden_dims is None:
+                    self.vae_vcp_hidden_dims = [64, 32]  # Smaller than main encoder since input is simpler
+                if self.vae_vcp_activation is None:
+                    self.vae_vcp_activation = "relu"  # Same as main encoder
             
             # Validate VAE prior configuration
             valid_prior_types = {"standard", "decoupled"}
@@ -398,6 +409,9 @@ class ModelConfig:
             lines.append(f"  VAE Latent Dim: {self.vae_latent_dim}")
             lines.append(f"  VAE Hidden Dims: {self.vae_hidden_dims}")
             lines.append(f"  VAE Prior Type: {self.vae_prior_type}")
+            if self.uses_variable_capture():
+                lines.append(f"  VAE VCP Hidden Dims: {self.vae_vcp_hidden_dims}")
+                lines.append(f"  VAE VCP Activation: {self.vae_vcp_activation}")
             if self.is_decoupled_prior():
                 lines.append(f"  VAE Prior Hidden Dims: {self.vae_prior_hidden_dims}")
                 lines.append(f"  VAE Prior Num Layers: {self.vae_prior_num_layers}")
