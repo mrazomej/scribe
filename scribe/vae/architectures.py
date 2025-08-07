@@ -2,6 +2,7 @@
 Default VAE architectures for scRNA-seq data using Flax NNX.
 """
 
+from flax.nnx.object import O
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -93,6 +94,13 @@ class VAEConfig:
         Whether to use variable capture probability (VCP) model. If True,
         encoder will output logalpha and logbeta parameters in addition to
         mean and logvar.
+    variable_capture_hidden_dims : Optional[List[int]], default=None
+        Hidden layer dimensions for the VCP encoder. If None and
+        variable_capture=True, defaults to [64, 32] (smaller than main encoder
+        since input is simpler).
+    variable_capture_activation : Optional[str], default=None
+        Activation function for the VCP encoder. If None and
+        variable_capture=True, defaults to "relu" (same as main encoder).
 
     Notes
     -----
@@ -114,6 +122,8 @@ class VAEConfig:
     standardize_std: Optional[jnp.ndarray] = None
     # Variable capture indicator
     variable_capture: bool = False
+    variable_capture_hidden_dims: Optional[List[int]] = None
+    variable_capture_activation: Optional[str] = None
 
     def __post_init__(self):
         """
@@ -121,9 +131,19 @@ class VAEConfig:
 
         If hidden_dims is None, sets it to [256, 256] (two hidden layers of 256
         units each).
+        
+        If variable_capture is True, sets default VCP encoder parameters if not
+        provided.
         """
         if self.hidden_dims is None:
             self.hidden_dims = [256, 256]
+        
+        # Set defaults for VCP encoder if using variable capture
+        if self.variable_capture:
+            if self.variable_capture_hidden_dims is None:
+                self.variable_capture_hidden_dims = [64, 32]  # Smaller than main encoder since input is simpler
+            if self.variable_capture_activation is None:
+                self.variable_capture_activation = "relu"  # Same as main encoder
 
 
 # ------------------------------------------------------------------------------
@@ -284,21 +304,185 @@ class Encoder(nnx.Module):
         return self.encode(x)
 
 
+# ==============================================================================
+# Variable Capture Probability (VCP) Encoder model
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# CaptureEncoder class (for VCP models)
+# ------------------------------------------------------------------------------
+
+class CaptureEncoder(nnx.Module):
+    """
+    Encoder module for computing variable capture probability (VCP) parameters
+    in VAE models.
+
+    This encoder processes a summary statistic of the input data (the sum of
+    counts per cell) through a configurable multi-layer perceptron (MLP) to
+    produce the log-alpha and log-beta parameters of a Beta (or BetaPrime)
+    distribution, which models the probability of capturing a variable (e.g.,
+    gene) in single-cell sequencing data.
+
+    Parameters
+    ----------
+    config : VAEConfig
+        Configuration object specifying the architecture, including the hidden
+        layer sizes and activation function for the VCP encoder.
+    rngs : nnx.Rngs
+        Random number generators for parameter initialization.
+
+    Attributes
+    ----------
+    hidden_layers : List[nnx.Linear]
+        List of linear layers forming the hidden layers of the VCP encoder MLP.
+    logalpha : nnx.Linear
+        Linear layer projecting the final hidden state to the log-alpha
+        parameter.
+    logbeta : nnx.Linear
+        Linear layer projecting the final hidden state to the log-beta
+        parameter.
+    config : VAEConfig
+        The configuration object used to construct the encoder.
+
+    Methods
+    -------
+    p_capture(x)
+        Computes the log-alpha and log-beta parameters for the input batch x.
+    __call__(x)
+        Alias for p_capture(x).
+    """
+    
+    def __init__(self, config: VAEConfig, *, rngs: nnx.Rngs):
+        # Initialize encoder layers
+        self.hidden_layers = []
+
+        # First layer: input_dim -> first hidden_dim
+        self.hidden_layers.append(
+            nnx.Linear(1, config.variable_capture_hidden_dims[0], rngs=rngs)
+        )
+
+        # Hidden layers
+        # hidden_dims[0] -> hidden_dims[1] -> ... -> hidden_dims[-1]
+        for i in range(len(config.variable_capture_hidden_dims) - 1):
+            self.hidden_layers.append(
+                nnx.Linear(
+                    config.variable_capture_hidden_dims[i], 
+                    config.variable_capture_hidden_dims[i + 1], 
+                    rngs=rngs
+                )
+            )
+
+        # Extract last hidden dimension
+        last_hidden_dim = config.variable_capture_hidden_dims[-1]    
+
+        # VCP parameters
+        self.logalpha = nnx.Linear(last_hidden_dim, 1, rngs=rngs)
+        self.logbeta = nnx.Linear(last_hidden_dim, 1, rngs=rngs) 
+
+        # Store config
+        self.config = config
+
+    # --------------------------------------------------------------------------
+
+    def p_capture(self, x: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        """
+        Compute variable capture probability (VCP) parameters.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Input data of shape (batch_size, input_dim).
+
+        Returns
+        -------
+        logalpha : jax.Array
+            Log-alpha parameter for the Beta (or BetaPrime) distribution 
+            (shape: [batch_size, 1]).
+        logbeta : jax.Array
+            Log-beta parameter for the Beta (or BetaPrime) distribution 
+            (shape: [batch_size, 1]).
+        """
+        # Get activation function
+        activation = ACTIVATION_FUNCTIONS[
+            self.config.variable_capture_activation
+        ]
+        input_transformation = INPUT_TRANSFORMATIONS[
+            self.config.input_transformation
+        ]
+
+        # Compute summary statistic: sum of all counts per cell to use as input
+        h = input_transformation(x.sum(axis=1, keepdims=True))
+
+        # Encoder forward pass through all hidden layers
+        for layer in self.hidden_layers:
+            h = activation(layer(h))
+
+        # Project to VCP parameters
+        return self.logalpha(h), self.logbeta(h)
+
+    # --------------------------------------------------------------------------
+
+    def __call__(self, x: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        return self.p_capture(x)
+
 # ------------------------------------------------------------------------------
 # EncoderVCP class (for VCP models)
 # ------------------------------------------------------------------------------
 
 
 class EncoderVCP(Encoder):
-    """Encoder for VAE VCP models."""
+    """
+    Encoder module for Variational Autoencoders (VAEs) with Variable Capture
+    Probability (VCP) modeling.
+
+    This class extends the standard encoder to jointly encode input data into a
+    latent space and estimate variable capture probability (VCP) parameters for
+    each input. The VCP parameters (logalpha, logbeta) are computed using a
+    dedicated CaptureEncoder and concatenated to the input before passing
+    through the main encoder network. The encoder outputs the mean and
+    log-variance of the approximate posterior over latent variables, as well as
+    the Variable Capture Probability (VCP) parameters.
+
+    Parameters
+    ----------
+    config : VAEConfig
+        Configuration object specifying architecture, activation, and
+        preprocessing options.
+    rngs : nnx.Rngs
+        Random number generators for parameter initialization.
+
+    Attributes
+    ----------
+    capture_encoder : CaptureEncoder
+        Submodule for computing VCP parameters from the input.
+    encoder_layers : list of nnx.Linear
+        List of linear layers forming the main encoder network.
+    latent_mean : nnx.Linear
+        Linear layer projecting to the mean of the latent distribution.
+    latent_logvar : nnx.Linear
+        Linear layer projecting to the log-variance of the latent distribution.
+    config : VAEConfig
+        Configuration object.
+
+    Methods
+    -------
+    encode(x)
+        Encodes input data into latent mean, log-variance, and VCP parameters.
+    __call__(x)
+        Alias for encode(x).
+    """
 
     def __init__(self, config: VAEConfig, *, rngs: nnx.Rngs):
+        # Initialize a CaptureEncoder
+        self.capture_encoder = CaptureEncoder(config, rngs=rngs)
+
         # Build encoder layers dynamically based on config
         self.encoder_layers = []
 
         # First layer: input_dim -> first hidden_dim
         self.encoder_layers.append(
-            nnx.Linear(config.input_dim, config.hidden_dims[0], rngs=rngs)
+            nnx.Linear(config.input_dim + 2, config.hidden_dims[0], rngs=rngs)
         )
 
         # Hidden layers
@@ -319,11 +503,9 @@ class EncoderVCP(Encoder):
             last_hidden_dim, config.latent_dim, rngs=rngs
         )
 
-        # VCP parameters
-        self.vcp_logalpha = nnx.Linear(last_hidden_dim, 1, rngs=rngs)
-        self.vcp_logbeta = nnx.Linear(last_hidden_dim, 1, rngs=rngs)
-
         self.config = config
+
+    # --------------------------------------------------------------------------
 
     def encode(
         self, x: jax.Array
@@ -352,26 +534,35 @@ class EncoderVCP(Encoder):
             Log-beta parameter for the Beta distribution of the variable capture
             probability (shape: [batch_size, latent_dim]).
         """
-        # Get activation function
+        # Get VCP parameters from the raw counts.
+        # Note: capture_encoder uses its own input_transformation on the summed
+        # counts.
+        logalpha, logbeta = self.capture_encoder(x)
+
+        # Separately, apply the main encoder's transformation and
+        # standardization to the raw counts.
         activation = ACTIVATION_FUNCTIONS[self.config.activation]
         input_transformation = INPUT_TRANSFORMATIONS[
             self.config.input_transformation
         ]
 
-        # Apply configurable input transformation
-        x = input_transformation(x)
+        x_processed = input_transformation(x)
 
         # Apply standardization if enabled
         if (
             self.config.standardize_mean is not None
             and self.config.standardize_std is not None
         ):
-            x = standardize_data(
-                x, self.config.standardize_mean, self.config.standardize_std
+            x_processed = standardize_data(
+                x_processed,
+                self.config.standardize_mean,
+                self.config.standardize_std,
             )
 
-        # Encoder forward pass through all hidden layers
-        h = x
+        # Concatenate the processed counts with the VCP parameters.
+        h = jnp.concatenate([x_processed, logalpha, logbeta], axis=1)
+
+        # Pass through the main encoder layers.
         for layer in self.encoder_layers:
             h = activation(layer(h))
 
@@ -379,11 +570,9 @@ class EncoderVCP(Encoder):
         mean = self.latent_mean(h)
         logvar = self.latent_logvar(h)
 
-        # VCP parameters
-        logalpha = self.vcp_logalpha(h)
-        logbeta = self.vcp_logbeta(h)
-
         return mean, logvar, logalpha, logbeta
+
+    # --------------------------------------------------------------------------
 
     def __call__(
         self, x: jax.Array
