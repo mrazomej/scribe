@@ -9,6 +9,7 @@ import jax
 
 from jax import random
 import jax.numpy as jnp
+import jax.scipy as jsp
 # Import pandas for data manipulation
 import pandas as pd
 # Import scribe
@@ -19,7 +20,7 @@ import scribe
 model_type = "nbvcp"
 
 # Define parameterization type
-parameterization = "odds_ratio"
+parameterization = "linked"
 
 # Define latent dimension
 latent_dim = 2
@@ -51,7 +52,7 @@ n_genes = data.shape[1]
 rng_key = random.PRNGKey(42)  # Set random seed
 
 # Define training parameters
-n_steps = 25#_000
+n_steps = 50_000
 
 # %% ---------------------------------------------------------------------------
 
@@ -61,8 +62,7 @@ jax.clear_caches()
 
 # Define output file name
 file_name = f"{OUTPUT_DIR}/" \
-        f"dpvae_{parameterization.replace('_', '-')}_" \
-        f"{model_type.replace('_', '-')}_" \
+        f"dpvae_{parameterization}_{model_type}_" \
         f"{n_cells}cells_" \
         f"{n_genes}genes_" \
         f"{latent_dim}latentdim_" \
@@ -77,18 +77,17 @@ if not os.path.exists(file_name):
         parameterization=parameterization,
         variable_capture=True,
         vae_latent_dim=latent_dim,
-        vae_hidden_dims=[128, 128, 128],
-        vae_activation="relu",
+        vae_hidden_dims=[128, 128, 128],  # Add encoder/decoder hidden dimensions
+        vae_activation="leaky_relu",  # Add encoder/decoder activation
         vae_prior_type="decoupled",
         vae_prior_hidden_dims=[128, 128, 128],
         vae_prior_num_layers=3,
-        vae_prior_activation="relu",
+        vae_prior_activation="leaky_relu",
         vae_prior_mask_type="alternating",
-        phi_prior=(10, 2),
-        phi_capture_prior=(10, 10),
+        p_prior=(10, 2),
         vae_standardize=False,
     )
     # Save VAE results
-    # with open(file_name, "wb") as f:
-    #     pickle.dump(vae_results, f)
+    with open(file_name, "wb") as f:
+        pickle.dump(vae_results, f)
 # %% ---------------------------------------------------------------------------

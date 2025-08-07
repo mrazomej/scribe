@@ -25,7 +25,7 @@ print("Defining inference parameters...")
 model_type = "nbvcp"
 
 # Define parameterization
-parameterization = "odds_ratio"
+parameterization = "linked"
 
 # Define training parameters
 n_steps = 25_000
@@ -87,8 +87,8 @@ if not os.path.exists(file_name):
         vae_prior_num_layers=3,
         vae_prior_activation="relu",
         vae_prior_mask_type="alternating",
-        phi_prior=(10, 2),
-        phi_capture_prior=(10, 10),
+        p_prior=(10, 2),
+        p_capture_prior=(10, 10),
         vae_standardize=False,
         batch_size=10,
     )
