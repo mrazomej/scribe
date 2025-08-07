@@ -15,7 +15,7 @@ import numpy as np
 
 # Import base results class
 from ..svi.results import ScribeSVIResults
-from .architectures import VAE, VAEConfig, dpVAE, Encoder, EncoderVCP
+from .architectures import VAE, VAEConfig, dpVAE, EncoderVCP
 from ..sampling import sample_variational_posterior, generate_predictive_samples
 
 try:
@@ -582,7 +582,7 @@ class ScribeVAEResults(ScribeSVIResults):
                 key = jax.random.fold_in(rng_key, i)
                 if batch_size is None:
                     # Process all cells at once
-                    _, _, logalpha, logbeta = encoder(counts)
+                    logalpha, logbeta = encoder.capture_encoder(counts)
                     # Sample from p_capture
                     p_capture = Beta(logalpha, logbeta).sample(key)
                     p_capture_samples.append(p_capture)
@@ -591,7 +591,7 @@ class ScribeVAEResults(ScribeSVIResults):
                     batch_samples = []
                     for j in range(0, counts.shape[0], batch_size):
                         batch = counts[j : j + batch_size]
-                        _, _, logalpha, logbeta = encoder(batch)
+                        logalpha, logbeta = encoder.capture_encoder(batch)
                         # Sample from latent space
                         p_capture = Beta(logalpha, logbeta).sample(key)
                         batch_samples.append(p_capture)
