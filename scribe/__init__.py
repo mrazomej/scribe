@@ -13,6 +13,10 @@ from . import viz
 from . import utils
 from . import stats
 
+# Automatically register BetaPrime KL divergence with Numpyro
+from .numpyro_kl_patch import register_betaprime_kl_divergence
+register_betaprime_kl_divergence()
+
 # Import configuration classes
 # Import main inference function
 from .inference import run_scribe

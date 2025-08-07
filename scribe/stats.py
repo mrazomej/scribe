@@ -693,6 +693,60 @@ def kl_beta(alpha1, beta1, alpha2, beta2):
 # ------------------------------------------------------------------------------
 
 
+def kl_betaprime(alpha1, beta1, alpha2, beta2):
+    """
+    Compute Kullback-Leibler (KL) divergence between two BetaPrime
+    distributions.
+
+    Calculates KL(P||Q) where: P ~ BetaPrime(α₁, β₁) Q ~ BetaPrime(α₂, β₂)
+
+    The KL divergence is given by:
+
+    KL(P||Q) = ln[B(α₂,β₂)] - ln[B(α₁,β₁)] + (α₁-α₂)ψ(α₁) + (β₁-β₂)ψ(β₁)
+                + (α₂-α₁+β₂-β₁)ψ(α₁+β₁)
+
+    where: - ψ(x) is the digamma function - B(x,y) is the beta function
+
+    Parameters
+    ----------
+    alpha1 : float or array-like
+        Shape parameter α₁ of the first BetaPrime distribution P
+    beta1 : float or array-like
+        Shape parameter β₁ of the first BetaPrime distribution P
+    alpha2 : float or array-like
+        Shape parameter α₂ of the second BetaPrime distribution Q
+    beta2 : float or array-like
+        Shape parameter β₂ of the second BetaPrime distribution Q
+
+    Returns
+    -------
+    float or array-like
+        KL divergence between the two BetaPrime distributions
+    """
+    # Check that all inputs are of same shape
+    if not all(
+        isinstance(a, (float, np.ndarray, jnp.ndarray))
+        and isinstance(b, (float, np.ndarray, jnp.ndarray))
+        for a, b in zip(
+            [alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2]
+        )
+    ):
+        raise ValueError("All inputs must be of the same shape")
+
+    return (
+        gammaln(alpha2 + beta2)
+        - gammaln(alpha2)
+        - gammaln(beta2)
+        - (gammaln(alpha1 + beta1) - gammaln(alpha1) - gammaln(beta1))
+        + (alpha1 - alpha2) * digamma(alpha1)
+        + (beta1 - beta2) * digamma(beta1)
+        + (alpha2 - alpha1 + beta2 - beta1) * digamma(alpha1 + beta1)
+    )
+
+
+# ------------------------------------------------------------------------------
+
+
 def kl_lognormal(mu1, sigma1, mu2, sigma2):
     """
     Compute Kullback-Leibler (KL) divergence between two log-normal
