@@ -8,8 +8,13 @@ from dataclasses import dataclass
 import jax
 from jax import random
 import jax.numpy as jnp
+import jax.scipy as jsp
 from flax import nnx
 from numpyro.distributions import Beta
+try:
+    from jax.random import PRNGKey
+except ImportError:
+    from jax.random import Key as PRNGKey
 
 import numpy as np
 
@@ -220,6 +225,51 @@ class ScribeVAEResults(ScribeSVIResults):
                     return zinb_dpvae_model, zinb_vae_guide
                 elif self.model_type == "nbvcp":
                     from ..models.vae_odds_ratio import (
+                        nbvcp_dpvae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_dpvae_model, nbvcp_vae_guide
+        elif self.model_config.parameterization == "unconstrained":
+            if self.prior_type == "standard":
+                if self.model_type == "nbdm":
+                    from ..models.vae_unconstrained import (
+                        nbdm_vae_model,
+                        nbdm_vae_guide,
+                    )
+
+                    return nbdm_vae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.vae_unconstrained import (
+                        zinb_vae_model,
+                        zinb_vae_guide,
+                    )
+
+                    return zinb_vae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_unconstrained import (
+                        nbvcp_vae_model,
+                        nbvcp_vae_guide,
+                    )
+
+                    return nbvcp_vae_model, nbvcp_vae_guide
+            elif self.prior_type == "decoupled":
+                if self.model_type == "nbdm":
+                    from ..models.vae_unconstrained import (
+                        nbdm_dpvae_model,
+                        nbdm_vae_guide,
+                    )
+
+                    return nbdm_dpvae_model, nbdm_vae_guide
+                elif self.model_type == "zinb":
+                    from ..models.vae_unconstrained import (
+                        zinb_dpvae_model,
+                        zinb_vae_guide,
+                    )
+
+                    return zinb_dpvae_model, zinb_vae_guide
+                elif self.model_type == "nbvcp":
+                    from ..models.vae_unconstrained import (
                         nbvcp_dpvae_model,
                         nbvcp_vae_guide,
                     )
@@ -576,33 +626,101 @@ class ScribeVAEResults(ScribeSVIResults):
         encoder = self.vae_model.encoder
 
         if isinstance(encoder, EncoderVCP):
+            from ..stats import BetaPrime
+            import jax.scipy as jsp
+            import numpyro.distributions as dist
+
             # Generate multiple samples
             p_capture_samples = []
             for i in range(n_samples):
                 key = jax.random.fold_in(rng_key, i)
                 if batch_size is None:
                     # Process all cells at once
-                    logalpha, logbeta = encoder.capture_encoder(counts)
-                    # Sample from p_capture
-                    p_capture = Beta(logalpha, logbeta).sample(key)
+                    _, _, param1, param2 = encoder(counts)
+
+                    if self.model_config.parameterization in [
+                        "standard",
+                        "linked",
+                    ]:
+                        # Extract parameters for Beta distribution
+                        alpha = jnp.exp(param1.squeeze(-1))
+                        beta = jnp.exp(param2.squeeze(-1))
+                        # Sample from Beta distribution
+                        p_capture = dist.Beta(alpha, beta).sample(key)
+                    elif self.model_config.parameterization == "odds_ratio":
+                        # Extract parameters for BetaPrime distribution
+                        alpha = jnp.exp(param1.squeeze(-1))
+                        beta = jnp.exp(param2.squeeze(-1))
+                        # Sample from BetaPrime distribution
+                        phi_capture = BetaPrime(alpha, beta).sample(key)
+                        # Convert to p_capture
+                        p_capture = jsp.special.expit(phi_capture)
+                    elif self.model_config.parameterization == "unconstrained":
+                        # Extract parameters for Normal distribution
+                        loc = param1.squeeze(-1)
+                        scale = jnp.exp(param2.squeeze(-1))
+                        # Sample from Normal distribution
+                        p_capture_unconstrained = dist.Normal(
+                            loc, scale
+                        ).sample(key)
+                        # Convert to p_capture
+                        p_capture = jsp.special.expit(p_capture_unconstrained)
+
                     p_capture_samples.append(p_capture)
                 else:
                     # Process in batches
                     batch_samples = []
                     for j in range(0, counts.shape[0], batch_size):
                         batch = counts[j : j + batch_size]
-                        logalpha, logbeta = encoder.capture_encoder(batch)
-                        # Sample from latent space
-                        p_capture = Beta(logalpha, logbeta).sample(key)
+                        _, _, param1, param2 = encoder(batch)
+
+                        if self.model_config.parameterization in [
+                            "standard",
+                            "linked",
+                        ]:
+                            # Extract parameters for Beta distribution
+                            alpha = jnp.exp(param1.squeeze(-1))
+                            beta = jnp.exp(param2.squeeze(-1))
+                            # Sample from Beta distribution
+                            p_capture = dist.Beta(alpha, beta).sample(key)
+                        elif (
+                            self.model_config.parameterization == "odds_ratio"
+                        ):
+                            # Extract parameters for BetaPrime distribution
+                            alpha = jnp.exp(param1.squeeze(-1))
+                            beta = jnp.exp(param2.squeeze(-1))
+                            # Sample from BetaPrime distribution
+                            phi_capture = BetaPrime(alpha, beta).sample(key)
+                            # Convert to p_capture
+                            p_capture = jsp.special.expit(phi_capture)
+                        elif (
+                            self.model_config.parameterization
+                            == "unconstrained"
+                        ):
+                            # Extract parameters for Normal distribution
+                            loc = param1.squeeze(-1)
+                            scale = jnp.exp(param2.squeeze(-1))
+                            # Sample from Normal distribution
+                            p_capture_unconstrained = dist.Normal(
+                                loc, scale
+                            ).sample(key)
+                            # Convert to p_capture
+                            p_capture = jsp.special.expit(
+                                p_capture_unconstrained
+                            )
+
                         batch_samples.append(p_capture)
-                    # Append batch samples
+
+                    # Concatenate batch samples
                     p_capture_samples.append(
                         jnp.concatenate(batch_samples, axis=0)
                     )
 
+            # Stack samples
             p_capture_samples_array = jnp.stack(p_capture_samples, axis=0)
 
-            return p_capture_samples_array.squeeze(-1)
+            # Return samples
+            return p_capture_samples_array
         else:
             return None
 
@@ -689,6 +807,9 @@ class ScribeVAEResults(ScribeSVIResults):
         elif self.model_config.parameterization == "odds_ratio":
             posterior_samples["log_mu"] = decoded_samples
             posterior_samples["mu"] = jnp.exp(decoded_samples)
+        elif self.model_config.parameterization == "unconstrained":
+            posterior_samples["r_unconstrained"] = decoded_samples
+            posterior_samples["r"] = jnp.exp(decoded_samples)
 
         # Store samples if requested
         if store_samples:
@@ -829,6 +950,15 @@ class ScribeVAEResults(ScribeSVIResults):
             posterior_samples["mu"] = jnp.exp(decoded_samples)
             # Make phi samples compatible in shape with r samples
             posterior_samples["phi"] = posterior_samples["phi"][:, None]
+        elif self.model_config.parameterization == "unconstrained":
+            # Get the log-transformed r values
+            posterior_samples["r_unconstrained"] = decoded_samples
+            # Get the r values
+            posterior_samples["r"] = jnp.exp(decoded_samples)
+            # Make p samples compatible in shape with r samples
+            posterior_samples["p_unconstrained"] = posterior_samples[
+                "p_unconstrained"
+            ][:, None]
 
         # Store samples if requested
         if store_samples:
