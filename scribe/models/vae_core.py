@@ -127,6 +127,8 @@ def make_vae_model_and_guide(
         from . import vae_linked as param_module
     elif parameterization == "odds_ratio":
         from . import vae_odds_ratio as param_module
+    elif parameterization == "unconstrained":
+        from . import vae_unconstrained as param_module
     else:
         raise ValueError(f"Unsupported parameterization: {parameterization}")
 
