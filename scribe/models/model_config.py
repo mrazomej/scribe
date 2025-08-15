@@ -1,8 +1,8 @@
 """
 Unified model configuration for SCRIBE.
 
-This module provides a single ModelConfig class that handles all parameterizations
-(standard, linked, odds_ratio, unconstrained) uniformly.
+This module provides a single ModelConfig class that handles all
+parameterizations (standard, linked, odds_ratio, unconstrained) uniformly.
 """
 
 from typing import Dict, Any, List, Tuple, Optional, Callable
@@ -47,6 +47,7 @@ class ModelConfig:
     # Core configuration
     base_model: str
     parameterization: str = "standard"
+    unconstrained: bool = False
     n_components: Optional[int] = None
     inference_method: str = "svi"
     component_specific_params: bool = False
@@ -83,19 +84,33 @@ class ModelConfig:
     mixing_param_prior: Optional[tuple] = None
     mixing_param_guide: Optional[tuple] = None
 
-    # Unconstrained parameters (used when parameterization="unconstrained")
+    # Unconstrained parameters (used when unconstrained=True)
     # These are Normal distributions on transformed parameters
+
+    # Standard parameterization unconstrained parameters
     p_unconstrained_prior: Optional[tuple] = None
     p_unconstrained_guide: Optional[tuple] = None
 
     r_unconstrained_prior: Optional[tuple] = None
     r_unconstrained_guide: Optional[tuple] = None
 
+    # Linked parameterization unconstrained parameters
+    mu_unconstrained_prior: Optional[tuple] = None
+    mu_unconstrained_guide: Optional[tuple] = None
+
+    # Odds ratio parameterization unconstrained parameters
+    phi_unconstrained_prior: Optional[tuple] = None
+    phi_unconstrained_guide: Optional[tuple] = None
+
+    # Common unconstrained parameters
     gate_unconstrained_prior: Optional[tuple] = None
     gate_unconstrained_guide: Optional[tuple] = None
 
     p_capture_unconstrained_prior: Optional[tuple] = None
     p_capture_unconstrained_guide: Optional[tuple] = None
+
+    phi_capture_unconstrained_prior: Optional[tuple] = None
+    phi_capture_unconstrained_guide: Optional[tuple] = None
 
     mixing_logits_unconstrained_prior: Optional[tuple] = None
     mixing_logits_unconstrained_guide: Optional[tuple] = None
@@ -105,21 +120,21 @@ class ModelConfig:
     vae_hidden_dims: Optional[List[int]] = None
     vae_activation: Optional[str] = None
     vae_input_transformation: Optional[str] = None
-    
+
     # VAE VCP encoder parameters (for variable capture models)
     vae_vcp_hidden_dims: Optional[List[int]] = None
     vae_vcp_activation: Optional[str] = None
-    
+
     # VAE prior configuration
     vae_prior_type: str = "standard"  # "standard" or "decoupled"
     vae_prior_num_layers: int = 2  # For decoupled prior
     vae_prior_hidden_dims: Optional[List[int]] = None  # For decoupled prior
     vae_prior_activation: Optional[str] = None  # For decoupled prior
     vae_prior_mask_type: str = "alternating"  # For decoupled prior
-    
+
     # VAE data preprocessing
     vae_standardize: bool = False  # Whether to standardize input data
-    
+
     # VAE standardization parameters (computed from data)
     standardize_mean: Optional[jnp.ndarray] = None
     standardize_std: Optional[jnp.ndarray] = None
@@ -134,12 +149,44 @@ class ModelConfig:
 
     def _set_default_priors(self):
         """Set default priors for parameters that are None."""
-        if self.parameterization == "unconstrained":
+        # Note: This method will be updated in Phase 2 to handle the
+        # unconstrained flag For now, we keep the old logic for backward
+        # compatibility
+
+        if hasattr(self, "unconstrained") and self.unconstrained:
             # Set defaults for unconstrained parameterization
-            if self.p_unconstrained_prior is None:
-                self.p_unconstrained_prior = (0.0, 1.0)  # Normal on logit(p)
-            if self.r_unconstrained_prior is None:
-                self.r_unconstrained_prior = (0.0, 1.0)  # Normal on log(r)
+            if self.parameterization == "standard":
+                if self.p_unconstrained_prior is None:
+                    self.p_unconstrained_prior = (
+                        0.0,
+                        1.0,
+                    )  # Normal on logit(p)
+                if self.r_unconstrained_prior is None:
+                    self.r_unconstrained_prior = (0.0, 1.0)  # Normal on log(r)
+            elif self.parameterization == "linked":
+                if self.p_unconstrained_prior is None:
+                    self.p_unconstrained_prior = (
+                        0.0,
+                        1.0,
+                    )  # Normal on logit(p)
+                if self.mu_unconstrained_prior is None:
+                    self.mu_unconstrained_prior = (
+                        0.0,
+                        1.0,
+                    )  # Normal on log(mu)
+            elif self.parameterization == "odds_ratio":
+                if self.phi_unconstrained_prior is None:
+                    self.phi_unconstrained_prior = (
+                        0.0,
+                        1.0,
+                    )  # Normal on log(phi)
+                if self.mu_unconstrained_prior is None:
+                    self.mu_unconstrained_prior = (
+                        0.0,
+                        1.0,
+                    )  # Normal on log(mu)
+
+            # Common unconstrained parameters
             if (
                 self.gate_unconstrained_prior is None
                 and "zinb" in self.base_model
@@ -156,6 +203,15 @@ class ModelConfig:
                     0.0,
                     1.0,
                 )  # Normal on logit(p_capture)
+            if (
+                self.phi_capture_unconstrained_prior is None
+                and "vcp" in self.base_model
+                and self.parameterization == "odds_ratio"
+            ):
+                self.phi_capture_unconstrained_prior = (
+                    0.0,
+                    1.0,
+                )  # Normal on log(phi_capture)
             if (
                 self.mixing_logits_unconstrained_prior is None
                 and self.is_mixture_model()
@@ -221,13 +277,24 @@ class ModelConfig:
             "standard",
             "linked",
             "odds_ratio",
-            "unconstrained",
         }
 
         if self.parameterization not in valid_parameterizations:
             raise ValueError(
                 f"Invalid parameterization: {self.parameterization}. "
                 f"Must be one of {valid_parameterizations}"
+            )
+
+        # Check that unconstrained flag is not used with old "unconstrained"
+        # parameterization
+        if (
+            hasattr(self, "unconstrained")
+            and self.unconstrained
+            and self.parameterization == "unconstrained"
+        ):
+            raise ValueError(
+                "Cannot use unconstrained=True with parameterization='unconstrained'. "
+                "Use unconstrained=True with one of: 'standard', 'linked', 'odds_ratio'"
             )
 
     def _validate_inference_method(self):
@@ -251,14 +318,17 @@ class ModelConfig:
                 self.vae_hidden_dims = [128, 128, 128]
             if self.vae_activation is None:
                 self.vae_activation = "relu"
-            
+
             # Set default VCP encoder parameters if using variable capture
             if self.uses_variable_capture():
                 if self.vae_vcp_hidden_dims is None:
-                    self.vae_vcp_hidden_dims = [64, 32]  # Smaller than main encoder since input is simpler
+                    self.vae_vcp_hidden_dims = [
+                        64,
+                        32,
+                    ]  # Smaller than main encoder since input is simpler
                 if self.vae_vcp_activation is None:
                     self.vae_vcp_activation = "relu"  # Same as main encoder
-            
+
             # Validate VAE prior configuration
             valid_prior_types = {"standard", "decoupled"}
             if self.vae_prior_type not in valid_prior_types:
@@ -266,11 +336,14 @@ class ModelConfig:
                     f"Invalid vae_prior_type: {self.vae_prior_type}. "
                     f"Must be one of {valid_prior_types}"
                 )
-            
+
             # Set default decoupled prior parameters if using decoupled prior
             if self.vae_prior_type == "decoupled":
                 if self.vae_prior_hidden_dims is None:
-                    self.vae_prior_hidden_dims = [64, 64]  # Default: 2 hidden layers of 64
+                    self.vae_prior_hidden_dims = [
+                        64,
+                        64,
+                    ]  # Default: 2 hidden layers of 64
                 if self.vae_prior_activation is None:
                     self.vae_prior_activation = "relu"
 
@@ -317,15 +390,27 @@ class ModelConfig:
         """
         params = []
 
-        if self.parameterization == "unconstrained":
-            params.extend(["p_unconstrained", "r_unconstrained"])
+        if hasattr(self, "unconstrained") and self.unconstrained:
+            # Unconstrained parameters based on parameterization
+            if self.parameterization == "standard":
+                params.extend(["p_unconstrained", "r_unconstrained"])
+            elif self.parameterization == "linked":
+                params.extend(["p_unconstrained", "mu_unconstrained"])
+            elif self.parameterization == "odds_ratio":
+                params.extend(["phi_unconstrained", "mu_unconstrained"])
+
+            # Common unconstrained parameters
             if self.is_zero_inflated():
                 params.append("gate_unconstrained")
             if self.uses_variable_capture():
-                params.append("p_capture_unconstrained")
+                if self.parameterization == "odds_ratio":
+                    params.append("phi_capture_unconstrained")
+                else:
+                    params.append("p_capture_unconstrained")
             if self.is_mixture_model():
                 params.append("mixing_logits_unconstrained")
         else:
+            # Constrained parameters based on parameterization
             if self.parameterization == "standard":
                 params.extend(["p", "r"])
             elif self.parameterization == "linked":
@@ -349,18 +434,23 @@ class ModelConfig:
         """Get dictionary of active prior parameters."""
         active_priors = {}
         for param in self.get_active_parameters():
-            prior_name = f"{param}_param_prior"
-            unconstrained_prior_name = f"{param}_unconstrained_prior"
+            if hasattr(self, "unconstrained") and self.unconstrained:
+                # For unconstrained models, use unconstrained prior names
+                if param.endswith("_unconstrained"):
+                    prior_name = f"{param}_prior"
+                else:
+                    # Handle cases where param doesn't have _unconstrained suffix
+                    prior_name = f"{param}_unconstrained_prior"
+            else:
+                # For constrained models, use regular prior names
+                prior_name = f"{param}_param_prior"
+
             if (
                 hasattr(self, prior_name)
                 and getattr(self, prior_name) is not None
             ):
                 active_priors[param] = getattr(self, prior_name)
-            elif (
-                hasattr(self, unconstrained_prior_name)
-                and getattr(self, unconstrained_prior_name) is not None
-            ):
-                active_priors[param] = getattr(self, unconstrained_prior_name)
+
         return active_priors
 
     def get_parameter_info(self, param_name: str) -> Dict[str, Any]:
@@ -394,6 +484,7 @@ class ModelConfig:
             f"ModelConfig Summary:",
             f"  Base Model: {self.base_model}",
             f"  Parameterization: {self.parameterization}",
+            f"  Unconstrained: {getattr(self, 'unconstrained', False)}",
             f"  Inference Method: {self.inference_method}",
         ]
 
@@ -403,26 +494,34 @@ class ModelConfig:
         lines.append(
             f"  Active Parameters: {', '.join(self.get_active_parameters())}"
         )
-        
+
         # Add VAE-specific information
         if self.inference_method == "vae":
             lines.append(f"  VAE Latent Dim: {self.vae_latent_dim}")
             lines.append(f"  VAE Hidden Dims: {self.vae_hidden_dims}")
             lines.append(f"  VAE Prior Type: {self.vae_prior_type}")
             if self.uses_variable_capture():
-                lines.append(f"  VAE VCP Hidden Dims: {self.vae_vcp_hidden_dims}")
+                lines.append(
+                    f"  VAE VCP Hidden Dims: {self.vae_vcp_hidden_dims}"
+                )
                 lines.append(f"  VAE VCP Activation: {self.vae_vcp_activation}")
             if self.is_decoupled_prior():
-                lines.append(f"  VAE Prior Hidden Dims: {self.vae_prior_hidden_dims}")
-                lines.append(f"  VAE Prior Num Layers: {self.vae_prior_num_layers}")
-                lines.append(f"  VAE Prior Activation: {self.vae_prior_activation}")
+                lines.append(
+                    f"  VAE Prior Hidden Dims: {self.vae_prior_hidden_dims}"
+                )
+                lines.append(
+                    f"  VAE Prior Num Layers: {self.vae_prior_num_layers}"
+                )
+                lines.append(
+                    f"  VAE Prior Activation: {self.vae_prior_activation}"
+                )
 
         return "\n".join(lines)
 
     def get_vae_prior_config(self) -> Dict[str, Any]:
         """
         Get VAE prior configuration information.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -431,21 +530,23 @@ class ModelConfig:
         config = {
             "prior_type": self.vae_prior_type,
         }
-        
+
         if self.vae_prior_type == "decoupled":
-            config.update({
-                "prior_hidden_dims": self.vae_prior_hidden_dims,
-                "prior_num_layers": self.vae_prior_num_layers,
-                "prior_activation": self.vae_prior_activation,
-                "prior_mask_type": self.vae_prior_mask_type,
-            })
-        
+            config.update(
+                {
+                    "prior_hidden_dims": self.vae_prior_hidden_dims,
+                    "prior_num_layers": self.vae_prior_num_layers,
+                    "prior_activation": self.vae_prior_activation,
+                    "prior_mask_type": self.vae_prior_mask_type,
+                }
+            )
+
         return config
 
     def is_decoupled_prior(self) -> bool:
         """
         Check if this configuration uses a decoupled prior.
-        
+
         Returns
         -------
         bool

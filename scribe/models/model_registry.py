@@ -16,7 +16,6 @@ SUPPORTED_PARAMETERIZATIONS = [
     "standard",
     "linked",
     "odds_ratio",
-    "unconstrained",
 ]
 
 # List of supported inference methods
@@ -42,6 +41,7 @@ def get_model_and_guide(
     parameterization: str = "standard",
     inference_method: str = "svi",
     prior_type: Optional[str] = None,
+    unconstrained: bool = False,
 ) -> Tuple[Callable, Optional[Callable]]:
     """
     Retrieve the model and guide functions for a specified model type,
@@ -58,11 +58,13 @@ def get_model_and_guide(
     model_type : str
         The type of model to retrieve (e.g., "nbdm", "zinb_mix").
     parameterization : str, default="standard"
-        The parameterization module to use (e.g., "standard", "unconstrained").
+        The parameterization module to use (e.g., "standard", "linked", "odds_ratio").
     inference_method : str, default="svi"
         The inference method to use ("svi" or "vae").
     prior_type : str, optional
         The prior type to use for VAE inference ("standard" or "decoupled").
+    unconstrained : bool, default=False
+        Whether to use unconstrained parameterization variants.
 
     Returns
     -------
@@ -93,7 +95,7 @@ def get_model_and_guide(
     # For VAE inference, use the centralized factory
     if inference_method == "vae":
         from .vae_core import make_vae_model_and_guide
-        
+
         # Create a factory function that calls the centralized factory
         def vae_factory(n_genes, model_config):
             return make_vae_model_and_guide(
@@ -101,17 +103,22 @@ def get_model_and_guide(
                 n_genes=n_genes,
                 model_config=model_config,
                 parameterization=parameterization,
-                prior_type=prior_type or "standard"
+                prior_type=prior_type or "standard",
+                unconstrained=unconstrained
             )
-        
+
         return vae_factory, None
     else:
-        # For non-VAE models, use the standard registry
-        # Dynamically import the parameterization module
-        module_name = f"{parameterization}"
-        
+        # For non-VAE models, use the standard registry Determine the module
+        # name based on parameterization and unconstrained flag
+        if unconstrained:
+            module_name = f"{parameterization}_unconstrained"
+        else:
+            module_name = f"{parameterization}"
+
         try:
-            module = importlib.import_module(f".{module_name}", "scribe.models")
+            module = importlib.import_module(
+                f".{module_name}", "scribe.models")
         except ImportError as e:
             raise ValueError(
                 f"Could not import parameterization module '{module_name}': {e}"

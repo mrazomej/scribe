@@ -14,7 +14,17 @@ from .model_registry import (
 )
 
 # Parameterization-specific model modules
-from . import linked, odds_ratio, standard, unconstrained, vae_standard
+from . import linked, odds_ratio, standard, vae_standard
+from . import (
+    linked_unconstrained,
+    odds_ratio_unconstrained,
+    standard_unconstrained,
+)
+from . import (
+    vae_linked_unconstrained,
+    vae_odds_ratio_unconstrained,
+    vae_standard_unconstrained,
+)
 
 __all__ = [
     # Configuration
@@ -25,4 +35,12 @@ __all__ = [
     # Model modules
     "standard",
     "vae_standard",
+    "linked",
+    "odds_ratio",
+    "linked_unconstrained",
+    "odds_ratio_unconstrained",
+    "standard_unconstrained",
+    "vae_linked_unconstrained",
+    "vae_odds_ratio_unconstrained",
+    "vae_standard_unconstrained",
 ]

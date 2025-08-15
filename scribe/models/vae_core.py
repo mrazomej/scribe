@@ -22,12 +22,14 @@ from .model_config import ModelConfig
 # VAE Core Factory
 # ------------------------------------------------------------------------------
 
+
 def make_vae_model_and_guide(
     model_type: str,
     n_genes: int,
     model_config: ModelConfig,
     parameterization: str,
     prior_type: str = "standard",
+    unconstrained: bool = False,
 ) -> Tuple[Callable, Callable]:
     """
     Factory function to create VAE model and guide functions for any
@@ -52,6 +54,8 @@ def make_vae_model_and_guide(
         The parameterization to use ("standard", "linked", or "odds_ratio").
     prior_type : str, default="standard"
         The prior type to use ("standard" or "decoupled").
+    unconstrained : bool, default=False
+        Whether to use unconstrained parameterization variants.
 
     Returns
     -------
@@ -121,16 +125,28 @@ def make_vae_model_and_guide(
         )
 
     # Dynamically import the parameterization module based on the argument
-    if parameterization == "standard":
-        from . import vae_standard as param_module
-    elif parameterization == "linked":
-        from . import vae_linked as param_module
-    elif parameterization == "odds_ratio":
-        from . import vae_odds_ratio as param_module
-    elif parameterization == "unconstrained":
-        from . import vae_unconstrained as param_module
+    if unconstrained:
+        # For unconstrained variants, import the _unconstrained modules
+        if parameterization == "standard":
+            from . import vae_standard_unconstrained as param_module
+        elif parameterization == "linked":
+            from . import vae_linked_unconstrained as param_module
+        elif parameterization == "odds_ratio":
+            from . import vae_odds_ratio_unconstrained as param_module
+        else:
+            raise ValueError(
+                f"Unsupported parameterization for unconstrained: {parameterization}")
     else:
-        raise ValueError(f"Unsupported parameterization: {parameterization}")
+        # For constrained variants, import the regular modules
+        if parameterization == "standard":
+            from . import vae_standard as param_module
+        elif parameterization == "linked":
+            from . import vae_linked as param_module
+        elif parameterization == "odds_ratio":
+            from . import vae_odds_ratio as param_module
+        else:
+            raise ValueError(
+                f"Unsupported parameterization: {parameterization}")
 
     # Select the appropriate model and guide functions for the chosen prior and
     # model type
@@ -190,4 +206,4 @@ def make_vae_model_and_guide(
         )
 
     # Return the configured model and guide functions
-    return configured_model, configured_guide 
+    return configured_model, configured_guide
