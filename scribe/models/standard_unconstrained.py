@@ -1,6 +1,9 @@
 """
-Unconstrained parameterization models for single-cell RNA sequencing data.
+Standard unconstrained parameterization models for single-cell RNA sequencing data.
 Uses Normal distributions on transformed parameters for MCMC inference.
+
+This parameterization uses the standard structure with p and r parameters,
+but samples them in unconstrained space using Normal distributions.
 """
 
 # Import JAX-related libraries
