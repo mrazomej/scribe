@@ -838,10 +838,12 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu_unconstrained = numpyro.deterministic(
+                    "mu_unconstrained", decoder_module(z)
+                )
 
                 # Compute mu from log_mu
-                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
+                mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -858,10 +860,12 @@ def nbdm_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+                mu_unconstrained = numpyro.deterministic(
+                    "mu_unconstrained", decoder_module(z)
+                )
 
                 # Compute mu from log_mu
-                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
+                mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -880,9 +884,11 @@ def nbdm_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
+            mu_unconstrained = numpyro.deterministic(
+                "mu_unconstrained", decoder_module(z)
+            )
 
-            mu = numpyro.deterministic("mu", jnp.exp(log_mu))
+            mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
             # Compute r using the linked parameterization
             r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -1031,8 +1037,10 @@ def nbvcp_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
-                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
+                mu_unconstrained = numpyro.deterministic(
+                    "mu_unconstrained", decoder_module(z)
+                )
+                mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -1065,8 +1073,10 @@ def nbvcp_dpvae_model(
                 z = numpyro.sample("z", decoupled_prior_dist)
 
                 # Use decoder to generate mu parameters from latent space
-                log_mu = numpyro.deterministic("log_mu", decoder_module(z))
-                mu = numpyro.deterministic("mu", jnp.exp(log_mu))
+                mu_unconstrained = numpyro.deterministic(
+                    "mu_unconstrained", decoder_module(z)
+                )
+                mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
                 # Compute r using the linked parameterization
                 r = numpyro.deterministic("r", mu * (1 - p) / p)
@@ -1097,8 +1107,10 @@ def nbvcp_dpvae_model(
             z = numpyro.sample("z", decoupled_prior_dist)
 
             # Use decoder to generate mu parameters from latent space
-            log_mu = numpyro.deterministic("log_mu", decoder_module(z))
-            mu = numpyro.deterministic("mu", jnp.exp(log_mu))
+            mu_unconstrained = numpyro.deterministic(
+                "mu_unconstrained", decoder_module(z)
+            )
+            mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
             # Compute r using the linked parameterization
             r = numpyro.deterministic("r", mu * (1 - p) / p)
