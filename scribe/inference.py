@@ -40,8 +40,10 @@ def run_scribe(
     n_components: Optional[int] = None,
     component_specific_params: bool = False,
     # Parameterization (now unified!)
-    # "standard", "linked", "odds_ratio", "unconstrained"
+    # "standard", "linked", "odds_ratio"
     parameterization: str = "standard",
+    # New unconstrained flag
+    unconstrained: bool = False,
     # Data processing parameters
     cells_axis: int = 0,
     layer: Optional[str] = None,
@@ -87,7 +89,7 @@ def run_scribe(
     Unified interface for SCRIBE inference with parameterization unification.
 
     This function provides a single entry point for SVI, MCMC, and VAE inference
-    methods, treating "unconstrained" as just another parameterization. 
+    methods, treating "unconstrained" as just another parameterization.
 
     Supported inference methods:
         - "svi": Stochastic Variational Inference
@@ -98,7 +100,7 @@ def run_scribe(
         - "standard": Beta/LogNormal for p/r
         - "linked": Beta/LogNormal for p/mu
         - "odds_ratio": BetaPrime/LogNormal for phi/mu
-        - "unconstrained": Normal on transformed parameters
+        - unconstrained=True: Normal distributions on transformed parameters
 
     Parameters
     ----------
@@ -123,8 +125,11 @@ def run_scribe(
     Parameterization
     ----------------
     parameterization : str, default="standard"
-        Model parameterization ("standard", "linked", "odds_ratio",
-        "unconstrained").
+        Model parameterization ("standard", "linked", "odds_ratio").
+    unconstrained : bool, default=False
+        Whether to use unconstrained parameterization variants. When True,
+        parameters are sampled in unconstrained space and transformed via
+        appropriate functions (e.g., sigmoid for probabilities, exp for positive values).
 
     Data Processing
     ---------------
@@ -161,9 +166,10 @@ def run_scribe(
     Prior Configuration
     -------------------
     r_prior, p_prior, gate_prior, p_capture_prior : Optional[tuple]
-        Prior parameters as (param1, param2) tuples. - For unconstrained: (loc,
-        scale) for Normal on transformed parameters. - For constrained:
-        Parameters for respective distributions (Beta, Gamma, etc.).
+        Prior parameters as (param1, param2) tuples.
+        - For unconstrained=True: (loc, scale) for Normal on transformed
+        parameters - For unconstrained=False: Parameters for respective
+        distributions (Beta, Gamma, etc.)
     mixing_prior : Optional[Any]
         Prior for mixture components (array-like or scalar).
     mu_prior, phi_prior, phi_capture_prior : Optional[tuple]
@@ -218,26 +224,34 @@ def run_scribe(
 
     Examples
     --------
-    # SVI with standard parameterization results = run_scribe(counts,
-    inference_method="svi", parameterization="standard")
+    # SVI with standard parameterization
+    results = run_scribe(counts, inference_method="svi", parameterization="standard")
 
-    # MCMC with unconstrained parameterization results = run_scribe(counts,
-    inference_method="mcmc", parameterization="unconstrained")
+    # MCMC with unconstrained parameterization
+    results = run_scribe(counts, inference_method="mcmc", parameterization="standard", unconstrained=True)
 
-    # SVI with odds_ratio parameterization for ZINBVCP mixture model results =
-    run_scribe(
+    # SVI with odds_ratio parameterization for ZINBVCP mixture model
+    results = run_scribe(
         counts, inference_method="svi", parameterization="odds_ratio",
         zero_inflated=True, variable_capture=True, mixture_model=True,
         n_components=3
     )
 
-    # MCMC with linked parameterization results = run_scribe(
+    # MCMC with linked parameterization
+    results = run_scribe(
         counts, inference_method="mcmc", parameterization="linked",
         n_samples=1000
     )
 
-    # VAE with standard parameterization results = run_scribe(
+    # VAE with standard parameterization
+    results = run_scribe(
         counts, inference_method="vae", parameterization="standard",
+        vae_latent_dim=5, vae_hidden_dims=[512, 256]
+    )
+
+    # VAE with linked unconstrained parameterization
+    results = run_scribe(
+        counts, inference_method="vae", parameterization="linked", unconstrained=True,
         vae_latent_dim=5, vae_hidden_dims=[512, 256]
     )
     """
@@ -280,6 +294,7 @@ def run_scribe(
     model_config_kwargs = {
         "base_model": model_type,
         "parameterization": parameterization,
+        "unconstrained": unconstrained,
         "inference_method": inference_method,
         "n_components": n_components,
         "component_specific_params": component_specific_params,
@@ -303,7 +318,9 @@ def run_scribe(
             }
         )
 
-    if parameterization == "unconstrained":
+    # Configure priors based on unconstrained flag
+    if unconstrained:
+        # For unconstrained parameterization, use unconstrained prior names
         model_config_kwargs.update(
             {
                 "p_unconstrained_prior": user_priors.get("p_prior"),
@@ -317,7 +334,26 @@ def run_scribe(
                 ),
             }
         )
+
+        # Add parameterization-specific unconstrained priors
+        if parameterization == "linked":
+            model_config_kwargs.update(
+                {
+                    "mu_unconstrained_prior": user_priors.get("mu_prior"),
+                }
+            )
+        elif parameterization == "odds_ratio":
+            model_config_kwargs.update(
+                {
+                    "phi_unconstrained_prior": user_priors.get("phi_prior"),
+                    "mu_unconstrained_prior": user_priors.get("mu_prior"),
+                    "phi_capture_unconstrained_prior": user_priors.get(
+                        "phi_capture_prior"
+                    ),
+                }
+            )
     else:
+        # For constrained parameterization, use standard prior names
         model_config_kwargs.update(
             {
                 "p_param_prior": user_priors.get("p_prior"),
@@ -382,6 +418,7 @@ def run_scribe(
         )
 
     return results
+
 
 # ------------------------------------------------------------------------------
 # SVI Inference
@@ -537,7 +574,7 @@ def _run_vae_inference(
         standardize_mean, standardize_std = compute_standardization_stats(
             transformed_data
         )
-        
+
         # Store standardization parameters in model config
         model_config.standardize_mean = standardize_mean
         model_config.standardize_std = standardize_std

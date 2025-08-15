@@ -285,18 +285,6 @@ class ModelConfig:
                 f"Must be one of {valid_parameterizations}"
             )
 
-        # Check that unconstrained flag is not used with old "unconstrained"
-        # parameterization
-        if (
-            hasattr(self, "unconstrained")
-            and self.unconstrained
-            and self.parameterization == "unconstrained"
-        ):
-            raise ValueError(
-                "Cannot use unconstrained=True with parameterization='unconstrained'. "
-                "Use unconstrained=True with one of: 'standard', 'linked', 'odds_ratio'"
-            )
-
     def _validate_inference_method(self):
         """Validate inference method specification."""
         valid_inference_methods = {
@@ -381,7 +369,6 @@ class ModelConfig:
             "standard",
             "linked",
             "odds_ratio",
-            "unconstrained",
         ]
 
     def get_active_parameters(self) -> List[str]:
@@ -467,7 +454,7 @@ class ModelConfig:
             info["guide_params"] = getattr(self, f"{param_name}_param_guide")
 
         # Add unconstrained parameter information if applicable
-        if self.parameterization == "unconstrained":
+        if getattr(self, "unconstrained", False):
             if hasattr(self, f"{param_name}_unconstrained_loc"):
                 info["unconstrained_loc"] = getattr(
                     self, f"{param_name}_unconstrained_loc"
