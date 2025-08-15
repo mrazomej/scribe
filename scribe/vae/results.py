@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from flax import nnx
 from numpyro.distributions import Beta
+
 try:
     from jax.random import PRNGKey
 except ImportError:
@@ -95,191 +96,282 @@ class ScribeVAEResults(ScribeSVIResults):
         """
         # For VAE models, we need to get the actual model and guide functions
         # from the appropriate module, not the factory functions
-        if self.model_config.parameterization == "standard":
-            if self.prior_type == "standard":
-                if self.model_type == "nbdm":
-                    from ..models.vae_standard import (
-                        nbdm_vae_model,
-                        nbdm_vae_guide,
-                    )
+        unconstrained = getattr(self.model_config, "unconstrained", False)
 
-                    return nbdm_vae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_standard import (
-                        zinb_vae_model,
-                        zinb_vae_guide,
-                    )
+        if unconstrained:
+            # For unconstrained variants, import the _unconstrained modules
+            if self.model_config.parameterization == "standard":
+                if self.prior_type == "standard":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_standard_unconstrained import (
+                            nbdm_vae_model,
+                            nbdm_vae_guide,
+                        )
 
-                    return zinb_vae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_standard import (
-                        nbvcp_vae_model,
-                        nbvcp_vae_guide,
-                    )
+                        return nbdm_vae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_standard_unconstrained import (
+                            zinb_vae_model,
+                            zinb_vae_guide,
+                        )
 
-                    return nbvcp_vae_model, nbvcp_vae_guide
-            elif self.prior_type == "decoupled":
-                if self.model_type == "nbdm":
-                    from ..models.vae_standard import (
-                        nbdm_dpvae_model,
-                        nbdm_vae_guide,
-                    )
+                        return zinb_vae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_standard_unconstrained import (
+                            nbvcp_vae_model,
+                            nbvcp_vae_guide,
+                        )
 
-                    return nbdm_dpvae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_standard import (
-                        zinb_dpvae_model,
-                        zinb_vae_guide,
-                    )
+                        return nbvcp_vae_model, nbvcp_vae_guide
+                elif self.prior_type == "decoupled":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_standard_unconstrained import (
+                            nbdm_dpvae_model,
+                            nbdm_vae_guide,
+                        )
 
-                    return zinb_dpvae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_standard import (
-                        nbvcp_dpvae_model,
-                        nbvcp_vae_guide,
-                    )
+                        return nbdm_dpvae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_standard_unconstrained import (
+                            zinb_dpvae_model,
+                            zinb_vae_guide,
+                        )
 
-                    return nbvcp_dpvae_model, nbvcp_vae_guide
-        elif self.model_config.parameterization == "linked":
-            if self.prior_type == "standard":
-                if self.model_type == "nbdm":
-                    from ..models.vae_linked import (
-                        nbdm_vae_model,
-                        nbdm_vae_guide,
-                    )
+                        return zinb_dpvae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_standard_unconstrained import (
+                            nbvcp_dpvae_model,
+                            nbvcp_vae_guide,
+                        )
 
-                    return nbdm_vae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_linked import (
-                        zinb_vae_model,
-                        zinb_vae_guide,
-                    )
+                        return nbvcp_dpvae_model, nbvcp_vae_guide
+            elif self.model_config.parameterization == "linked":
+                if self.prior_type == "standard":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_linked_unconstrained import (
+                            nbdm_vae_model,
+                            nbdm_vae_guide,
+                        )
 
-                    return zinb_vae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_linked import (
-                        nbvcp_vae_model,
-                        nbvcp_vae_guide,
-                    )
+                        return nbdm_vae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_linked_unconstrained import (
+                            zinb_vae_model,
+                            zinb_vae_guide,
+                        )
 
-                    return nbvcp_vae_model, nbvcp_vae_guide
-            elif self.prior_type == "decoupled":
-                if self.model_type == "nbdm":
-                    from ..models.vae_linked import (
-                        nbdm_dpvae_model,
-                        nbdm_vae_guide,
-                    )
+                        return zinb_vae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_linked_unconstrained import (
+                            nbvcp_vae_model,
+                            nbvcp_vae_guide,
+                        )
 
-                    return nbdm_dpvae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_linked import (
-                        zinb_dpvae_model,
-                        zinb_vae_guide,
-                    )
+                        return nbvcp_vae_model, nbvcp_vae_guide
+                elif self.prior_type == "decoupled":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_linked_unconstrained import (
+                            nbdm_dpvae_model,
+                            nbdm_vae_guide,
+                        )
 
-                    return zinb_dpvae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_linked import (
-                        nbvcp_dpvae_model,
-                        nbvcp_vae_guide,
-                    )
+                        return nbdm_dpvae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_linked_unconstrained import (
+                            zinb_dpvae_model,
+                            zinb_vae_guide,
+                        )
 
-                    return nbvcp_dpvae_model, nbvcp_vae_guide
-        elif self.model_config.parameterization == "odds_ratio":
-            if self.prior_type == "standard":
-                if self.model_type == "nbdm":
-                    from ..models.vae_odds_ratio import (
-                        nbdm_vae_model,
-                        nbdm_vae_guide,
-                    )
+                        return zinb_dpvae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_linked_unconstrained import (
+                            nbvcp_dpvae_model,
+                            nbvcp_vae_guide,
+                        )
 
-                    return nbdm_vae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_odds_ratio import (
-                        zinb_vae_model,
-                        zinb_vae_guide,
-                    )
+                        return nbvcp_dpvae_model, nbvcp_vae_guide
+            elif self.model_config.parameterization == "odds_ratio":
+                if self.prior_type == "standard":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_odds_ratio_unconstrained import (
+                            nbdm_vae_model,
+                            nbdm_vae_guide,
+                        )
 
-                    return zinb_vae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_odds_ratio import (
-                        nbvcp_vae_model,
-                        nbvcp_vae_guide,
-                    )
+                        return nbdm_vae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_odds_ratio_unconstrained import (
+                            zinb_vae_model,
+                            zinb_vae_guide,
+                        )
 
-                    return nbvcp_vae_model, nbvcp_vae_guide
-            elif self.prior_type == "decoupled":
-                if self.model_type == "nbdm":
-                    from ..models.vae_odds_ratio import (
-                        nbdm_dpvae_model,
-                        nbdm_vae_guide,
-                    )
+                        return zinb_vae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_odds_ratio_unconstrained import (
+                            nbvcp_vae_model,
+                            nbvcp_vae_guide,
+                        )
 
-                    return nbdm_dpvae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_odds_ratio import (
-                        zinb_dpvae_model,
-                        zinb_vae_guide,
-                    )
+                        return nbvcp_vae_model, nbvcp_vae_guide
+                elif self.prior_type == "decoupled":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_odds_ratio_unconstrained import (
+                            nbdm_dpvae_model,
+                            nbdm_vae_guide,
+                        )
 
-                    return zinb_dpvae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_odds_ratio import (
-                        nbvcp_dpvae_model,
-                        nbvcp_vae_guide,
-                    )
+                        return nbdm_dpvae_model, nbvcp_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_odds_ratio_unconstrained import (
+                            zinb_dpvae_model,
+                            zinb_vae_guide,
+                        )
 
-                    return nbvcp_dpvae_model, nbvcp_vae_guide
-        elif self.model_config.parameterization == "unconstrained":
-            if self.prior_type == "standard":
-                if self.model_type == "nbdm":
-                    from ..models.vae_unconstrained import (
-                        nbdm_vae_model,
-                        nbdm_vae_guide,
-                    )
+                        return zinb_dpvae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_odds_ratio_unconstrained import (
+                            nbvcp_dpvae_model,
+                            nbvcp_vae_guide,
+                        )
 
-                    return nbdm_vae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_unconstrained import (
-                        zinb_vae_model,
-                        zinb_vae_guide,
-                    )
-
-                    return zinb_vae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_unconstrained import (
-                        nbvcp_vae_model,
-                        nbvcp_vae_guide,
-                    )
-
-                    return nbvcp_vae_model, nbvcp_vae_guide
-            elif self.prior_type == "decoupled":
-                if self.model_type == "nbdm":
-                    from ..models.vae_unconstrained import (
-                        nbdm_dpvae_model,
-                        nbdm_vae_guide,
-                    )
-
-                    return nbdm_dpvae_model, nbdm_vae_guide
-                elif self.model_type == "zinb":
-                    from ..models.vae_unconstrained import (
-                        zinb_dpvae_model,
-                        zinb_vae_guide,
-                    )
-
-                    return zinb_dpvae_model, zinb_vae_guide
-                elif self.model_type == "nbvcp":
-                    from ..models.vae_unconstrained import (
-                        nbvcp_dpvae_model,
-                        nbvcp_vae_guide,
-                    )
-
-                    return nbvcp_dpvae_model, nbvcp_vae_guide
+                        return nbvcp_dpvae_model, nbvcp_vae_guide
         else:
-            raise NotImplementedError(
-                f"get_model_and_guide not implemented for "
-                f"'{self.model_config.parameterization}'."
-            )
+            # For constrained variants, import the regular modules
+            if self.model_config.parameterization == "standard":
+                if self.prior_type == "standard":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_standard import (
+                            nbdm_vae_model,
+                            nbdm_vae_guide,
+                        )
+
+                        return nbdm_vae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_standard import (
+                            zinb_vae_model,
+                            zinb_vae_guide,
+                        )
+
+                        return zinb_vae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_standard import (
+                            nbvcp_vae_model,
+                            nbvcp_vae_guide,
+                        )
+
+                        return nbvcp_vae_model, nbvcp_vae_guide
+                elif self.prior_type == "decoupled":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_standard import (
+                            nbdm_dpvae_model,
+                            nbdm_vae_guide,
+                        )
+
+                        return nbdm_dpvae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_standard import (
+                            zinb_dpvae_model,
+                            zinb_vae_guide,
+                        )
+
+                        return zinb_dpvae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_standard import (
+                            nbvcp_dpvae_model,
+                            nbvcp_vae_guide,
+                        )
+
+                        return nbvcp_dpvae_model, nbvcp_vae_guide
+            elif self.model_config.parameterization == "linked":
+                if self.prior_type == "standard":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_linked import (
+                            nbdm_vae_model,
+                            nbdm_vae_guide,
+                        )
+
+                        return nbdm_vae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_linked import (
+                            zinb_vae_model,
+                            zinb_vae_guide,
+                        )
+
+                        return zinb_vae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_linked import (
+                            nbvcp_vae_model,
+                            nbvcp_vae_guide,
+                        )
+
+                        return nbvcp_vae_model, nbvcp_vae_guide
+                elif self.prior_type == "decoupled":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_linked import (
+                            nbdm_dpvae_model,
+                            nbdm_vae_guide,
+                        )
+
+                        return nbdm_dpvae_model, nbvcp_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_linked import (
+                            zinb_dpvae_model,
+                            zinb_vae_guide,
+                        )
+
+                        return zinb_dpvae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_linked import (
+                            nbvcp_dpvae_model,
+                            nbvcp_vae_guide,
+                        )
+
+                        return nbvcp_dpvae_model, nbvcp_vae_guide
+            elif self.model_config.parameterization == "odds_ratio":
+                if self.prior_type == "standard":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_odds_ratio import (
+                            nbdm_vae_model,
+                            nbdm_vae_guide,
+                        )
+
+                        return nbdm_vae_model, nbdm_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_odds_ratio import (
+                            zinb_vae_model,
+                            zinb_vae_guide,
+                        )
+
+                        return zinb_vae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_odds_ratio import (
+                            nbvcp_vae_model,
+                            nbvcp_vae_guide,
+                        )
+
+                        return nbvcp_vae_model, nbvcp_vae_guide
+                elif self.prior_type == "decoupled":
+                    if self.model_type == "nbdm":
+                        from ..models.vae_odds_ratio import (
+                            nbdm_dpvae_model,
+                            nbdm_vae_guide,
+                        )
+
+                        return nbdm_dpvae_model, nbvcp_vae_guide
+                    elif self.model_type == "zinb":
+                        from ..models.vae_odds_ratio import (
+                            zinb_dpvae_model,
+                            zinb_vae_guide,
+                        )
+
+                        return zinb_dpvae_model, zinb_vae_guide
+                    elif self.model_type == "nbvcp":
+                        from ..models.vae_odds_ratio import (
+                            nbvcp_dpvae_model,
+                            nbvcp_vae_guide,
+                        )
+
+                        return nbvcp_dpvae_model, nbvcp_vae_guide
 
         raise ValueError(f"Unknown model type: {self.model_type}")
 
@@ -414,27 +506,44 @@ class ScribeVAEResults(ScribeSVIResults):
             If backend is not supported.
         """
         # Dynamically import the correct posterior distribution function
-        if self.model_config.parameterization == "standard":
-            from ..models.vae_standard import (
-                get_posterior_distributions as get_dist_fn,
-            )
-        elif self.model_config.parameterization == "linked":
-            from ..models.vae_linked import (
-                get_posterior_distributions as get_dist_fn,
-            )
-        elif self.model_config.parameterization == "odds_ratio":
-            from ..models.vae_odds_ratio import (
-                get_posterior_distributions as get_dist_fn,
-            )
-        elif self.model_config.parameterization == "unconstrained":
-            from ..models.vae_unconstrained import (
-                get_posterior_distributions as get_dist_fn,
-            )
+        unconstrained = getattr(self.model_config, "unconstrained", False)
+
+        if unconstrained:
+            # For unconstrained variants, import the _unconstrained modules
+            if self.model_config.parameterization == "standard":
+                from ..models.vae_standard_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "linked":
+                from ..models.vae_linked_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "odds_ratio":
+                from ..models.vae_odds_ratio_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            else:
+                raise NotImplementedError(
+                    f"get_distributions not implemented for unconstrained '{self.model_config.parameterization}'."
+                )
         else:
-            raise NotImplementedError(
-                f"get_distributions not implemented for "
-                f"'{self.model_config.parameterization}'."
-            )
+            # For constrained variants, import the regular modules
+            if self.model_config.parameterization == "standard":
+                from ..models.vae_standard import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "linked":
+                from ..models.vae_linked import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "odds_ratio":
+                from ..models.vae_odds_ratio import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            else:
+                raise NotImplementedError(
+                    f"get_distributions not implemented for '{self.model_config.parameterization}'."
+                )
 
         distributions = get_dist_fn(
             self.params, self.model_config, self.vae_model
@@ -655,7 +764,7 @@ class ScribeVAEResults(ScribeSVIResults):
                         phi_capture = BetaPrime(alpha, beta).sample(key)
                         # Convert to p_capture
                         p_capture = jsp.special.expit(phi_capture)
-                    elif self.model_config.parameterization == "unconstrained":
+                    elif getattr(self.model_config, "unconstrained", False):
                         # Extract parameters for Normal distribution
                         loc = param1.squeeze(-1)
                         scale = jnp.exp(param2.squeeze(-1))
@@ -683,9 +792,7 @@ class ScribeVAEResults(ScribeSVIResults):
                             beta = jnp.exp(param2.squeeze(-1))
                             # Sample from Beta distribution
                             p_capture = dist.Beta(alpha, beta).sample(key)
-                        elif (
-                            self.model_config.parameterization == "odds_ratio"
-                        ):
+                        elif self.model_config.parameterization == "odds_ratio":
                             # Extract parameters for BetaPrime distribution
                             alpha = jnp.exp(param1.squeeze(-1))
                             beta = jnp.exp(param2.squeeze(-1))
@@ -693,10 +800,7 @@ class ScribeVAEResults(ScribeSVIResults):
                             phi_capture = BetaPrime(alpha, beta).sample(key)
                             # Convert to p_capture
                             p_capture = jsp.special.expit(phi_capture)
-                        elif (
-                            self.model_config.parameterization
-                            == "unconstrained"
-                        ):
+                        elif getattr(self.model_config, "unconstrained", False):
                             # Extract parameters for Normal distribution
                             loc = param1.squeeze(-1)
                             scale = jnp.exp(param2.squeeze(-1))
@@ -807,7 +911,7 @@ class ScribeVAEResults(ScribeSVIResults):
         elif self.model_config.parameterization == "odds_ratio":
             posterior_samples["log_mu"] = decoded_samples
             posterior_samples["mu"] = jnp.exp(decoded_samples)
-        elif self.model_config.parameterization == "unconstrained":
+        elif getattr(self.model_config, "unconstrained", False):
             posterior_samples["r_unconstrained"] = decoded_samples
             posterior_samples["r"] = jnp.exp(decoded_samples)
 
@@ -950,7 +1054,7 @@ class ScribeVAEResults(ScribeSVIResults):
             posterior_samples["mu"] = jnp.exp(decoded_samples)
             # Make phi samples compatible in shape with r samples
             posterior_samples["phi"] = posterior_samples["phi"][:, None]
-        elif self.model_config.parameterization == "unconstrained":
+        elif getattr(self.model_config, "unconstrained", False):
             # Get the log-transformed r values
             posterior_samples["r_unconstrained"] = decoded_samples
             # Get the r values

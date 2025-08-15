@@ -149,27 +149,30 @@ class ScribeSVIResults:
                     f"{self.model_config.n_components} in model_config"
                 )
 
-        # Validate required distributions based on model type and parameterization
-        parameterization = self.model_config.parameterization
+        # Validate required distributions based on model type and unconstrained
+        # flag
+        unconstrained = getattr(self.model_config, "unconstrained", False)
 
         # ZINB models require gate priors
         if "zinb" in self.model_type:
-            if parameterization == "unconstrained":
+            if unconstrained:
                 # Unconstrained uses gate_unconstrained_prior
                 if self.model_config.gate_unconstrained_prior is None:
                     raise ValueError(
-                        "ZINB models with unconstrained parameterization require gate_unconstrained_prior"
+                        "ZINB models with unconstrained=True require "
+                        "gate_unconstrained_prior"
                     )
             else:
-                # Standard, linked, odds_ratio use gate_param_prior
+                # Constrained uses gate_param_prior
                 if self.model_config.gate_param_prior is None:
                     raise ValueError("ZINB models require gate_param_prior")
         else:
             # Non-ZINB models should not have gate priors
-            if parameterization == "unconstrained":
+            if unconstrained:
                 if self.model_config.gate_unconstrained_prior is not None:
                     raise ValueError(
-                        "Non-ZINB models should not have gate_unconstrained_prior"
+                        "Non-ZINB models should not have "
+                        "gate_unconstrained_prior"
                     )
             else:
                 if self.model_config.gate_param_prior is not None:
@@ -179,39 +182,46 @@ class ScribeSVIResults:
 
         # VCP models require capture probability priors
         if "vcp" in self.model_type:
-            if parameterization == "unconstrained":
+            if unconstrained:
                 # Unconstrained uses p_capture_unconstrained_prior
                 if self.model_config.p_capture_unconstrained_prior is None:
                     raise ValueError(
-                        "VCP models with unconstrained parameterization require p_capture_unconstrained_prior"
+                        "VCP models with unconstrained=True require "
+                        "p_capture_unconstrained_prior"
                     )
-            elif parameterization in ["standard", "linked"]:
-                # Standard and linked use p_capture_param_prior
-                if self.model_config.p_capture_param_prior is None:
-                    raise ValueError("VCP models require p_capture_param_prior")
-            elif parameterization == "odds_ratio":
-                # Odds_ratio uses phi_capture_param_prior
-                if self.model_config.phi_capture_param_prior is None:
-                    raise ValueError(
-                        "VCP models with odds_ratio parameterization require phi_capture_param_prior"
-                    )
+            else:
+                # Constrained uses appropriate prior based on parameterization
+                if self.model_config.parameterization in ["standard", "linked"]:
+                    if self.model_config.p_capture_param_prior is None:
+                        raise ValueError(
+                            "VCP models require p_capture_param_prior"
+                        )
+                elif self.model_config.parameterization == "odds_ratio":
+                    if self.model_config.phi_capture_param_prior is None:
+                        raise ValueError(
+                            "VCP models with odds_ratio parameterization "
+                            "require phi_capture_param_prior"
+                        )
         else:
             # Non-VCP models should not have capture probability priors
-            if parameterization == "unconstrained":
+            if unconstrained:
                 if self.model_config.p_capture_unconstrained_prior is not None:
                     raise ValueError(
-                        "Non-VCP models should not have p_capture_unconstrained_prior"
+                        "Non-VCP models should not have "
+                        "p_capture_unconstrained_prior"
                     )
-            elif parameterization in ["standard", "linked"]:
-                if self.model_config.p_capture_param_prior is not None:
-                    raise ValueError(
-                        "Non-VCP models should not have p_capture_param_prior"
-                    )
-            elif parameterization == "odds_ratio":
-                if self.model_config.phi_capture_param_prior is not None:
-                    raise ValueError(
-                        "Non-VCP models should not have phi_capture_param_prior"
-                    )
+            else:
+                if self.model_config.parameterization in ["standard", "linked"]:
+                    if self.model_config.p_capture_param_prior is not None:
+                        raise ValueError(
+                            "Non-VCP models should not have p_capture_param_prior"
+                        )
+                elif self.model_config.parameterization == "odds_ratio":
+                    if self.model_config.phi_capture_param_prior is not None:
+                        raise ValueError(
+                            "Non-VCP models should not have "
+                            "phi_capture_param_prior"
+                        )
 
     # --------------------------------------------------------------------------
     # Create ScribeSVIResults from AnnData object
@@ -280,26 +290,46 @@ class ScribeSVIResults:
             raise ValueError(f"Invalid backend: {backend}")
 
         # Dynamically import the correct posterior distribution function
-        if self.model_config.parameterization == "standard":
-            from ..models.standard import (
-                get_posterior_distributions as get_dist_fn,
-            )
-        elif self.model_config.parameterization == "linked":
-            from ..models.linked import (
-                get_posterior_distributions as get_dist_fn,
-            )
-        elif self.model_config.parameterization == "odds_ratio":
-            from ..models.odds_ratio import (
-                get_posterior_distributions as get_dist_fn,
-            )
-        elif self.model_config.parameterization == "unconstrained":
-            from ..models.unconstrained import (
-                get_posterior_distributions as get_dist_fn,
-            )
+        unconstrained = getattr(self.model_config, "unconstrained", False)
+
+        if unconstrained:
+            # For unconstrained variants, import the _unconstrained modules
+            if self.model_config.parameterization == "standard":
+                from ..models.standard_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "linked":
+                from ..models.linked_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "odds_ratio":
+                from ..models.odds_ratio_unconstrained import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            else:
+                raise NotImplementedError(
+                    f"get_distributions not implemented for unconstrained "
+                    f"'{self.model_config.parameterization}'."
+                )
         else:
-            raise NotImplementedError(
-                f"get_distributions not implemented for '{self.model_config.parameterization}'."
-            )
+            # For constrained variants, import the regular modules
+            if self.model_config.parameterization == "standard":
+                from ..models.standard import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "linked":
+                from ..models.linked import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            elif self.model_config.parameterization == "odds_ratio":
+                from ..models.odds_ratio import (
+                    get_posterior_distributions as get_dist_fn,
+                )
+            else:
+                raise NotImplementedError(
+                    f"get_distributions not implemented for "
+                    f"'{self.model_config.parameterization}'."
+                )
 
         distributions = get_dist_fn(self.params, self.model_config, split=split)
 
@@ -414,6 +444,7 @@ class ScribeSVIResults:
         """
         estimates = map_estimates.copy()
         parameterization = self.model_config.parameterization
+        unconstrained = getattr(self.model_config, "unconstrained", False)
 
         # Handle linked parameterization
         if parameterization == "linked":
@@ -468,7 +499,7 @@ class ScribeSVIResults:
                 estimates["p_capture"] = 1.0 / (1.0 + estimates["phi_capture"])
 
         # Handle unconstrained parameterization
-        elif parameterization == "unconstrained":
+        if unconstrained:
             # Convert r_unconstrained to r if needed
             if "r_unconstrained" in estimates and "r" not in estimates:
                 if verbose:
@@ -983,7 +1014,7 @@ class ScribeSVIResults:
             prior_params=self.prior_params,
             obs=self.obs,
             var=self.var,
-            uns=self.uns,       
+            uns=self.uns,
             n_obs=self.n_obs,
             n_vars=self.n_vars,
             posterior_samples=new_posterior_samples,
