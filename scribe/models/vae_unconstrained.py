@@ -1109,8 +1109,6 @@ def get_posterior_distributions(
             - "p_unconstrained_loc", "p_unconstrained_scale"
             - "gate_unconstrained_loc", "gate_unconstrained_scale"
             - "p_capture_unconstrained_loc", "p_capture_unconstrained_scale"
-            - "mixing_logits_unconstrained_loc",
-              "mixing_logits_unconstrained_scale"
         Each value is a JAX array of appropriate shape (scalar or vector).
     model_config : ModelConfig
         Model configuration object containing VAE-specific settings.
@@ -1151,16 +1149,6 @@ def get_posterior_distributions(
         distributions["p_capture_unconstrained"] = dist.Normal(
             params["p_capture_unconstrained_loc"],
             params["p_capture_unconstrained_scale"],
-        )
-
-    # mixing_logits_unconstrained parameter (Normal distribution)
-    if (
-        "mixing_logits_unconstrained_loc" in params
-        and "mixing_logits_unconstrained_scale" in params
-    ):
-        distributions["mixing_logits_unconstrained"] = dist.Normal(
-            params["mixing_logits_unconstrained_loc"],
-            params["mixing_logits_unconstrained_scale"],
         )
 
     # Get the decoupled prior distribution

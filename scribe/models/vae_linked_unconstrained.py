@@ -1174,7 +1174,6 @@ def get_posterior_distributions(
             - "mu_unconstrained_loc", "mu_unconstrained_scale"
             - "gate_unconstrained_loc", "gate_unconstrained_scale"
             - "p_capture_unconstrained_loc", "p_capture_unconstrained_scale"
-            - "mixing_concentrations" (for mixture models)
         Each value is a JAX array of appropriate shape (scalar or vector).
     model_config : ModelConfig
         Model configuration object containing VAE-specific settings.
@@ -1221,11 +1220,6 @@ def get_posterior_distributions(
             params["p_capture_unconstrained_loc"],
             params["p_capture_unconstrained_scale"],
         )
-
-    # mixing_weights parameter (Dirichlet distribution)
-    if "mixing_concentrations" in params:
-        mixing_dist = dist.Dirichlet(params["mixing_concentrations"])
-        distributions["mixing_weights"] = mixing_dist
 
     # Get the decoupled prior distribution
     distributions["z"] = vae_model.get_prior_distribution()
