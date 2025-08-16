@@ -913,18 +913,26 @@ class ScribeVAEResults(ScribeSVIResults):
         decoded_samples = self.vae_model.decoder(posterior_samples["z"])
 
         # Store decoded samples with right keys
-        if self.model_config.parameterization == "standard":
-            posterior_samples["log_r"] = decoded_samples
-            posterior_samples["r"] = jnp.exp(decoded_samples)
-        elif self.model_config.parameterization == "linked":
-            posterior_samples["log_mu"] = decoded_samples
-            posterior_samples["mu"] = jnp.exp(decoded_samples)
-        elif self.model_config.parameterization == "odds_ratio":
-            posterior_samples["log_mu"] = decoded_samples
-            posterior_samples["mu"] = jnp.exp(decoded_samples)
-        elif getattr(self.model_config, "unconstrained", False):
-            posterior_samples["r_unconstrained"] = decoded_samples
-            posterior_samples["r"] = jnp.exp(decoded_samples)
+        if getattr(self.model_config, "unconstrained", False):
+            if self.model_config.parameterization == "standard":
+                posterior_samples["r_unconstrained"] = decoded_samples
+                posterior_samples["r"] = jnp.exp(decoded_samples)
+            elif self.model_config.parameterization == "linked":
+                posterior_samples["mu_unconstrained"] = decoded_samples
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
+            elif self.model_config.parameterization == "odds_ratio":
+                posterior_samples["mu_unconstrained"] = decoded_samples
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
+        else:
+            if self.model_config.parameterization == "standard":
+                posterior_samples["log_r"] = decoded_samples
+                posterior_samples["r"] = jnp.exp(decoded_samples)
+            elif self.model_config.parameterization == "linked":
+                posterior_samples["log_mu"] = decoded_samples
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
+            elif self.model_config.parameterization == "odds_ratio":
+                posterior_samples["log_mu"] = decoded_samples
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
 
         # Store samples if requested
         if store_samples:
