@@ -760,10 +760,10 @@ class ScribeVAEResults(ScribeSVIResults):
                             phi_capture_unconstrained = dist.Normal(
                                 loc, scale
                             ).sample(key)
-                            # Convert to phi_capture
-                            phi_capture = jnp.exp(phi_capture_unconstrained)
                             # Convert to p_capture
-                            p_capture = jsp.special.expit(phi_capture)
+                            p_capture = jsp.special.expit(
+                                -phi_capture_unconstrained
+                            )
                         else:
                             # Sample from Normal distribution
                             p_capture_unconstrained = dist.Normal(
@@ -780,38 +780,7 @@ class ScribeVAEResults(ScribeSVIResults):
                         # Sample from Beta or BetaPrime distribution
                         p_capture = dist.Beta(alpha, beta).sample(key)
 
-                    if (
-                        self.model_config.parameterization
-                        in [
-                            "standard",
-                            "linked",
-                        ]
-                        and not unconstrained
-                    ):
-                        # Extract parameters for Beta distribution
-                        alpha = jnp.exp(param1.squeeze(-1))
-                        beta = jnp.exp(param2.squeeze(-1))
-                        # Sample from Beta distribution
-                        p_capture = dist.Beta(alpha, beta).sample(key)
-                    elif self.model_config.parameterization == "odds_ratio":
-                        # Extract parameters for BetaPrime distribution
-                        alpha = jnp.exp(param1.squeeze(-1))
-                        beta = jnp.exp(param2.squeeze(-1))
-                        # Sample from BetaPrime distribution
-                        phi_capture = BetaPrime(alpha, beta).sample(key)
-                        # Convert to p_capture
-                        p_capture = jsp.special.expit(phi_capture)
-                    elif getattr(self.model_config, "unconstrained", False):
-                        # Extract parameters for Normal distribution
-                        loc = param1.squeeze(-1)
-                        scale = jnp.exp(param2.squeeze(-1))
-                        # Sample from Normal distribution
-                        p_capture_unconstrained = dist.Normal(
-                            loc, scale
-                        ).sample(key)
-                        # Convert to p_capture
-                        p_capture = jsp.special.expit(p_capture_unconstrained)
-
+                    # Append p_capture samples
                     p_capture_samples.append(p_capture)
                 else:
                     # Process in batches
@@ -820,36 +789,41 @@ class ScribeVAEResults(ScribeSVIResults):
                         batch = counts[j : j + batch_size]
                         _, _, param1, param2 = encoder(batch)
 
-                        if self.model_config.parameterization in [
-                            "standard",
-                            "linked",
-                        ]:
-                            # Extract parameters for Beta distribution
-                            alpha = jnp.exp(param1.squeeze(-1))
-                            beta = jnp.exp(param2.squeeze(-1))
-                            # Sample from Beta distribution
-                            p_capture = dist.Beta(alpha, beta).sample(key)
-                        elif self.model_config.parameterization == "odds_ratio":
-                            # Extract parameters for BetaPrime distribution
-                            alpha = jnp.exp(param1.squeeze(-1))
-                            beta = jnp.exp(param2.squeeze(-1))
-                            # Sample from BetaPrime distribution
-                            phi_capture = BetaPrime(alpha, beta).sample(key)
-                            # Convert to p_capture
-                            p_capture = jsp.special.expit(phi_capture)
-                        elif getattr(self.model_config, "unconstrained", False):
+                        if unconstrained:
                             # Extract parameters for Normal distribution
                             loc = param1.squeeze(-1)
                             scale = jnp.exp(param2.squeeze(-1))
-                            # Sample from Normal distribution
-                            p_capture_unconstrained = dist.Normal(
-                                loc, scale
-                            ).sample(key)
-                            # Convert to p_capture
-                            p_capture = jsp.special.expit(
-                                p_capture_unconstrained
-                            )
 
+                            if (
+                                self.model_config.parameterization
+                                == "odds_ratio"
+                            ):
+                                # Sample from Normal distribution
+                                phi_capture_unconstrained = dist.Normal(
+                                    loc, scale
+                                ).sample(key)
+                                # Convert to p_capture
+                                p_capture = jsp.special.expit(
+                                    -phi_capture_unconstrained
+                                )
+                            else:
+                                # Sample from Normal distribution
+                                p_capture_unconstrained = dist.Normal(
+                                    loc, scale
+                                ).sample(key)
+                                # Convert to p_capture
+                                p_capture = jsp.special.expit(
+                                    p_capture_unconstrained
+                                )
+                        else:
+                            # Extract parameters for Beta or BetaPrime
+                            # distribution
+                            alpha = jnp.exp(param1.squeeze(-1))
+                            beta = jnp.exp(param2.squeeze(-1))
+                            # Sample from Beta or BetaPrime distribution
+                            p_capture = dist.Beta(alpha, beta).sample(key)
+
+                        # Append p_capture samples
                         batch_samples.append(p_capture)
 
                     # Concatenate batch samples
