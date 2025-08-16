@@ -862,165 +862,66 @@ def hellinger_lognormal(mu1, sigma1, mu2, sigma2):
 
 
 # ------------------------------------------------------------------------------
-# Mode functions
+# Distribution Mode Monkey Patches
 # ------------------------------------------------------------------------------
 
 
-def beta_mode(alpha, beta):
-    """
-    Calculate the mode for a Beta distribution.
+def _beta_mode(self):
+    """Monkey patch mode property for Beta distribution."""
+    a = self.concentration1
+    b = self.concentration0
+    interior = (a > 1) & (b > 1)
+    left_bd = (a <= 1) & (b > 1)  # mode at 0
+    right_bd = (a > 1) & (b <= 1)  # mode at 1
+    both_bd = (a <= 1) & (b <= 1)  # two boundary modes: 0 and 1
 
-    For Beta(α,β) distribution, the mode is:
-        (α-1)/(α+β-2) when α,β > 1
-        undefined when α,β ≤ 1
+    interior_val = (a - 1) / (a + b - 2)  # safe because interior ⇒ denom > 0
 
-    Parameters
-    ----------
-    alpha : float or array-like
-        Shape parameter α of the Beta distribution
-    beta : float or array-like
-        Shape parameter β of the Beta distribution
-
-    Returns
-    -------
-    float or array-like
-        Mode of the Beta distribution. Returns NaN for cases where
-        mode is undefined (α,β ≤ 1)
-    """
+    # Return NaN where the mode is non-unique (both boundaries), else 0/1/interior
     return jnp.where(
-        (alpha > 1) & (beta > 1), (alpha - 1) / (alpha + beta - 2), jnp.nan
+        interior,
+        interior_val,
+        jnp.where(left_bd, 0.0, jnp.where(right_bd, 1.0, jnp.nan)),
     )
 
 
-# ------------------------------------------------------------------------------
-
-
-def betaprime_mode(alpha, beta):
-    """
-    Calculate the mode for a Beta Prime distribution.
-
-    For BetaPrime(α,β) distribution, the mode is:
-        (α-1)/β when α > 1
-        0 when α ≤ 1
-    """
-    return jnp.where(alpha > 1, (alpha - 1) / (beta + 1), 0.0)
-
-
-# ------------------------------------------------------------------------------
-
-
-def gamma_mode(alpha, beta):
-    """
-    Calculate the mode for a Gamma distribution.
-
-    For Gamma(α,β) distribution, the mode is:
-        (α-1)/β when α > 1
-        0 when α ≤ 1
-
-    Parameters
-    ----------
-    alpha : float or array-like
-        Shape parameter α of the Gamma distribution
-    beta : float or array-like
-        Rate parameter β of the Gamma distribution
-
-    Returns
-    -------
-    float or array-like
-        Mode of the Gamma distribution
-    """
-    return jnp.where(alpha > 1, (alpha - 1) / beta, 0.0)
-
-
-# ------------------------------------------------------------------------------
-
-
-def dirichlet_mode(alpha):
-    """
-    Calculate the mode for a Dirichlet distribution.
-
-    For Dirichlet(α) distribution with concentration parameters α, the mode for
-    each component is:
-        (αᵢ-1)/(∑ⱼαⱼ-K) when αᵢ > 1 for all i
-        0 when αᵢ ≤ 1 for any i
-    where K is the number of components.
-
-    Parameters
-    ----------
-    alpha : array-like
-        Concentration parameters α of the Dirichlet distribution
-
-    Returns
-    -------
-    array-like
-        Mode of the Dirichlet distribution
-    """
+def _betaprime_mode(self):
+    """Monkey patch mode property for BetaPrime distribution."""
+    # mode = (β - 1) / (α + 1) for β >= 1; else 0
     return jnp.where(
-        alpha > 1, (alpha - 1) / (jnp.sum(alpha) - len(alpha)), jnp.nan
+        self.concentration0 >= 1,
+        (self.concentration0 - 1) / (self.concentration1 + 1),
+        0.0,
     )
 
 
-# ------------------------------------------------------------------------------
+def _lognormal_mode(self):
+    """Monkey patch mode property for LogNormal distribution."""
+    # mode = exp(μ - σ²)
+    return jnp.exp(self.loc - self.scale**2)
 
 
-def lognorm_mode(mu, sigma):
-    """
-    Calculate the mode for a log-normal distribution.
-
-    For LogNormal(μ,σ) distribution, the mode is:
-        exp(μ - σ²)
-
-    Parameters
-    ----------
-    mu : float or array-like
-        Mean of the log-normal distribution
-    sigma : float or array-like
-        Standard deviation of the log-normal distribution
-
-    Returns
-    -------
-    float or array-like
-        Mode of the log-normal distribution
-    """
-    return jnp.exp(mu - sigma**2)
+def _normal_mode(self):
+    """Monkey patch mode property for Normal distribution."""
+    # mode = μ (mean)
+    return self.loc
 
 
-# ------------------------------------------------------------------------------
+def apply_distribution_mode_patches():
+    """Apply mode property patches to NumPyro distributions."""
+    from numpyro.distributions.continuous import Beta, LogNormal, Normal
 
+    # Only add if not already present
+    if not hasattr(Beta, "mode"):
+        Beta.mode = property(_beta_mode)
 
-def get_distribution_mode(dist_obj):
-    """
-    Get the mode of a distribution object.
+    if not hasattr(LogNormal, "mode"):
+        LogNormal.mode = property(_lognormal_mode)
 
-    Parameters
-    ----------
-    dist_obj : numpyro.distributions.Distribution
-        Distribution object
+    if not hasattr(Normal, "mode"):
+        Normal.mode = property(_normal_mode)
 
-    Returns
-    -------
-    jnp.ndarray
-        Mode of the distribution
-    """
-    dist_type = type(dist_obj).__name__
-
-    if dist_type == "Beta":
-        return beta_mode(dist_obj.concentration1, dist_obj.concentration0)
-    elif dist_type == "BetaPrime":
-        return betaprime_mode(dist_obj.concentration1, dist_obj.concentration0)
-    elif dist_type == "Gamma":
-        return gamma_mode(dist_obj.concentration, dist_obj.rate)
-    elif dist_type == "LogNormal":
-        return lognorm_mode(dist_obj.loc, dist_obj.scale)
-    elif dist_type == "Dirichlet":
-        return dirichlet_mode(dist_obj.concentration)
-    else:
-        try:
-            return dist_obj.mean
-        except:
-            raise ValueError(
-                f"Cannot compute mode for distribution type {dist_type}"
-            )
+    # BetaPrime already has mode property, no need to patch
 
 
 # ------------------------------------------------------------------------------
@@ -1192,3 +1093,35 @@ def log_liks_to_probs(log_liks: jnp.ndarray) -> jnp.ndarray:
         Log-likelihoods to convert to probabilities.
     """
     return jax.nn.softmax(log_liks, axis=-1)
+
+
+# ------------------------------------------------------------------------------
+# Module exports
+# ------------------------------------------------------------------------------
+
+
+__all__ = [
+    # Histogram functions
+    "compute_histogram_percentiles",
+    "compute_histogram_credible_regions",
+    # ECDF functions
+    "compute_ecdf_percentiles",
+    "compute_ecdf_credible_regions",
+    # Fraction of transcriptome functions
+    "sample_dirichlet_from_parameters",
+    "fit_dirichlet_mle",
+    "fit_dirichlet_minka",
+    # Hellinger distance functions
+    "sq_hellinger_beta",
+    "hellinger_beta",
+    "sq_hellinger_gamma",
+    "hellinger_gamma",
+    "sq_hellinger_lognormal",
+    "hellinger_lognormal",
+    # Distribution classes
+    "BetaPrime",
+    # JIT-compiled functions
+    "log_liks_to_probs",
+    # Utility functions
+    "apply_distribution_mode_patches",
+]
