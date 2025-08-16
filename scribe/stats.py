@@ -3,6 +3,7 @@ Statistics functions
 """
 
 # Import numpy for array manipulation
+from subprocess import NORMAL_PRIORITY_CLASS
 import numpy as np
 
 # Import typing
@@ -21,11 +22,21 @@ from numpyro.distributions import Dirichlet
 from jax.scipy.special import gammaln, digamma, betaln
 
 # Import numpyro distributions
-from numpyro.distributions import constraints, Distribution, Gamma, Beta
+from numpyro.distributions import (
+    constraints,
+    Distribution,
+    Beta,
+    Normal,
+    LogNormal,
+)
+
 from numpyro.distributions.util import promote_shapes, validate_sample
 
 # Import numpyro KL divergence
 from numpyro.distributions.kl import kl_divergence
+
+# Import multipledispatch
+from multipledispatch import dispatch
 
 # ------------------------------------------------------------------------------
 # Histogram functions
@@ -598,333 +609,6 @@ def fit_dirichlet_minka(samples, max_iter=1000, tol=1e-7, sample_axis=0):
 
 
 # ------------------------------------------------------------------------------
-# Hellinger distance functions
-# ------------------------------------------------------------------------------
-
-
-def sq_hellinger_beta(alpha1, beta1, alpha2, beta2):
-    """
-    Compute the squared Hellinger distance between two Beta distributions.
-
-    The squared Hellinger distance between two Beta distributions P and Q is
-    given by:
-
-    H²(P,Q) = 1 - ∫ sqrt(P(x)Q(x)) dx
-
-    where P(x) and Q(x) are the probability density functions of P and Q,
-    respectively.
-
-    For Beta distributions P ~ Beta(α₁,β₁) and Q ~ Beta(α₂,β₂), this has the
-    closed form:
-
-    H²(P,Q) = 1 - B((α₁+α₂)/2, (β₁+β₂)/2) / sqrt(B(α₁,β₁) * B(α₂,β₂))
-
-    where B(x,y) is the beta function.
-
-    Parameters
-    ----------
-    alpha1 : float or array-like
-        Shape parameter α₁ of the first Beta distribution P
-    beta1 : float or array-like
-        Shape parameter β₁ of the first Beta distribution P
-    alpha2 : float or array-like
-        Shape parameter α₂ of the second Beta distribution Q
-    beta2 : float or array-like
-        Shape parameter β₂ of the second Beta distribution Q
-
-    Returns
-    -------
-    float or array-like
-        Squared Hellinger distance between the two Beta distributions
-    """
-    # Check that all inputs are of same shape
-    if not all(
-        isinstance(a, (float, np.ndarray, jnp.ndarray))
-        and isinstance(b, (float, np.ndarray, jnp.ndarray))
-        for a, b in zip(
-            [alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2]
-        )
-    ):
-        raise ValueError("All inputs must be of the same shape")
-
-    return 1 - (
-        jsp.special.beta((alpha1 + alpha2) / 2, (beta1 + beta2) / 2)
-        / jnp.sqrt(
-            jsp.special.beta(alpha1, beta1) * jsp.special.beta(alpha2, beta2)
-        )
-    )
-
-
-# ------------------------------------------------------------------------------
-
-
-def hellinger_beta(alpha1, beta1, alpha2, beta2):
-    """
-    Compute the Hellinger distance between two Beta distributions.
-
-    The Hellinger distance between two Beta distributions P and Q is given by:
-
-    H(P,Q) = sqrt(H²(P,Q))
-
-    where H²(P,Q) is the squared Hellinger distance.
-
-    For Beta distributions P ~ Beta(α₁,β₁) and Q ~ Beta(α₂,β₂), this has the
-    closed form:
-
-    H(P,Q) = sqrt(1 - B((α₁+α₂)/2, (β₁+β₂)/2) / sqrt(B(α₁,β₁) * B(α₂,β₂)))
-
-    where B(x,y) is the beta function.
-
-    Parameters
-    ----------
-    alpha1 : float or array-like
-        Shape parameter α₁ of the first Beta distribution P
-    beta1 : float or array-like
-        Shape parameter β₁ of the first Beta distribution P
-    alpha2 : float or array-like
-        Shape parameter α₂ of the second Beta distribution Q
-    beta2 : float or array-like
-        Shape parameter β₂ of the second Beta distribution Q
-
-    Returns
-    -------
-    float or array-like
-        Hellinger distance between the two Beta distributions
-    """
-    return jnp.sqrt(sq_hellinger_beta(alpha1, beta1, alpha2, beta2))
-
-
-# ------------------------------------------------------------------------------
-
-
-def sq_hellinger_gamma(alpha1, beta1, alpha2, beta2):
-    """
-    Compute the squared Hellinger distance between two Gamma distributions.
-
-    The squared Hellinger distance between two Gamma distributions P and Q is
-    given by:
-
-    H²(P,Q) = 1 - ∫ sqrt(P(x)Q(x)) dx
-
-    where P(x) and Q(x) are the probability density functions of P and Q,
-    respectively.
-
-    For Gamma distributions P ~ Gamma(α₁,β₁) and Q ~ Gamma(α₂,β₂), this has the
-    closed form:
-
-    H²(P,Q) = 1 - Γ((α₁+α₂)/2) * ((β₁+β₂)/2)^(-(α₁+α₂)/2) *
-               sqrt((β₁^α₁ * β₂^α₂)/(Γ(α₁) * Γ(α₂)))
-
-    where Γ(x) is the gamma function.
-
-    Parameters
-    ----------
-    alpha1 : float or array-like
-        Shape parameter α₁ of the first Gamma distribution P
-    beta1 : float or array-like
-        Rate parameter β₁ of the first Gamma distribution P
-    alpha2 : float or array-like
-        Shape parameter α₂ of the second Gamma distribution Q
-    beta2 : float or array-like
-        Rate parameter β₂ of the second Gamma distribution Q
-
-    Returns
-    -------
-    float or array-like
-        Squared Hellinger distance between the two Gamma distributions
-    """
-    # Check that all inputs are of same shape
-    if not all(
-        isinstance(a, (float, np.ndarray, jnp.ndarray))
-        and isinstance(b, (float, np.ndarray, jnp.ndarray))
-        for a, b in zip(
-            [alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2]
-        )
-    ):
-        raise ValueError("All inputs must be of the same shape")
-
-    return 1 - (
-        jsp.special.gamma((alpha1 + alpha2) / 2)
-        * ((beta1 + beta2) / 2) ** (-(alpha1 + alpha2) / 2)
-        * jnp.sqrt(
-            beta1**alpha1
-            * beta2**alpha2
-            / jsp.special.gamma(alpha1)
-            * jsp.special.gamma(alpha2)
-        )
-    )
-
-
-def hellinger_gamma(alpha1, beta1, alpha2, beta2):
-    """
-    Compute the Hellinger distance between two Gamma distributions.
-
-    The Hellinger distance between two Gamma distributions P and Q is given by:
-
-    H(P,Q) = sqrt(H²(P,Q))
-
-    where H²(P,Q) is the squared Hellinger distance.
-
-    For Gamma distributions P ~ Gamma(α₁,β₁) and Q ~ Gamma(α₂,β₂), this has the
-    closed form:
-
-    H(P,Q) = sqrt(1 - Γ((α₁+α₂)/2) * ((β₁+β₂)/2)^(-(α₁+α₂)/2) *
-                   sqrt((β₁^α₁ * β₂^α₂)/(Γ(α₁) * Γ(α₂))))
-
-    where Γ(x) is the gamma function.
-
-    Parameters
-    ----------
-    alpha1 : float or array-like
-        Shape parameter α₁ of the first Gamma distribution P
-    beta1 : float or array-like
-        Rate parameter β₁ of the first Gamma distribution P
-    alpha2 : float or array-like
-        Shape parameter α₂ of the second Gamma distribution Q
-    beta2 : float or array-like
-        Rate parameter β₂ of the second Gamma distribution Q
-
-    Returns
-    -------
-    float or array-like
-        Hellinger distance between the two Gamma distributions
-    """
-    return jnp.sqrt(sq_hellinger_gamma(alpha1, beta1, alpha2, beta2))
-
-
-# ------------------------------------------------------------------------------
-
-
-def sq_hellinger_lognormal(mu1, sigma1, mu2, sigma2):
-    """
-    Compute the squared Hellinger distance between two log-normal distributions.
-
-    The squared Hellinger distance between two log-normal distributions P and Q is
-    given by:
-
-    H²(P,Q) = 1 - sqrt( σ1 * σ2 / (σ1² + σ2²) )
-                    * exp( - (μ1-μ2)² / [4*(σ1² + σ2²)] )
-
-    Parameters
-    ----------
-    mu1 : float or array-like
-        Location parameter μ₁ of the first log-normal distribution P
-    sigma1 : float or array-like
-        Scale parameter σ₁ of the first log-normal distribution P
-    mu2 : float or array-like
-        Location parameter μ₂ of the second log-normal distribution Q
-    sigma2 : float or array-like
-        Scale parameter σ₂ of the second log-normal distribution Q
-
-    Returns
-    -------
-    float or array-like
-        Squared Hellinger distance between the two log-normal distributions
-    """
-    # Check that all inputs are of same shape
-    if not all(
-        isinstance(a, (float, np.ndarray, jnp.ndarray))
-        and isinstance(b, (float, np.ndarray, jnp.ndarray))
-        for a, b in zip([mu1, sigma1, mu2, sigma2], [mu1, sigma1, mu2, sigma2])
-    ):
-        raise ValueError("All inputs must be of the same shape")
-
-    # The prefactor under the square root:
-    prefactor = jnp.sqrt((sigma1 * sigma2) / (sigma1**2 + sigma2**2))
-    # The exponent factor:
-    exponent = jnp.exp(-((mu1 - mu2) ** 2) / (4.0 * (sigma1**2 + sigma2**2)))
-    return 1.0 - (prefactor * exponent)
-
-
-def hellinger_lognormal(mu1, sigma1, mu2, sigma2):
-    """
-    Compute the Hellinger distance between two log-normal distributions.
-
-    The Hellinger distance is the square root of the squared Hellinger distance.
-
-    Parameters
-    ----------
-    mu1 : float or array-like
-        Location parameter μ₁ of the first log-normal distribution P
-    sigma1 : float or array-like
-        Scale parameter σ₁ of the first log-normal distribution P
-    mu2 : float or array-like
-        Location parameter μ₂ of the second log-normal distribution Q
-    sigma2 : float or array-like
-        Scale parameter σ₂ of the second log-normal distribution Q
-
-    Returns
-    -------
-    float or array-like
-        Hellinger distance between the two log-normal distributions
-    """
-    return jnp.sqrt(sq_hellinger_lognormal(mu1, sigma1, mu2, sigma2))
-
-
-# ------------------------------------------------------------------------------
-# Distribution Mode Monkey Patches
-# ------------------------------------------------------------------------------
-
-
-def _beta_mode(self):
-    """Monkey patch mode property for Beta distribution."""
-    a = self.concentration1
-    b = self.concentration0
-    interior = (a > 1) & (b > 1)
-    left_bd = (a <= 1) & (b > 1)  # mode at 0
-    right_bd = (a > 1) & (b <= 1)  # mode at 1
-    both_bd = (a <= 1) & (b <= 1)  # two boundary modes: 0 and 1
-
-    interior_val = (a - 1) / (a + b - 2)  # safe because interior ⇒ denom > 0
-
-    # Return NaN where the mode is non-unique (both boundaries), else 0/1/interior
-    return jnp.where(
-        interior,
-        interior_val,
-        jnp.where(left_bd, 0.0, jnp.where(right_bd, 1.0, jnp.nan)),
-    )
-
-
-def _betaprime_mode(self):
-    """Monkey patch mode property for BetaPrime distribution."""
-    # mode = (β - 1) / (α + 1) for β >= 1; else 0
-    return jnp.where(
-        self.concentration0 >= 1,
-        (self.concentration0 - 1) / (self.concentration1 + 1),
-        0.0,
-    )
-
-
-def _lognormal_mode(self):
-    """Monkey patch mode property for LogNormal distribution."""
-    # mode = exp(μ - σ²)
-    return jnp.exp(self.loc - self.scale**2)
-
-
-def _normal_mode(self):
-    """Monkey patch mode property for Normal distribution."""
-    # mode = μ (mean)
-    return self.loc
-
-
-def apply_distribution_mode_patches():
-    """Apply mode property patches to NumPyro distributions."""
-    from numpyro.distributions.continuous import Beta, LogNormal, Normal
-
-    # Only add if not already present
-    if not hasattr(Beta, "mode"):
-        Beta.mode = property(_beta_mode)
-
-    if not hasattr(LogNormal, "mode"):
-        LogNormal.mode = property(_lognormal_mode)
-
-    if not hasattr(Normal, "mode"):
-        Normal.mode = property(_normal_mode)
-
-    # BetaPrime already has mode property, no need to patch
-
-
-# ------------------------------------------------------------------------------
 # Beta Prime Distribution
 # ------------------------------------------------------------------------------
 
@@ -1077,22 +761,228 @@ def _kl_betaprime(p, q):
     return kl_divergence(Beta(a1, b1), Beta(a2, b2))
 
 
+# ==============================================================================
+# Distribution Mode Monkey Patches
+# ==============================================================================
+
 # ------------------------------------------------------------------------------
-# JIT-compiled functions
+# Mode functions
 # ------------------------------------------------------------------------------
 
 
-@jit
-def log_liks_to_probs(log_liks: jnp.ndarray) -> jnp.ndarray:
-    """
-    Convert log-likelihoods to probabilities using optimized softmax.
+def _beta_mode(self):
+    """Monkey patch mode property for Beta distribution."""
+    a = self.concentration1
+    b = self.concentration0
+    interior = (a > 1) & (b > 1)
+    left_bd = (a <= 1) & (b > 1)  # mode at 0
+    right_bd = (a > 1) & (b <= 1)  # mode at 1
+    both_bd = (a <= 1) & (b <= 1)  # two boundary modes: 0 and 1
 
-    Parameters
-    ----------
-    log_liks : jnp.ndarray
-        Log-likelihoods to convert to probabilities.
+    interior_val = (a - 1) / (a + b - 2)  # safe because interior ⇒ denom > 0
+
+    # Return NaN where the mode is non-unique (both boundaries), else
+    # 0/1/interior
+    return jnp.where(
+        interior,
+        interior_val,
+        jnp.where(left_bd, 0.0, jnp.where(right_bd, 1.0, jnp.nan)),
+    )
+
+
+def _lognormal_mode(self):
+    """Monkey patch mode property for LogNormal distribution."""
+    # mode = exp(μ - σ²)
+    return jnp.exp(self.loc - self.scale**2)
+
+
+def _normal_mode(self):
+    """Monkey patch mode property for Normal distribution."""
+    # mode = μ (mean)
+    return self.loc
+
+
+def apply_distribution_mode_patches():
+    """Apply mode property patches to NumPyro distributions."""
+    from numpyro.distributions.continuous import Beta, LogNormal, Normal
+
+    # Only add if not already present
+    if not hasattr(Beta, "mode"):
+        Beta.mode = property(_beta_mode)
+
+    if not hasattr(LogNormal, "mode"):
+        LogNormal.mode = property(_lognormal_mode)
+
+    if not hasattr(Normal, "mode"):
+        Normal.mode = property(_normal_mode)
+
+
+# ------------------------------------------------------------------------------
+# Multipledispatch Jensen-Shannon divergence
+# ------------------------------------------------------------------------------
+
+
+@dispatch(Beta, Beta)
+def jensen_shannon(p, q):
+    # Define distributions
+    p = Beta(p.concentration1, p.concentration0)
+    q = Beta(q.concentration1, q.concentration0)
+    # Compute KL divergences
+    kl_p_q = kl_divergence(p, q)
+    kl_q_p = kl_divergence(q, p)
+    # Compute Jensen-Shannon divergence
+    return 0.5 * (kl_p_q + kl_q_p)
+
+
+# ------------------------------------------------------------------------------
+
+
+@dispatch(BetaPrime, BetaPrime)
+def jensen_shannon(p, q):
+    # Define distributions
+    p = BetaPrime(p.concentration1, p.concentration0)
+    q = BetaPrime(q.concentration1, q.concentration0)
+    # Compute KL divergences
+    kl_p_q = kl_divergence(p, q)
+    kl_q_p = kl_divergence(q, p)
+    # Compute Jensen-Shannon divergence
+    return 0.5 * (kl_p_q + kl_q_p)
+
+
+# ------------------------------------------------------------------------------
+
+
+@dispatch(Normal, Normal)
+def jensen_shannon(p, q):
+    # Define distributions
+    p = Normal(p.loc, p.scale)
+    q = Normal(q.loc, q.scale)
+    # Compute KL divergences
+    kl_p_q = kl_divergence(p, q)
+    kl_q_p = kl_divergence(q, p)
+    # Compute Jensen-Shannon divergence
+    return 0.5 * (kl_p_q + kl_q_p)
+
+
+# ------------------------------------------------------------------------------
+
+
+@dispatch(LogNormal, LogNormal)
+def jensen_shannon(p, q):
+    # Define distributions
+    p = LogNormal(p.loc, p.scale)
+    q = LogNormal(q.loc, q.scale)
+    # Compute KL divergences
+    kl_p_q = kl_divergence(p, q)
+    kl_q_p = kl_divergence(q, p)
+    # Compute Jensen-Shannon divergence
+    return 0.5 * (kl_p_q + kl_q_p)
+
+
+# ------------------------------------------------------------------------------
+# Multipledispatch Hellinger distance functions
+# ------------------------------------------------------------------------------
+
+
+@dispatch(Beta, Beta)
+def sq_hellinger(p, q):
     """
-    return jax.nn.softmax(log_liks, axis=-1)
+    Compute the squared Hellinger distance between two Beta distributions.
+
+    H²(P,Q) = 1 - B((α₁+α₂)/2, (β₁+β₂)/2) / sqrt(B(α₁,β₁) * B(α₂,β₂))
+    where B(x,y) is the beta function.
+    """
+    return 1 - (
+        jsp.special.beta(
+            (p.concentration1 + q.concentration1) / 2,
+            (p.concentration0 + q.concentration0) / 2,
+        )
+        / jnp.sqrt(
+            jsp.special.beta(p.concentration1, p.concentration0)
+            * jsp.special.beta(q.concentration1, q.concentration0)
+        )
+    )
+
+
+@dispatch(Beta, Beta)
+def hellinger(p, q):
+    """Compute the Hellinger distance between two Beta distributions."""
+    return jnp.sqrt(sq_hellinger(p, q))
+
+
+@dispatch(BetaPrime, BetaPrime)
+def sq_hellinger(p, q):
+    """
+    Compute the squared Hellinger distance between two BetaPrime distributions.
+
+    For BetaPrime distributions, we can use the relationship with Beta
+    distributions and the fact that BetaPrime(α, β) corresponds to Beta(β, α) in
+    standard form.
+    """
+    # Convert to Beta parameters for computation
+    # BetaPrime(α, β) corresponds to Beta(β, α) in standard form
+    return 1 - (
+        jsp.special.beta(
+            (p.concentration0 + q.concentration0) / 2,
+            (p.concentration1 + q.concentration1) / 2,
+        )
+        / jnp.sqrt(
+            jsp.special.beta(p.concentration0, p.concentration1)
+            * jsp.special.beta(q.concentration0, q.concentration1)
+        )
+    )
+
+
+@dispatch(BetaPrime, BetaPrime)
+def hellinger(p, q):
+    """Compute the Hellinger distance between two BetaPrime distributions."""
+    return jnp.sqrt(sq_hellinger(p, q))
+
+
+@dispatch(Normal, Normal)
+def sq_hellinger(p, q):
+    """
+    Compute the squared Hellinger distance between two Normal distributions.
+
+    H²(P,Q) = 1 - sqrt(2*σ₁*σ₂/(σ₁² + σ₂²)) * exp(-(μ₁-μ₂)²/(4*(σ₁² + σ₂²)))
+    """
+    mu1, sigma1 = p.loc, p.scale
+    mu2, sigma2 = q.loc, q.scale
+
+    # The prefactor under the square root:
+    prefactor = jnp.sqrt((2 * sigma1 * sigma2) / (sigma1**2 + sigma2**2))
+    # The exponent factor:
+    exponent = jnp.exp(-((mu1 - mu2) ** 2) / (4.0 * (sigma1**2 + sigma2**2)))
+    return 1.0 - (prefactor * exponent)
+
+
+@dispatch(Normal, Normal)
+def hellinger(p, q):
+    """Compute the Hellinger distance between two Normal distributions."""
+    return jnp.sqrt(sq_hellinger(p, q))
+
+
+@dispatch(LogNormal, LogNormal)
+def sq_hellinger(p, q):
+    """
+    Compute the squared Hellinger distance between two LogNormal distributions.
+
+    H²(P,Q) = 1 - sqrt(σ₁*σ₂/(σ₁² + σ₂²)) * exp(-(μ₁-μ₂)²/(4*(σ₁² + σ₂²)))
+    """
+    mu1, sigma1 = p.loc, p.scale
+    mu2, sigma2 = q.loc, q.scale
+
+    # The prefactor under the square root:
+    prefactor = jnp.sqrt((sigma1 * sigma2) / (sigma1**2 + sigma2**2))
+    # The exponent factor:
+    exponent = jnp.exp(-((mu1 - mu2) ** 2) / (4.0 * (sigma1**2 + sigma2**2)))
+    return 1.0 - (prefactor * exponent)
+
+
+@dispatch(LogNormal, LogNormal)
+def hellinger(p, q):
+    """Compute the Hellinger distance between two LogNormal distributions."""
+    return jnp.sqrt(sq_hellinger(p, q))
 
 
 # ------------------------------------------------------------------------------
@@ -1112,16 +1002,10 @@ __all__ = [
     "fit_dirichlet_mle",
     "fit_dirichlet_minka",
     # Hellinger distance functions
-    "sq_hellinger_beta",
-    "hellinger_beta",
-    "sq_hellinger_gamma",
-    "hellinger_gamma",
-    "sq_hellinger_lognormal",
-    "hellinger_lognormal",
+    "sq_hellinger",
+    "hellinger",
+    # Multipledispatch functions
+    "jensen_shannon",
     # Distribution classes
     "BetaPrime",
-    # JIT-compiled functions
-    "log_liks_to_probs",
-    # Utility functions
-    "apply_distribution_mode_patches",
 ]
