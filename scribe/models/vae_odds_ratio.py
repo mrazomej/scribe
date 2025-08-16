@@ -387,7 +387,8 @@ def nbvcp_vae_model(
         p_hat[i, j] = 1 / (1 + phi + phi * phi_capture[i])
 
     The model architecture consists of:
-        1. Global parameters phi and phi_capture sampled from BetaPrime prior distributions
+        1. Global parameters phi and phi_capture sampled from BetaPrime prior
+           distributions
         2. A latent variable z sampled from a standard Normal prior
         3. A decoder network that maps z to cell-specific mu parameters
         4. The odds ratio relationship that computes r from mu and phi
@@ -475,13 +476,11 @@ def nbvcp_vae_model(
                 )
                 # Reshape phi_capture for broadcasting to (n_cells, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute p_hat using the derived formula
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute the logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
 
                 # Define base distribution with VAE-generated r
-                base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+                base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
                 numpyro.sample("counts", base_dist, obs=counts)
         else:
             # With batching: sample counts for a subset of cells
@@ -509,13 +508,11 @@ def nbvcp_vae_model(
                 )
                 # Reshape phi_capture for broadcasting to (n_cells, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute p_hat using the derived formula
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute the logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
 
                 # Define base distribution with VAE-generated r
-                base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+                base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
                 numpyro.sample("counts", base_dist, obs=counts[idx])
     else:
         # Without counts: for prior predictive sampling
@@ -541,13 +538,11 @@ def nbvcp_vae_model(
             )
             # Reshape phi_capture for broadcasting to (n_cells, n_genes)
             phi_capture_reshaped = phi_capture[:, None]
-            # Compute p_hat using the derived formula
-            p_hat = numpyro.deterministic(
-                "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-            )
+            # Compute the logits for the Negative Binomial distribution
+            logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
 
             # Define base distribution with VAE-generated r
-            base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+            base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
             numpyro.sample("counts", base_dist)
 
 
@@ -587,8 +582,9 @@ def nbvcp_vae_guide(
           learnable parameters with positivity constraints
         - z[cell] ~ Normal(z_mean[cell], z_std[cell]) where z_mean and z_std are
           computed by the encoder network from the observed counts
-        - phi_capture[cell] ~ BetaPrime(phi_capture_alpha[cell], phi_capture_beta[cell])
-          where the parameters are computed by the encoder network
+        - phi_capture[cell] ~ BetaPrime(phi_capture_alpha[cell],
+          phi_capture_beta[cell]) where the parameters are computed by the
+          encoder network
 
     The encoder network takes the observed gene expression counts for each cell
     and outputs:
@@ -1046,13 +1042,11 @@ def nbvcp_dpvae_model(
                 )
                 # Reshape phi_capture for broadcasting to (n_cells, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute p_hat using the derived formula
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
 
                 # Define base distribution with VAE-generated r
-                base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+                base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
                 numpyro.sample("counts", base_dist, obs=counts)
         else:
             # With batching: sample counts for a subset of cells
@@ -1076,13 +1070,11 @@ def nbvcp_dpvae_model(
                 )
                 # Reshape phi_capture for broadcasting to (n_cells, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute p_hat using the derived formula
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
 
                 # Define base distribution with VAE-generated r
-                base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+                base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
                 numpyro.sample("counts", base_dist, obs=counts[idx])
     else:
         # Without counts: for prior predictive sampling
@@ -1103,13 +1095,11 @@ def nbvcp_dpvae_model(
             )
             # Reshape phi_capture for broadcasting to (n_cells, n_genes)
             phi_capture_reshaped = phi_capture[:, None]
-            # Compute p_hat using the derived formula
-            p_hat = numpyro.deterministic(
-                "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-            )
+            # Compute logits for the Negative Binomial distribution
+            logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
 
             # Define base distribution with VAE-generated r
-            base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+            base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
             numpyro.sample("counts", base_dist)
 
 
