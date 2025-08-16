@@ -274,14 +274,12 @@ def nbvcp_model(
                 )
                 # Reshape phi_capture for broadcasting to (n_cells, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute p_hat using the derived formula
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute the logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
                 # Sample observed counts from Negative Binomial with p_hat
                 numpyro.sample(
                     "counts",
-                    dist.NegativeBinomialProbs(r, p_hat).to_event(1),
+                    dist.NegativeBinomialLogits(r, logits).to_event(1),
                     obs=counts,
                 )
         else:
@@ -295,15 +293,13 @@ def nbvcp_model(
                 )
                 # Reshape phi_capture for broadcasting to (batch_size, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute p_hat using the derived formula
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute the logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
                 # Sample observed counts for the batch from Negative Binomial
                 # with p_hat
                 numpyro.sample(
                     "counts",
-                    dist.NegativeBinomialProbs(r, p_hat).to_event(1),
+                    dist.NegativeBinomialLogits(r, logits).to_event(1),
                     obs=counts[idx],
                 )
     else:
@@ -315,14 +311,12 @@ def nbvcp_model(
             )
             # Reshape phi_capture for broadcasting to (n_cells, n_genes)
             phi_capture_reshaped = phi_capture[:, None]
-            # Compute effective success probability p_hat for each cell/gene
-            p_hat = numpyro.deterministic(
-                "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-            )
-            # Sample latent counts from Negative Binomial with p_hat
+            # Compute the logits for the Negative Binomial distribution
+            logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
+            # Sample latent counts from Negative Binomial with logits
             numpyro.sample(
                 "counts",
-                dist.NegativeBinomialProbs(r, p_hat).to_event(1),
+                dist.NegativeBinomialLogits(r, logits).to_event(1),
             )
 
 
@@ -444,12 +438,10 @@ def zinbvcp_model(
                 )
                 # Reshape phi_capture for broadcasting to genes
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute p_hat using the derived formula
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute the logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
                 # Define base Negative Binomial distribution
-                base_dist = dist.NegativeBinomialProbs(r, p_hat)
+                base_dist = dist.NegativeBinomialLogits(r, logits)
                 # Define zero-inflated NB distribution
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
@@ -467,12 +459,10 @@ def zinbvcp_model(
                 )
                 # Reshape phi_capture for broadcasting to genes
                 phi_capture_reshaped = phi_capture[:, None]
-                # Compute effective success probability for each cell/gene
-                p_hat = numpyro.deterministic(
-                    "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-                )
+                # Compute the logits for the Negative Binomial distribution
+                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
                 # Define base Negative Binomial distribution
-                base_dist = dist.NegativeBinomialProbs(r, p_hat)
+                base_dist = dist.NegativeBinomialLogits(r, logits)
                 # Define zero-inflated NB distribution
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
@@ -488,12 +478,10 @@ def zinbvcp_model(
             )
             # Reshape phi_capture for broadcasting to genes
             phi_capture_reshaped = phi_capture[:, None]
-            # Compute effective success probability for each cell/gene
-            p_hat = numpyro.deterministic(
-                "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-            )
+            # Compute the logits for the Negative Binomial distribution
+            logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
             # Define base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialProbs(r, p_hat)
+            base_dist = dist.NegativeBinomialLogits(r, logits)
             # Define zero-inflated NB distribution
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
                 1
@@ -983,14 +971,10 @@ def nbvcp_mixture_model(
         )
         # Reshape phi_capture for broadcasting with components
         phi_capture_reshaped = phi_capture[:, None, None]
-        # Compute p_hat using the derived formula
-        p_hat = numpyro.deterministic(
-            "p_hat",
-            1.0 / (1 + phi + phi * phi_capture_reshaped),
-        )
-
+        # Compute the logits for the Negative Binomial distribution
+        logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
         # Define the base distribution for each component (Negative Binomial)
-        base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+        base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
         # Create the mixture distribution over components
         mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
         # Define observation context for sampling
@@ -1172,13 +1156,10 @@ def zinbvcp_mixture_model(
         )
         # Reshape phi_capture for broadcasting with components
         phi_capture_reshaped = phi_capture[:, None, None]
-        # Compute p_hat using the derived formula
-        p_hat = numpyro.deterministic(
-            "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
-        )
-
+        # Compute the logits for the Negative Binomial distribution
+        logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
         # Define the base distribution for each component (Negative Binomial)
-        base_dist = dist.NegativeBinomialProbs(r, p_hat)
+        base_dist = dist.NegativeBinomialLogits(r, logits)
         # Create the zero-inflated distribution over components
         zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
         # Create the mixture distribution over components
@@ -1413,7 +1394,8 @@ def get_posterior_distributions(
             # Cell-specific phi_capture parameters
             distributions["phi_capture"] = [
                 BetaPrime(
-                    params["phi_capture_alpha"][c], params["phi_capture_beta"][c]
+                    params["phi_capture_alpha"][c],
+                    params["phi_capture_beta"][c],
                 )
                 for c in range(params["phi_capture_alpha"].shape[0])
             ]
