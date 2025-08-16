@@ -1032,37 +1032,58 @@ class ScribeVAEResults(ScribeSVIResults):
         decoded_samples = self.vae_model.decoder(posterior_samples["z"])
 
         # Store decoded samples with right keys
-        if self.model_config.parameterization == "standard":
-            # Get the log-transformed r values
-            posterior_samples["log_r"] = decoded_samples
-            # Get the r values
-            posterior_samples["r"] = jnp.exp(decoded_samples)
-            # Make p samples compatible in shape with r samples
-            posterior_samples["p"] = posterior_samples["p"][:, None]
-        elif self.model_config.parameterization == "linked":
-            # Get the log-transformed mu values
-            posterior_samples["log_mu"] = decoded_samples
-            # Get the mu values
-            posterior_samples["mu"] = jnp.exp(decoded_samples)
-            # Make p samples compatible in shape with r samples
-            posterior_samples["p"] = posterior_samples["p"][:, None]
-
-        elif self.model_config.parameterization == "odds_ratio":
-            # Get the log-transformed mu values
-            posterior_samples["log_mu"] = decoded_samples
-            # Get the mu values
-            posterior_samples["mu"] = jnp.exp(decoded_samples)
-            # Make phi samples compatible in shape with r samples
-            posterior_samples["phi"] = posterior_samples["phi"][:, None]
-        elif getattr(self.model_config, "unconstrained", False):
-            # Get the log-transformed r values
-            posterior_samples["r_unconstrained"] = decoded_samples
-            # Get the r values
-            posterior_samples["r"] = jnp.exp(decoded_samples)
-            # Make p samples compatible in shape with r samples
-            posterior_samples["p_unconstrained"] = posterior_samples[
-                "p_unconstrained"
-            ][:, None]
+        if getattr(self.model_config, "unconstrained", False):
+            # Handle unconstrained parameterization
+            if self.model_config.parameterization == "standard":
+                # Get the log-transformed r values
+                posterior_samples["r_unconstrained"] = decoded_samples
+                # Get the r values
+                posterior_samples["r"] = jnp.exp(decoded_samples)
+                # Make p samples compatible in shape with r samples
+                posterior_samples["p_unconstrained"] = posterior_samples[
+                    "p_unconstrained"
+                ][:, None]
+            elif self.model_config.parameterization == "linked":
+                # Get the log-transformed mu values
+                posterior_samples["mu_unconstrained"] = decoded_samples
+                # Get the mu values
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
+                # Make p samples compatible in shape with r samples
+                posterior_samples["p_unconstrained"] = posterior_samples[
+                    "p_unconstrained"
+                ][:, None]
+            elif self.model_config.parameterization == "odds_ratio":
+                # Get the log-transformed mu values
+                posterior_samples["mu_unconstrained"] = decoded_samples
+                # Get the mu values
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
+                # Make phi samples compatible in shape with r samples
+                posterior_samples["phi_unconstrained"] = posterior_samples[
+                    "phi_unconstrained"
+                ][:, None]
+        else:
+            # Handle constrained parameterization
+            if self.model_config.parameterization == "standard":
+                # Get the log-transformed r values
+                posterior_samples["log_r"] = decoded_samples
+                # Get the r values
+                posterior_samples["r"] = jnp.exp(decoded_samples)
+                # Make p samples compatible in shape with r samples
+                posterior_samples["p"] = posterior_samples["p"][:, None]
+            elif self.model_config.parameterization == "linked":
+                # Get the log-transformed mu values
+                posterior_samples["log_mu"] = decoded_samples
+                # Get the mu values
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
+                # Make p samples compatible in shape with r samples
+                posterior_samples["p"] = posterior_samples["p"][:, None]
+            elif self.model_config.parameterization == "odds_ratio":
+                # Get the log-transformed mu values
+                posterior_samples["log_mu"] = decoded_samples
+                # Get the mu values
+                posterior_samples["mu"] = jnp.exp(decoded_samples)
+                # Make phi samples compatible in shape with r samples
+                posterior_samples["phi"] = posterior_samples["phi"][:, None]
 
         # Store samples if requested
         if store_samples:
