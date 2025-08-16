@@ -222,6 +222,7 @@ def nbdm_vae_model(
             )
             numpyro.sample("counts", base_dist)
 
+
 # ------------------------------------------------------------------------------
 # NBDM VAE Guide
 # ------------------------------------------------------------------------------
@@ -347,6 +348,7 @@ def nbdm_vae_guide(
                 .expand([model_config.vae_latent_dim])
                 .to_event(1),
             )
+
 
 # ------------------------------------------------------------------------------
 # NBVCP VAE Model
@@ -759,6 +761,7 @@ def nbvcp_vae_guide(
                 dist.Normal(*phi_capture_prior_params),
             )
 
+
 # ==============================================================================
 # dpVAE Model Functions (for decoupled prior)
 # ==============================================================================
@@ -857,7 +860,6 @@ def nbdm_dpvae_model(
     """
     # Define prior parameters for unconstrained variables
     phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
 
     # Sample unconstrained parameters
     phi_unconstrained = numpyro.sample(
@@ -946,9 +948,9 @@ def nbdm_dpvae_model(
             r = numpyro.deterministic("r", mu * phi)
 
             # Define base distribution with VAE-generated r
-            base_dist = dist.NegativeBinomialLogits(
-                r, -jnp.log(phi)
-            ).to_event(1)
+            base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(
+                1
+            )
             numpyro.sample("counts", base_dist)
 
 
@@ -1254,7 +1256,10 @@ def get_posterior_distributions(
     distributions = {}
 
     # p_unconstrained parameter (Normal distribution)
-    if "phi_unconstrained_loc" in params and "phi_unconstrained_scale" in params:
+    if (
+        "phi_unconstrained_loc" in params
+        and "phi_unconstrained_scale" in params
+    ):
         distributions["phi_unconstrained"] = dist.Normal(
             params["phi_unconstrained_loc"],
             params["phi_unconstrained_scale"],
