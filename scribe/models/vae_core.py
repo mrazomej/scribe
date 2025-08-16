@@ -6,9 +6,8 @@ across all parameterizations, eliminating code duplication between standard VAE
 and dpVAE implementations.
 """
 
-from typing import Callable, Tuple, Optional
+from typing import Callable, Tuple
 import jax
-import jax.numpy as jnp
 from flax import nnx
 
 from ..vae.architectures import (
@@ -83,7 +82,7 @@ def make_vae_model_and_guide(
     )
 
     # Determine if variable capture should be enabled based on model type
-    variable_capture = (model_type == "nbvcp")
+    variable_capture = model_type == "nbvcp"
 
     # Create the encoder module for the inference model
     encoder = create_encoder(
@@ -135,7 +134,8 @@ def make_vae_model_and_guide(
             from . import vae_odds_ratio_unconstrained as param_module
         else:
             raise ValueError(
-                f"Unsupported parameterization for unconstrained: {parameterization}")
+                f"Unsupported parameterization for unconstrained: {parameterization}"
+            )
     else:
         # For constrained variants, import the regular modules
         if parameterization == "standard":
@@ -146,7 +146,8 @@ def make_vae_model_and_guide(
             from . import vae_odds_ratio as param_module
         else:
             raise ValueError(
-                f"Unsupported parameterization: {parameterization}")
+                f"Unsupported parameterization: {parameterization}"
+            )
 
     # Select the appropriate model and guide functions for the chosen prior and
     # model type
@@ -155,9 +156,6 @@ def make_vae_model_and_guide(
         if model_type == "nbdm":
             model_fn = param_module.nbdm_vae_model
             guide_fn = param_module.nbdm_vae_guide
-        elif model_type == "zinb":
-            model_fn = param_module.zinb_vae_model
-            guide_fn = param_module.zinb_vae_guide
         elif model_type == "nbvcp":
             model_fn = param_module.nbvcp_vae_model
             guide_fn = param_module.nbvcp_vae_guide
@@ -169,9 +167,6 @@ def make_vae_model_and_guide(
         if model_type == "nbdm":
             model_fn = param_module.nbdm_dpvae_model
             guide_fn = param_module.nbdm_vae_guide  # Guide is shared for dpVAE
-        elif model_type == "zinb":
-            model_fn = param_module.zinb_dpvae_model
-            guide_fn = param_module.zinb_vae_guide  # Guide is shared for dpVAE
         elif model_type == "nbvcp":
             model_fn = param_module.nbvcp_dpvae_model
             guide_fn = param_module.nbvcp_vae_guide  # Guide is shared for dpVAE
@@ -192,8 +187,13 @@ def make_vae_model_and_guide(
             # For decoupled prior, call model_fn with decoder and
             # decoupled_prior
             return model_fn(
-                n_cells, n_genes, model_config, decoder, decoupled_prior,
-                counts, batch_size
+                n_cells,
+                n_genes,
+                model_config,
+                decoder,
+                decoupled_prior,
+                counts,
+                batch_size,
             )
 
     # Define a closure for the guide function, injecting the created encoder
