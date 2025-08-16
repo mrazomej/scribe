@@ -739,6 +739,9 @@ class ScribeVAEResults(ScribeSVIResults):
             import jax.scipy as jsp
             import numpyro.distributions as dist
 
+            # Determine model unconstrained
+            unconstrained = getattr(self.model_config, "unconstrained", False)
+
             # Generate multiple samples
             p_capture_samples = []
             for i in range(n_samples):
@@ -747,10 +750,44 @@ class ScribeVAEResults(ScribeSVIResults):
                     # Process all cells at once
                     _, _, param1, param2 = encoder(counts)
 
-                    if self.model_config.parameterization in [
-                        "standard",
-                        "linked",
-                    ]:
+                    if unconstrained:
+                        # Extract parameters for Normal distribution
+                        loc = param1.squeeze(-1)
+                        scale = jnp.exp(param2.squeeze(-1))
+
+                        if self.model_config.parameterization == "odds_ratio":
+                            # Sample from Normal distribution
+                            phi_capture_unconstrained = dist.Normal(
+                                loc, scale
+                            ).sample(key)
+                            # Convert to phi_capture
+                            phi_capture = jnp.exp(phi_capture_unconstrained)
+                            # Convert to p_capture
+                            p_capture = jsp.special.expit(phi_capture)
+                        else:
+                            # Sample from Normal distribution
+                            p_capture_unconstrained = dist.Normal(
+                                loc, scale
+                            ).sample(key)
+                            # Convert to p_capture
+                            p_capture = jsp.special.expit(
+                                p_capture_unconstrained
+                            )
+                    else:
+                        # Extract parameters for Beta or BetaPrime distribution
+                        alpha = jnp.exp(param1.squeeze(-1))
+                        beta = jnp.exp(param2.squeeze(-1))
+                        # Sample from Beta or BetaPrime distribution
+                        p_capture = dist.Beta(alpha, beta).sample(key)
+
+                    if (
+                        self.model_config.parameterization
+                        in [
+                            "standard",
+                            "linked",
+                        ]
+                        and not unconstrained
+                    ):
                         # Extract parameters for Beta distribution
                         alpha = jnp.exp(param1.squeeze(-1))
                         beta = jnp.exp(param2.squeeze(-1))
