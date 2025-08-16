@@ -24,6 +24,9 @@ from jax.scipy.special import gammaln, digamma
 from numpyro.distributions import constraints, Distribution, Gamma
 from numpyro.distributions.util import promote_shapes, validate_sample
 
+# Import numpyro KL divergence
+from numpyro.distributions.kl import kl_divergence
+
 # ------------------------------------------------------------------------------
 # Histogram functions
 # ------------------------------------------------------------------------------
@@ -730,24 +733,24 @@ def kl_betaprime(alpha1, beta1, alpha2, beta2):
     float or array-like
         KL divergence between the two BetaPrime distributions
     """
-    # Check that all inputs are of same shape
-    if not all(
-        isinstance(a, (float, np.ndarray, jnp.ndarray))
-        and isinstance(b, (float, np.ndarray, jnp.ndarray))
-        for a, b in zip(
-            [alpha1, beta1, alpha2, beta2], [alpha1, beta1, alpha2, beta2]
-        )
-    ):
-        raise ValueError("All inputs must be of the same shape")
+    # Convert alpha1, beta1, alpha2, beta2 to JAX arrays
+    a1 = jnp.asarray(alpha1)
+    b1 = jnp.asarray(beta1)
+    a2 = jnp.asarray(alpha2)
+    b2 = jnp.asarray(beta2)
 
+    # Define a function to compute the log Beta function:
+    # logB(a, b) = gammaln(a + b) - gammaln(a) - gammaln(b)
+    logB = lambda a, b: gammaln(a + b) - gammaln(a) - gammaln(b)
+    # Compute the KL divergence using the closed-form expression for BetaPrime
+    # distributions
     return (
-        gammaln(alpha2 + beta2)
-        - gammaln(alpha2)
-        - gammaln(beta2)
-        - (gammaln(alpha1 + beta1) - gammaln(alpha1) - gammaln(beta1))
-        + (alpha1 - alpha2) * digamma(alpha1)
-        + (beta1 - beta2) * digamma(beta1)
-        + (alpha2 - alpha1 + beta2 - beta1) * digamma(alpha1 + beta1)
+        logB(a2, b2)  # log B(a2, b2)
+        - logB(a1, b1)  # - log B(a1, b1)
+        + (a1 - a2) * digamma(a1)  # + (a1 - a2) * digamma(a1)
+        + (b1 - b2) * digamma(b1)  # + (b1 - b2) * digamma(b1)
+        + (a2 - a1 + b2 - b1)
+        * digamma(a1 + b1)  # + (a2 - a1 + b2 - b1) * digamma(a1 + b1)
     )
 
 
@@ -1449,6 +1452,26 @@ class BetaPrime(Distribution):
         return jnp.where(
             self.beta >= 1, (self.beta - 1) / (self.alpha + 1), 0.0
         )
+
+    @property
+    def concentration1(self):
+        """Access to concentration1 parameter (α) for NumPyro compatibility."""
+        return self.alpha
+
+    @property
+    def concentration0(self):
+        """Access to concentration0 parameter (β) for NumPyro compatibility."""
+        return self.beta
+
+
+# ------------------------------------------------------------------------------
+
+
+@kl_divergence.register(BetaPrime, BetaPrime)
+def _kl_betaprime(p, q):
+    a1, b1 = p.concentration1, p.concentration0  # user-facing α, β
+    a2, b2 = q.concentration1, q.concentration0
+    return kl_betaprime(a1, b1, a2, b2)
 
 
 # ------------------------------------------------------------------------------
