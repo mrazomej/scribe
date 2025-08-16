@@ -71,6 +71,7 @@ class SVIInferenceEngine:
                 parameterization=model_config.parameterization,
                 inference_method="vae",
                 prior_type=model_config.vae_prior_type,
+                unconstrained=model_config.unconstrained,
             )
 
             # For VAE models, the registry returns factory functions that need
