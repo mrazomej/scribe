@@ -709,6 +709,7 @@ def nbvcp_vae_guide(
                 "p_capture_unconstrained", dist.Normal(*p_capture_prior_params)
             )
 
+
 # ==============================================================================
 # dpVAE Model Functions (for decoupled prior)
 # ==============================================================================
@@ -799,22 +800,13 @@ def nbdm_dpvae_model(
     """
     # Define prior parameters for unconstrained variables
     p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
 
     # Sample unconstrained parameters
     p_unconstrained = numpyro.sample(
         "p_unconstrained", dist.Normal(*p_prior_params)
     )
-    mu_unconstrained = numpyro.sample(
-        "mu_unconstrained", dist.Normal(*mu_prior_params).expand([n_genes])
-    )
-
     # Transform to constrained space
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
-    mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
-
-    # Compute r using the linked relationship
-    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     # Register the decoder and decoupled prior as NumPyro modules
     decoder_module = nnx_module("decoder", decoder)
@@ -993,7 +985,6 @@ def nbvcp_dpvae_model(
     """
     # Define prior parameters for unconstrained variables
     p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
     p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
         0.0,
         1.0,
@@ -1003,16 +994,8 @@ def nbvcp_dpvae_model(
     p_unconstrained = numpyro.sample(
         "p_unconstrained", dist.Normal(*p_prior_params)
     )
-    mu_unconstrained = numpyro.sample(
-        "mu_unconstrained", dist.Normal(*mu_prior_params).expand([n_genes])
-    )
-
     # Transform to constrained space
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
-    mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
-
-    # Compute r using the linked relationship
-    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     # Register the decoder and decoupled prior as NumPyro modules
     decoder_module = nnx_module("decoder", decoder)
