@@ -24,11 +24,16 @@ def pytest_addoption(parser):
     parser.addoption(
         "--parameterization",
         default="all",
-        choices=["standard", "linked", "odds_ratio", "unconstrained", "all"],
+        choices=["standard", "linked", "odds_ratio", "all"],
         help=(
-            "Model parameterization to test: standard, linked, odds_ratio, "
-            "unconstrained, or all"
+            "Model parameterization to test: standard, linked, odds_ratio, or all"
         ),
+    )
+    parser.addoption(
+        "--unconstrained",
+        default="all",
+        choices=["false", "true", "all"],
+        help="Whether to test unconstrained variants: false, true, or all",
     )
 
 
@@ -45,6 +50,15 @@ def inference_method(request):
 @pytest.fixture(scope="session")
 def parameterization(request):
     return request.config.getoption("--parameterization")
+
+
+@pytest.fixture(scope="session")
+def unconstrained(request):
+    """Convert string option to boolean for unconstrained parameter."""
+    opt = request.config.getoption("--unconstrained")
+    if opt == "all":
+        return "all"
+    return opt == "true"
 
 
 @pytest.fixture(scope="session")
