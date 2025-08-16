@@ -32,6 +32,24 @@ except Exception as _e:
         RuntimeWarning,
     )
 
+# Apply distribution mode monkey patches
+try:
+    from .stats import apply_distribution_mode_patches
+
+    apply_distribution_mode_patches()
+except Exception as _e:
+    import logging
+
+    logging.warning(
+        "SCRIBE: Failed to apply distribution mode patches. "
+        "Distribution mode properties will not be available. "
+        f"Error: {_e}"
+    )
+    warnings.warn(
+        "SCRIBE: Could not apply distribution mode patches. " f"Error: {_e}",
+        RuntimeWarning,
+    )
+
 # Automatically register BetaPrime KL divergence with Numpyro
 # from .numpyro_kl_patch import register_betaprime_kl_divergence
 # register_betaprime_kl_divergence()
@@ -62,4 +80,6 @@ __all__ = [
     "viz",
     "utils",
     "stats",
+    # Utility functions
+    "apply_distribution_mode_patches",
 ]
