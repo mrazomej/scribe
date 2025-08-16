@@ -3,7 +3,6 @@ Statistics functions
 """
 
 # Import numpy for array manipulation
-from subprocess import NORMAL_PRIORITY_CLASS
 import numpy as np
 
 # Import typing
