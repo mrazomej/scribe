@@ -515,7 +515,14 @@ def digamma_inv(y, num_iters=5):
     return x
 
 
-@partial(jax.jit, static_argnums=(1, 2, 3,))
+@partial(
+    jax.jit,
+    static_argnums=(
+        1,
+        2,
+        3,
+    ),
+)
 def fit_dirichlet_minka(samples, max_iter=1000, tol=1e-7, sample_axis=0):
     """
     Fit a Dirichlet distribution to data using Minka's fixed-point iteration.
@@ -1212,6 +1219,7 @@ def beta_mode(alpha, beta):
 
 # ------------------------------------------------------------------------------
 
+
 def betaprime_mode(alpha, beta):
     """
     Calculate the mode for a Beta Prime distribution.
@@ -1347,87 +1355,99 @@ def get_distribution_mode(dist_obj):
 
 class BetaPrime(Distribution):
     """
-    Beta Prime distribution.
+    Beta Prime distribution (odds-of-Beta convention).
 
-    The Beta Prime distribution is the distribution of the ratio of two
-    independent random variables with Gamma distributions. If X ~ Gamma(α, 1) and
-    Y ~ Gamma(β, 1), then X/Y ~ BetaPrime(α, β).
+    Convention
+    ----------
+    If p ~ Beta(α, β) and φ = (1 - p) / p (odds of "success" 1 - p), then
+    φ ~ BetaPrime(α, β) in THIS CLASS.
 
-    The probability density function is given by:
-        f(x; α, β) = x^(α-1) * (1+x)^(-α-β) / B(α, β)
-    where B(α, β) is the Beta function.
+    Implementation detail
+    ---------------------
+    Mathematically, φ has the *standard* Beta-prime with swapped parameters:
+        φ ~ BetaPrime_std(β, α).
+    This class accepts (α, β) at the call site and internally uses (β, α),
+    so that your models can pass (α, β) unchanged. This is necessary because the
+    NumPyro NegativeBinomial distribution expects the `probs` parameter to be
+    the *failure probability* p, so that the odds ratio φ = (1 - p) / p is
+    consistent with the parameterization of the BetaPrime distribution.
+
+    Density (with user parameters α, β)
+    -----------------------------------
+        f(φ; α, β) = φ^(β - 1) * (1 + φ)^(-(α + β)) / B(β, α),    φ > 0
+
+    Note the Beta function arguments B(β, α).
 
     Parameters
     ----------
     concentration1 : jnp.ndarray
-        First shape parameter (α).
+        α (matches the Beta prior's first shape)
     concentration0 : jnp.ndarray
-        Second shape parameter (β).
+        β (matches the Beta prior's second shape)
     """
 
     arg_constraints = {
-        "concentration1": constraints.positive,
-        "concentration0": constraints.positive,
+        "concentration1": constraints.positive,  # α
+        "concentration0": constraints.positive,  # β
     }
     support = constraints.positive
     has_rsample = False
 
     def __init__(self, concentration1, concentration0, validate_args=None):
-        c1 = jnp.asarray(concentration1, dtype=jnp.float32)
-        c0 = jnp.asarray(concentration0, dtype=jnp.float32)
-        self.concentration1, self.concentration0 = promote_shapes(c1, c0)
+        alpha = jnp.asarray(concentration1, dtype=jnp.float32)  # α
+        beta = jnp.asarray(concentration0, dtype=jnp.float32)  # β
+        # store user-facing α, β
+        self.alpha, self.beta = promote_shapes(alpha, beta)
+        # internal standard Beta-prime uses (a_std, b_std) = (β, α)
+        self._a_std = self.beta
+        self._b_std = self.alpha
         super().__init__(
-            batch_shape=self.concentration1.shape,
+            batch_shape=self.alpha.shape,
             event_shape=(),
             validate_args=validate_args,
         )
 
     def sample(self, key, sample_shape=()):
         key1, key2 = random.split(key)
-        gamma1 = Gamma(self.concentration1, 1.0).sample(key1, sample_shape)
-        gamma2 = Gamma(self.concentration0, 1.0).sample(key2, sample_shape)
-        return gamma1 / gamma2
+        # φ = X / Y with X ~ Gamma(β, 1), Y ~ Gamma(α, 1)
+        x = Gamma(self._a_std, 1.0).sample(key1, sample_shape)
+        y = Gamma(self._b_std, 1.0).sample(key2, sample_shape)
+        return x / y
 
     @validate_sample
     def log_prob(self, value):
-        log_numerator = jnp.log(value) * (self.concentration1 - 1) - jnp.log(
-            1 + value
-        ) * (self.concentration1 + self.concentration0)
-        log_denominator = (
-            gammaln(self.concentration1)
-            + gammaln(self.concentration0)
-            - gammaln(self.concentration1 + self.concentration0)
+        # log f(φ; α, β) = (β-1) log φ - (α+β) log(1+φ) - log B(β, α)
+        log_num = (self.beta - 1) * jnp.log(value) - (
+            self.alpha + self.beta
+        ) * jnp.log1p(value)
+        log_den = (
+            gammaln(self._a_std)
+            + gammaln(self._b_std)
+            - gammaln(self._a_std + self._b_std)
         )
-        return log_numerator - log_denominator
+        return log_num - log_den
 
     @property
     def mean(self):
-        # Mean is defined for concentration0 > 1
-        return jnp.where(
-            self.concentration0 > 1,
-            self.concentration1 / (self.concentration0 - 1),
-            jnp.inf,
-        )
+        # E[φ] = β / (α - 1), defined for α > 1
+        return jnp.where(self.alpha > 1, self.beta / (self.alpha - 1), jnp.inf)
 
     @property
     def variance(self):
-        # Variance is defined for concentration0 > 2
+        # Var[φ] = β(β + α - 1) / [(α - 1)^2 (α - 2)], defined for α > 2
         return jnp.where(
-            self.concentration0 > 2,
-            (
-                self.concentration1
-                * (self.concentration1 + self.concentration0 - 1)
-            )
-            / ((self.concentration0 - 1) ** 2 * (self.concentration0 - 2)),
+            self.alpha > 2,
+            self.beta
+            * (self.beta + self.alpha - 1)
+            / ((self.alpha - 1) ** 2 * (self.alpha - 2)),
             jnp.inf,
         )
 
     @property
     def mode(self):
+        # mode = (β - 1) / (α + 1) for β >= 1; else 0
         return jnp.where(
-            self.concentration0 >= 1,
-            (self.concentration1 - 1) / (self.concentration0 + 1),
-            0.0,
+            self.beta >= 1, (self.beta - 1) / (self.alpha + 1), 0.0
         )
 
 
