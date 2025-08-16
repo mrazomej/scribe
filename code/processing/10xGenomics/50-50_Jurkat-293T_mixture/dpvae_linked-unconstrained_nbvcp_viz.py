@@ -77,7 +77,7 @@ vae_results = pickle.load(
     open(
         f"{OUTPUT_DIR}/"
         f"dpvae_{parameterization.replace('_', '-')}_"
-        f"{model_type.replace('_', '-')}_"
+        f"{model_type.replace('_', '-')}-"
         f"unconstrained_"
         f"{latent_dim}latentdim_"
         f"{n_steps}steps.pkl",
