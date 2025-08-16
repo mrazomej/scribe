@@ -29,7 +29,55 @@ def nbdm_model(
     batch_size=None,
 ):
     """
-    Numpyro model for Negative Binomial-Dirichlet Multinomial data.
+    Implements the Negative Binomial-Dirichlet Multinomial (NBDM) model using a
+    standard parameterization suitable for variational inference in single-cell
+    RNA sequencing data.
+
+    This model assumes that the observed gene expression counts for each cell
+    are generated from a Negative Binomial distribution, where the success
+    probability (p) and dispersion parameter (r) are sampled directly from their
+    constrained distributions. Specifically:
+
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
+        - r > 0 is the dispersion parameter for each gene.
+
+    The parameters are sampled from their constrained distributions:
+        - p ~ Beta(alpha, beta)
+        - r ~ LogNormal(loc, scale) for each gene
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ NegativeBinomialProbs(r, p)
+
+    where NegativeBinomialProbs denotes the Negative Binomial distribution
+    parameterized by the number of failures (r) and the probability of success
+    (p), and the distribution is applied independently to each gene
+    (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells in the dataset.
+    n_genes: int
+        Number of genes (features) per cell.
+    model_config: ModelConfig
+        ModelConfig object specifying prior parameters for the constrained
+        variables.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size: Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
     p_prior_params = model_config.p_param_prior or (1.0, 1.0)
@@ -71,7 +119,48 @@ def nbdm_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the NBDM model.
+    Mean-field variational guide for the standard Negative Binomial-Dirichlet
+    Multinomial Model (NBDM).
+
+    This guide defines a mean-field variational approximation for the standard
+    NBDM, which models count data (such as gene expression) using a Negative
+    Binomial distribution parameterized by a success probability (p) and a
+    dispersion parameter (r). The model uses constrained parameters sampled from
+    appropriate distributions.
+
+    The generative model is:
+        - p ~ Beta(alpha, beta)
+        - r ~ LogNormal(loc, scale) for each gene
+        - For each cell:
+            - counts ~ NegativeBinomialProbs(r, p)
+
+    The guide defines variational distributions for the constrained parameters:
+        - q(p) = Beta(p_alpha, p_beta)
+        - q(r) = LogNormal(r_loc, r_scale) for each gene
+
+    The variational parameters (alpha, beta for p and loc, scale for r) are
+    registered as learnable parameters in the guide.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells (samples) in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        Configuration object containing prior and guide parameter settings.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     # Define prior parameters
     p_prior_params = model_config.p_param_guide or (1.0, 1.0)
@@ -114,7 +203,58 @@ def zinb_model(
     batch_size=None,
 ):
     """
-    Numpyro model for Zero-Inflated Negative Binomial data.
+    Implements the Zero-Inflated Negative Binomial (ZINB) model using a standard
+    parameterization suitable for variational inference in single-cell RNA
+    sequencing data.
+
+    This model assumes that the observed gene expression counts for each cell
+    are generated from a Zero-Inflated Negative Binomial distribution, where the
+    success probability (p), dispersion parameter (r), and zero-inflation
+    probability (gate) are sampled directly from their constrained
+    distributions. Specifically:
+
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
+        - r > 0 is the dispersion parameter for each gene,
+        - gate ∈ (0, 1) is the zero-inflation probability for each gene.
+
+    The parameters are sampled from their constrained distributions:
+        - p ~ Beta(alpha, beta)
+        - r ~ LogNormal(loc, scale) for each gene
+        - gate ~ Beta(alpha, beta) for each gene
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ ZeroInflatedNegativeBinomial(r, p, gate)
+
+    where ZeroInflatedNegativeBinomial denotes the zero-inflated Negative
+    Binomial distribution parameterized by the number of failures (r), the
+    probability of success (p), and the zero-inflation probability (gate), and
+    the distribution is applied independently to each gene (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells in the dataset.
+    n_genes: int
+        Number of genes (features) per cell.
+    model_config: ModelConfig
+        ModelConfig object specifying prior parameters for the constrained
+        variables.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size: Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     # Get prior parameters for p (success probability), r (dispersion), and gate
     # (zero-inflation) from model_config, or use defaults if not provided
@@ -170,7 +310,51 @@ def zinb_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the ZINB model.
+    Mean-field variational guide for the standard Zero-Inflated Negative
+    Binomial (ZINB) model.
+
+    This guide defines a mean-field variational approximation for the standard
+    ZINB, which models count data (such as gene expression) using a
+    Zero-Inflated Negative Binomial distribution parameterized by a success
+    probability (p), a dispersion parameter (r), and a zero-inflation
+    probability (gate). The model uses constrained parameters sampled from
+    appropriate distributions.
+
+    The generative model is:
+        - p ~ Beta(alpha, beta)
+        - r ~ LogNormal(loc, scale) for each gene
+        - gate ~ Beta(alpha, beta) for each gene
+        - For each cell:
+            - counts ~ ZeroInflatedNegativeBinomial(r, p, gate)
+
+    The guide defines variational distributions for the constrained parameters:
+        - q(p) = Beta(p_alpha, p_beta)
+        - q(r) = LogNormal(r_loc, r_scale) for each gene
+        - q(gate) = Beta(gate_alpha, gate_beta) for each gene
+
+    The variational parameters (alpha, beta for p and gate, and loc, scale for
+    r) are registered as learnable parameters in the guide.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells (samples) in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        Configuration object containing prior and guide parameter settings.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     # Define guide parameters for p, r, and gate
     # Get initial values for p's Beta distribution parameters (alpha, beta)
@@ -225,7 +409,64 @@ def nbvcp_model(
     batch_size=None,
 ):
     """
-    Numpyro model for Negative Binomial with variable mRNA capture probability.
+    Implements the Negative Binomial model with variable mRNA capture
+    probability (NBVCP) using a standard parameterization suitable for
+    variational inference in single-cell RNA sequencing data.
+
+    This model assumes that the observed gene expression counts for each cell
+    are generated from a Negative Binomial distribution, where the success
+    probability (p), dispersion parameter (r), and cell-specific capture
+    probability (p_capture) are sampled directly from their constrained
+    distributions. Specifically:
+
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
+        - r > 0 is the dispersion parameter for each gene,
+        - p_capture ∈ (0, 1) is the mRNA capture probability for each cell.
+
+    The model introduces a cell-specific mRNA capture probability p_capture,
+    which modifies the effective success probability for each cell and gene. The
+    effective success probability for cell i and gene j is:
+
+        p_hat[i, j] = p * p_capture[i] / (1 - p * (1 - p_capture[i]))
+
+    The parameters are sampled from their constrained distributions:
+        - p ~ Beta(alpha, beta)
+        - r ~ LogNormal(loc, scale) for each gene
+        - p_capture ~ Beta(alpha, beta) for each cell
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ NegativeBinomialProbs(r, p_hat[cell, :])
+
+    where NegativeBinomialProbs denotes the Negative Binomial distribution
+    parameterized by the number of failures (r) and the effective probability of
+    success (p_hat), and the distribution is applied independently to each gene
+    (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset.
+    n_genes : int
+        Number of genes (features) per cell.
+    model_config : ModelConfig
+        ModelConfig object specifying prior parameters for the constrained
+        variables.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
     p_prior_params = model_config.p_param_prior or (1.0, 1.0)
@@ -312,7 +553,52 @@ def nbvcp_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the NBVCP model.
+    Mean-field variational guide for the standard Negative Binomial with
+    Variable Capture Probability (NBVCP) model.
+
+    This guide defines a mean-field variational approximation for the standard
+    NBVCP, which extends the standard Negative Binomial model by introducing a
+    cell-specific mRNA capture probability. The model uses constrained
+    parameters sampled from appropriate distributions.
+
+    The generative model assumes that the observed gene expression counts for
+    each cell are generated from a Negative Binomial distribution, where the
+    success probability (p), dispersion parameter (r), and cell-specific capture
+    probability (p_capture) are linked through their distributions. The
+    effective success probability for each cell and gene is:
+
+        p_hat = p * p_capture / (1 - p * (1 - p_capture))
+
+    The guide defines variational distributions for the constrained parameters:
+        - q(p) = Beta(p_alpha, p_beta)
+        - q(r) = LogNormal(r_loc, r_scale) for each gene
+        - q(p_capture) = Beta(p_capture_alpha, p_capture_beta) for each cell
+
+    The variational distributions are mean-field (fully factorized) and
+    parameterized by learnable location and scale parameters for each
+    constrained variable.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        ModelConfig object specifying prior and guide parameters for the
+        constrained variables.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     # Define guide parameters for p, r, and p_capture
     # Get initial values for p's Beta distribution parameters (alpha, beta)
@@ -380,7 +666,67 @@ def zinbvcp_model(
     batch_size=None,
 ):
     """
-    Numpyro model for ZINB with variable mRNA capture probability.
+    Implements the Zero-Inflated Negative Binomial model with variable mRNA
+    capture probability (ZINBVCP) using a standard parameterization suitable for
+    variational inference in single-cell RNA sequencing data.
+
+    This model assumes that the observed gene expression counts for each cell
+    are generated from a Zero-Inflated Negative Binomial distribution, where the
+    success probability (p), dispersion parameter (r), zero-inflation
+    probability (gate), and cell-specific capture probability (p_capture) are
+    sampled directly from their constrained distributions. Specifically:
+
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
+        - r > 0 is the dispersion parameter for each gene,
+        - gate ∈ (0, 1) is the zero-inflation probability for each gene,
+        - p_capture ∈ (0, 1) is the mRNA capture probability for each cell.
+
+    The model introduces a cell-specific mRNA capture probability p_capture,
+    which modifies the effective success probability for each cell and gene. The
+    effective success probability for cell i and gene j is:
+
+        p_hat[i, j] = p * p_capture[i] / (1 - p * (1 - p_capture[i]))
+
+    The parameters are sampled from their constrained distributions:
+        - p ~ Beta(alpha, beta)
+        - r ~ LogNormal(loc, scale) for each gene
+        - gate ~ Beta(alpha, beta) for each gene
+        - p_capture ~ Beta(alpha, beta) for each cell
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ ZeroInflatedNegativeBinomial(r, p_hat[cell, :], gate)
+
+    where ZeroInflatedNegativeBinomial denotes the zero-inflated Negative
+    Binomial distribution parameterized by the number of failures (r), the
+    effective probability of success (p_hat), and the zero-inflation probability
+    (gate), and the distribution is applied independently to each gene
+    (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells in the dataset.
+    n_genes : int
+        Number of genes (features) per cell.
+    model_config : ModelConfig
+        ModelConfig object specifying prior parameters for the constrained
+        variables.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     # Get prior parameters from model_config, or use defaults if not provided
     p_prior_params = model_config.p_param_prior or (1.0, 1.0)
@@ -475,7 +821,53 @@ def zinbvcp_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the ZINBVCP model.
+    Mean-field variational guide for the standard Zero-Inflated Negative
+    Binomial with Variable Capture Probability (ZINBVCP) model.
+
+    This guide defines a mean-field variational approximation for the standard
+    ZINBVCP, which extends the standard Zero-Inflated Negative Binomial (ZINB)
+    model by introducing a cell-specific mRNA capture probability. The model
+    uses constrained parameters sampled from appropriate distributions.
+
+    The generative model assumes that the observed gene expression counts for
+    each cell are generated from a Zero-Inflated Negative Binomial distribution,
+    where the success probability (p), dispersion parameter (r), zero-inflation
+    probability (gate), and cell-specific capture probability (p_capture) are
+    linked through their distributions. The effective success probability for
+    each cell and gene is:
+
+        p_hat = p * p_capture / (1 - p * (1 - p_capture))
+
+    The guide defines variational distributions for the constrained parameters:
+        - q(p) = Beta(p_alpha, p_beta)
+        - q(r) = LogNormal(r_loc, r_scale) for each gene
+        - q(gate) = Beta(gate_alpha, gate_beta) for each gene
+        - q(p_capture) = Beta(p_capture_alpha, p_capture_beta) for each cell
+
+    The variational distributions are mean-field (fully factorized) and
+    parameterized by learnable location and scale parameters for each
+    constrained variable.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells (samples) in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        Configuration object containing prior and guide parameter settings.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     # Define guide parameters for p, r, and gate
     # Get initial values for p's Beta distribution parameters (alpha, beta)
@@ -558,7 +950,55 @@ def nbdm_mixture_model(
     batch_size=None,
 ):
     """
-    Numpyro model for Negative Binomial-Dirichlet Multinomial data.
+    Implements the Negative Binomial-Dirichlet Multinomial (NBDM) mixture model
+    using a standard parameterization suitable for variational inference in
+    single-cell RNA sequencing data.
+
+    This model extends the standard NBDM model by introducing mixture
+    components, where each component has its own set of parameters. The model
+    assumes that the observed gene expression counts for each cell are generated
+    from a mixture of Negative Binomial distributions, where the success
+    probability (p) and dispersion parameter (r) can be either
+    component-specific or shared across components.
+
+    The model parameters are:
+        - mixing_weights: Component mixing probabilities from Dirichlet prior
+        - p: Success probability (Beta prior) - can be component-specific or
+          shared
+        - r: Dispersion parameter (LogNormal prior) for each component and gene
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ Mixture(mixing_weights, NegativeBinomialProbs(r, p))
+
+    where the mixture distribution combines multiple Negative Binomial
+    components, each with their own parameters, and the distribution is applied
+    independently to each gene (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells in the dataset.
+    n_genes: int
+        Number of genes (features) per cell.
+    model_config: ModelConfig
+        ModelConfig object specifying prior parameters and mixture
+        configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size: Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     # Get the number of mixture components from the model configuration
     n_components = model_config.n_components
@@ -631,7 +1071,51 @@ def nbdm_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the NBDM mixture model.
+    Mean-field variational guide for the standard Negative Binomial-Dirichlet
+    Multinomial (NBDM) mixture model.
+
+    This guide defines a mean-field variational approximation for the standard
+    NBDM mixture model, which extends the standard NBDM model by introducing
+    mixture components. Each component can have its own set of parameters,
+    allowing for more flexible modeling of heterogeneous cell populations.
+
+    The generative model is:
+        - mixing_weights ~ Dirichlet(concentrations)
+        - p ~ Beta(alpha, beta) - can be component-specific or shared
+        - r ~ LogNormal(loc, scale) for each component and gene
+        - For each cell:
+            - counts ~ Mixture(mixing_weights, NegativeBinomialProbs(r, p))
+
+    The guide defines variational distributions for the mixture parameters:
+        - q(mixing_weights) = Dirichlet(mixing_concentrations)
+        - q(p) = Beta(p_alpha, p_beta) - can be component-specific or shared
+        - q(r) = LogNormal(r_loc, r_scale) for each component and gene
+
+    The variational distributions are mean-field (fully factorized) and
+    parameterized by learnable concentration and shape parameters for each
+    mixture component.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells (samples) in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        Configuration object containing prior and guide parameter settings,
+        including mixture configuration.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     # Get the number of mixture components from the model configuration
     n_components = model_config.n_components
@@ -711,7 +1195,59 @@ def zinb_mixture_model(
     batch_size=None,
 ):
     """
-    Numpyro mixture model for ZINB data.
+    Implements the Zero-Inflated Negative Binomial (ZINB) mixture model using a
+    standard parameterization suitable for variational inference in single-cell
+    RNA sequencing data.
+
+    This model extends the standard ZINB model by introducing mixture
+    components, where each component has its own set of parameters. The model
+    assumes that the observed gene expression counts for each cell are generated
+    from a mixture of Zero-Inflated Negative Binomial distributions, where the
+    success probability (p), dispersion parameter (r), and zero-inflation
+    probability (gate) can be either component-specific or shared across
+    components.
+
+    The model parameters are:
+        - mixing_weights: Component mixing probabilities from Dirichlet prior
+        - p: Success probability (Beta prior) - can be component-specific or
+          shared
+        - r: Dispersion parameter (LogNormal prior) for each component and gene
+        - gate: Zero-inflation probability (Beta prior) for each component and
+          gene
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ Mixture(mixing_weights,
+        ZeroInflatedNegativeBinomial(r, p, gate))
+
+    where the mixture distribution combines multiple Zero-Inflated Negative
+    Binomial components, each with their own parameters, and the distribution is
+    applied independently to each gene (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells in the dataset.
+    n_genes: int
+        Number of genes (features) per cell.
+    model_config: ModelConfig
+        ModelConfig object specifying prior parameters and mixture
+        configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size: Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     # Get the number of mixture components from the model configuration
     n_components = model_config.n_components
@@ -783,7 +1319,55 @@ def zinb_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the ZINB mixture model.
+    Mean-field variational guide for the standard Zero-Inflated Negative
+    Binomial (ZINB) mixture model.
+
+    This guide defines a mean-field variational approximation for the standard
+    ZINB mixture model, which extends the standard ZINB model by introducing
+    mixture components. Each component can have its own set of parameters,
+    allowing for more flexible modeling of heterogeneous cell populations with
+    different zero-inflation patterns.
+
+    The generative model is:
+        - mixing_weights ~ Dirichlet(concentrations)
+        - p ~ Beta(alpha, beta) - can be component-specific or shared
+        - r ~ LogNormal(loc, scale) for each component and gene
+        - gate ~ Beta(alpha, beta) for each component and gene
+        - For each cell:
+            - counts ~ Mixture(mixing_weights, ZeroInflatedNegativeBinomial(r,
+              p, gate))
+
+    The guide defines variational distributions for the mixture parameters:
+        - q(mixing_weights) = Dirichlet(mixing_concentrations)
+        - q(p) = Beta(p_alpha, p_beta) - can be component-specific or shared
+        - q(r) = LogNormal(r_loc, r_scale) for each component and gene
+        - q(gate) = Beta(gate_alpha, gate_beta) for each component and gene
+
+    The variational distributions are mean-field (fully factorized) and
+    parameterized by learnable concentration and shape parameters for each
+    mixture component.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells (samples) in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        Configuration object containing prior and guide parameter settings,
+        including mixture configuration.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
@@ -874,7 +1458,64 @@ def nbvcp_mixture_model(
     batch_size=None,
 ):
     """
-    Numpyro mixture model for NBVCP data.
+    Implements the Negative Binomial with Variable Capture Probability (NBVCP)
+    mixture model using a standard parameterization suitable for variational
+    inference in single-cell RNA sequencing data.
+
+    This model extends the standard NBVCP model by introducing mixture
+    components, where each component has its own set of parameters. The model
+    assumes that the observed gene expression counts for each cell are generated
+    from a mixture of Negative Binomial distributions with variable capture
+    probability, where the success probability (p), dispersion parameter (r),
+    and cell-specific capture probability (p_capture) can be either
+    component-specific or shared across components.
+
+    The model parameters are:
+        - mixing_weights: Component mixing probabilities from Dirichlet prior
+        - p: Success probability (Beta prior) - can be component-specific or
+          shared
+        - r: Dispersion parameter (LogNormal prior) for each component and gene
+        - p_capture: Cell-specific capture probability (Beta prior)
+
+    The model introduces a cell-specific mRNA capture probability p_capture,
+    which modifies the effective success probability for each cell and gene. The
+    effective success probability for cell i and gene j is:
+
+        p_hat[i, j] = p * p_capture[i] / (1 - p * (1 - p_capture[i]))
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ Mixture(mixing_weights, NegativeBinomialProbs(r,
+        p_hat))
+
+    where the mixture distribution combines multiple Negative Binomial
+    components with variable capture probability, and the distribution is
+    applied independently to each gene (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells in the dataset.
+    n_genes: int
+        Number of genes (features) per cell.
+    model_config: ModelConfig
+        ModelConfig object specifying prior parameters and mixture
+        configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size: Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
@@ -948,7 +1589,55 @@ def nbvcp_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the NBVCP mixture model.
+    Mean-field variational guide for the standard Negative Binomial with
+    Variable Capture Probability (NBVCP) mixture model.
+
+    This guide defines a mean-field variational approximation for the standard
+    NBVCP mixture model, which extends the standard NBVCP model by introducing
+    mixture components. Each component can have its own set of parameters,
+    allowing for more flexible modeling of heterogeneous cell populations with
+    different capture probability patterns.
+
+    The generative model is:
+        - mixing_weights ~ Dirichlet(concentrations)
+        - p ~ Beta(alpha, beta) - can be component-specific or shared
+        - r ~ LogNormal(loc, scale) for each component and gene
+        - p_capture ~ Beta(alpha, beta) for each cell
+        - p_hat = p * p_capture / (1 - p * (1 - p_capture))
+        - For each cell:
+            - counts ~ Mixture(mixing_weights, NegativeBinomialProbs(r, p_hat))
+
+    The guide defines variational distributions for the mixture parameters:
+        - q(mixing_weights) = Dirichlet(mixing_concentrations)
+        - q(p) = Beta(p_alpha, p_beta) - can be component-specific or shared
+        - q(r) = LogNormal(r_loc, r_scale) for each component and gene
+        - q(p_capture) = Beta(p_capture_alpha, p_capture_beta) for each cell
+
+    The variational distributions are mean-field (fully factorized) and
+    parameterized by learnable concentration and shape parameters for each
+    mixture component.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells (samples) in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        Configuration object containing prior and guide parameter settings,
+        including mixture configuration.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
@@ -1054,7 +1743,67 @@ def zinbvcp_mixture_model(
     batch_size=None,
 ):
     """
-    Numpyro mixture model for ZINBVCP data.
+    Implements the Zero-Inflated Negative Binomial with Variable Capture
+    Probability (ZINBVCP) mixture model using a standard parameterization
+    suitable for variational inference in single-cell RNA sequencing data.
+
+    This model extends the standard ZINBVCP model by introducing mixture
+    components, where each component has its own set of parameters. The model
+    assumes that the observed gene expression counts for each cell are generated
+    from a mixture of Zero-Inflated Negative Binomial distributions with
+    variable capture probability, where the success probability (p), dispersion
+    parameter (r), zero-inflation probability (gate), and cell-specific capture
+    probability (p_capture) can be either component-specific or shared across
+    components.
+
+    The model parameters are:
+        - mixing_weights: Component mixing probabilities from Dirichlet prior
+        - p: Success probability (Beta prior) - can be component-specific or
+          shared
+        - r: Dispersion parameter (LogNormal prior) for each component and gene
+        - gate: Zero-inflation probability (Beta prior) for each component and
+          gene
+        - p_capture: Cell-specific capture probability (Beta prior)
+
+    The model introduces a cell-specific mRNA capture probability p_capture,
+    which modifies the effective success probability for each cell and gene. The
+    effective success probability for cell i and gene j is:
+
+        p_hat[i, j] = p * p_capture[i] / (1 - p * (1 - p_capture[i]))
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ Mixture(mixing_weights,
+        ZeroInflatedNegativeBinomial(r, p_hat, gate))
+
+    where the mixture distribution combines multiple Zero-Inflated Negative
+    Binomial components with variable capture probability, and the distribution
+    is applied independently to each gene (to_event(1)).
+
+    The model supports optional batching over cells for scalable inference. If
+    `counts` is provided, it is used as observed data; otherwise, the model
+    samples counts from the generative process.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells in the dataset.
+    n_genes: int
+        Number of genes (features) per cell.
+    model_config: ModelConfig
+        ModelConfig object specifying prior parameters and mixture
+        configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data (not used in the model, but included for interface
+        compatibility).
+    batch_size: Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
@@ -1131,7 +1880,58 @@ def zinbvcp_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the ZINBVCP mixture model.
+    Mean-field variational guide for the standard Zero-Inflated Negative
+    Binomial with Variable Capture Probability (ZINBVCP) mixture model.
+
+    This guide defines a mean-field variational approximation for the standard
+    ZINBVCP mixture model, which extends the standard ZINBVCP model by
+    introducing mixture components. Each component can have its own set of
+    parameters, allowing for more flexible modeling of heterogeneous cell
+    populations with different zero-inflation and capture probability patterns.
+
+    The generative model is:
+        - mixing_weights ~ Dirichlet(concentrations)
+        - p ~ Beta(alpha, beta) - can be component-specific or shared
+        - r ~ LogNormal(loc, scale) for each component and gene
+        - gate ~ Beta(alpha, beta) for each component and gene
+        - p_capture ~ Beta(alpha, beta) for each cell
+        - p_hat = p * p_capture / (1 - p * (1 - p_capture))
+        - For each cell:
+            - counts ~ Mixture(mixing_weights, ZeroInflatedNegativeBinomial(r,
+              p_hat, gate))
+
+    The guide defines variational distributions for the mixture parameters:
+        - q(mixing_weights) = Dirichlet(mixing_concentrations)
+        - q(p) = Beta(p_alpha, p_beta) - can be component-specific or shared
+        - q(r) = LogNormal(r_loc, r_scale) for each component and gene
+        - q(gate) = Beta(gate_alpha, gate_beta) for each component and gene
+        - q(p_capture) = Beta(p_capture_alpha, p_capture_beta) for each cell
+
+    The variational distributions are mean-field (fully factorized) and
+    parameterized by learnable concentration and shape parameters for each
+    mixture component.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells (samples) in the dataset.
+    n_genes : int
+        Number of genes (features) in the dataset.
+    model_config : ModelConfig
+        Configuration object containing prior and guide parameter settings,
+        including mixture configuration.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data (not used in the guide, but included for interface
+        compatibility).
+    batch_size : Optional[int], default=None
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the variational guide for use with NumPyro's
+        inference machinery.
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
@@ -1245,21 +2045,54 @@ def get_posterior_distributions(
     split: bool = False,
 ) -> Dict[str, dist.Distribution]:
     """
-    Constructs and returns a dictionary of posterior distributions from
-    estimated parameters.
+    Constructs posterior distributions for model parameters from variational
+    guide outputs.
 
     This function is specific to the 'standard' parameterization and builds the
     appropriate `numpyro` distributions based on the guide parameters found in
     the `params` dictionary. It handles both single and mixture models.
 
-    Args:
-        params: A dictionary of estimated parameters from the variational guide.
-        model_config: The model configuration object.
-        split: If True, returns lists of individual distributions for
-        multidimensional parameters instead of batch distributions.
+    The function constructs posterior distributions for the following
+    parameters:
+        - p: Success probability (Beta distribution)
+        - r: Dispersion parameter (LogNormal distribution)
+        - gate: Zero-inflation probability (Beta distribution)
+        - p_capture: Cell-specific capture probability (Beta distribution)
+        - mixing_weights: Component mixing probabilities (Dirichlet
+          distribution)
 
-    Returns:
-        A dictionary mapping parameter names to their posterior distributions.
+    For vector-valued parameters (e.g., gene- or cell-specific), the function
+    can return either a single batched distribution or a list of univariate
+    distributions, depending on the `split` parameter.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Dictionary containing estimated variational parameters (alpha, beta for
+        Beta distributions; loc, scale for LogNormal distributions) for each
+        constrained latent variable, as produced by the guide. Expected keys
+        include:
+            - "p_alpha", "p_beta"
+            - "r_loc", "r_scale"
+            - "gate_alpha", "gate_beta"
+            - "p_capture_alpha", "p_capture_beta"
+            - "mixing_concentrations"
+        Each value is a JAX array of appropriate shape (scalar or vector).
+    model_config : ModelConfig
+        Model configuration object containing information about component
+        specificity and mixture configuration.
+    split : bool, optional (default=False)
+        If True, for vector-valued parameters (e.g., gene- or cell-specific),
+        return a list of univariate distributions (one per element). If False,
+        return a single batched distribution.
+
+    Returns
+    -------
+    Dict[str, Union[dist.Distribution, List[dist.Distribution]]]
+        Dictionary mapping parameter names (e.g., "p", "r", "gate", etc.) to
+        their corresponding posterior distributions. For vector-valued
+        parameters, the value is either a batched distribution or a list of
+        univariate distributions, depending on `split`.
     """
     distributions = {}
 
