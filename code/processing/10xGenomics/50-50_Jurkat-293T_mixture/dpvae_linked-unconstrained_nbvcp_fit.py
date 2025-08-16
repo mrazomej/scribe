@@ -2,12 +2,15 @@
 
 # Import base libraries
 import os
+import gc
 import pickle
 import scanpy as sc
 
 # Import scribe
 import scribe
 
+# Import JAX-related libraries
+import jax
 
 # %% ---------------------------------------------------------------------------
 
@@ -17,7 +20,10 @@ print("Defining inference parameters...")
 model_type = "nbvcp"
 
 # Define parameterization
-parameterization = "standard"
+parameterization = "linked"
+
+# Define if unconstrained
+unconstrained = True
 
 # Define training parameters
 n_steps = 25_000
@@ -54,12 +60,16 @@ data = sc.read_h5ad(f"{DATA_DIR}/data.h5ad")
 
 print("Running inference...")
 
+# Clear caches before running
+gc.collect()
+jax.clear_caches()
 
 # Define file name
 file_name = (
     f"{OUTPUT_DIR}/"
     f"dpvae_{parameterization.replace('_', '-')}_"
-    f"{model_type.replace('_', '-')}_"
+    f"{model_type.replace('_', '-')}-"
+    f"unconstrained_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps.pkl"
 )
@@ -72,9 +82,10 @@ if not os.path.exists(file_name):
         counts=data,
         n_steps=n_steps,
         parameterization=parameterization,
+        unconstrained=unconstrained,
         variable_capture=True,
         vae_latent_dim=latent_dim,
-        vae_hidden_dims=[128, 128, 128],
+        vae_hidden_dims=[128, 128, 128, 128],
         vae_activation="relu",
         vae_prior_type="decoupled",
         vae_prior_hidden_dims=[128, 128, 128],

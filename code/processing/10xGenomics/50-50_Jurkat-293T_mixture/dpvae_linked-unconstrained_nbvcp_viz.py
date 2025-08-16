@@ -30,6 +30,9 @@ model_type = "nbvcp"
 # Define parameterization
 parameterization = "linked"
 
+# Define if unconstrained
+unconstrained = True
+
 # Define number of steps for scribe
 n_steps = 25_000
 
@@ -75,6 +78,7 @@ vae_results = pickle.load(
         f"{OUTPUT_DIR}/"
         f"dpvae_{parameterization.replace('_', '-')}_"
         f"{model_type.replace('_', '-')}_"
+        f"unconstrained_"
         f"{latent_dim}latentdim_"
         f"{n_steps}steps.pkl",
         "rb",
@@ -102,6 +106,7 @@ ax.set_ylabel("ELBO loss")
 fig.savefig(
     f"{FIG_DIR}/dpvae_{parameterization.replace('_', '-')}_"
     f"{model_type.replace('_', '-')}_"
+    f"unconstrained_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps_loss.png",
     bbox_inches="tight",
@@ -136,6 +141,7 @@ ax.set_ylabel("latent dimension 2")
 fig.savefig(
     f"{FIG_DIR}/dpvae_{parameterization.replace('_', '-')}_"
     f"{model_type.replace('_', '-')}_"
+    f"unconstrained_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps_latent_embeddings.png",
     bbox_inches="tight",
@@ -170,6 +176,7 @@ ax.set_ylabel("latent dimension 2")
 fig.savefig(
     f"{FIG_DIR}/dpvae_{parameterization.replace('_', '-')}_"
     f"{model_type.replace('_', '-')}_"
+    f"unconstrained_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps_latent_samples.png",
     bbox_inches="tight",
@@ -207,6 +214,7 @@ ax.set_ylabel("latent dimension 2")
 fig.savefig(
     f"{FIG_DIR}/dpvae_{parameterization.replace('_', '-')}_"
     f"{model_type.replace('_', '-')}_"
+    f"unconstrained_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps_latent_samples_density.png",
     bbox_inches="tight",
@@ -353,6 +361,7 @@ fig.suptitle("Example PPC", y=1.02)
 fig.savefig(
     f"{FIG_DIR}/dpvae_{parameterization.replace('_', '-')}_"
     f"{model_type.replace('_', '-')}_"
+    f"unconstrained_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps_ppc.png",
     bbox_inches="tight",
@@ -445,7 +454,8 @@ fig.suptitle("Example PPC", y=1.02)
 # Save figure
 fig.savefig(
     f"{FIG_DIR}/dpvae_{parameterization.replace('_', '-')}_"
-    f"{model_type.replace('_', '-')}_"
+    f"{model_type.replace('_', '-')}-"
+    f"unconstrained_"
     f"conditioned_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps_ppc.png",
