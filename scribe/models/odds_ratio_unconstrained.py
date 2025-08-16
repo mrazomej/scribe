@@ -1101,6 +1101,801 @@ def zinbvcp_guide(
 
 
 # ------------------------------------------------------------------------------
+# Mixture Models
+# ------------------------------------------------------------------------------
+
+
+def nbdm_mixture_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Implements the Negative Binomial-Dirichlet Multinomial (NBDM) mixture model
+    using an unconstrained odds ratio parameterization.
+
+    This model extends the odds ratio NBDM model by introducing mixture
+    components.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells.
+    n_genes: int
+        Number of genes.
+    model_config: ModelConfig
+        Model configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size: Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define prior parameters
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+        0.0,
+        1.0,
+    )
+    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
+
+    # Sample unconstrained mixing logits
+    mixing_logits_unconstrained = numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(*mixing_prior_params).expand([n_components]),
+    )
+    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
+
+    # Sample component-specific or shared parameters
+    if model_config.component_specific_params:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params).expand([n_components]),
+        )
+        phi_unconstrained = phi_unconstrained[:, None]
+    else:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params),
+        )
+
+    mu_unconstrained = numpyro.sample(
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+    )
+
+    # Deterministic transformations
+    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
+    r = numpyro.deterministic("r", mu * phi)
+
+    # Define component distribution
+    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
+    mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
+
+    # Sample observed or latent counts
+    if counts is not None:
+        if batch_size is None:
+            with numpyro.plate("cells", n_cells):
+                numpyro.sample("counts", mixture, obs=counts)
+        else:
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                numpyro.sample("counts", mixture, obs=counts[idx])
+    else:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample("counts", mixture)
+
+
+# ------------------------------------------------------------------------------
+
+
+def nbdm_mixture_guide(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the odds ratio NBDM mixture model.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells.
+    n_genes : int
+        Number of genes.
+    model_config : ModelConfig
+        Configuration object.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size : Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define guide parameters
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+        0.0,
+        1.0,
+    )
+    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
+
+    # Register mixing weights parameters
+    mixing_loc = numpyro.param(
+        "mixing_logits_unconstrained_loc",
+        jnp.full(n_components, mixing_guide_params[0]),
+    )
+    mixing_scale = numpyro.param(
+        "mixing_logits_unconstrained_scale",
+        jnp.full(n_components, mixing_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(mixing_loc, mixing_scale),
+    )
+
+    if model_config.component_specific_params:
+        phi_loc = numpyro.param(
+            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
+        )
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            jnp.full(n_components, phi_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    else:
+        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            phi_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+
+    # Register mu parameters
+    mu_loc = numpyro.param(
+        "mu_unconstrained_loc",
+        jnp.full((n_components, n_genes), mu_guide_params[0]),
+    )
+    mu_scale = numpyro.param(
+        "mu_unconstrained_scale",
+        jnp.full((n_components, n_genes), mu_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+
+
+# ------------------------------------------------------------------------------
+
+
+def zinb_mixture_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Implements the Zero-Inflated Negative Binomial (ZINB) mixture model
+    using an odds ratio unconstrained parameterization.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells.
+    n_genes: int
+        Number of genes.
+    model_config: ModelConfig
+        Model configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size: Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define prior parameters
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+        0.0,
+        1.0,
+    )
+    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
+    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
+
+    # Sample unconstrained mixing logits
+    mixing_logits_unconstrained = numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(*mixing_prior_params).expand([n_components]),
+    )
+    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
+
+    # Sample component-specific or shared parameters
+    if model_config.component_specific_params:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params).expand([n_components]),
+        )
+        phi_unconstrained = phi_unconstrained[:, None]
+    else:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params),
+        )
+
+    mu_unconstrained = numpyro.sample(
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+    )
+    gate_unconstrained = numpyro.sample(
+        "gate_unconstrained",
+        dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
+    )
+
+    # Transform to constrained space
+    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
+    r = numpyro.deterministic("r", mu * phi)
+    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
+
+    # Define distributions
+    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
+    zinb_comp_dist = dist.ZeroInflatedDistribution(
+        base_dist, gate_logits=gate_unconstrained
+    ).to_event(1)
+    mixture = dist.MixtureSameFamily(mixing_dist, zinb_comp_dist)
+
+    # Model likelihood
+    if counts is not None:
+        if batch_size is None:
+            with numpyro.plate("cells", n_cells):
+                numpyro.sample("counts", mixture, obs=counts)
+        else:
+            with numpyro.plate(
+                "cells", n_cells, subsample_size=batch_size
+            ) as idx:
+                numpyro.sample("counts", mixture, obs=counts[idx])
+    else:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample("counts", mixture)
+
+
+# ------------------------------------------------------------------------------
+
+
+def zinb_mixture_guide(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the odds ratio ZINB mixture model.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells.
+    n_genes : int
+        Number of genes.
+    model_config : ModelConfig
+        Configuration object.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size : Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define guide parameters
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+        0.0,
+        1.0,
+    )
+    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
+    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
+
+    # Register mixing weights parameters
+    mixing_loc = numpyro.param(
+        "mixing_logits_unconstrained_loc",
+        jnp.full(n_components, mixing_guide_params[0]),
+    )
+    mixing_scale = numpyro.param(
+        "mixing_logits_unconstrained_scale",
+        jnp.full(n_components, mixing_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(mixing_loc, mixing_scale),
+    )
+
+    gate_loc = numpyro.param(
+        "gate_unconstrained_loc",
+        jnp.full((n_components, n_genes), gate_guide_params[0]),
+    )
+    gate_scale = numpyro.param(
+        "gate_unconstrained_scale",
+        jnp.full((n_components, n_genes), gate_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
+
+    if model_config.component_specific_params:
+        phi_loc = numpyro.param(
+            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
+        )
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            jnp.full(n_components, phi_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    else:
+        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            phi_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+
+    mu_loc = numpyro.param(
+        "mu_unconstrained_loc",
+        jnp.full((n_components, n_genes), mu_guide_params[0]),
+    )
+    mu_scale = numpyro.param(
+        "mu_unconstrained_scale",
+        jnp.full((n_components, n_genes), mu_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+
+
+# ------------------------------------------------------------------------------
+
+
+def nbvcp_mixture_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Implements the Negative Binomial with Variable Capture Probability (NBVCP)
+    mixture model using an odds ratio unconstrained parameterization.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells.
+    n_genes: int
+        Number of genes.
+    model_config: ModelConfig
+        Model configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size: Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define prior parameters
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+        0.0,
+        1.0,
+    )
+    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
+    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+        0.0,
+        1.0,
+    )
+
+    # Sample global unconstrained parameters
+    mixing_logits_unconstrained = numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(*mixing_prior_params).expand([n_components]),
+    )
+    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
+
+    if model_config.component_specific_params:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params).expand([n_components]),
+        )
+        phi_unconstrained = phi_unconstrained[:, None]
+    else:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params),
+        )
+
+    mu_unconstrained = numpyro.sample(
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+    )
+
+    # Transform to constrained space
+    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
+    r = numpyro.deterministic("r", mu * phi)
+
+    plate_context = (
+        numpyro.plate("cells", n_cells, subsample_size=batch_size)
+        if counts is not None and batch_size is not None
+        else numpyro.plate("cells", n_cells)
+    )
+
+    with plate_context as idx:
+        phi_capture_unconstrained = numpyro.sample(
+            "phi_capture_unconstrained",
+            dist.Normal(*phi_capture_prior_params),
+        )
+        phi_capture = numpyro.deterministic(
+            "phi_capture", jnp.exp(phi_capture_unconstrained)
+        )
+        phi_capture_reshaped = phi_capture[:, None, None]
+        p_hat = numpyro.deterministic(
+            "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
+        )
+        base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
+        mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
+        obs = counts[idx] if counts is not None and idx is not None else None
+        numpyro.sample("counts", mixture, obs=obs)
+
+
+# ------------------------------------------------------------------------------
+
+
+def nbvcp_mixture_guide(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the odds ratio NBVCP mixture model.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells.
+    n_genes : int
+        Number of genes.
+    model_config : ModelConfig
+        Configuration object.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size : Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define guide parameters
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+        0.0,
+        1.0,
+    )
+    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
+    phi_capture_guide_params = model_config.phi_capture_unconstrained_guide or (
+        0.0,
+        1.0,
+    )
+
+    # Register global parameters
+    mixing_loc = numpyro.param(
+        "mixing_logits_unconstrained_loc",
+        jnp.full(n_components, mixing_guide_params[0]),
+    )
+    mixing_scale = numpyro.param(
+        "mixing_logits_unconstrained_scale",
+        jnp.full(n_components, mixing_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(mixing_loc, mixing_scale),
+    )
+
+    if model_config.component_specific_params:
+        phi_loc = numpyro.param(
+            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
+        )
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            jnp.full(n_components, phi_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    else:
+        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            phi_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+
+    mu_loc = numpyro.param(
+        "mu_unconstrained_loc",
+        jnp.full((n_components, n_genes), mu_guide_params[0]),
+    )
+    mu_scale = numpyro.param(
+        "mu_unconstrained_scale",
+        jnp.full((n_components, n_genes), mu_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+
+    # Cell-specific capture probability parameters
+    phi_capture_loc = numpyro.param(
+        "phi_capture_unconstrained_loc",
+        jnp.full(n_cells, phi_capture_guide_params[0]),
+    )
+    phi_capture_scale = numpyro.param(
+        "phi_capture_unconstrained_scale",
+        jnp.full(n_cells, phi_capture_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture_unconstrained",
+                dist.Normal(phi_capture_loc, phi_capture_scale),
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "phi_capture_unconstrained",
+                dist.Normal(phi_capture_loc[idx], phi_capture_scale[idx]),
+            )
+
+
+# ------------------------------------------------------------------------------
+
+
+def zinbvcp_mixture_model(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Implements the Zero-Inflated Negative Binomial with Variable Capture
+    Probability (ZINBVCP) mixture model using an odds ratio unconstrained
+    parameterization.
+
+    Parameters
+    ----------
+    n_cells: int
+        Number of cells.
+    n_genes: int
+        Number of genes.
+    model_config: ModelConfig
+        Model configuration.
+    counts: Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size: Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define prior parameters
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+        0.0,
+        1.0,
+    )
+    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
+    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
+    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+        0.0,
+        1.0,
+    )
+
+    # Sample global unconstrained parameters
+    mixing_logits_unconstrained = numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(*mixing_prior_params).expand([n_components]),
+    )
+    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
+
+    gate_unconstrained = numpyro.sample(
+        "gate_unconstrained",
+        dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
+    )
+
+    if model_config.component_specific_params:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params).expand([n_components]),
+        )
+        phi_unconstrained = phi_unconstrained[:, None]
+    else:
+        phi_unconstrained = numpyro.sample(
+            "phi_unconstrained",
+            dist.Normal(*phi_prior_params),
+        )
+
+    mu_unconstrained = numpyro.sample(
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+    )
+
+    # Transform to constrained space
+    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
+    r = numpyro.deterministic("r", mu * phi)
+    numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
+
+    plate_context = (
+        numpyro.plate("cells", n_cells, subsample_size=batch_size)
+        if counts is not None and batch_size is not None
+        else numpyro.plate("cells", n_cells)
+    )
+
+    with plate_context as idx:
+        phi_capture_unconstrained = numpyro.sample(
+            "phi_capture_unconstrained",
+            dist.Normal(*phi_capture_prior_params),
+        )
+        phi_capture = numpyro.deterministic(
+            "phi_capture", jnp.exp(phi_capture_unconstrained)
+        )
+        phi_capture_reshaped = phi_capture[:, None, None]
+        p_hat = numpyro.deterministic(
+            "p_hat", 1.0 / (1 + phi + phi * phi_capture_reshaped)
+        )
+        base_dist = dist.NegativeBinomialProbs(r, p_hat)
+        zinb_base_dist = dist.ZeroInflatedDistribution(
+            base_dist,
+            gate_logits=gate_unconstrained[None, :, :],
+        ).to_event(1)
+        mixture = dist.MixtureSameFamily(mixing_dist, zinb_base_dist)
+        obs = counts[idx] if counts is not None and idx is not None else None
+        numpyro.sample("counts", mixture, obs=obs)
+
+
+# ------------------------------------------------------------------------------
+
+
+def zinbvcp_mixture_guide(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the odds ratio ZINBVCP mixture model.
+
+    Parameters
+    ----------
+    n_cells : int
+        Number of cells.
+    n_genes : int
+        Number of genes.
+    model_config : ModelConfig
+        Configuration object.
+    counts : Optional[jnp.ndarray], default=None
+        Observed count data.
+    batch_size : Optional[int], default=None
+        Batch size for subsampling.
+    """
+    n_components = model_config.n_components
+
+    # Define guide parameters
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+        0.0,
+        1.0,
+    )
+    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
+    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
+    phi_capture_guide_params = model_config.phi_capture_unconstrained_guide or (
+        0.0,
+        1.0,
+    )
+
+    # Register global parameters
+    mixing_loc = numpyro.param(
+        "mixing_logits_unconstrained_loc",
+        jnp.full(n_components, mixing_guide_params[0]),
+    )
+    mixing_scale = numpyro.param(
+        "mixing_logits_unconstrained_scale",
+        jnp.full(n_components, mixing_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample(
+        "mixing_logits_unconstrained",
+        dist.Normal(mixing_loc, mixing_scale),
+    )
+
+    gate_loc = numpyro.param(
+        "gate_unconstrained_loc",
+        jnp.full((n_components, n_genes), gate_guide_params[0]),
+    )
+    gate_scale = numpyro.param(
+        "gate_unconstrained_scale",
+        jnp.full((n_components, n_genes), gate_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
+
+    if model_config.component_specific_params:
+        phi_loc = numpyro.param(
+            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
+        )
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            jnp.full(n_components, phi_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    else:
+        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
+        phi_scale = numpyro.param(
+            "phi_unconstrained_scale",
+            phi_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+
+    mu_loc = numpyro.param(
+        "mu_unconstrained_loc",
+        jnp.full((n_components, n_genes), mu_guide_params[0]),
+    )
+    mu_scale = numpyro.param(
+        "mu_unconstrained_scale",
+        jnp.full((n_components, n_genes), mu_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+
+    # Cell-specific capture probability parameters
+    phi_capture_loc = numpyro.param(
+        "phi_capture_unconstrained_loc",
+        jnp.full(n_cells, phi_capture_guide_params[0]),
+    )
+    phi_capture_scale = numpyro.param(
+        "phi_capture_unconstrained_scale",
+        jnp.full(n_cells, phi_capture_guide_params[1]),
+        constraint=constraints.positive,
+    )
+
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture_unconstrained",
+                dist.Normal(phi_capture_loc, phi_capture_scale),
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "phi_capture_unconstrained",
+                dist.Normal(phi_capture_loc[idx], phi_capture_scale[idx]),
+            )
+
+
+# ------------------------------------------------------------------------------
 # Get posterior distributions for SVI results
 # ------------------------------------------------------------------------------
 
@@ -1154,9 +1949,19 @@ def get_posterior_distributions(
         "phi_unconstrained_loc" in params
         and "phi_unconstrained_scale" in params
     ):
-        distributions["phi_unconstrained"] = dist.Normal(
-            params["phi_unconstrained_loc"], params["phi_unconstrained_scale"]
-        )
+        if split and model_config.component_specific_params:
+            distributions["phi_unconstrained"] = [
+                dist.Normal(
+                    params["phi_unconstrained_loc"][i],
+                    params["phi_unconstrained_scale"][i],
+                )
+                for i in range(params["phi_unconstrained_loc"].shape[0])
+            ]
+        else:
+            distributions["phi_unconstrained"] = dist.Normal(
+                params["phi_unconstrained_loc"],
+                params["phi_unconstrained_scale"],
+            )
 
     # mu_unconstrained parameter (Normal distribution)
     if "mu_unconstrained_loc" in params and "mu_unconstrained_scale" in params:
@@ -1167,6 +1972,18 @@ def get_posterior_distributions(
                     params["mu_unconstrained_loc"][c],
                     params["mu_unconstrained_scale"][c],
                 )
+                for c in range(params["mu_unconstrained_loc"].shape[0])
+            ]
+        elif split and len(params["mu_unconstrained_loc"].shape) == 2:
+            # Component and gene-specific mu parameters
+            distributions["mu_unconstrained"] = [
+                [
+                    dist.Normal(
+                        params["mu_unconstrained_loc"][c, g],
+                        params["mu_unconstrained_scale"][c, g],
+                    )
+                    for g in range(params["mu_unconstrained_loc"].shape[1])
+                ]
                 for c in range(params["mu_unconstrained_loc"].shape[0])
             ]
         else:
@@ -1186,6 +2003,18 @@ def get_posterior_distributions(
                     params["gate_unconstrained_loc"][c],
                     params["gate_unconstrained_scale"][c],
                 )
+                for c in range(params["gate_unconstrained_loc"].shape[0])
+            ]
+        elif split and len(params["gate_unconstrained_loc"].shape) == 2:
+            # Component and gene-specific gate parameters
+            distributions["gate_unconstrained"] = [
+                [
+                    dist.Normal(
+                        params["gate_unconstrained_loc"][c, g],
+                        params["gate_unconstrained_scale"][c, g],
+                    )
+                    for g in range(params["gate_unconstrained_loc"].shape[1])
+                ]
                 for c in range(params["gate_unconstrained_loc"].shape[0])
             ]
         else:
@@ -1213,5 +2042,15 @@ def get_posterior_distributions(
                 params["phi_capture_unconstrained_loc"],
                 params["phi_capture_unconstrained_scale"],
             )
+
+    # mixing_logits_unconstrained parameter (Normal distribution)
+    if (
+        "mixing_logits_unconstrained_loc" in params
+        and "mixing_logits_unconstrained_scale" in params
+    ):
+        distributions["mixing_logits_unconstrained"] = dist.Normal(
+            params["mixing_logits_unconstrained_loc"],
+            params["mixing_logits_unconstrained_scale"],
+        )
 
     return distributions

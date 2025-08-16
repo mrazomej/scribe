@@ -186,7 +186,12 @@ class ScribeMCMCSubset:
             # Reshape phi to broadcast with mu based on mixture model
             if self.n_components is not None:
                 # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                phi_reshaped = phi[:, None, None]
+                if self.model_config.component_specific_params:
+                    # Component-specific phi: shape (n_samples, n_components) -> reshape
+                    phi_reshaped = phi[:, :, None]
+                else:
+                    # Shared phi: shape (n_samples,) -> reshape
+                    phi_reshaped = phi[:, None, None]
             else:
                 # Non-mixture model: mu has shape (n_samples, n_genes)
                 phi_reshaped = phi[:, None]
@@ -205,7 +210,12 @@ class ScribeMCMCSubset:
             # Reshape p to broadcast with mu based on mixture model
             if self.n_components is not None:
                 # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                p_reshaped = p[:, None, None]
+                if self.model_config.component_specific_params:
+                    # Component-specific p: shape (n_samples, n_components) -> reshape
+                    p_reshaped = p[:, :, None]
+                else:
+                    # Shared p: shape (n_samples,) -> reshape
+                    p_reshaped = p[:, None, None]
             else:
                 # Non-mixture model: mu has shape (n_samples, n_genes)
                 p_reshaped = p[:, None]
@@ -721,10 +731,17 @@ class ScribeMCMCResults(MCMC):
             # Compute p from phi
             canonical_samples["p"] = 1.0 / (1.0 + phi)
 
-            # Reshape phi to broadcast with mu based on mixture model
+            # Reshape phi to broadcast with mu based on mixture model and
+            # component specificity
             if self.n_components is not None:
                 # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                phi_reshaped = phi[:, None, None]
+                if self.model_config.component_specific_params:
+                    # Component-specific phi: shape (n_samples, n_components)
+                    phi_reshaped = phi[:, :, None]
+                else:
+                    # Shared phi: shape (n_samples,) ->
+                    # broadcast to (n_samples, 1, 1)
+                    phi_reshaped = phi[:, None, None]
             else:
                 # Non-mixture model: mu has shape (n_samples, n_genes)
                 phi_reshaped = phi[:, None]
@@ -740,10 +757,15 @@ class ScribeMCMCResults(MCMC):
             # Extract p and mu
             p = canonical_samples["p"]
             mu = canonical_samples["mu"]
-            # Reshape p to broadcast with mu based on mixture model
+            # Reshape p to broadcast with mu based on mixture model and component specificity
             if self.n_components is not None:
-                # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                p_reshaped = p[:, None, None]
+                if self.model_config.component_specific_params:
+                    # Component-specific p: shape (n_samples, n_components)
+                    p_reshaped = p[:, :, None]
+                else:
+                    # Shared p: shape (n_samples,) ->
+                    # broadcast to (n_samples, 1, 1)
+                    p_reshaped = p[:, None, None]
             else:
                 # Non-mixture model: mu has shape (n_samples, n_genes)
                 p_reshaped = p[:, None]

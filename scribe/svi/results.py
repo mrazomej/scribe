@@ -454,8 +454,20 @@ class ScribeSVIResults:
                         "Computing r from mu and p for linked parameterization"
                     )
                 # r = mu * (1 - p) / p
+                p = estimates["p"]
+                if (
+                    self.n_components is not None
+                    and self.model_config.component_specific_params
+                ):
+                    # Mixture model: mu has shape (n_components, n_genes)
+                    # p has shape (n_components,). Reshape for broadcasting.
+                    p_reshaped = p[:, None]
+                else:
+                    # Non-mixture or shared p: p is scalar, broadcasts.
+                    p_reshaped = p
+
                 estimates["r"] = (
-                    estimates["mu"] * (1 - estimates["p"]) / estimates["p"]
+                    estimates["mu"] * (1 - p_reshaped) / p_reshaped
                 )
 
         # Handle odds_ratio parameterization
