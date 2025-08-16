@@ -1,83 +1,89 @@
 # %% ---------------------------------------------------------------------------
 
-# Import base libraries
 import os
-import gc
 import pickle
-import scanpy as sc
-
-# Import scribe
-import scribe
+import gc
 
 # Import JAX-related libraries
 import jax
 
+from jax import random
+import jax.numpy as jnp
+
+# Import pandas for data manipulation
+import pandas as pd
+
+# Import scribe
+import scribe
+
 # %% ---------------------------------------------------------------------------
-
-print("Defining inference parameters...")
-
-# Define model_type
+# Define model type
 model_type = "nbvcp"
 
-# Define parameterization
-parameterization = "linked"
+# Define parameterization type
+parameterization = "odds_ratio"
 
-# Define training parameters
-n_steps = 25_000
+# Define unconstrained parameterization
+unconstrained = True
 
 # Define latent dimension
 latent_dim = 2
 
-# %% ---------------------------------------------------------------------------
-
-print("Setting directories...")
-
 # Define data directory
-DATA_DIR = (
-    f"{scribe.utils.git_root()}/data/" f"10xGenomics/50-50_Jurkat-293T_mixture"
-)
-
+DATA_DIR = f"{scribe.utils.git_root()}/data/singer/"
 # Define output directory
-OUTPUT_DIR = (
-    f"{scribe.utils.git_root()}/output/"
-    f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
-)
+OUTPUT_DIR = f"{scribe.utils.git_root()}/output/singer/{model_type}"
 
 # Create output directory if it doesn't exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # %% ---------------------------------------------------------------------------
 
-print("Loading data...")
+# Load CSV file
+df = pd.read_csv(f"{DATA_DIR}/singer_transcript_counts.csv", comment="#")
 
-# Load data
-data = sc.read_h5ad(f"{DATA_DIR}/data.h5ad")
+# Define data
+data = jnp.array(df.to_numpy())
+
+# Define number of cells
+n_cells = data.shape[0]
+# Define number of genes
+n_genes = data.shape[1]
 
 # %% ---------------------------------------------------------------------------
 
-print("Running inference...")
+# Setup the PRNG key
+rng_key = random.PRNGKey(42)  # Set random seed
+
+# Define training parameters
+n_steps = 25_000
+
+# %% ---------------------------------------------------------------------------
 
 # Clear caches before running
 gc.collect()
 jax.clear_caches()
 
-# Define file name
+# Define output file name
 file_name = (
     f"{OUTPUT_DIR}/"
     f"dpvae_{parameterization.replace('_', '-')}_"
     f"{model_type.replace('_', '-')}_"
+    f"unconstrained_"
+    f"{n_cells}cells_"
+    f"{n_genes}genes_"
     f"{latent_dim}latentdim_"
     f"{n_steps}steps.pkl"
 )
 
-# Check if the file exists
 if not os.path.exists(file_name):
-    # Run scribe
-    scribe_results = scribe.run_scribe(
+    # Run SVI
+    vae_results = scribe.run_scribe(
         inference_method="vae",
         counts=data,
         n_steps=n_steps,
         parameterization=parameterization,
+        unconstrained=unconstrained,
         variable_capture=True,
         vae_latent_dim=latent_dim,
         vae_hidden_dims=[128, 128, 128],
@@ -87,10 +93,11 @@ if not os.path.exists(file_name):
         vae_prior_num_layers=3,
         vae_prior_activation="relu",
         vae_prior_mask_type="alternating",
+        phi_prior=(10, 2),
+        phi_capture_prior=(10, 10),
         vae_standardize=False,
-        batch_size=512,
     )
-
-    # Save the results, the true values, and the counts
+    # Save VAE results
     with open(file_name, "wb") as f:
-        pickle.dump(scribe_results, f)
+        pickle.dump(vae_results, f)
+# %% ---------------------------------------------------------------------------
