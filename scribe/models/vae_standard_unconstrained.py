@@ -1,6 +1,6 @@
 """
-VAE-based models for single-cell RNA sequencing data using standard parameterization
-with unconstrained parameters.
+VAE-based models for single-cell RNA sequencing data using standard
+parameterization with unconstrained parameters.
 
 This parameterization uses a Variational Autoencoder (VAE) architecture to
 generate cell-specific dispersion parameters (r) from a low-dimensional latent
@@ -28,14 +28,13 @@ This module implements the STANDARD parameterization where:
     - The relationship is: counts ~ NegativeBinomialProbs(r, p)
 """
 
-import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
 from numpyro.contrib.module import nnx_module
-from typing import Dict, Optional
+from typing import Dict
 
 from .model_config import ModelConfig
 from ..vae.architectures import (
