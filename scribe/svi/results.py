@@ -20,18 +20,12 @@ from ..sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
 )
-from ..stats import (
-    fit_dirichlet_minka,
-    get_distribution_mode,
-    hellinger_gamma,
-    hellinger_lognormal,
-    kl_gamma,
-    kl_lognormal,
-    jensen_shannon_gamma,
-    jensen_shannon_lognormal,
-)
+from ..stats import fit_dirichlet_minka
 from ..models.model_config import ModelConfig
-from ..models.standard import get_posterior_distributions
+
+# Import multipledispatch functions from stats
+from ..stats import hellinger, jensen_shannon
+from numpyro.distributions.kl import kl_divergence
 from ..utils import numpyro_to_scipy
 
 
@@ -388,7 +382,7 @@ class ScribeSVIResults:
         distributions = self.get_distributions(backend="numpyro")
         # Get estimate of map
         map_estimates = {
-            param: get_distribution_mode(dist)
+            param: dist.mode if hasattr(dist, "mode") else dist.mean
             for param, dist in distributions.items()
         }
 
@@ -428,7 +422,8 @@ class ScribeSVIResults:
         self, map_estimates: Dict, verbose: bool = True
     ) -> Dict:
         """
-        Compute canonical parameters (p, r) from other parameters for different parameterizations.
+        Compute canonical parameters (p, r) from other parameters for different
+        parameterizations.
 
         Parameters
         ----------
@@ -466,9 +461,7 @@ class ScribeSVIResults:
                     # Non-mixture or shared p: p is scalar, broadcasts.
                     p_reshaped = p
 
-                estimates["r"] = (
-                    estimates["mu"] * (1 - p_reshaped) / p_reshaped
-                )
+                estimates["r"] = estimates["mu"] * (1 - p_reshaped) / p_reshaped
 
         # Handle odds_ratio parameterization
         elif parameterization == "odds_ratio":
@@ -779,9 +772,9 @@ class ScribeSVIResults:
         """
         Create a view of the results selecting a specific mixture component.
 
-        This method returns a new ScribeSVIResults object that contains parameter
-        values for the specified component, allowing for further gene-based
-        indexing. Only applicable to mixture models.
+        This method returns a new ScribeSVIResults object that contains
+        parameter values for the specified component, allowing for further
+        gene-based indexing. Only applicable to mixture models.
 
         Parameters
         ----------
@@ -791,7 +784,8 @@ class ScribeSVIResults:
         Returns
         -------
         ScribeSVIResults
-            A new ScribeSVIResults object with parameters for the selected component
+            A new ScribeSVIResults object with parameters for the selected
+            component
 
         Raises
         ------
@@ -847,45 +841,108 @@ class ScribeSVIResults:
         and naming conventions, regardless of parameterization.
         """
         # Define parameter categories based on their structure
+
+        # Component-gene-specific parameters (shape: [n_components, n_genes])
+        # These parameters have both component and gene dimensions
         component_gene_specific = [
-            "r_loc_comp",
-            "r_scale_comp",
+            # Standard parameterization
+            "r_loc",
+            "r_scale",  # dispersion parameters
+            "gate_alpha",
+            "gate_beta",  # zero-inflation parameters
+            # Standard unconstrained parameterization
             "r_unconstrained_loc",
             "r_unconstrained_scale",
-            "gate_alpha_comp",
-            "gate_beta_comp",
             "gate_unconstrained_loc",
             "gate_unconstrained_scale",
+            # Linked parameterization
             "mu_loc",
-            "mu_scale",
-            "phi_loc",
-            "phi_scale",
+            "mu_scale",  # mean parameters
+            "gate_alpha",
+            "gate_beta",  # zero-inflation parameters
+            # Odds ratio parameterization
+            "phi_alpha",
+            "phi_beta",  # odds ratio parameters
+            "gate_alpha",
+            "gate_beta",  # zero-inflation parameters
+            # Odds ratio unconstrained parameterization
+            "phi_unconstrained_loc",
+            "phi_unconstrained_scale",
+            "gate_unconstrained_loc",
+            "gate_unconstrained_scale",
         ]
 
+        # Component-specific parameters (shape: [n_components])
+        # These parameters have only component dimension
         component_specific = [
-            "p_alpha_comp",
-            "p_beta_comp",
+            # Standard unconstrained parameterization
             "p_unconstrained_loc",
             "p_unconstrained_scale",
             "mixing_logits_unconstrained_loc",
             "mixing_logits_unconstrained_scale",
+            # Odds ratio unconstrained parameterization
+            "phi_unconstrained_loc",
+            "phi_unconstrained_scale",
+            "mixing_logits_unconstrained_loc",
+            "mixing_logits_unconstrained_scale",
         ]
 
+        # Cell-specific parameters (shape: [n_cells])
+        # These parameters are cell-specific and not component-specific
         cell_specific = [
+            # Standard parameterization
             "p_capture_alpha",
-            "p_capture_beta",
+            "p_capture_beta",  # capture probability parameters
+            # Standard unconstrained parameterization
             "p_capture_unconstrained_loc",
             "p_capture_unconstrained_scale",
-            "phi_capture_loc",
-            "phi_capture_scale",
+            # Linked parameterization
+            "p_capture_alpha",
+            "p_capture_beta",  # capture probability parameters
+            # Odds ratio parameterization
+            "phi_capture_alpha",
+            "phi_capture_beta",  # capture odds ratio parameters
+            # Odds ratio unconstrained parameterization
+            "phi_capture_unconstrained_loc",
+            "phi_capture_unconstrained_scale",
         ]
 
-        shared_params = [
+        # Parameters that can be either component-specific or shared depending on model config
+        # These need special handling based on component_specific_params setting
+        configurable_params = [
+            # Standard parameterization
             "p_alpha",
-            "p_beta",
-            "gate_alpha",
-            "gate_beta",
-            "mixing_conc",
+            "p_beta",  # success probability parameters
+            # Linked parameterization
+            "p_alpha",
+            "p_beta",  # success probability parameters
+            # Odds ratio parameterization
+            "phi_alpha",
+            "phi_beta",  # odds ratio parameters
+        ]
+
+        # Shared parameters (scalar or global)
+        # These parameters are shared across all components
+        shared_params = [
+            # Standard parameterization
+            "mixing_conc",  # mixture concentrations
+            # Standard unconstrained parameterization
+            "mixing_logits_unconstrained_loc",
+            "mixing_logits_unconstrained_scale",
+            # Linked parameterization
+            "mixing_conc",  # mixture concentrations
+            # Odds ratio parameterization
+            "mixing_conc",  # mixture concentrations
+            # Odds ratio unconstrained parameterization
+            "mixing_logits_unconstrained_loc",
+            "mixing_logits_unconstrained_scale",
+        ]
+
+        # Additional parameters that might be present but not categorized above
+        # These are typically scalar or global parameters
+        additional_params = [
+            # Any other parameters that don't fit the above categories
+            # This list can be expanded as needed
         ]
 
         # Handle component-gene-specific parameters (shape: [n_components, n_genes])
@@ -913,9 +970,31 @@ class ScribeSVIResults:
             if param_name in self.params:
                 new_params[param_name] = self.params[param_name]
 
+        # Handle configurable parameters (can be component-specific or shared)
+        for param_name in configurable_params:
+            if param_name in self.params:
+                param = self.params[param_name]
+                # Check if parameter has component dimension
+                if param.ndim > 0:  # Has component dimension
+                    new_params[param_name] = param[component_index]
+                else:  # Scalar parameter, copy as-is
+                    new_params[param_name] = param
+
         # Handle shared parameters (copy as-is, used across all components)
         for param_name in shared_params:
             if param_name in self.params:
+                new_params[param_name] = self.params[param_name]
+
+        # Handle any additional parameters that might be present
+        for param_name in additional_params:
+            if param_name in self.params:
+                new_params[param_name] = self.params[param_name]
+
+        # Handle any remaining parameters not explicitly categorized
+        # This ensures we don't miss any parameters
+        for param_name in self.params:
+            if param_name not in new_params:
+                # For any uncategorized parameters, copy as-is
                 new_params[param_name] = self.params[param_name]
 
     # --------------------------------------------------------------------------
@@ -935,38 +1014,84 @@ class ScribeSVIResults:
 
         # Define parameter categories for posterior samples
         component_gene_specific_samples = [
-            "r",
-            "r_unconstrained",
-            "gate",
-            "gate_unconstrained",
-            "mu",
-            "phi",
-            "r_unconstrained_loc",
-            "r_unconstrained_scale",
-            "gate_unconstrained_loc",
-            "gate_unconstrained_scale",
+            # Standard parameterization
+            "r",  # dispersion parameter
+            "gate",  # zero-inflation parameter
+            # Standard unconstrained parameterization
+            "r_unconstrained",  # dispersion parameter
+            "gate_unconstrained",  # zero-inflation parameter
+            # Linked parameterization
+            "mu",  # mean parameter
+            "gate",  # zero-inflation parameter
+            # Odds ratio parameterization
+            "phi",  # odds ratio parameter
+            "gate",  # zero-inflation parameter
+            # Odds ratio unconstrained parameterization
+            "phi_unconstrained",  # odds ratio parameter
+            "gate_unconstrained",  # zero-inflation parameter
         ]
 
         component_specific_samples = [
-            "p",
-            "p_unconstrained",
-            "mixing_weights",
-            "mixing_logits_unconstrained",
-            "p_unconstrained_loc",
-            "p_unconstrained_scale",
-            "mixing_logits_unconstrained_loc",
-            "mixing_logits_unconstrained_scale",
+            # Standard parameterization
+            "p",  # success probability parameter
+            # Standard unconstrained parameterization
+            "p_unconstrained",  # success probability parameter
+            "mixing_logits_unconstrained",  # mixing logits
+            # Linked parameterization
+            "p",  # success probability parameter
+            # Odds ratio parameterization
+            "phi",  # odds ratio parameter
+            # Odds ratio unconstrained parameterization
+            "phi_unconstrained",  # odds ratio parameter
+            "mixing_logits_unconstrained",  # mixing logits
         ]
 
         cell_specific_samples = [
-            "p_capture",
-            "p_capture_unconstrained",
-            "phi_capture",
-            "p_capture_unconstrained_loc",
-            "p_capture_unconstrained_scale",
+            # Standard parameterization
+            "p_capture",  # capture probability parameter
+            # Standard unconstrained parameterization
+            "p_capture_unconstrained",  # capture probability parameter
+            # Linked parameterization
+            "p_capture",  # capture probability parameter
+            # Odds ratio parameterization
+            "phi_capture",  # capture odds ratio parameter
+            # Odds ratio unconstrained parameterization
+            "phi_capture_unconstrained",  # capture odds ratio parameter
         ]
 
-        # Handle component-gene-specific samples (shape: [n_samples, n_components, n_genes])
+        # Shared parameters (scalar or global)
+        shared_samples = [
+            # Standard parameterization
+            "mixing_weights",  # mixture weights
+            # Standard unconstrained parameterization
+            "mixing_logits_unconstrained",  # mixing logits
+            # Linked parameterization
+            "mixing_weights",  # mixture weights
+            # Odds ratio parameterization
+            "mixing_weights",  # mixture weights
+            # Odds ratio unconstrained parameterization
+            "mixing_logits_unconstrained",  # mixing logits
+        ]
+
+        # Configurable parameters (can be component-specific or shared)
+        configurable_samples = [
+            # Standard parameterization
+            "p",  # success probability parameter
+            # Linked parameterization
+            "p",  # success probability parameter
+            # Odds ratio parameterization
+            "phi",  # odds ratio parameter
+        ]
+
+        # Additional parameters that might be present in posterior samples
+        # These are typically derived parameters or deterministic values
+        additional_samples = [
+            # Any other parameters that don't fit the above categories
+            # This list can be expanded as needed
+        ]
+
+        # Handle component-gene-specific samples
+        # (shape: [n_samples, n_components, n_genes])
         for param_name in component_gene_specific_samples:
             if param_name in samples:
                 sample_value = samples[param_name]
@@ -991,6 +1116,34 @@ class ScribeSVIResults:
         # Handle cell-specific samples (copy as-is, not component-specific)
         for param_name in cell_specific_samples:
             if param_name in samples:
+                new_posterior_samples[param_name] = samples[param_name]
+
+        # Handle shared samples (copy as-is, used across all components)
+        for param_name in shared_samples:
+            if param_name in samples:
+                new_posterior_samples[param_name] = samples[param_name]
+
+        # Handle configurable samples (can be component-specific or shared)
+        for param_name in configurable_samples:
+            if param_name in samples:
+                sample_value = samples[param_name]
+                if sample_value.ndim > 1:  # Has component dimension
+                    new_posterior_samples[param_name] = sample_value[
+                        :, component_index
+                    ]
+                else:  # Scalar parameter, copy as-is
+                    new_posterior_samples[param_name] = sample_value
+
+        # Handle any additional samples that might be present
+        for param_name in additional_samples:
+            if param_name in samples:
+                new_posterior_samples[param_name] = samples[param_name]
+
+        # Handle any remaining samples not explicitly categorized
+        # This ensures we don't miss any parameters
+        for param_name in samples:
+            if param_name not in new_posterior_samples:
+                # For any uncategorized parameters, copy as-is
                 new_posterior_samples[param_name] = samples[param_name]
 
         return new_posterior_samples
@@ -1056,6 +1209,14 @@ class ScribeSVIResults:
     def _parameterization(self) -> str:
         """Get the parameterization type."""
         return self.model_config.parameterization or ""
+
+    # --------------------------------------------------------------------------
+    # Get if unconstrained
+    # --------------------------------------------------------------------------
+
+    def _unconstrained(self) -> bool:
+        """Get if the parameterization is unconstrained."""
+        return self.model_config.unconstrained
 
     # --------------------------------------------------------------------------
     # Get log likelihood function
@@ -1734,251 +1895,6 @@ class ScribeSVIResults:
         return entropy
 
     # --------------------------------------------------------------------------
-    # Hellinger distance for mixture models
-    # --------------------------------------------------------------------------
-
-    def hellinger_distance(
-        self,
-        dtype: jnp.dtype = jnp.float32,
-    ) -> jnp.ndarray:
-        """
-        Compute pairwise Hellinger distances between mixture model components.
-
-        This method calculates the Hellinger distance between each pair of
-        components in the mixture model based on their inferred parameter
-        distributions. The Hellinger distance is a metric that quantifies the
-        similarity between two probability distributions, ranging from 0
-        (identical) to 1 (completely different).
-
-        The specific distance calculation depends on the distribution type used
-        for the dispersion parameter (r):
-            - For LogNormal: Uses location and scale parameters
-            - For Gamma: Uses concentration and rate parameters
-
-        Parameters
-        ----------
-        dtype : jnp.dtype, default=jnp.float32
-            Data type for numerical precision in computations
-
-        Returns
-        -------
-        Dict[str, jnp.ndarray]
-            Dictionary containing pairwise Hellinger distances between
-            components. Keys are of the form 'i_j' where i,j are component
-            indices. Values are the Hellinger distances between components i and
-            j.
-
-        Raises
-        ------
-        ValueError
-            If the model is not a mixture model with multiple components, or if
-            the distribution type is not supported (must be LogNormal or Gamma)
-        """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "Hellinger distance calculation only applies to mixture models "
-                "with multiple components"
-            )
-
-        # The 'standard' parameterization uses LogNormal for the r parameter.
-        # The 'linked' parameterization uses LogNormal for the mu parameter.
-        if self.model_config.parameterization == "standard":
-            hellinger_distance_fn = hellinger_lognormal
-            param1_key, param2_key = "r_loc_comp", "r_scale_comp"
-        elif self.model_config.parameterization == "linked":
-            hellinger_distance_fn = hellinger_lognormal
-            param1_key, param2_key = "mu_loc_comp", "mu_scale_comp"
-        else:
-            raise NotImplementedError(
-                f"Hellinger distance not implemented for '{self.model_config.parameterization}'."
-            )
-
-        # Extract parameters for LogNormal distribution
-        r_param1 = self.params[param1_key].astype(dtype)
-        r_param2 = self.params[param2_key].astype(dtype)
-
-        # Initialize dictionary to store distances
-        hellinger_distances = {}
-
-        # Compute pairwise distances for each component
-        for i in range(self.n_components):
-            for j in range(i + 1, self.n_components):
-                # Compute Hellinger distance between component i and j
-                hellinger_distances[f"{i}_{j}"] = hellinger_distance_fn(
-                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
-                )
-
-        return hellinger_distances
-
-    # --------------------------------------------------------------------------
-    # KL Divergence for mixture models
-    # --------------------------------------------------------------------------
-
-    def kl_divergence(
-        self,
-        dtype: jnp.dtype = jnp.float32,
-    ) -> Dict[str, jnp.ndarray]:
-        """
-        Compute pairwise KL divergences between mixture model components.
-
-        This method calculates the Kullback-Leibler (KL) divergence between each
-        pair of components in the mixture model based on their inferred
-        parameter distributions. The KL divergence is a measure of how one
-        probability distribution diverges from a second reference distribution,
-        with larger values indicating greater difference.
-
-        Note that KL divergence is asymmetric: KL(P||Q) ≠ KL(Q||P).
-
-        The specific divergence calculation depends on the distribution type
-        used for the dispersion parameter (r):
-            - For LogNormal: Uses location and scale parameters
-            - For Gamma: Uses concentration and rate parameters
-
-        Parameters
-        ----------
-        dtype : jnp.dtype, default=jnp.float32
-            Data type for numerical precision in computations
-
-        Returns
-        -------
-        Dict[str, jnp.ndarray]
-            Dictionary containing pairwise KL divergences between components.
-            Keys are of the form 'i_j' where i,j are component indices. Values
-            are the KL divergences from component i to component j.
-
-        Raises
-        ------
-        ValueError
-            If the model is not a mixture model with multiple components, or if
-            the distribution type is not supported (must be LogNormal or Gamma)
-        """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "KL divergence calculation only applies to mixture models "
-                "with multiple components"
-            )
-
-        # The 'standard' parameterization uses LogNormal for the r parameter.
-        # The 'linked' parameterization uses LogNormal for the mu parameter.
-        if self.model_config.parameterization == "standard":
-            kl_divergence_fn = kl_lognormal
-            param1_key, param2_key = "r_loc_comp", "r_scale_comp"
-        elif self.model_config.parameterization == "linked":
-            kl_divergence_fn = kl_lognormal
-            param1_key, param2_key = "mu_loc_comp", "mu_scale_comp"
-        else:
-            raise NotImplementedError(
-                f"KL divergence not implemented for '{self.model_config.parameterization}'."
-            )
-
-        # Extract parameters from r distribution based on distribution type
-        r_param1 = self.params[param1_key].astype(dtype)
-        r_param2 = self.params[param2_key].astype(dtype)
-
-        # Initialize dictionary to store divergences
-        kl_divergences = {}
-
-        # Compute pairwise divergences for each component
-        for i in range(self.n_components):
-            for j in range(self.n_components):
-                if i != j:  # Skip self-comparisons
-                    # Compute KL divergence from component i to j
-                    kl_divergences[f"{i}_{j}"] = kl_divergence_fn(
-                        r_param1[i], r_param2[i], r_param1[j], r_param2[j]
-                    )
-
-        return kl_divergences
-
-    # --------------------------------------------------------------------------
-    # Jensen-Shannon divergence for mixture models
-    # --------------------------------------------------------------------------
-
-    def jensen_shannon_divergence(
-        self,
-        dtype: jnp.dtype = jnp.float32,
-    ) -> Dict[str, jnp.ndarray]:
-        """
-        Compute pairwise Jensen-Shannon divergences between mixture model
-        components.
-
-        This method calculates the Jensen-Shannon (JS) divergence between each
-        pair of components in the mixture model based on their inferred
-        parameter distributions. The JS divergence is a symmetrized and smoothed
-        version of the Kullback-Leibler divergence, defined as:
-
-            JSD(P||Q) = 1/2 × KL(P||M) + 1/2 × KL(Q||M)
-
-        where M = 1/2 × (P + Q) is the average of the two distributions.
-
-        Unlike KL divergence, JS divergence is symmetric and bounded between 0
-        and 1 (when using log base 2) or between 0 and ln(2) (when using natural
-        logarithm).
-
-        The specific divergence calculation depends on the distribution type
-        used for the dispersion parameter (r):
-            - For LogNormal: Uses location and scale parameters
-            - For Gamma: Uses concentration and rate parameters
-
-        Parameters
-        ----------
-        dtype : jnp.dtype, default=jnp.float32
-            Data type for numerical precision in computations
-
-        Returns
-        -------
-        Dict[str, jnp.ndarray]
-            Dictionary containing pairwise JS divergences between components.
-            Keys are of the form 'i_j' where i,j are component indices. Values
-            are the JS divergences between components i and j.
-
-        Raises
-        ------
-        ValueError
-            If the model is not a mixture model with multiple components, or if
-            the distribution type is not supported (must be LogNormal or Gamma)
-        """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "Jensen-Shannon divergence calculation only applies to mixture models "
-                "with multiple components"
-            )
-
-        # The 'standard' parameterization uses LogNormal for the r parameter.
-        # The 'linked' parameterization uses LogNormal for the mu parameter.
-        if self.model_config.parameterization == "standard":
-            js_divergence_fn = jensen_shannon_lognormal
-            param1_key, param2_key = "r_loc_comp", "r_scale_comp"
-        elif self.model_config.parameterization == "linked":
-            js_divergence_fn = jensen_shannon_lognormal
-            param1_key, param2_key = "mu_loc_comp", "mu_scale_comp"
-        else:
-            raise NotImplementedError(
-                f"Jensen-Shannon divergence not implemented for '{self.model_config.parameterization}'."
-            )
-
-        # Extract parameters from r distribution based on distribution type
-        r_param1 = self.params[param1_key].astype(dtype)
-        r_param2 = self.params[param2_key].astype(dtype)
-
-        # Initialize dictionary to store divergences
-        js_divergences = {}
-
-        # Compute pairwise divergences for each component
-        for i in range(self.n_components):
-            for j in range(
-                i + 1, self.n_components
-            ):  # Only compute for i < j since JS is symmetric
-                # Compute JS divergence between components i and j
-                js_divergences[f"{i}_{j}"] = js_divergence_fn(
-                    r_param1[i], r_param2[i], r_param1[j], r_param2[j]
-                )
-
-        return js_divergences
-
-    # --------------------------------------------------------------------------
     # Cell type assignment method for mixture models
     # --------------------------------------------------------------------------
 
@@ -2168,17 +2084,19 @@ class ScribeSVIResults:
         Normalize counts using posterior samples of the r parameter.
 
         This method takes posterior samples of the dispersion parameter (r) and
-        uses them as concentration parameters for Dirichlet distributions to generate
-        normalized expression profiles. For mixture models, normalization is performed
-        per component, resulting in an extra dimension in the output.
+        uses them as concentration parameters for Dirichlet distributions to
+        generate normalized expression profiles. For mixture models,
+        normalization is performed per component, resulting in an extra
+        dimension in the output.
 
-        Based on the insights from the Dirichlet-multinomial model derivation, the
-        r parameters represent the concentration parameters of a Dirichlet distribution
-        that can be used to generate normalized expression profiles.
+        Based on the insights from the Dirichlet-multinomial model derivation,
+        the r parameters represent the concentration parameters of a Dirichlet
+        distribution that can be used to generate normalized expression
+        profiles.
 
-        The method generates Dirichlet samples using all posterior samples of r, then
-        fits a single Dirichlet distribution to all these samples (or one per component
-        for mixture models).
+        The method generates Dirichlet samples using all posterior samples of r,
+        then fits a single Dirichlet distribution to all these samples (or one
+        per component for mixture models).
 
         Parameters
         ----------
@@ -2187,19 +2105,21 @@ class ScribeSVIResults:
         n_samples_dirichlet : int, default=1000
             Number of samples to draw from each Dirichlet distribution
         fit_distribution : bool, default=True
-            If True, fits a Dirichlet distribution to the generated samples using
-            fit_dirichlet_minka from stats.py
+            If True, fits a Dirichlet distribution to the generated samples
+            using fit_dirichlet_minka from stats.py
         store_samples : bool, default=False
             If True, includes the raw Dirichlet samples in the output
         sample_axis : int, default=0
-            Axis containing samples in the Dirichlet fitting (passed to fit_dirichlet_minka)
+            Axis containing samples in the Dirichlet fitting (passed to
+            fit_dirichlet_minka)
         return_concentrations : bool, default=False
-            If True, returns the original r parameter samples used as concentrations
+            If True, returns the original r parameter samples used as
+            concentrations
         backend : str, default="numpyro"
-            Statistical package to use for distributions when fit_distribution=True.
-            Must be one of:
-            - "numpyro": Returns numpyro.distributions.Dirichlet objects
-            - "scipy": Returns scipy.stats distributions via numpyro_to_scipy conversion
+            Statistical package to use for distributions when
+            fit_distribution=True. Must be one of: - "numpyro": Returns
+            numpyro.distributions.Dirichlet objects - "scipy": Returns
+            scipy.stats distributions via numpyro_to_scipy conversion
         verbose : bool, default=True
             If True, prints progress messages
 
@@ -2207,32 +2127,36 @@ class ScribeSVIResults:
         -------
         Dict[str, Union[jnp.ndarray, object]]
             Dictionary containing normalized expression profiles. Keys depend on
-            input arguments:
-            - 'samples': Raw Dirichlet samples (if store_samples=True)
-            - 'concentrations': Fitted concentration parameters (if fit_distribution=True)
-            - 'mean_probabilities': Mean probabilities from fitted distribution (if fit_distribution=True)
-            - 'distributions': Dirichlet distribution objects (if fit_distribution=True)
-            - 'original_concentrations': Original r parameter samples (if return_concentrations=True)
+            input arguments: - 'samples': Raw Dirichlet samples (if
+            store_samples=True) - 'concentrations': Fitted concentration
+            parameters (if fit_distribution=True) - 'mean_probabilities': Mean
+            probabilities from fitted distribution (if fit_distribution=True) -
+            'distributions': Dirichlet distribution objects (if
+            fit_distribution=True) - 'original_concentrations': Original r
+            parameter samples (if return_concentrations=True)
 
-            For non-mixture models:
-            - samples: shape (n_posterior_samples, n_genes, n_samples_dirichlet) or
+            For non-mixture models: - samples: shape (n_posterior_samples,
+            n_genes, n_samples_dirichlet) or
                       (n_posterior_samples, n_genes) if n_samples_dirichlet=1
             - concentrations: shape (n_genes,) - single fitted distribution
             - mean_probabilities: shape (n_genes,) - single fitted distribution
             - distributions: single Dirichlet distribution object
 
-            For mixture models:
-            - samples: shape (n_posterior_samples, n_components, n_genes, n_samples_dirichlet) or
-                      (n_posterior_samples, n_components, n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_components, n_genes) - one fitted distribution per component
-            - mean_probabilities: shape (n_components, n_genes) - one fitted distribution per component
+            For mixture models: - samples: shape (n_posterior_samples,
+            n_components, n_genes, n_samples_dirichlet) or
+                      (n_posterior_samples, n_components, n_genes) if
+                      n_samples_dirichlet=1
+            - concentrations: shape (n_components, n_genes) - one fitted
+              distribution per component
+            - mean_probabilities: shape (n_components, n_genes) - one fitted
+              distribution per component
             - distributions: list of n_components Dirichlet distribution objects
 
         Raises
         ------
         ValueError
-            If posterior samples have not been generated yet, or if 'r' parameter
-            is not found in posterior samples
+            If posterior samples have not been generated yet, or if 'r'
+            parameter is not found in posterior samples
 
         Examples
         --------
