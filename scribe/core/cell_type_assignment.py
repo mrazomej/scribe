@@ -7,9 +7,9 @@ that work with both SVI and MCMC results objects.
 
 import jax.numpy as jnp
 from jax.nn import softmax
-from typing import Dict, Optional, Union, Any
+from typing import Dict, Optional
 
-from ..stats import fit_dirichlet_minka, hellinger_gamma, hellinger_lognormal
+from ..stats import fit_dirichlet_minka
 
 
 # ------------------------------------------------------------------------------
@@ -456,7 +456,9 @@ def compute_cell_type_probabilities(
     else:
         return {"sample_probabilities": probabilities}
 
+
 # ------------------------------------------------------------------------------
+
 
 def compute_cell_type_probabilities_map(
     results,
