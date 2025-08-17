@@ -1141,7 +1141,7 @@ def get_posterior_distributions(
         Dictionary containing estimated variational parameters for each latent
         variable, as produced by the guide. Expected keys include:
             - "phi_alpha", "phi_beta" for global odds ratio parameter
-            - "phi_capture_alpha", "phi_capture_beta" for capture probabilities
+            - "p_alpha", "p_beta" for gene-specific p parameters
         Each value is a JAX array of appropriate shape (scalar or vector).
     model_config : ModelConfig
         Model configuration object containing VAE-specific settings.
@@ -1160,15 +1160,12 @@ def get_posterior_distributions(
 
     # phi parameter (BetaPrime distribution)
     if "phi_alpha" in params and "phi_beta" in params:
+        # Get global phi parameter
         distributions["phi"] = BetaPrime(
             params["phi_alpha"], params["phi_beta"]
         )
-
-    # phi_capture parameter (BetaPrime distribution)
-    if "phi_capture_alpha" in params and "phi_capture_beta" in params:
-        distributions["phi_capture"] = BetaPrime(
-            params["phi_capture_alpha"], params["phi_capture_beta"]
-        )
+        # Get global p parameter
+        distributions["p"] = dist.Beta(params["phi_alpha"], params["phi_beta"])
 
     # Get the decoupled prior distribution
     distributions["z"] = vae_model.get_prior_distribution()
