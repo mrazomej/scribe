@@ -757,6 +757,45 @@ def _kl_betaprime(p, q):
     return kl_divergence(Beta(a1, b1), Beta(a2, b2))
 
 
+# ------------------------------------------------------------------------------
+
+
+@kl_divergence.register(LogNormal, LogNormal)
+def _kl_lognormal(p, q):
+    """
+    Compute the KL divergence between two LogNormal distributions by leveraging
+    the invariance of KL divergence under invertible, differentiable
+    transformations.
+
+    The LogNormal(μ, σ) distribution is the distribution of exp(X), where X ~
+    Normal(μ, σ). Since the transformation x ↦ exp(x) is invertible and
+    differentiable, the KL divergence between two LogNormal distributions is
+    equal to the KL divergence between their underlying Normal distributions:
+
+        KL(LogNormal(μ₁, σ₁) || LogNormal(μ₂, σ₂)) = KL(Normal(μ₁, σ₁) ||
+        Normal(μ₂, σ₂))
+
+    This property allows us to compute the KL divergence for LogNormal
+    distributions by simply calling the KL divergence for the corresponding
+    Normal distributions.
+
+    Parameters
+    ----------
+    p : LogNormal
+        The first LogNormal distribution.
+    q : LogNormal
+        The second LogNormal distribution.
+
+    Returns
+    -------
+    float
+        The KL divergence KL(p || q).
+    """
+    loc1, scale1 = p.loc, p.scale
+    loc2, scale2 = q.loc, q.scale
+    return kl_divergence(Normal(loc1, scale1), Normal(loc2, scale2))
+
+
 # ==============================================================================
 # Distribution Mode Monkey Patches
 # ==============================================================================
