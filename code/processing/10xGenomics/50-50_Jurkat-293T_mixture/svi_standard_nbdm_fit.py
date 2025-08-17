@@ -13,16 +13,16 @@ import scribe
 print("Defining inference parameters...")
 
 # Define model_type
-model_type = "nbdm_mix"
+model_type = "nbdm"
 
 # Define parameterization
-parameterization = "odds_ratio"
+parameterization = "standard"
 
 # Define training parameters
-n_steps = 50_000
+n_steps = 40_000
 
 # Define number of components in mixture model
-n_components = 2
+n_components = 1
 
 # %% ---------------------------------------------------------------------------
 
@@ -30,7 +30,7 @@ print("Setting directories...")
 
 # Define data directory
 DATA_DIR = (
-    f"{scribe.utils.git_root()}/data/10xGenomics/50-50_Jurkat-293T_mixture"
+    f"{scribe.utils.git_root()}/data/" f"10xGenomics/50-50_Jurkat-293T_mixture"
 )
 
 # Define output directory
@@ -68,11 +68,10 @@ if not os.path.exists(file_name):
     # Run scribe
     scribe_results = scribe.run_scribe(
         inference_method="svi",
-        parameterization=parameterization,
         counts=data,
-        mixture_model=True,
+        mixture_model=False,
         n_steps=n_steps,
-        n_components=n_components,
+        parameterization=parameterization,
     )
 
     # Save the results, the true values, and the counts
