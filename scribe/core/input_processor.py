@@ -83,9 +83,9 @@ class InputProcessor:
             If configuration is invalid
         """
         # Validate mixture model configuration
-        if n_components is not None and not mixture_model:
+        if not mixture_model and n_components not in (None, 1):
             raise ValueError(
-                "n_components must be None when mixture_model=False"
+                "n_components must be None or 1 when mixture_model=False"
             )
 
         if mixture_model:
