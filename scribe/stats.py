@@ -14,11 +14,6 @@ import jax.numpy as jnp
 import jax.random as random
 from jax import scipy as jsp
 import jax
-from jax import jit
-from numpyro.distributions import Dirichlet
-
-# Import scipy.special functions
-from jax.scipy.special import gammaln, digamma, betaln
 
 # Import numpyro distributions
 from numpyro.distributions import (
@@ -27,6 +22,8 @@ from numpyro.distributions import (
     Beta,
     Normal,
     LogNormal,
+    Dirichlet,
+    Gamma,
 )
 
 from numpyro.distributions.util import promote_shapes, validate_sample
@@ -680,9 +677,9 @@ class BetaPrime(Distribution):
             self.alpha + self.beta
         ) * jnp.log1p(value)
         log_den = (
-            gammaln(self._a_std)
-            + gammaln(self._b_std)
-            - gammaln(self._a_std + self._b_std)
+            jsp.special.gammaln(self._a_std)
+            + jsp.special.gammaln(self._b_std)
+            - jsp.special.gammaln(self._a_std + self._b_std)
         )
         return log_num - log_den
 
