@@ -13,16 +13,22 @@ import scribe
 print("Defining inference parameters...")
 
 # Define model_type
-model_type = "nbdm_mix"
+model_type = "nbvcp_mix"
 
 # Define parameterization
-parameterization = "odds_ratio"
+parameterization = "linked"
+
+# Define component-specific parameters
+component_specific_params = True
 
 # Define training parameters
-n_steps = 50_000
+n_steps = 30_000
 
 # Define number of components in mixture model
 n_components = 2
+
+# Define batch size
+batch_size = 1024
 
 # %% ---------------------------------------------------------------------------
 
@@ -58,8 +64,9 @@ print("Running inference...")
 file_name = (
     f"{OUTPUT_DIR}/"
     f"svi_{parameterization.replace('_', '-')}_"
-    f"{model_type.replace('_', '-')}_"
+    f"{model_type.replace('_', '-')}-split_"
     f"{n_components:02d}components_"
+    f"{batch_size}batch_"
     f"{n_steps}steps.pkl"
 )
 
@@ -68,11 +75,15 @@ if not os.path.exists(file_name):
     # Run scribe
     scribe_results = scribe.run_scribe(
         inference_method="svi",
-        parameterization=parameterization,
         counts=data,
+        batch_size=batch_size,
         mixture_model=True,
+        variable_capture=True,
         n_steps=n_steps,
+        parameterization=parameterization,
         n_components=n_components,
+        component_specific_params=component_specific_params,
+        phi_capture_prior=(2.7, 30.0),
     )
 
     # Save the results, the true values, and the counts

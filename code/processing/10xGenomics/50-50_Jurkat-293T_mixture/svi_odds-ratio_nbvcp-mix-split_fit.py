@@ -2,20 +2,11 @@
 
 # Import base libraries
 import os
-import glob
-import gc
 import pickle
 import scanpy as sc
 
-# Import pandas for data manipulation
-import pandas as pd
 # Import scribe
 import scribe
-
-# Import JAX-related libraries
-import jax
-from jax import random
-import jax.numpy as jnp
 
 # %% ---------------------------------------------------------------------------
 
@@ -44,12 +35,15 @@ batch_size = 1024
 print("Setting directories...")
 
 # Define data directory
-DATA_DIR = f"{scribe.utils.git_root()}/data/" \
-           f"10xGenomics/50-50_Jurkat-293T_mixture"
+DATA_DIR = (
+    f"{scribe.utils.git_root()}/data/10xGenomics/50-50_Jurkat-293T_mixture"
+)
 
 # Define output directory
-OUTPUT_DIR = f"{scribe.utils.git_root()}/output/" \
-             f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
+OUTPUT_DIR = (
+    f"{scribe.utils.git_root()}/output/"
+    f"10xGenomics/50-50_Jurkat-293T_mixture/{model_type}"
+)
 
 # Create output directory if it doesn't exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -67,12 +61,14 @@ print("Running inference...")
 
 
 # Define file name
-file_name = f"{OUTPUT_DIR}/" \
-    f"svi_{parameterization.replace('_', '-')}_" \
-    f"{model_type.replace('_', '-')}-split_" \
-    f"{n_components:02d}components_" \
-    f"{batch_size}batch_" \
+file_name = (
+    f"{OUTPUT_DIR}/"
+    f"svi_{parameterization.replace('_', '-')}_"
+    f"{model_type.replace('_', '-')}-split_"
+    f"{n_components:02d}components_"
+    f"{batch_size}batch_"
     f"{n_steps}steps.pkl"
+)
 
 # Check if the file exists
 if not os.path.exists(file_name):
@@ -86,11 +82,10 @@ if not os.path.exists(file_name):
         n_steps=n_steps,
         parameterization=parameterization,
         n_components=n_components,
-        mixing_prior=(30.0, 30.0),
         component_specific_params=component_specific_params,
+        phi_capture_prior=(1.6, 14.0),
     )
 
     # Save the results, the true values, and the counts
     with open(file_name, "wb") as f:
         pickle.dump(scribe_results, f)
-
