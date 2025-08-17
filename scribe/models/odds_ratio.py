@@ -1324,6 +1324,11 @@ def get_posterior_distributions(
                 BetaPrime(params["phi_alpha"][c], params["phi_beta"][c])
                 for c in range(params["phi_alpha"].shape[0])
             ]
+            # Gene-specific p parameters
+            distributions["p"] = [
+                dist.Beta(params["phi_alpha"][c], params["phi_beta"][c])
+                for c in range(params["phi_alpha"].shape[0])
+            ]
         elif split and len(params["phi_alpha"].shape) == 2:
             # Component and gene-specific phi parameters
             distributions["phi"] = [
@@ -1335,8 +1340,21 @@ def get_posterior_distributions(
                 ]
                 for c in range(params["phi_alpha"].shape[0])
             ]
+            # Component-specific p parameters
+            distributions["p"] = [
+                [
+                    dist.Beta(
+                        params["phi_alpha"][c, g], params["phi_beta"][c, g]
+                    )
+                    for g in range(params["phi_alpha"].shape[1])
+                ]
+                for c in range(params["phi_alpha"].shape[0])
+            ]
         else:
             distributions["phi"] = BetaPrime(
+                params["phi_alpha"], params["phi_beta"]
+            )
+            distributions["p"] = dist.Beta(
                 params["phi_alpha"], params["phi_beta"]
             )
 
@@ -1399,8 +1417,19 @@ def get_posterior_distributions(
                 )
                 for c in range(params["phi_capture_alpha"].shape[0])
             ]
+            # Cell-specific p_capture parameters
+            distributions["p_capture"] = [
+                dist.Beta(
+                    params["phi_capture_alpha"][c],
+                    params["phi_capture_beta"][c],
+                )
+                for c in range(params["phi_capture_alpha"].shape[0])
+            ]
         else:
             distributions["phi_capture"] = BetaPrime(
+                params["phi_capture_alpha"], params["phi_capture_beta"]
+            )
+            distributions["p_capture"] = dist.Beta(
                 params["phi_capture_alpha"], params["phi_capture_beta"]
             )
 
