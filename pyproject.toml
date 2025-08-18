@@ -38,6 +38,7 @@ dependencies = [
     "nbclient>=0.10.2",
     "notebook>=7.4.3",
     "flax>=0.10.7",
+    "umap-learn>=0.5.7",
 ]
 
 # Development dependencies
