@@ -42,7 +42,7 @@ def nbdm_model(
     # Sample parameters
     phi = numpyro.sample("phi", BetaPrime(*phi_prior_params))
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes])
+        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes]).to_event(1)
     )
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
@@ -107,7 +107,7 @@ def nbdm_guide(
     )
     # Sample mu from the LogNormal distribution parameterized by mu_loc and
     # mu_scale, with event dimension 1
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
 
 # ------------------------------------------------------------------------------
@@ -136,7 +136,7 @@ def zinb_model(
     # Sample mu from a LogNormal distribution with the specified prior
     # parameters, expanded to n_genes
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes])
+        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes]).to_event(1)
     )
     # Sample gate from a Beta distribution with the specified prior parameters,
     # expanded to n_genes
@@ -212,7 +212,7 @@ def zinb_guide(
     )
     # Sample mu from the variational LogNormal distribution (vectorized over
     # genes)
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
     # Register variational parameters for gate (zero-inflation probability)
     gate_alpha = numpyro.param(
@@ -257,7 +257,7 @@ def nbvcp_model(
     # Sample gene-specific dispersion r from LogNormal prior (vectorized over
     # genes)
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes])
+        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes]).to_event(1)
     )
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
@@ -361,7 +361,7 @@ def nbvcp_guide(
         jnp.full(n_genes, mu_prior_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
     # Set up cell-specific capture probability parameters
     phi_capture_alpha = numpyro.param(
@@ -417,7 +417,7 @@ def zinbvcp_model(
     phi = numpyro.sample("phi", BetaPrime(*phi_prior_params))
     # Sample gene-specific dispersion r (Gamma prior)
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes])
+        "mu", dist.LogNormal(*mu_prior_params).expand([n_genes]).to_event(1)
     )
     # Sample gene-specific zero-inflation gate (Beta prior)
     gate = numpyro.sample(
@@ -533,7 +533,7 @@ def zinbvcp_guide(
         jnp.full(n_genes, mu_prior_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
     # Register variational parameters for gate (zero-inflation probability)
     gate_alpha = numpyro.param(
@@ -610,7 +610,10 @@ def nbdm_mixture_model(
 
     # Sample the gene-specific dispersion r from a LogNormal prior
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_components, n_genes])
+        "mu",
+        dist.LogNormal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
 
     # Sample component-specific or shared parameters depending on config
@@ -699,9 +702,7 @@ def nbdm_mixture_guide(
     )
 
     # Sample the gene-specific dispersion r from a LogNormal prior
-    numpyro.sample(
-        "mu", dist.LogNormal(mu_loc, mu_scale).expand([n_components, n_genes])
-    )
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
     if model_config.component_specific_params:
         # Define parameters for p
@@ -768,7 +769,10 @@ def zinb_mixture_model(
 
     # Sample the gene-specific dispersion r from a LogNormal prior
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_components, n_genes])
+        "mu",
+        dist.LogNormal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
     # Sample the gene-specific gate from a Beta prior
     gate = numpyro.sample(
@@ -854,9 +858,7 @@ def zinb_mixture_guide(
     )
 
     # Sample the gene-specific dispersion r from a LogNormal prior
-    numpyro.sample(
-        "mu", dist.LogNormal(mu_loc, mu_scale).expand([n_components, n_genes])
-    )
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
     # Define parameters for gate
     gate_alpha = numpyro.param(
@@ -942,7 +944,10 @@ def nbvcp_mixture_model(
 
     # Sample the gene-specific dispersion r from a LogNormal prior
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_components, n_genes])
+        "mu",
+        dist.LogNormal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
 
     if model_config.component_specific_params:
@@ -1029,7 +1034,7 @@ def nbvcp_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific dispersion r from a LogNormal prior
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
     if model_config.component_specific_params:
         # Define parameters for p
@@ -1124,7 +1129,10 @@ def zinbvcp_mixture_model(
 
     # Sample the gene-specific dispersion r from a LogNormal prior
     mu = numpyro.sample(
-        "mu", dist.LogNormal(*mu_prior_params).expand([n_components, n_genes])
+        "mu",
+        dist.LogNormal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
     # Sample the gene-specific gate from a Beta prior
     gate = numpyro.sample(
@@ -1215,7 +1223,7 @@ def zinbvcp_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific dispersion r from a LogNormal prior
-    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale))
+    numpyro.sample("mu", dist.LogNormal(mu_loc, mu_scale).to_event(1))
 
     # Define parameters for gate
     gate_alpha = numpyro.param(
@@ -1301,17 +1309,23 @@ def get_posterior_distributions(
     Constructs and returns a dictionary of posterior distributions from
     estimated parameters.
 
-    This function is specific to the 'odds_ratio' parameterization and builds the
-    appropriate `numpyro` distributions based on the guide parameters found in
-    the `params` dictionary. It handles both single and mixture models.
+    This function is specific to the 'odds_ratio' parameterization and builds
+    the appropriate `numpyro` distributions based on the guide parameters found
+    in the `params` dictionary. It handles both single and mixture models.
 
-    Args:
-        params: A dictionary of estimated parameters from the variational guide.
-        model_config: The model configuration object.
-        split: If True, returns lists of individual distributions for
-        multidimensional parameters instead of batch distributions.
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        A dictionary of estimated parameters from the variational guide.
+    model_config : ModelConfig
+        The model configuration object.
+    split : bool, optional
+        If True, returns lists of individual distributions for multidimensional
+        parameters instead of batch distributions.
 
-    Returns:
+    Returns
+    -------
+    Dict[str, dist.Distribution]
         A dictionary mapping parameter names to their posterior distributions.
     """
     distributions = {}
