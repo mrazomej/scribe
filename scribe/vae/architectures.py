@@ -2,7 +2,6 @@
 Default VAE architectures for scRNA-seq data using Flax NNX.
 """
 
-from flax.nnx.object import O
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -131,19 +130,24 @@ class VAEConfig:
 
         If hidden_dims is None, sets it to [256, 256] (two hidden layers of 256
         units each).
-        
+
         If variable_capture is True, sets default VCP encoder parameters if not
         provided.
         """
         if self.hidden_dims is None:
             self.hidden_dims = [256, 256]
-        
+
         # Set defaults for VCP encoder if using variable capture
         if self.variable_capture:
             if self.variable_capture_hidden_dims is None:
-                self.variable_capture_hidden_dims = [64, 32]  # Smaller than main encoder since input is simpler
+                self.variable_capture_hidden_dims = [
+                    64,
+                    32,
+                ]  # Smaller than main encoder since input is simpler
             if self.variable_capture_activation is None:
-                self.variable_capture_activation = "relu"  # Same as main encoder
+                self.variable_capture_activation = (
+                    "relu"  # Same as main encoder
+                )
 
 
 # ------------------------------------------------------------------------------
@@ -313,6 +317,7 @@ class Encoder(nnx.Module):
 # CaptureEncoder class (for VCP models)
 # ------------------------------------------------------------------------------
 
+
 class CaptureEncoder(nnx.Module):
     """
     Encoder module for computing variable capture probability (VCP) parameters
@@ -352,7 +357,7 @@ class CaptureEncoder(nnx.Module):
     __call__(x)
         Alias for p_capture(x).
     """
-    
+
     def __init__(self, config: VAEConfig, *, rngs: nnx.Rngs):
         # Initialize encoder layers
         self.hidden_layers = []
@@ -367,18 +372,18 @@ class CaptureEncoder(nnx.Module):
         for i in range(len(config.variable_capture_hidden_dims) - 1):
             self.hidden_layers.append(
                 nnx.Linear(
-                    config.variable_capture_hidden_dims[i], 
-                    config.variable_capture_hidden_dims[i + 1], 
-                    rngs=rngs
+                    config.variable_capture_hidden_dims[i],
+                    config.variable_capture_hidden_dims[i + 1],
+                    rngs=rngs,
                 )
             )
 
         # Extract last hidden dimension
-        last_hidden_dim = config.variable_capture_hidden_dims[-1]    
+        last_hidden_dim = config.variable_capture_hidden_dims[-1]
 
         # VCP parameters
         self.logalpha = nnx.Linear(last_hidden_dim, 1, rngs=rngs)
-        self.logbeta = nnx.Linear(last_hidden_dim, 1, rngs=rngs) 
+        self.logbeta = nnx.Linear(last_hidden_dim, 1, rngs=rngs)
 
         # Store config
         self.config = config
@@ -397,10 +402,10 @@ class CaptureEncoder(nnx.Module):
         Returns
         -------
         logalpha : jax.Array
-            Log-alpha parameter for the Beta (or BetaPrime) distribution 
+            Log-alpha parameter for the Beta (or BetaPrime) distribution
             (shape: [batch_size, 1]).
         logbeta : jax.Array
-            Log-beta parameter for the Beta (or BetaPrime) distribution 
+            Log-beta parameter for the Beta (or BetaPrime) distribution
             (shape: [batch_size, 1]).
         """
         # Get activation function
@@ -425,6 +430,7 @@ class CaptureEncoder(nnx.Module):
 
     def __call__(self, x: jax.Array) -> Tuple[jax.Array, jax.Array]:
         return self.p_capture(x)
+
 
 # ------------------------------------------------------------------------------
 # EncoderVCP class (for VCP models)
