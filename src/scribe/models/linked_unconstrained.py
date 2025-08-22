@@ -1,11 +1,11 @@
 """
-Odds Ratio unconstrained parameterization models for single-cell RNA sequencing
+Linked unconstrained parameterization models for single-cell RNA sequencing
 data.
 
 This parameterization differs from the standard parameterization in that the
-mean parameter (mu) is linked to the odds ratio parameter (phi) through
+mean parameter (mu) is linked to the success probability parameter (p) through
 the relationship:
-    r = mu * phi
+    r = mu * (1 - p) / p
 where r is the dispersion parameter.
 
 Parameters are sampled in unconstrained space using Normal distributions.
@@ -21,7 +21,7 @@ import numpyro.distributions as dist
 from numpyro.distributions import constraints
 
 # Import typing
-from typing import Dict, Optional, Union, List
+from typing import Dict, Optional, Union
 
 # Import model config
 from .model_config import ModelConfig
@@ -45,31 +45,31 @@ def nbdm_model(
 
     This model assumes that the observed gene expression counts for each cell
     are generated from a Negative Binomial distribution, where the mean (mu) and
-    odds ratio parameter (phi) are linked through an unconstrained
+    success probability (p) are linked through an unconstrained
     parameterization. Specifically, the dispersion parameter r is defined as:
 
-        r = mu * phi
+        r = mu * (1 - p) / p
 
     where:
         - mu > 0 is the mean expression for each gene,
-        - phi > 0 is the odds ratio parameter that controls dispersion,
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
         - r > 0 is the dispersion parameter.
 
-    The parameters mu and phi are sampled in unconstrained space:
-        - phi_unconstrained ~ Normal(loc, scale)
+    The parameters mu and p are sampled in unconstrained space:
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale) for each gene
 
     These are transformed to the constrained space as follows:
-        - phi = exp(phi_unconstrained) > 0
+        - p = sigmoid(p_unconstrained) ∈ (0, 1)
         - mu = exp(mu_unconstrained) > 0
 
     For each cell, the observed counts vector (of length n_genes) is modeled as:
 
-        counts[cell, :] ~ NegativeBinomialLogits(r, -log(phi))
+        counts[cell, :] ~ NegativeBinomialProbs(r, p)
 
-    where NegativeBinomialLogits denotes the Negative Binomial distribution
-    parameterized by the number of failures (r) and the logits parameter
-    (-log(phi)), and the distribution is applied independently to each gene
+    where NegativeBinomialProbs denotes the Negative Binomial distribution
+    parameterized by the number of failures (r) and the probability of success
+    (p), and the distribution is applied independently to each gene
     (to_event(1)).
 
     The model supports optional batching over cells for scalable inference. If
@@ -98,26 +98,27 @@ def nbdm_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
 
     # Sample unconstrained parameters
-    phi_unconstrained = numpyro.sample(
-        "phi_unconstrained", dist.Normal(*phi_prior_params)
+    p_unconstrained = numpyro.sample(
+        "p_unconstrained", dist.Normal(*p_prior_params)
     )
     mu_unconstrained = numpyro.sample(
-        "mu_unconstrained", dist.Normal(*mu_prior_params).expand([n_genes])
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_genes]).to_event(1),
     )
 
     # Transform to constrained space
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
-    # Compute r using the odds ratio relationship
-    r = numpyro.deterministic("r", mu * phi)
+    # Compute r using the linked relationship
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     # Define base distribution
-    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
+    base_dist = dist.NegativeBinomialProbs(r, p).to_event(1)
 
     # Sample counts
     if counts is not None:
@@ -145,28 +146,28 @@ def nbdm_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the unconstrained odds ratio Negative
-    Binomial Dirichlet-Multinomial Model (NBDM).
+    Mean-field variational guide for the unconstrained linked Negative Binomial
+    Dirichlet-Multinomial Model (NBDM).
 
     This guide defines a mean-field variational approximation for the
-    unconstrained odds ratio NBDM, which models count data (such as gene
-    expression) using a Negative Binomial distribution parameterized by a mean
-    (mu) and an odds ratio parameter (phi). The model uses unconstrained
-    real-valued parameters for both mu and phi, which are transformed to their
-    constrained spaces (mu > 0, phi > 0) via exponential functions.
+    unconstrained linked NBDM, which models count data (such as gene expression)
+    using a Negative Binomial distribution parameterized by a mean (mu) and a
+    success probability (p). The model uses unconstrained real-valued parameters
+    for both mu and p, which are transformed to their constrained spaces (mu >
+    0, 0 < p < 1) via exponential and sigmoid (expit) functions, respectively.
 
     The generative model is:
-        - phi_unconstrained ~ Normal(loc, scale)
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale)  (vector of length n_genes)
-        - phi = exp(phi_unconstrained)
+        - p = sigmoid(p_unconstrained)
         - mu = exp(mu_unconstrained)
-        - r = mu * phi
+        - r = mu * (1 - p) / p
         - For each cell:
-            - counts ~ NegativeBinomialLogits(r, -log(phi))
+            - counts ~ NegativeBinomial(r, p)
 
     The guide defines variational distributions for the unconstrained
     parameters:
-        - q(phi_unconstrained) = Normal(phi_loc, phi_scale)
+        - q(p_unconstrained) = Normal(p_loc, p_scale)
         - q(mu_unconstrained) = Normal(mu_loc, mu_scale)  (vectorized over
           genes)
 
@@ -192,17 +193,17 @@ def nbdm_guide(
         inference machinery.
     """
     # Define guide parameters with proper defaults
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
 
-    # Register unconstrained phi parameters
-    phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-    phi_scale = numpyro.param(
-        "phi_unconstrained_scale",
-        phi_guide_params[1],
+    # Register unconstrained p parameters
+    p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+    p_scale = numpyro.param(
+        "p_unconstrained_scale",
+        p_guide_params[1],
         constraint=constraints.positive,
     )
-    numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
     # Register unconstrained mu parameters
     mu_loc = numpyro.param(
@@ -213,7 +214,9 @@ def nbdm_guide(
         jnp.full(n_genes, mu_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -234,15 +237,16 @@ def zinb_model(
     single-cell RNA sequencing data.
 
     This model assumes that the observed gene expression counts for each cell
-    are generated from a Zero-Inflated Negative Binomial distribution, where the
-    mean (mu) and odds ratio parameter (phi) are linked through an unconstrained
-    parameterization. Specifically, the dispersion parameter r is defined as:
+    are generated from a Zero-Inflated Negative Binomial distribution, where
+    the mean (mu) and success probability (p) are linked through an
+    unconstrained parameterization. Specifically, the dispersion parameter r is
+    defined as:
 
-        r = mu * phi
+        r = mu * (1 - p) / p
 
     where:
         - mu > 0 is the mean expression for each gene,
-        - phi > 0 is the odds ratio parameter that controls dispersion,
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
         - r > 0 is the dispersion parameter.
 
     The model also includes a zero-inflation parameter (gate) for each gene,
@@ -250,23 +254,23 @@ def zinb_model(
 
         - gate ∈ (0, 1) is the zero-inflation probability for each gene.
 
-    The parameters mu, phi, and gate are sampled in unconstrained space:
-        - phi_unconstrained ~ Normal(loc, scale)
+    The parameters mu, p, and gate are sampled in unconstrained space:
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale) for each gene
         - gate_unconstrained ~ Normal(loc, scale) for each gene
 
     These are transformed to the constrained space as follows:
-        - phi = exp(phi_unconstrained) > 0
+        - p = sigmoid(p_unconstrained) ∈ (0, 1)
         - mu = exp(mu_unconstrained) > 0
         - gate = sigmoid(gate_unconstrained) ∈ (0, 1)
 
     For each cell, the observed counts vector (of length n_genes) is modeled as:
 
-        counts[cell, :] ~ ZeroInflatedNegativeBinomial(r, -log(phi), gate)
+        counts[cell, :] ~ ZeroInflatedNegativeBinomial(r, p, gate)
 
     where ZeroInflatedNegativeBinomial denotes the zero-inflated Negative
     Binomial distribution parameterized by the number of failures (r), the
-    logits parameter (-log(phi)), and the zero-inflation probability (gate), and
+    probability of success (p), and the zero-inflation probability (gate), and
     the distribution is applied independently to each gene (to_event(1)).
 
     The model supports optional batching over cells for scalable inference. If
@@ -295,31 +299,32 @@ def zinb_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
     gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
 
     # Sample unconstrained parameters
-    phi_unconstrained = numpyro.sample(
-        "phi_unconstrained", dist.Normal(*phi_prior_params)
+    p_unconstrained = numpyro.sample(
+        "p_unconstrained", dist.Normal(*p_prior_params)
     )
     mu_unconstrained = numpyro.sample(
-        "mu_unconstrained", dist.Normal(*mu_prior_params).expand([n_genes])
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_genes]).to_event(1),
     )
     gate_unconstrained = numpyro.sample(
         "gate_unconstrained", dist.Normal(*gate_prior_params).expand([n_genes])
     )
 
     # Transform to constrained space
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
     gate = numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
-    # Compute r using the odds ratio relationship
-    r = numpyro.deterministic("r", mu * phi)
+    # Compute r using the linked relationship
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     # Define distributions
-    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
+    base_dist = dist.NegativeBinomialProbs(r, p)
     zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(1)
 
     # Sample counts
@@ -348,7 +353,7 @@ def zinb_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the unconstrained odds ratio Zero-Inflated
+    Mean-field variational guide for the unconstrained linked Zero-Inflated
     Negative Binomial (ZINB) model.
 
     This guide defines a variational family for the ZINB model using an
@@ -357,25 +362,25 @@ def zinb_guide(
 
     The ZINB model assumes that the observed gene expression counts for each
     cell are generated from a Zero-Inflated Negative Binomial distribution,
-    where the mean (mu), odds ratio parameter (phi), and zero-inflation gate
+    where the mean (mu), success probability (p), and zero-inflation gate
     parameter (gate) are linked through unconstrained latent variables.
     Specifically:
 
         - The dispersion parameter r is defined as:
-            r = mu * phi
+            r = mu * (1 - p) / p
 
         - mu > 0 is the mean expression for each gene,
-        - phi > 0 is the odds ratio parameter that controls dispersion,
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
         - r > 0 is the dispersion parameter,
         - gate ∈ (0, 1) is the zero-inflation probability for each gene.
 
     The variational guide samples the following unconstrained latent variables:
-        - phi_unconstrained ~ Normal(loc, scale)
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale) for each gene
         - gate_unconstrained ~ Normal(loc, scale) for each gene
 
     These are transformed to the constrained space as follows:
-        - phi = exp(phi_unconstrained) > 0
+        - p = sigmoid(p_unconstrained) ∈ (0, 1)
         - mu = exp(mu_unconstrained) > 0
         - gate = sigmoid(gate_unconstrained) ∈ (0, 1)
 
@@ -404,18 +409,18 @@ def zinb_guide(
         This function defines the variational guide for use with NumPyro.
     """
     # Define guide parameters
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
     gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
 
-    # Register unconstrained phi parameters
-    phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-    phi_scale = numpyro.param(
-        "phi_unconstrained_scale",
-        phi_guide_params[1],
+    # Register unconstrained p parameters
+    p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+    p_scale = numpyro.param(
+        "p_unconstrained_scale",
+        p_guide_params[1],
         constraint=constraints.positive,
     )
-    numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
     # Register unconstrained mu parameters
     mu_loc = numpyro.param(
@@ -426,7 +431,9 @@ def zinb_guide(
         jnp.full(n_genes, mu_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
 
     # Register unconstrained gate parameters
     gate_loc = numpyro.param(
@@ -459,32 +466,32 @@ def nbvcp_model(
 
     This model assumes that the observed gene expression counts for each cell
     are generated from a Negative Binomial distribution, where the mean (mu) and
-    odds ratio parameter (phi) are linked through an unconstrained
+    success probability (p) are linked through an unconstrained
     parameterization, and each cell has its own mRNA capture probability
-    (phi_capture). The dispersion parameter r is defined as:
+    (p_capture). The dispersion parameter r is defined as:
 
-        r = mu * phi
+        r = mu * (1 - p) / p
 
     where:
         - mu > 0 is the mean expression for each gene,
-        - phi > 0 is the odds ratio parameter that controls dispersion,
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
         - r > 0 is the dispersion parameter.
 
-    The model introduces a cell-specific mRNA capture probability phi_capture >
-    0, which modifies the effective success probability for each cell and gene.
-    The effective success probability for cell i and gene j is:
+    The model introduces a cell-specific mRNA capture probability p_capture ∈
+    (0, 1), which modifies the effective success probability for each cell and
+    gene. The effective success probability for cell i and gene j is:
 
-        p_hat[i, j] = 1 / (1 + phi + phi * phi_capture[i])
+        p_hat[i, j] = p * p_capture[i] / (1 - p * (1 - p_capture[i]))
 
-    The parameters phi, mu, and phi_capture are sampled in unconstrained space:
-        - phi_unconstrained ~ Normal(loc, scale)
+    The parameters p, mu, and p_capture are sampled in unconstrained space:
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale) for each gene
-        - phi_capture_unconstrained ~ Normal(loc, scale) for each cell
+        - p_capture_unconstrained ~ Normal(loc, scale) for each cell
 
     These are transformed to the constrained space as follows:
-        - phi = exp(phi_unconstrained) > 0
+        - p = sigmoid(p_unconstrained) ∈ (0, 1)
         - mu = exp(mu_unconstrained) > 0
-        - phi_capture = exp(phi_capture_unconstrained) > 0
+        - p_capture = sigmoid(p_capture_unconstrained) ∈ (0, 1)
 
     For each cell, the observed counts vector (of length n_genes) is modeled as:
 
@@ -521,98 +528,103 @@ def nbvcp_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
         0.0,
         1.0,
     )
 
     # Sample unconstrained parameters
-    phi_unconstrained = numpyro.sample(
-        "phi_unconstrained", dist.Normal(*phi_prior_params)
+    p_unconstrained = numpyro.sample(
+        "p_unconstrained", dist.Normal(*p_prior_params)
     )
     mu_unconstrained = numpyro.sample(
-        "mu_unconstrained", dist.Normal(*mu_prior_params).expand([n_genes])
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_genes]).to_event(1),
     )
 
     # Transform to constrained space
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
 
-    # Compute r using the odds ratio relationship
-    r = numpyro.deterministic("r", mu * phi)
+    # Compute r using the linked relationship
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     # If observed counts are provided, use them as observations
     if counts is not None:
         if batch_size is None:
-            # No batching: sample phi_capture for all cells, then sample counts
+            # No batching: sample p_capture for all cells, then sample counts
             # for all cells
             with numpyro.plate("cells", n_cells):
                 # Sample cell-specific capture probability from unconstrained prior
-                phi_capture_unconstrained = numpyro.sample(
-                    "phi_capture_unconstrained",
-                    dist.Normal(*phi_capture_prior_params),
+                p_capture_unconstrained = numpyro.sample(
+                    "p_capture_unconstrained",
+                    dist.Normal(*p_capture_prior_params),
                 )
                 # Transform to constrained space
-                phi_capture = numpyro.deterministic(
-                    "phi_capture", jnp.exp(phi_capture_unconstrained)
+                p_capture = numpyro.deterministic(
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                # Reshape phi_capture for broadcasting to (n_cells, n_genes)
-                phi_capture_reshaped = phi_capture[:, None]
-                # Compute logits for the Negative Binomial distribution
-                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
+                # Reshape p_capture for broadcasting to (n_cells, n_genes)
+                p_capture_reshaped = p_capture[:, None]
+                # Compute effective success probability p_hat for each cell/gene
+                p_hat = (
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                )
                 # Sample observed counts from Negative Binomial with p_hat
                 numpyro.sample(
                     "counts",
-                    dist.NegativeBinomialLogits(r, logits).to_event(1),
+                    dist.NegativeBinomialProbs(r, p_hat).to_event(1),
                     obs=counts,
                 )
         else:
-            # With batching: sample phi_capture and counts for a batch of cells
+            # With batching: sample p_capture and counts for a batch of cells
             with numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
                 # Sample cell-specific capture probability for the batch
-                phi_capture_unconstrained = numpyro.sample(
-                    "phi_capture_unconstrained",
-                    dist.Normal(*phi_capture_prior_params),
+                p_capture_unconstrained = numpyro.sample(
+                    "p_capture_unconstrained",
+                    dist.Normal(*p_capture_prior_params),
                 )
                 # Transform to constrained space
-                phi_capture = numpyro.deterministic(
-                    "phi_capture", jnp.exp(phi_capture_unconstrained)
+                p_capture = numpyro.deterministic(
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                # Reshape phi_capture for broadcasting to (batch_size, n_genes)
-                phi_capture_reshaped = phi_capture[:, None]
-                # Compute logits for the Negative Binomial distribution
-                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
+                # Reshape p_capture for broadcasting to (batch_size, n_genes)
+                p_capture_reshaped = p_capture[:, None]
+                # Compute effective success probability p_hat for each cell/gene
+                # in the batch
+                p_hat = (
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                )
                 # Sample observed counts for the batch from Negative Binomial
                 # with p_hat
                 numpyro.sample(
                     "counts",
-                    dist.NegativeBinomialLogits(r, logits).to_event(1),
+                    dist.NegativeBinomialProbs(r, p_hat).to_event(1),
                     obs=counts[idx],
                 )
     else:
         # No observed counts: sample latent counts for all cells
         with numpyro.plate("cells", n_cells):
             # Sample cell-specific capture probability from unconstrained prior
-            phi_capture_unconstrained = numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(*phi_capture_prior_params),
+            p_capture_unconstrained = numpyro.sample(
+                "p_capture_unconstrained", dist.Normal(*p_capture_prior_params)
             )
             # Transform to constrained space
-            phi_capture = numpyro.deterministic(
-                "phi_capture", jnp.exp(phi_capture_unconstrained)
+            p_capture = numpyro.deterministic(
+                "p_capture", jsp.special.expit(p_capture_unconstrained)
             )
-            # Reshape phi_capture for broadcasting to (n_cells, n_genes)
-            phi_capture_reshaped = phi_capture[:, None]
-            # Compute logits for the Negative Binomial distribution
-            logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
+            # Reshape p_capture for broadcasting to (n_cells, n_genes)
+            p_capture_reshaped = p_capture[:, None]
+            # Compute effective success probability p_hat for each cell/gene
+            p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
             # Sample latent counts from Negative Binomial with p_hat
             numpyro.sample(
                 "counts",
-                dist.NegativeBinomialLogits(r, logits).to_event(1),
+                dist.NegativeBinomialProbs(r, p_hat).to_event(1),
             )
 
 
@@ -627,8 +639,8 @@ def nbvcp_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the unconstrained odds ratio Negative
-    Binomial with Variable Capture Probability (NBVCP) model.
+    Mean-field variational guide for the unconstrained linked Negative Binomial
+    with Variable Capture Probability (NBVCP) model.
 
     This guide defines a mean-field variational approximation for the NBVCP
     model, which extends the standard Negative Binomial model by introducing a
@@ -637,32 +649,32 @@ def nbvcp_guide(
 
     The generative model assumes that the observed gene expression counts for
     each cell are generated from a Negative Binomial distribution, where the
-    mean (mu) and odds ratio parameter (phi) are linked through an unconstrained
+    mean (mu) and success probability (p) are linked through an unconstrained
     parameterization. The dispersion parameter r is defined as:
 
-        r = mu * phi
+        r = mu * (1 - p) / p
 
     where:
         - mu > 0 is the mean expression for each gene,
-        - phi > 0 is the odds ratio parameter that controls dispersion,
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
         - r > 0 is the dispersion parameter.
 
-    In addition, each cell has a capture probability phi_capture > 0, which is
-    also parameterized in unconstrained space. The effective success probability
-    for each cell and gene is:
+    In addition, each cell has a capture probability p_capture ∈ (0, 1), which
+    is also parameterized in unconstrained space. The effective success
+    probability for each cell and gene is:
 
-        p_hat = 1 / (1 + phi + phi * phi_capture)
+        p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     The variational guide defines distributions for the unconstrained
     parameters:
-        - phi_unconstrained ~ Normal(loc, scale)
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale) for each gene
-        - phi_capture_unconstrained ~ Normal(loc, scale) for each cell
+        - p_capture_unconstrained ~ Normal(loc, scale) for each cell
 
     These are transformed to the constrained space as follows:
-        - phi = exp(phi_unconstrained) > 0
+        - p = sigmoid(p_unconstrained) ∈ (0, 1)
         - mu = exp(mu_unconstrained) > 0
-        - phi_capture = exp(phi_capture_unconstrained) > 0
+        - p_capture = sigmoid(p_capture_unconstrained) ∈ (0, 1)
 
     The variational distributions are mean-field (fully factorized) and
     parameterized by learnable location and scale parameters for each
@@ -691,21 +703,21 @@ def nbvcp_guide(
         inference machinery.
     """
     # Define guide parameters
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    phi_capture_guide_params = model_config.phi_capture_unconstrained_guide or (
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
         0.0,
         1.0,
     )
 
-    # Register unconstrained phi parameters
-    phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-    phi_scale = numpyro.param(
-        "phi_unconstrained_scale",
-        phi_guide_params[1],
+    # Register unconstrained p parameters
+    p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+    p_scale = numpyro.param(
+        "p_unconstrained_scale",
+        p_guide_params[1],
         constraint=constraints.positive,
     )
-    numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
     # Register unconstrained mu parameters
     mu_loc = numpyro.param(
@@ -716,31 +728,33 @@ def nbvcp_guide(
         jnp.full(n_genes, mu_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
 
     # Set up cell-specific capture probability parameters
-    phi_capture_loc = numpyro.param(
-        "phi_capture_unconstrained_loc",
-        jnp.full(n_cells, phi_capture_guide_params[0]),
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
     )
-    phi_capture_scale = numpyro.param(
-        "phi_capture_unconstrained_scale",
-        jnp.full(n_cells, phi_capture_guide_params[1]),
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
         constraint=constraints.positive,
     )
 
-    # Sample phi_capture depending on batch size
+    # Sample p_capture depending on batch size
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc, phi_capture_scale),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
             )
     else:
         with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc[idx], phi_capture_scale[idx]),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
             )
 
 
@@ -763,15 +777,15 @@ def zinbvcp_model(
 
     This model assumes that the observed gene expression counts for each cell
     are generated from a Zero-Inflated Negative Binomial distribution, where the
-    mean (mu) and odds ratio parameter (phi) are linked through an unconstrained
+    mean (mu) and success probability (p) are linked through an unconstrained
     parameterization, and each cell has its own mRNA capture probability
-    (phi_capture). The dispersion parameter r is defined as:
+    (p_capture). The dispersion parameter r is defined as:
 
-        r = mu * phi
+        r = mu * (1 - p) / p
 
     where:
         - mu > 0 is the mean expression for each gene,
-        - phi > 0 is the odds ratio parameter that controls dispersion,
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
         - r > 0 is the dispersion parameter.
 
     The model also includes a zero-inflation parameter (gate) for each gene,
@@ -779,24 +793,24 @@ def zinbvcp_model(
 
         - gate ∈ (0, 1) is the zero-inflation probability for each gene.
 
-    The model introduces a cell-specific mRNA capture probability phi_capture >
-    0, which modifies the effective success probability for each cell and gene.
-    The effective success probability for cell i and gene j is:
+    The model introduces a cell-specific mRNA capture probability p_capture ∈
+    (0, 1), which modifies the effective success probability for each cell and
+    gene. The effective success probability for cell i and gene j is:
 
-        p_hat[i, j] = 1 / (1 + phi + phi * phi_capture[i])
+        p_hat[i, j] = p * p_capture[i] / (1 - p * (1 - p_capture[i]))
 
-    The parameters phi, mu, gate, and phi_capture are sampled in unconstrained
+    The parameters p, mu, gate, and p_capture are sampled in unconstrained
     space:
-        - phi_unconstrained ~ Normal(loc, scale)
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale) for each gene
         - gate_unconstrained ~ Normal(loc, scale) for each gene
-        - phi_capture_unconstrained ~ Normal(loc, scale) for each cell
+        - p_capture_unconstrained ~ Normal(loc, scale) for each cell
 
     These are transformed to the constrained space as follows:
-        - phi = exp(phi_unconstrained) > 0
+        - p = sigmoid(p_unconstrained) ∈ (0, 1)
         - mu = exp(mu_unconstrained) > 0
         - gate = sigmoid(gate_unconstrained) ∈ (0, 1)
-        - phi_capture = exp(phi_capture_unconstrained) > 0
+        - p_capture = sigmoid(p_capture_unconstrained) ∈ (0, 1)
 
     For each cell, the observed counts vector (of length n_genes) is modeled as:
 
@@ -834,32 +848,33 @@ def zinbvcp_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Get prior parameters from model_config, or use defaults if not provided
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
     gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
         0.0,
         1.0,
     )
 
     # Sample unconstrained parameters
-    phi_unconstrained = numpyro.sample(
-        "phi_unconstrained", dist.Normal(*phi_prior_params)
+    p_unconstrained = numpyro.sample(
+        "p_unconstrained", dist.Normal(*p_prior_params)
     )
     mu_unconstrained = numpyro.sample(
-        "mu_unconstrained", dist.Normal(*mu_prior_params).expand([n_genes])
+        "mu_unconstrained",
+        dist.Normal(*mu_prior_params).expand([n_genes]).to_event(1),
     )
     gate_unconstrained = numpyro.sample(
         "gate_unconstrained", dist.Normal(*gate_prior_params).expand([n_genes])
     )
 
     # Transform to constrained space
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
     gate = numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
-    # Compute r using the odds ratio relationship
-    r = numpyro.deterministic("r", mu * phi)
+    # Compute r using the linked relationship
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     if counts is not None:
         # If observed counts are provided
@@ -868,20 +883,22 @@ def zinbvcp_model(
             with numpyro.plate("cells", n_cells):
                 # Sample cell-specific capture probability from unconstrained
                 # prior
-                phi_capture_unconstrained = numpyro.sample(
-                    "phi_capture_unconstrained",
-                    dist.Normal(*phi_capture_prior_params),
+                p_capture_unconstrained = numpyro.sample(
+                    "p_capture_unconstrained",
+                    dist.Normal(*p_capture_prior_params),
                 )
                 # Transform to constrained space
-                phi_capture = numpyro.deterministic(
-                    "phi_capture", jnp.exp(phi_capture_unconstrained)
+                p_capture = numpyro.deterministic(
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                # Reshape phi_capture for broadcasting to genes
-                phi_capture_reshaped = phi_capture[:, None]
-                # Compute logits for the Negative Binomial distribution
-                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
+                # Reshape p_capture for broadcasting to genes
+                p_capture_reshaped = p_capture[:, None]
+                # Compute effective success probability for each cell/gene
+                p_hat = (
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                )
                 # Define base Negative Binomial distribution
-                base_dist = dist.NegativeBinomialLogits(r, logits)
+                base_dist = dist.NegativeBinomialProbs(r, p_hat)
                 # Define zero-inflated NB distribution
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
@@ -895,20 +912,22 @@ def zinbvcp_model(
             ) as idx:
                 # Sample cell-specific capture probability from unconstrained
                 # prior
-                phi_capture_unconstrained = numpyro.sample(
-                    "phi_capture_unconstrained",
-                    dist.Normal(*phi_capture_prior_params),
+                p_capture_unconstrained = numpyro.sample(
+                    "p_capture_unconstrained",
+                    dist.Normal(*p_capture_prior_params),
                 )
                 # Transform to constrained space
-                phi_capture = numpyro.deterministic(
-                    "phi_capture", jnp.exp(phi_capture_unconstrained)
+                p_capture = numpyro.deterministic(
+                    "p_capture", jsp.special.expit(p_capture_unconstrained)
                 )
-                # Reshape phi_capture for broadcasting to genes
-                phi_capture_reshaped = phi_capture[:, None]
-                # Compute logits for the Negative Binomial distribution
-                logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
+                # Reshape p_capture for broadcasting to genes
+                p_capture_reshaped = p_capture[:, None]
+                # Compute effective success probability for each cell/gene
+                p_hat = (
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                )
                 # Define base Negative Binomial distribution
-                base_dist = dist.NegativeBinomialLogits(r, logits)
+                base_dist = dist.NegativeBinomialProbs(r, p_hat)
                 # Define zero-inflated NB distribution
                 zinb = dist.ZeroInflatedDistribution(
                     base_dist, gate=gate
@@ -919,20 +938,19 @@ def zinbvcp_model(
         # No observed counts: just define the generative process
         with numpyro.plate("cells", n_cells):
             # Sample cell-specific capture probability from unconstrained prior
-            phi_capture_unconstrained = numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(*phi_capture_prior_params),
+            p_capture_unconstrained = numpyro.sample(
+                "p_capture_unconstrained", dist.Normal(*p_capture_prior_params)
             )
             # Transform to constrained space
-            phi_capture = numpyro.deterministic(
-                "phi_capture", jnp.exp(phi_capture_unconstrained)
+            p_capture = numpyro.deterministic(
+                "p_capture", jsp.special.expit(p_capture_unconstrained)
             )
-            # Reshape phi_capture for broadcasting to genes
-            phi_capture_reshaped = phi_capture[:, None]
-            # Compute logits for the Negative Binomial distribution
-            logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
+            # Reshape p_capture for broadcasting to genes
+            p_capture_reshaped = p_capture[:, None]
+            # Compute effective success probability for each cell/gene
+            p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
             # Define base Negative Binomial distribution
-            base_dist = dist.NegativeBinomialLogits(r, logits)
+            base_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Define zero-inflated NB distribution
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate).to_event(
                 1
@@ -952,7 +970,7 @@ def zinbvcp_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the unconstrained odds ratio Zero-Inflated
+    Mean-field variational guide for the unconstrained linked Zero-Inflated
     Negative Binomial with Variable Capture Probability (ZINBVCP) model.
 
     This guide defines a mean-field variational approximation for the ZINBVCP
@@ -962,15 +980,15 @@ def zinbvcp_guide(
 
     The generative model assumes that the observed gene expression counts for
     each cell are generated from a Zero-Inflated Negative Binomial distribution,
-    where the mean (mu), odds ratio parameter (phi), zero-inflation probability
-    (gate), and cell-specific capture probability (phi_capture) are linked
-    through unconstrained parameters. The dispersion parameter r is defined as:
+    where the mean (mu), success probability (p), zero-inflation probability
+    (gate), and cell-specific capture probability (p_capture) are linked through
+    unconstrained parameters. The dispersion parameter r is defined as:
 
-        r = mu * phi
+        r = mu * (1 - p) / p
 
     where:
         - mu > 0 is the mean expression for each gene,
-        - phi > 0 is the odds ratio parameter that controls dispersion,
+        - p ∈ (0, 1) is the success probability for the Negative Binomial,
         - r > 0 is the dispersion parameter.
 
     The model also includes a zero-inflation parameter (gate) for each gene,
@@ -978,24 +996,24 @@ def zinbvcp_guide(
 
         - gate ∈ (0, 1) is the zero-inflation probability for each gene.
 
-    In addition, each cell has a capture probability phi_capture > 0, which
+    In addition, each cell has a capture probability p_capture ∈ (0, 1), which
     modifies the effective success probability for each cell and gene. The
     effective success probability for cell i and gene j is:
 
-        p_hat[i, j] = 1 / (1 + phi + phi * phi_capture[i])
+        p_hat[i, j] = p * p_capture[i] / (1 - p * (1 - p_capture[i]))
 
     The variational guide defines distributions for the unconstrained
     parameters:
-        - phi_unconstrained ~ Normal(loc, scale)
+        - p_unconstrained ~ Normal(loc, scale)
         - mu_unconstrained ~ Normal(loc, scale) for each gene
         - gate_unconstrained ~ Normal(loc, scale) for each gene
-        - phi_capture_unconstrained ~ Normal(loc, scale) for each cell
+        - p_capture_unconstrained ~ Normal(loc, scale) for each cell
 
     These are transformed to the constrained space as follows:
-        - phi = exp(phi_unconstrained) > 0
+        - p = sigmoid(p_unconstrained) ∈ (0, 1)
         - mu = exp(mu_unconstrained) > 0
         - gate = sigmoid(gate_unconstrained) ∈ (0, 1)
-        - phi_capture = exp(phi_capture_unconstrained) > 0
+        - p_capture = sigmoid(p_capture_unconstrained) ∈ (0, 1)
 
     The variational distributions are mean-field (fully factorized) and
     parameterized by learnable location and scale parameters for each
@@ -1023,22 +1041,22 @@ def zinbvcp_guide(
         inference machinery.
     """
     # Define guide parameters
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
     gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
-    phi_capture_guide_params = model_config.phi_capture_unconstrained_guide or (
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
         0.0,
         1.0,
     )
 
-    # Register unconstrained phi parameters
-    phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-    phi_scale = numpyro.param(
-        "phi_unconstrained_scale",
-        phi_guide_params[1],
+    # Register unconstrained p parameters
+    p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+    p_scale = numpyro.param(
+        "p_unconstrained_scale",
+        p_guide_params[1],
         constraint=constraints.positive,
     )
-    numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+    numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
     # Register unconstrained mu parameters
     mu_loc = numpyro.param(
@@ -1049,7 +1067,9 @@ def zinbvcp_guide(
         jnp.full(n_genes, mu_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
 
     # Register unconstrained gate parameters
     gate_loc = numpyro.param(
@@ -1063,28 +1083,28 @@ def zinbvcp_guide(
     numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
     # Set up cell-specific capture probability parameters
-    phi_capture_loc = numpyro.param(
-        "phi_capture_unconstrained_loc",
-        jnp.full(n_cells, phi_capture_guide_params[0]),
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
     )
-    phi_capture_scale = numpyro.param(
-        "phi_capture_unconstrained_scale",
-        jnp.full(n_cells, phi_capture_guide_params[1]),
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
         constraint=constraints.positive,
     )
 
-    # Sample phi_capture depending on batch size
+    # Sample p_capture depending on batch size
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc, phi_capture_scale),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
             )
     else:
         with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc[idx], phi_capture_scale[idx]),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
             )
 
 
@@ -1102,23 +1122,45 @@ def nbdm_mixture_model(
 ):
     """
     Implements the Negative Binomial-Dirichlet Multinomial (NBDM) mixture model
-    using an unconstrained odds ratio parameterization.
+    using an unconstrained parameterization suitable for variational inference
+    in single-cell RNA sequencing data.
 
-    This model extends the odds ratio NBDM model by introducing mixture
-    components.
+    This model extends the linked unconstrained NBDM model by introducing
+    mixture components, where each component has its own set of parameters. The
+    model assumes that the observed gene expression counts for each cell are
+    generated from a mixture of Negative Binomial distributions.
+
+    Parameters are sampled in unconstrained space and transformed:
+        - mixing_logits_unconstrained ~ Normal
+        - p_unconstrained ~ Normal
+        - mu_unconstrained ~ Normal
+        - p = sigmoid(p_unconstrained)
+        - mu = exp(mu_unconstrained)
+        - r = mu * (1 - p) / p
+
+    For each cell, the observed counts vector (of length n_genes) is modeled as:
+
+        counts[cell, :] ~ Mixture(mixing_weights, NegativeBinomialLogits(r, p))
 
     Parameters
     ----------
     n_cells: int
-        Number of cells.
+        Number of cells in the dataset.
     n_genes: int
-        Number of genes.
+        Number of genes (features) per cell.
     model_config: ModelConfig
-        Model configuration.
+        ModelConfig object specifying prior parameters and mixture
+        configuration.
     counts: Optional[jnp.ndarray], default=None
         Observed count data.
     batch_size: Optional[int], default=None
-        Batch size for subsampling.
+        If specified, enables subsampling of cells for stochastic variational
+        inference.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic model for use with NumPyro.
     """
     n_components = model_config.n_components
 
@@ -1127,7 +1169,7 @@ def nbdm_mixture_model(
         0.0,
         1.0,
     )
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
 
     # Sample unconstrained mixing logits
@@ -1135,33 +1177,41 @@ def nbdm_mixture_model(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
+
+    # Define mixing distribution
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     # Sample component-specific or shared parameters
     if model_config.component_specific_params:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params).expand([n_components]),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params).expand([n_components]),
         )
-        phi_unconstrained = phi_unconstrained[:, None]
+        p_unconstrained = p_unconstrained[:, None]
     else:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params),
         )
 
     mu_unconstrained = numpyro.sample(
         "mu_unconstrained",
-        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
 
     # Deterministic transformations
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
-    r = numpyro.deterministic("r", mu * phi)
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     # Define component distribution
-    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
+    base_dist = dist.NegativeBinomialLogits(
+        total_count=r, logits=p_unconstrained
+    ).to_event(1)
+
+    # Create mixture distribution
     mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
 
     # Sample observed or latent counts
@@ -1190,7 +1240,16 @@ def nbdm_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the odds ratio NBDM mixture model.
+    Mean-field variational guide for the linked NBDM mixture model.
+
+    This guide defines a mean-field variational approximation for the
+    unconstrained NBDM mixture model.
+
+    The guide defines variational distributions for the unconstrained
+    parameters:
+        - q(mixing_logits_unconstrained)
+        - q(p_unconstrained)
+        - q(mu_unconstrained)
 
     Parameters
     ----------
@@ -1212,7 +1271,7 @@ def nbdm_mixture_guide(
         0.0,
         1.0,
     )
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
 
     # Register mixing weights parameters
@@ -1231,23 +1290,23 @@ def nbdm_mixture_guide(
     )
 
     if model_config.component_specific_params:
-        phi_loc = numpyro.param(
-            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
+        p_loc = numpyro.param(
+            "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
         )
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            jnp.full(n_components, phi_guide_params[1]),
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            jnp.full(n_components, p_guide_params[1]),
             constraint=constraints.positive,
         )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
     else:
-        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            phi_guide_params[1],
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            p_guide_params[1],
             constraint=constraints.positive,
         )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
     # Register mu parameters
     mu_loc = numpyro.param(
@@ -1259,7 +1318,9 @@ def nbdm_mixture_guide(
         jnp.full((n_components, n_genes), mu_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -1274,7 +1335,9 @@ def zinb_mixture_model(
 ):
     """
     Implements the Zero-Inflated Negative Binomial (ZINB) mixture model
-    using an odds ratio unconstrained parameterization.
+    using a linked unconstrained parameterization.
+
+    This model extends the linked ZINB model by introducing mixture components.
 
     Parameters
     ----------
@@ -1296,7 +1359,7 @@ def zinb_mixture_model(
         0.0,
         1.0,
     )
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
     gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
 
@@ -1305,24 +1368,25 @@ def zinb_mixture_model(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
-    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     # Sample component-specific or shared parameters
     if model_config.component_specific_params:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params).expand([n_components]),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params).expand([n_components]),
         )
-        phi_unconstrained = phi_unconstrained[:, None]
+        p_unconstrained = p_unconstrained[:, None]
     else:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params),
         )
 
     mu_unconstrained = numpyro.sample(
         "mu_unconstrained",
-        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
     gate_unconstrained = numpyro.sample(
         "gate_unconstrained",
@@ -1330,15 +1394,18 @@ def zinb_mixture_model(
     )
 
     # Transform to constrained space
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
-    r = numpyro.deterministic("r", mu * phi)
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     # Define distributions
-    base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
+    mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
+    base_nb_dist = dist.NegativeBinomialLogits(
+        total_count=r, logits=p_unconstrained
+    )
     zinb_comp_dist = dist.ZeroInflatedDistribution(
-        base_dist, gate_logits=gate_unconstrained
+        base_nb_dist, gate_logits=gate_unconstrained
     ).to_event(1)
     mixture = dist.MixtureSameFamily(mixing_dist, zinb_comp_dist)
 
@@ -1368,7 +1435,7 @@ def zinb_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the odds ratio ZINB mixture model.
+    Mean-field variational guide for the linked ZINB mixture model.
 
     Parameters
     ----------
@@ -1390,7 +1457,7 @@ def zinb_mixture_guide(
         0.0,
         1.0,
     )
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
     gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
 
@@ -1409,6 +1476,40 @@ def zinb_mixture_guide(
         dist.Normal(mixing_loc, mixing_scale),
     )
 
+    if model_config.component_specific_params:
+        p_loc = numpyro.param(
+            "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
+        )
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            jnp.full(n_components, p_guide_params[1]),
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
+    else:
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            p_guide_params[1],
+            constraint=constraints.positive,
+        )
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
+
+    # Register mu parameters
+    mu_loc = numpyro.param(
+        "mu_unconstrained_loc",
+        jnp.full((n_components, n_genes), mu_guide_params[0]),
+    )
+    mu_scale = numpyro.param(
+        "mu_unconstrained_scale",
+        jnp.full((n_components, n_genes), mu_guide_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
+
+    # Register gate parameters
     gate_loc = numpyro.param(
         "gate_unconstrained_loc",
         jnp.full((n_components, n_genes), gate_guide_params[0]),
@@ -1419,36 +1520,6 @@ def zinb_mixture_guide(
         constraint=constraints.positive,
     )
     numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
-
-    if model_config.component_specific_params:
-        phi_loc = numpyro.param(
-            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
-        )
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            jnp.full(n_components, phi_guide_params[1]),
-            constraint=constraints.positive,
-        )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
-    else:
-        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            phi_guide_params[1],
-            constraint=constraints.positive,
-        )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
-
-    mu_loc = numpyro.param(
-        "mu_unconstrained_loc",
-        jnp.full((n_components, n_genes), mu_guide_params[0]),
-    )
-    mu_scale = numpyro.param(
-        "mu_unconstrained_scale",
-        jnp.full((n_components, n_genes), mu_guide_params[1]),
-        constraint=constraints.positive,
-    )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
 
 
 # ------------------------------------------------------------------------------
@@ -1463,7 +1534,7 @@ def nbvcp_mixture_model(
 ):
     """
     Implements the Negative Binomial with Variable Capture Probability (NBVCP)
-    mixture model using an odds ratio unconstrained parameterization.
+    mixture model using a linked unconstrained parameterization.
 
     Parameters
     ----------
@@ -1485,9 +1556,9 @@ def nbvcp_mixture_model(
         0.0,
         1.0,
     )
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
         0.0,
         1.0,
     )
@@ -1500,26 +1571,28 @@ def nbvcp_mixture_model(
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     if model_config.component_specific_params:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params).expand([n_components]),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params).expand([n_components]),
         )
-        phi_unconstrained = phi_unconstrained[:, None]
+        p_unconstrained = p_unconstrained[:, None]
     else:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params),
         )
 
     mu_unconstrained = numpyro.sample(
         "mu_unconstrained",
-        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
 
     # Transform to constrained space
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
-    r = numpyro.deterministic("r", mu * phi)
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
 
     plate_context = (
         numpyro.plate("cells", n_cells, subsample_size=batch_size)
@@ -1527,29 +1600,21 @@ def nbvcp_mixture_model(
         else numpyro.plate("cells", n_cells)
     )
 
-    # Define a plate context for cells, with optional batching
     with plate_context as idx:
-        # Sample unconstrained cell-specific capture parameter
-        phi_capture_unconstrained = numpyro.sample(
-            "phi_capture_unconstrained",
-            # Use Normal prior for unconstrained phi_capture
-            dist.Normal(*phi_capture_prior_params),
+        p_capture_unconstrained = numpyro.sample(
+            "p_capture_unconstrained",
+            dist.Normal(*p_capture_prior_params),
         )
-        # Transform to constrained (positive) space
-        phi_capture = numpyro.deterministic(
-            "phi_capture", jnp.exp(phi_capture_unconstrained)
+        p_capture = numpyro.deterministic(
+            "p_capture", jsp.special.expit(p_capture_unconstrained)
         )
-        # Reshape for broadcasting to (cells, components, genes)
-        phi_capture_reshaped = phi_capture[:, None, None]
-        # Compute logits for NB using phi and phi_capture
-        logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
-        # Define NB distribution for each component/gene
-        base_dist = dist.NegativeBinomialLogits(r, logits).to_event(1)
-        # Create mixture distribution over components
+        p_capture_reshaped = p_capture[:, None, None]
+        p_hat = numpyro.deterministic(
+            "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+        )
+        base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
         mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
-        # Select observed counts for batch if present
         obs = counts[idx] if counts is not None and idx is not None else None
-        # Sample (or observe) counts from the mixture distribution
         numpyro.sample("counts", mixture, obs=obs)
 
 
@@ -1564,7 +1629,7 @@ def nbvcp_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the odds ratio NBVCP mixture model.
+    Mean-field variational guide for the linked NBVCP mixture model.
 
     Parameters
     ----------
@@ -1586,9 +1651,9 @@ def nbvcp_mixture_guide(
         0.0,
         1.0,
     )
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    phi_capture_guide_params = model_config.phi_capture_unconstrained_guide or (
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
         0.0,
         1.0,
     )
@@ -1609,23 +1674,23 @@ def nbvcp_mixture_guide(
     )
 
     if model_config.component_specific_params:
-        phi_loc = numpyro.param(
-            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
+        p_loc = numpyro.param(
+            "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
         )
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            jnp.full(n_components, phi_guide_params[1]),
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            jnp.full(n_components, p_guide_params[1]),
             constraint=constraints.positive,
         )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
     else:
-        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            phi_guide_params[1],
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            p_guide_params[1],
             constraint=constraints.positive,
         )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
     mu_loc = numpyro.param(
         "mu_unconstrained_loc",
@@ -1636,30 +1701,32 @@ def nbvcp_mixture_guide(
         jnp.full((n_components, n_genes), mu_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
 
     # Cell-specific capture probability parameters
-    phi_capture_loc = numpyro.param(
-        "phi_capture_unconstrained_loc",
-        jnp.full(n_cells, phi_capture_guide_params[0]),
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
     )
-    phi_capture_scale = numpyro.param(
-        "phi_capture_unconstrained_scale",
-        jnp.full(n_cells, phi_capture_guide_params[1]),
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
         constraint=constraints.positive,
     )
 
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc, phi_capture_scale),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
             )
     else:
         with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc[idx], phi_capture_scale[idx]),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
             )
 
 
@@ -1675,7 +1742,7 @@ def zinbvcp_mixture_model(
 ):
     """
     Implements the Zero-Inflated Negative Binomial with Variable Capture
-    Probability (ZINBVCP) mixture model using an odds ratio unconstrained
+    Probability (ZINBVCP) mixture model using a linked unconstrained
     parameterization.
 
     Parameters
@@ -1698,10 +1765,10 @@ def zinbvcp_mixture_model(
         0.0,
         1.0,
     )
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
     mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
     gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
         0.0,
         1.0,
     )
@@ -1719,26 +1786,28 @@ def zinbvcp_mixture_model(
     )
 
     if model_config.component_specific_params:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params).expand([n_components]),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params).expand([n_components]),
         )
-        phi_unconstrained = phi_unconstrained[:, None]
+        p_unconstrained = p_unconstrained[:, None]
     else:
-        phi_unconstrained = numpyro.sample(
-            "phi_unconstrained",
-            dist.Normal(*phi_prior_params),
+        p_unconstrained = numpyro.sample(
+            "p_unconstrained",
+            dist.Normal(*p_prior_params),
         )
 
     mu_unconstrained = numpyro.sample(
         "mu_unconstrained",
-        dist.Normal(*mu_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*mu_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(1),
     )
 
     # Transform to constrained space
-    phi = numpyro.deterministic("phi", jnp.exp(phi_unconstrained))
+    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
-    r = numpyro.deterministic("r", mu * phi)
+    r = numpyro.deterministic("r", mu * (1 - p) / p)
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     plate_context = (
@@ -1747,36 +1816,25 @@ def zinbvcp_mixture_model(
         else numpyro.plate("cells", n_cells)
     )
 
-    # Enter plate context for cells, with optional batching if batch_size is
-    # specified
     with plate_context as idx:
-        # Sample unconstrained cell-specific capture parameter from Normal prior
-        phi_capture_unconstrained = numpyro.sample(
-            "phi_capture_unconstrained",
-            dist.Normal(*phi_capture_prior_params),
+        p_capture_unconstrained = numpyro.sample(
+            "p_capture_unconstrained",
+            dist.Normal(*p_capture_prior_params),
         )
-        # Transform unconstrained phi_capture to constrained (positive) space
-        phi_capture = numpyro.deterministic(
-            "phi_capture", jnp.exp(phi_capture_unconstrained)
+        p_capture = numpyro.deterministic(
+            "p_capture", jsp.special.expit(p_capture_unconstrained)
         )
-        # Reshape phi_capture for broadcasting to (cells, components, genes)
-        phi_capture_reshaped = phi_capture[:, None, None]
-        # Compute logits for Negative Binomial using phi and phi_capture
-        logits = -jnp.log(phi * (1.0 + phi_capture_reshaped))
-        # Define Negative Binomial distribution with computed r and logits
-        base_dist = dist.NegativeBinomialLogits(r, logits)
-        # Define zero-inflated NB distribution using gate logits for each
-        # component/gene
+        p_capture_reshaped = p_capture[:, None, None]
+        p_hat = numpyro.deterministic(
+            "p_hat", p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+        )
+        base_dist = dist.NegativeBinomialProbs(r, p_hat)
         zinb_base_dist = dist.ZeroInflatedDistribution(
             base_dist,
             gate_logits=gate_unconstrained[None, :, :],
         ).to_event(1)
-        # Create mixture distribution over components using mixing_dist and
-        # zinb_base_dist
         mixture = dist.MixtureSameFamily(mixing_dist, zinb_base_dist)
-        # Select observed counts for batch if present, else None
         obs = counts[idx] if counts is not None and idx is not None else None
-        # Sample (or observe) counts from the mixture distribution
         numpyro.sample("counts", mixture, obs=obs)
 
 
@@ -1791,7 +1849,7 @@ def zinbvcp_mixture_guide(
     batch_size=None,
 ):
     """
-    Mean-field variational guide for the odds ratio ZINBVCP mixture model.
+    Mean-field variational guide for the linked ZINBVCP mixture model.
 
     Parameters
     ----------
@@ -1813,10 +1871,10 @@ def zinbvcp_mixture_guide(
         0.0,
         1.0,
     )
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
     mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
     gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
-    phi_capture_guide_params = model_config.phi_capture_unconstrained_guide or (
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
         0.0,
         1.0,
     )
@@ -1848,23 +1906,23 @@ def zinbvcp_mixture_guide(
     numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
 
     if model_config.component_specific_params:
-        phi_loc = numpyro.param(
-            "phi_unconstrained_loc", jnp.full(n_components, phi_guide_params[0])
+        p_loc = numpyro.param(
+            "p_unconstrained_loc", jnp.full(n_components, p_guide_params[0])
         )
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            jnp.full(n_components, phi_guide_params[1]),
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            jnp.full(n_components, p_guide_params[1]),
             constraint=constraints.positive,
         )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
     else:
-        phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
-        phi_scale = numpyro.param(
-            "phi_unconstrained_scale",
-            phi_guide_params[1],
+        p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
+        p_scale = numpyro.param(
+            "p_unconstrained_scale",
+            p_guide_params[1],
             constraint=constraints.positive,
         )
-        numpyro.sample("phi_unconstrained", dist.Normal(phi_loc, phi_scale))
+        numpyro.sample("p_unconstrained", dist.Normal(p_loc, p_scale))
 
     mu_loc = numpyro.param(
         "mu_unconstrained_loc",
@@ -1875,30 +1933,32 @@ def zinbvcp_mixture_guide(
         jnp.full((n_components, n_genes), mu_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("mu_unconstrained", dist.Normal(mu_loc, mu_scale))
+    numpyro.sample(
+        "mu_unconstrained", dist.Normal(mu_loc, mu_scale).to_event(1)
+    )
 
     # Cell-specific capture probability parameters
-    phi_capture_loc = numpyro.param(
-        "phi_capture_unconstrained_loc",
-        jnp.full(n_cells, phi_capture_guide_params[0]),
+    p_capture_loc = numpyro.param(
+        "p_capture_unconstrained_loc",
+        jnp.full(n_cells, p_capture_guide_params[0]),
     )
-    phi_capture_scale = numpyro.param(
-        "phi_capture_unconstrained_scale",
-        jnp.full(n_cells, phi_capture_guide_params[1]),
+    p_capture_scale = numpyro.param(
+        "p_capture_unconstrained_scale",
+        jnp.full(n_cells, p_capture_guide_params[1]),
         constraint=constraints.positive,
     )
 
     if batch_size is None:
         with numpyro.plate("cells", n_cells):
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc, phi_capture_scale),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc, p_capture_scale),
             )
     else:
         with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
             numpyro.sample(
-                "phi_capture_unconstrained",
-                dist.Normal(phi_capture_loc[idx], phi_capture_scale[idx]),
+                "p_capture_unconstrained",
+                dist.Normal(p_capture_loc[idx], p_capture_scale[idx]),
             )
 
 
@@ -1911,15 +1971,10 @@ def get_posterior_distributions(
     params: Dict[str, jnp.ndarray],
     model_config: ModelConfig,
     split: bool = False,
-) -> Dict[str, dist.Distribution]:
+) -> Dict[str, Union[dist.Distribution]]:
     """
     Construct posterior distributions for model parameters from variational
     guide outputs.
-
-    This function is specific to the 'odds_ratio_unconstrained' parameterization
-    and builds the appropriate `numpyro` distributions based on the guide
-    parameters found in the `params` dictionary. It handles both single and
-    mixture models.
 
     Parameters
     ----------
@@ -1927,10 +1982,10 @@ def get_posterior_distributions(
         Dictionary containing estimated variational parameters (means and
         standard deviations) for each unconstrained latent variable, as produced
         by the guide. Expected keys include:
-            - "phi_unconstrained_loc", "phi_unconstrained_scale"
+            - "p_unconstrained_loc", "p_unconstrained_scale"
             - "mu_unconstrained_loc", "mu_unconstrained_scale"
             - "gate_unconstrained_loc", "gate_unconstrained_scale"
-            - "phi_capture_unconstrained_loc", "phi_capture_unconstrained_scale"
+            - "p_capture_unconstrained_loc", "p_capture_unconstrained_scale"
         Each value is a JAX array of appropriate shape (scalar or vector).
     model_config : ModelConfig
         Model configuration object (not used in this function, but included for
@@ -1942,8 +1997,8 @@ def get_posterior_distributions(
 
     Returns
     -------
-    Dict[str, Union[dist.Distribution, List[dist.Distribution]]]
-        Dictionary mapping parameter names (e.g., "phi_unconstrained",
+    Dict[str, Union[dist.Distribution]]:
+        Dictionary mapping parameter names (e.g., "p_unconstrained",
         "mu_unconstrained", etc.) to their corresponding posterior
         distributions. For vector-valued parameters, the value is either a
         batched distribution or a list of univariate distributions, depending on
@@ -1951,23 +2006,19 @@ def get_posterior_distributions(
     """
     distributions = {}
 
-    # phi_unconstrained parameter (Normal distribution)
-    if (
-        "phi_unconstrained_loc" in params
-        and "phi_unconstrained_scale" in params
-    ):
+    # p_unconstrained parameter (Normal distribution)
+    if "p_unconstrained_loc" in params and "p_unconstrained_scale" in params:
         if split and model_config.component_specific_params:
-            distributions["phi_unconstrained"] = [
+            distributions["p_unconstrained"] = [
                 dist.Normal(
-                    params["phi_unconstrained_loc"][i],
-                    params["phi_unconstrained_scale"][i],
+                    params["p_unconstrained_loc"][i],
+                    params["p_unconstrained_scale"][i],
                 )
-                for i in range(params["phi_unconstrained_loc"].shape[0])
+                for i in range(params["p_unconstrained_loc"].shape[0])
             ]
         else:
-            distributions["phi_unconstrained"] = dist.Normal(
-                params["phi_unconstrained_loc"],
-                params["phi_unconstrained_scale"],
+            distributions["p_unconstrained"] = dist.Normal(
+                params["p_unconstrained_loc"], params["p_unconstrained_scale"]
             )
 
     # mu_unconstrained parameter (Normal distribution)
@@ -2030,24 +2081,24 @@ def get_posterior_distributions(
                 params["gate_unconstrained_scale"],
             )
 
-    # phi_capture_unconstrained parameter (Normal distribution)
+    # p_capture_unconstrained parameter (Normal distribution)
     if (
-        "phi_capture_unconstrained_loc" in params
-        and "phi_capture_unconstrained_scale" in params
+        "p_capture_unconstrained_loc" in params
+        and "p_capture_unconstrained_scale" in params
     ):
-        if split and len(params["phi_capture_unconstrained_loc"].shape) == 1:
-            # Cell-specific phi_capture parameters
-            distributions["phi_capture_unconstrained"] = [
+        if split and len(params["p_capture_unconstrained_loc"].shape) == 1:
+            # Cell-specific p_capture parameters
+            distributions["p_capture_unconstrained"] = [
                 dist.Normal(
-                    params["phi_capture_unconstrained_loc"][c],
-                    params["phi_capture_unconstrained_scale"][c],
+                    params["p_capture_unconstrained_loc"][c],
+                    params["p_capture_unconstrained_scale"][c],
                 )
-                for c in range(params["phi_capture_unconstrained_loc"].shape[0])
+                for c in range(params["p_capture_unconstrained_loc"].shape[0])
             ]
         else:
-            distributions["phi_capture_unconstrained"] = dist.Normal(
-                params["phi_capture_unconstrained_loc"],
-                params["phi_capture_unconstrained_scale"],
+            distributions["p_capture_unconstrained"] = dist.Normal(
+                params["p_capture_unconstrained_loc"],
+                params["p_capture_unconstrained_scale"],
             )
 
     # mixing_logits_unconstrained parameter (Normal distribution)

@@ -59,7 +59,8 @@ def get_model_and_guide(
     model_type : str
         The type of model to retrieve (e.g., "nbdm", "zinb_mix").
     parameterization : str, default="standard"
-        The parameterization module to use (e.g., "standard", "linked", "odds_ratio").
+        The parameterization module to use (e.g., "standard", "linked",
+        "odds_ratio").
     inference_method : str, default="svi"
         The inference method to use ("svi" or "vae").
     prior_type : str, optional
@@ -113,17 +114,30 @@ def get_model_and_guide(
 
         return vae_factory, None
     else:
-        # For non-VAE models, use the standard registry Determine the module
-        # name based on parameterization and unconstrained flag
+        # Determine the module name based on parameterization and unconstrained
+        # flag
         if unconstrained:
-            model_module_name = f"{parameterization}_unconstrained"
+            if guide_rank is not None:
+                # For low-rank guides with unconstrained:
+                # {parameterization}_low_rank_unconstrained
+                model_module_name = f"{parameterization}_unconstrained"
+                guide_module_name = f"{parameterization}_low_rank_unconstrained"
+            else:
+                # For mean-field guides with unconstrained:
+                # {parameterization}_unconstrained
+                model_module_name = f"{parameterization}_unconstrained"
+                guide_module_name = f"{parameterization}_unconstrained"
         else:
-            model_module_name = f"{parameterization}"
-
-        if guide_rank is not None:
-            guide_module_name = f"{model_module_name}_low_rank"
-        else:
-            guide_module_name = model_module_name
+            if guide_rank is not None:
+                # For low-rank guides without unconstrained:
+                # {parameterization}_low_rank
+                model_module_name = f"{parameterization}"
+                guide_module_name = f"{parameterization}_low_rank"
+            else:
+                # For mean-field guides without unconstrained:
+                # {parameterization}
+                model_module_name = f"{parameterization}"
+                guide_module_name = f"{parameterization}"
 
         try:
             model_module = importlib.import_module(
