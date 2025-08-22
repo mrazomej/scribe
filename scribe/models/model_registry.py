@@ -42,6 +42,7 @@ def get_model_and_guide(
     inference_method: str = "svi",
     prior_type: Optional[str] = None,
     unconstrained: bool = False,
+    guide_rank: Optional[int] = None,
 ) -> Tuple[Callable, Optional[Callable]]:
     """
     Retrieve the model and guide functions for a specified model type,
@@ -65,6 +66,9 @@ def get_model_and_guide(
         The prior type to use for VAE inference ("standard" or "decoupled").
     unconstrained : bool, default=False
         Whether to use unconstrained parameterization variants.
+    guide_rank : Optional[int], default=None
+        If provided, specifies the rank `k` for a low-rank multivariate normal
+        guide. If None, a mean-field guide is used.
 
     Returns
     -------
@@ -104,7 +108,7 @@ def get_model_and_guide(
                 model_config=model_config,
                 parameterization=parameterization,
                 prior_type=prior_type or "standard",
-                unconstrained=unconstrained
+                unconstrained=unconstrained,
             )
 
         return vae_factory, None
@@ -112,16 +116,31 @@ def get_model_and_guide(
         # For non-VAE models, use the standard registry Determine the module
         # name based on parameterization and unconstrained flag
         if unconstrained:
-            module_name = f"{parameterization}_unconstrained"
+            model_module_name = f"{parameterization}_unconstrained"
         else:
-            module_name = f"{parameterization}"
+            model_module_name = f"{parameterization}"
+
+        if guide_rank is not None:
+            guide_module_name = f"{model_module_name}_low_rank"
+        else:
+            guide_module_name = model_module_name
 
         try:
-            module = importlib.import_module(
-                f".{module_name}", "scribe.models")
+            model_module = importlib.import_module(
+                f".{model_module_name}", "scribe.models"
+            )
         except ImportError as e:
             raise ValueError(
-                f"Could not import parameterization module '{module_name}': {e}"
+                f"Could not import parameterization module '{model_module_name}': {e}"
+            )
+
+        try:
+            guide_module = importlib.import_module(
+                f".{guide_module_name}", "scribe.models"
+            )
+        except ImportError as e:
+            raise ValueError(
+                f"Could not import parameterization module '{guide_module_name}': {e}"
             )
 
         # Determine the function names based on convention
@@ -134,20 +153,20 @@ def get_model_and_guide(
             guide_name = f"{model_type}_guide"
 
         # Retrieve the functions from the module
-        model_fn = getattr(module, model_name, None)
+        model_fn = getattr(model_module, model_name, None)
         if model_fn is None:
             raise ValueError(
                 f"Model function '{model_name}' "
-                f"not found in module '{module_name}'"
+                f"not found in module '{model_module_name}'"
             )
 
         # Guide functions exist for all parameterizations including
         # unconstrained
-        guide_fn = getattr(module, guide_name, None)
+        guide_fn = getattr(guide_module, guide_name, None)
         if guide_fn is None:
             raise ValueError(
                 f"Guide function '{guide_name}' "
-                f"not found in module '{module_name}'"
+                f"not found in module '{guide_module_name}'"
             )
         return model_fn, guide_fn
 

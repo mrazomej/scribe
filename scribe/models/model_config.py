@@ -51,6 +51,7 @@ class ModelConfig:
     n_components: Optional[int] = None
     inference_method: str = "svi"
     component_specific_params: bool = False
+    guide_rank: Optional[int] = None
 
     # Success probability parameter (p) - used in standard and linked
     p_param_prior: Optional[tuple] = None
