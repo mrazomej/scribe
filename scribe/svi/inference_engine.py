@@ -84,6 +84,8 @@ class SVIInferenceEngine:
             model, guide = get_model_and_guide(
                 model_config.base_model,
                 parameterization=model_config.parameterization,
+                unconstrained=model_config.unconstrained,
+                guide_rank=model_config.guide_rank,
             )
 
         # Create SVI instance

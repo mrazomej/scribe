@@ -39,6 +39,8 @@ def run_scribe(
     mixture_model: bool = False,
     n_components: Optional[int] = None,
     component_specific_params: bool = False,
+    # New guide rank parameter
+    guide_rank: Optional[int] = None,
     # Parameterization (now unified!)
     # "standard", "linked", "odds_ratio"
     parameterization: str = "standard",
@@ -129,7 +131,11 @@ def run_scribe(
     unconstrained : bool, default=False
         Whether to use unconstrained parameterization variants. When True,
         parameters are sampled in unconstrained space and transformed via
-        appropriate functions (e.g., sigmoid for probabilities, exp for positive values).
+        appropriate functions (e.g., sigmoid for probabilities, exp for positive
+        values).
+    guide_rank : Optional[int], default=None
+        Rank of the low-rank approximation for the gene-specifc parameters
+        (either r or mu). Only used with svi inference.
 
     Data Processing
     ---------------
@@ -166,10 +172,10 @@ def run_scribe(
     Prior Configuration
     -------------------
     r_prior, p_prior, gate_prior, p_capture_prior : Optional[tuple]
-        Prior parameters as (param1, param2) tuples.
-        - For unconstrained=True: (loc, scale) for Normal on transformed
-        parameters - For unconstrained=False: Parameters for respective
-        distributions (Beta, Gamma, etc.)
+        Prior parameters as (param1, param2) tuples. - For unconstrained=True:
+        (loc, scale) for Normal on transformed parameters - For
+        unconstrained=False: Parameters for respective distributions (Beta,
+        Gamma, etc.)
     mixing_prior : Optional[Any]
         Prior for mixture components (array-like or scalar).
     mu_prior, phi_prior, phi_capture_prior : Optional[tuple]
@@ -184,11 +190,11 @@ def run_scribe(
     vae_activation : Optional[str], default=None
         Activation function name for VAE (default: "gelu").
     vae_vcp_hidden_dims : Optional[List[int]], default=None
-        Hidden layer dimensions for VCP encoder (default: [64, 32]).
-        Only used when variable_capture=True.
+        Hidden layer dimensions for VCP encoder (default: [64, 32]). Only used
+        when variable_capture=True.
     vae_vcp_activation : Optional[str], default=None
-        Activation function for VCP encoder (default: "relu").
-        Only used when variable_capture=True.
+        Activation function for VCP encoder (default: "relu"). Only used when
+        variable_capture=True.
     vae_prior_type : str, default="standard"
         Type of VAE prior ("standard" or "decoupled").
     vae_prior_hidden_dims : Optional[List[int]], default=None
@@ -224,35 +230,32 @@ def run_scribe(
 
     Examples
     --------
-    # SVI with standard parameterization
-    results = run_scribe(counts, inference_method="svi", parameterization="standard")
+    # SVI with standard parameterization results = run_scribe(counts,
+    inference_method="svi", parameterization="standard")
 
-    # MCMC with unconstrained parameterization
-    results = run_scribe(counts, inference_method="mcmc", parameterization="standard", unconstrained=True)
+    # MCMC with unconstrained parameterization results = run_scribe(counts,
+    inference_method="mcmc", parameterization="standard", unconstrained=True)
 
-    # SVI with odds_ratio parameterization for ZINBVCP mixture model
-    results = run_scribe(
+    # SVI with odds_ratio parameterization for ZINBVCP mixture model results =
+    run_scribe(
         counts, inference_method="svi", parameterization="odds_ratio",
         zero_inflated=True, variable_capture=True, mixture_model=True,
         n_components=3
     )
 
-    # MCMC with linked parameterization
-    results = run_scribe(
+    # MCMC with linked parameterization results = run_scribe(
         counts, inference_method="mcmc", parameterization="linked",
         n_samples=1000
     )
 
-    # VAE with standard parameterization
-    results = run_scribe(
+    # VAE with standard parameterization results = run_scribe(
         counts, inference_method="vae", parameterization="standard",
         vae_latent_dim=5, vae_hidden_dims=[512, 256]
     )
 
-    # VAE with linked unconstrained parameterization
-    results = run_scribe(
-        counts, inference_method="vae", parameterization="linked", unconstrained=True,
-        vae_latent_dim=5, vae_hidden_dims=[512, 256]
+    # VAE with linked unconstrained parameterization results = run_scribe(
+        counts, inference_method="vae", parameterization="linked",
+        unconstrained=True, vae_latent_dim=5, vae_hidden_dims=[512, 256]
     )
     """
     # Step 1: Input Processing & Validation
@@ -298,6 +301,7 @@ def run_scribe(
         "inference_method": inference_method,
         "n_components": n_components,
         "component_specific_params": component_specific_params,
+        "guide_rank": guide_rank,
     }
 
     # Add VAE-specific parameters if using VAE inference
