@@ -1,19 +1,35 @@
-# SCRIBE: Single-Cell RNA-seq Inference using Bayesian Estimation
+# SCRIBE: Single-Cell RNA-seq Inference with Bayesian Estimation
 
-SCRIBE is a `Python` package for analyzing single-cell RNA sequencing
-(scRNA-seq) data using variational inference based on `Numpyro`—a `Jax`-based
-probabilistic programming library with GPU acceleration. It provides a
-collection of probabilistic models and inference tools specifically designed for
-scRNA-seq count data.
+SCRIBE is a comprehensive Python package for Bayesian analysis of single-cell
+RNA sequencing (scRNA-seq) data. Built on JAX and NumPyro, SCRIBE provides a
+unified framework for probabilistic modeling, variational inference, and
+uncertainty quantification in single-cell genomics.
 
-## Features
+## Why SCRIBE?
 
-- Multiple probabilistic models for scRNA-seq data analysis
-- Efficient variational inference using JAX and Numpyro
-- Support for both full-batch and mini-batch inference
-- Integration with AnnData objects
-- Comprehensive visualization tools for posterior analysis
-- GPU acceleration support
+🎯 **Unified Framework**: Single interface for SVI, MCMC, and VAE inference
+methods  
+🧬 **Specialized Models**: Four probabilistic models designed specifically for
+scRNA-seq data  
+⚡ **GPU Accelerated**: JAX-based implementation with automatic GPU support  
+📊 **Rich Analysis**: Comprehensive posterior analysis and uncertainty
+quantification  
+🔧 **Flexible**: Multiple parameterizations and constrained/unconstrained
+variants  
+📈 **Scalable**: From small experiments to large-scale atlases with mini-batch
+support
+
+## Key Features
+
+- **Three Inference Methods**: 
+  - SVI for speed and scalability
+  - MCMC for exact Bayesian inference  
+  - VAE for representation learning
+- **Specialized scRNA-seq Models**: NBDM, ZINB, NBVCP, ZINBVCP
+- **Advanced Analysis**: Mixture models for cell type discovery
+- **Seamless Integration**: Works with AnnData and the scanpy ecosystem
+- **Professional Visualization**: Comprehensive plotting tools for results
+  analysis
 
 ## Available Models
 
@@ -33,7 +49,8 @@ SCRIBE includes several probabilistic models for scRNA-seq data:
    - Models technical variation in library preparation
    - Suitable for datasets with varying sequencing depths per cell
 
-4. **Zero-Inflated Negative Binomial with Variable Capture Probability (ZINBVCP)**
+4. **Zero-Inflated Negative Binomial with Variable Capture Probability
+   (ZINBVCP)**
    - Combines zero-inflation and variable capture probability
    - Most comprehensive model for technical variation
    - Handles both dropouts and capture efficiency
@@ -68,77 +85,163 @@ docker run --gpus all -it scribe
 
 ## Quick Start
 
-Here's a simple example of how to use SCRIBE:
+Get started with SCRIBE in just a few lines:
 
 ```python
 import scribe
-from jax import random
+import scanpy as sc
 
-# Load your data (using AnnData)
-import anndata as ad
-adata = ad.read_h5ad("your_data.h5ad")
+# Load your single-cell data
+adata = sc.read_h5ad("your_data.h5ad")
 
-# Run inference
+# Run SCRIBE with default settings (SVI inference, NBDM model)
 results = scribe.run_scribe(
-    adata,
-    model_type="zinb",  # Choose your model
-    n_steps=100_000,    # Number of optimization steps
-    batch_size=512,     # Mini-batch size
-    rng_key=random.PRNGKey(0)
+    counts=adata,
+    inference_method="svi",
+    n_steps=50000
 )
 
-# Generate posterior predictive samples
-ppc_samples = results.ppc_samples(n_samples=100)
+# Analyze results
+posterior_samples = results.get_posterior_samples()
+log_likelihood = results.log_likelihood()
 
-# Visualize results
-scribe.viz.plot_parameter_posteriors(results)
+# Visualize
+scribe.viz.plot_loss_history(results.loss_history)
+```
+
+### Choose Your Inference Method
+
+```python
+# Fast exploration with SVI
+svi_results = scribe.run_scribe(
+    counts=adata, 
+    inference_method="svi",
+    zero_inflated=True,
+    n_steps=75000
+)
+
+# Exact inference with MCMC  
+mcmc_results = scribe.run_scribe(
+    counts=adata,
+    inference_method="mcmc", 
+    n_samples=3000,
+    n_chains=4
+)
+
+# Representation learning with VAE
+vae_results = scribe.run_scribe(
+    counts=adata,
+    inference_method="vae",
+    vae_latent_dim=15
+)
 ```
 
 ## Advanced Usage
 
-### Model Selection
-
-Choose the appropriate model based on your data characteristics:
-
-- Use `NBDM` for well-behaved datasets with minimal technical artifacts.
-- Use `ZINB` when dropout is a significant concern.
-- Use `NBVCP` when capture efficiency varies significantly between cells.
-- Use `ZINBVCP` when both dropout and capture efficiency are concerns.
-
-### Customizing Inference
+### Mixture Models for Cell Type Discovery
 
 ```python
-# Custom prior parameters
-prior_params = {
-    'p_prior': (1.0, 1.0),
-    'r_prior': (2.0, 0.1),
-    'gate_prior': (1.0, 1.0)
-}
-
-# Run inference with custom parameters
-results = scribe.run_scribe(
-    adata,
-    model_type="zinb",
-    prior_params=prior_params,
-    n_steps=200_000,
-    batch_size=1024
+# Discover cell types with mixture models
+mixture_results = scribe.run_scribe(
+    counts=adata,
+    mixture_model=True,
+    n_components=5,
+    inference_method="svi",
+    n_steps=100000
 )
+
+# Analyze cell type assignments
+cell_types = mixture_results.cell_type_probabilities()
+
+# Access individual components
+for i in range(5):
+    component = mixture_results.get_component(i)
+    print(f"Component {i} MAP estimates:", component.get_map())
 ```
 
-### GPU Acceleration
+### Model Selection Guide
 
-SCRIBE automatically uses GPU if available. To explicitly control device usage:
+Choose the right model for your data:
+
+| Model | Best For | Key Features |
+|-------|----------|--------------|
+| **NBDM** | Baseline analysis | Simple, interpretable, fast |
+| **ZINB** | Data with excess zeros | Handles dropouts |
+| **NBVCP** | Variable sequencing depth | Models capture efficiency |
+| **ZINBVCP** | Complex technical variation | Most comprehensive |
+
+### Multi-Method Workflow
 
 ```python
-with scribe.utils.use_cpu():
-    # Force CPU execution
-    results = scribe.run_scribe(adata)
+# Compare inference methods for comprehensive analysis
+config = {
+    "zero_inflated": True,
+    "mixture_model": True,
+    "n_components": 3
+}
+
+# Fast exploration
+svi_results = scribe.run_scribe(counts=adata, inference_method="svi", **config)
+
+# Exact inference for final analysis  
+mcmc_results = scribe.run_scribe(counts=adata, inference_method="mcmc", **config)
+
+# Representation learning
+vae_results = scribe.run_scribe(counts=adata, inference_method="vae", **config)
+```
+
+### Integration with Single-Cell Ecosystem
+
+```python
+import scanpy as sc
+
+# Standard scanpy preprocessing
+sc.pp.filter_cells(adata, min_genes=200)
+sc.pp.filter_genes(adata, min_cells=3)
+
+# SCRIBE analysis
+results = scribe.run_scribe(counts=adata, inference_method="vae", vae_latent_dim=15)
+
+# Add results back to AnnData
+adata.obsm["X_scribe"] = results.get_latent_embeddings(adata.X)
+adata.obs["scribe_cluster"] = results.cell_type_probabilities().argmax(axis=1)
+
+# Continue with scanpy
+sc.pp.neighbors(adata, use_rep="X_scribe")
+sc.tl.umap(adata)
+sc.pl.umap(adata, color="scribe_cluster")
+```
+
+## Performance & Scalability
+
+SCRIBE is designed for real-world single-cell datasets:
+
+- **GPU Acceleration**: Automatic GPU detection and usage
+- **Memory Efficient**: Mini-batch processing for large datasets
+- **Scalable**: Tested on datasets from hundreds to hundreds of thousands of
+  cells
+- **Fast**: SVI inference typically completes in minutes
+
+```python
+# For large datasets
+large_results = scribe.run_scribe(
+    counts=large_adata,
+    inference_method="svi",
+    batch_size=1024,  # Process in batches
+    n_steps=150000    # More steps for convergence
+)
 ```
 
 ## Documentation
 
-For detailed documentation, please visit [our documentation
-site](https://scribe.readthedocs.io/).
+Comprehensive documentation is available in each module:
+
+- **[Package Overview](src/scribe/README.md)**: Complete package documentation
+- **[Models](src/scribe/models/README.md)**: Probabilistic model details
+- **[SVI](src/scribe/svi/README.md)**: Stochastic variational inference
+- **[MCMC](src/scribe/mcmc/README.md)**: Markov Chain Monte Carlo
+- **[VAE](src/scribe/vae/README.md)**: Variational autoencoders
+- **[Core](src/scribe/core/README.md)**: Shared utilities and preprocessing
 
 ## Contributing
 
@@ -167,13 +270,16 @@ This project is licensed under the terms of the [LICENSE](LICENSE) file.
 
 SCRIBE builds upon several excellent libraries:
 
-- [JAX](https://github.com/google/jax) for automatic differentiation and GPU acceleration
+- [JAX](https://github.com/google/jax) for automatic differentiation and GPU
+  acceleration
 - [Numpyro](https://github.com/pyro-ppl/numpyro) for probabilistic programming
 - [AnnData](https://anndata.readthedocs.io/) for data management
-- [Matplotlib](https://matplotlib.org/) and [Seaborn](https://seaborn.pydata.org/) for visualization
+- [Matplotlib](https://matplotlib.org/) and
+  [Seaborn](https://seaborn.pydata.org/) for visualization
 
 ## Support
 
 For questions and support:
 
-- Create an issue in the [GitHub repository](https://github.com/mrazomej/scribe/issues)
+- Create an issue in the [GitHub
+  repository](https://github.com/mrazomej/scribe/issues)
