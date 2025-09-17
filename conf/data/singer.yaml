@@ -1,0 +1,9 @@
+# @package _group_
+name: "singer"
+path: "data/singer/singer_transcript_counts.csv"
+
+preprocessing:
+  filter_cells:
+    min_genes: null
+  filter_genes:
+    min_cells: null

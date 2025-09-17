@@ -1,0 +1,8 @@
+# @package _group_
+method: "mcmc"
+
+# MCMC Parameters
+n_samples: 2_000
+n_warmup: 1_000
+n_chains: 1
+mcmc_kwargs: null
