@@ -1,0 +1,48 @@
+# @package _global_
+
+# --- Hydra settings ---
+hydra:
+  run:
+    dir: outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
+  job:
+    name: ${data.name}_${inference.method}
+
+# --- Defaults ---
+defaults:
+  - data: singer
+  - inference: svi
+  - _self_
+
+# --- Data Loading ---
+# path is now in conf/data
+
+# --- run_scribe Configuration ---
+
+# General
+seed: 42
+
+# Model Configuration
+zero_inflated: false
+variable_capture: false
+mixture_model: false
+n_components: null
+component_specific_params: false
+guide_rank: null
+
+# Parameterization
+parameterization: "standard" # "standard", "linked", "odds_ratio"
+unconstrained: false
+
+# Data Processing in model
+cells_axis: 0
+layer: null
+
+# Prior Configuration
+r_prior: null
+p_prior: null
+gate_prior: null
+p_capture_prior: null
+mixing_prior: null
+mu_prior: null
+phi_prior: null
+phi_capture_prior: null

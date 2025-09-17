@@ -1,0 +1,20 @@
+# @package _group_
+method: "vae"
+
+# SVI parameters used by VAE
+n_steps: 50_000
+batch_size: null
+stable_update: true
+
+# VAE-specific parameters
+vae_latent_dim: 3
+vae_hidden_dims: [256, 256]
+vae_activation: "gelu"
+vae_vcp_hidden_dims: [64, 32]
+vae_vcp_activation: "relu"
+vae_prior_type: "standard"
+vae_prior_hidden_dims: [64, 64]
+vae_prior_num_layers: 2
+vae_prior_activation: "relu"
+vae_prior_mask_type: "alternating"
+vae_standardize: false
