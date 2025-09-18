@@ -204,23 +204,6 @@ wheels = [
 ]
 
 [[package]]
-name = "blackjax"
-version = "1.2.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fastprogress" },
-    { name = "jax" },
-    { name = "jaxlib" },
-    { name = "jaxopt" },
-    { name = "optax" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/cd/7f/2bc7ed9f831e93f670d95e1d4c6c0005fe57fe68cfce5a254d9dcf3bfa6b/blackjax-1.2.5.tar.gz", hash = "sha256:8fedfc8de2ad33e4c170de4648d8301374e386fd68d8db91bf03f1bd2d0f5e97", size = 4636520, upload-time = "2025-02-07T12:41:17.28Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/fe/b7528d1fc33879862559f0d5207a5750ac85592a100bd012d8536090e22f/blackjax-1.2.5-py3-none-any.whl", hash = "sha256:b46c31857ee9ff47027aa915c2c8d7eca3fec757f5054c6979ae0f2ee83cc773", size = 4648930, upload-time = "2025-02-07T12:41:14.67Z" },
-]
-
-[[package]]
 name = "bleach"
 version = "6.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -652,15 +635,6 @@ wheels = [
 ]
 
 [[package]]
-name = "fastprogress"
-version = "1.0.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/95/52/77c827febdf8aac3b0840ce0edb7c34cbd330fab9bbe032c2a79ec8f2d51/fastprogress-1.0.3.tar.gz", hash = "sha256:7a17d2b438890f838c048eefce32c4ded47197ecc8ea042cecc33d3deb8022f5", size = 14920, upload-time = "2022-07-22T07:02:14.983Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/8f/213223fdee199c55db81e2d0c669f30e8285c5be2526c4ed924de39247da/fastprogress-1.0.3-py3-none-any.whl", hash = "sha256:6dfea88f7a4717b0a8d6ee2048beae5dbed369f932a368c5dd9caff34796f7c5", size = 12744, upload-time = "2022-07-22T07:02:12.547Z" },
-]
-
-[[package]]
 name = "flax"
 version = "0.10.7"
 source = { registry = "https://pypi.org/simple" }
@@ -991,21 +965,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/06/b9/ea50792ee0333dba764e06c305fe098bce1cb938dcb66fbe2fc47ef5dd02/jaxlib-0.6.2-cp313-cp313-win_amd64.whl", hash = "sha256:b977604cd36c74b174d25ed685017379468138eb747d865f75e466cb273c801d", size = 57919073, upload-time = "2025-06-17T23:11:39.344Z" },
     { url = "https://files.pythonhosted.org/packages/09/ce/9596391c104a0547fcaf6a8c72078bbae79dbc8e7f0843dc8318f6606328/jaxlib-0.6.2-cp313-cp313t-manylinux2014_aarch64.whl", hash = "sha256:39cf9555f85ae1ce2e2c1a59fc71f2eca4f9867a7cb934fef881ba56b11371d1", size = 79579638, upload-time = "2025-06-17T23:11:43.054Z" },
     { url = "https://files.pythonhosted.org/packages/10/79/f6e80f7f4cacfc9f03e64ac57ecb856b140de7c2f939b25f8dcf1aff63f9/jaxlib-0.6.2-cp313-cp313t-manylinux2014_x86_64.whl", hash = "sha256:3abd536e44b05fb1657507e3ff1fc3691f99613bae3921ecab9e82f27255f784", size = 90066675, upload-time = "2025-06-17T23:11:47.454Z" },
-]
-
-[[package]]
-name = "jaxopt"
-version = "0.8.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jax" },
-    { name = "jaxlib" },
-    { name = "numpy" },
-    { name = "scipy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/af/73f7514ea14d6aba0a851e03afbdd532a7af896577c708c6ce405917ce80/jaxopt-0.8.3.tar.gz", hash = "sha256:4b06dfa6f915a4f3291699606245af6069371a48dc5c92d4c507840d62990646", size = 121236, upload-time = "2024-01-10T12:04:13.487Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/a4/fc292a90a9c51d1b633cdffe2df30c702e1e0b3e0b568c7b81004cac0a06/jaxopt-0.8.3-py3-none-any.whl", hash = "sha256:4be2f82798393682529c9ca5046e5397ac6c8657b8acb6bf275e773b28df15b6", size = 172264, upload-time = "2024-01-10T12:04:11.354Z" },
 ]
 
 [[package]]
@@ -2729,13 +2688,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anndata" },
-    { name = "arviz" },
-    { name = "blackjax" },
     { name = "corner" },
     { name = "flax" },
     { name = "graphviz" },
-    { name = "hydra-core" },
-    { name = "ipykernel" },
     { name = "matplotlib" },
     { name = "multipledispatch" },
     { name = "myst-parser" },
@@ -2744,7 +2699,6 @@ dependencies = [
     { name = "notebook" },
     { name = "numpy" },
     { name = "numpyro" },
-    { name = "omegaconf" },
     { name = "pandas" },
     { name = "scanpy" },
     { name = "scipy" },
@@ -2752,26 +2706,29 @@ dependencies = [
     { name = "sphinx" },
     { name = "sphinx-rtd-theme" },
     { name = "statsmodels" },
-    { name = "umap-learn" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "arviz" },
+    { name = "hydra-core" },
+    { name = "ipykernel" },
+    { name = "omegaconf" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mpl" },
+    { name = "umap-learn" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "anndata", specifier = ">=0.11.1" },
-    { name = "arviz", specifier = ">=0.20.0" },
-    { name = "blackjax", specifier = "==1.2.5" },
+    { name = "arviz", marker = "extra == 'dev'", specifier = ">=0.20.0" },
     { name = "corner", specifier = ">=2.2.3" },
     { name = "flax", specifier = ">=0.10.7" },
     { name = "graphviz", specifier = ">=0.20.3" },
-    { name = "hydra-core", specifier = ">=1.3.2" },
-    { name = "ipykernel", specifier = ">=6.29.5" },
+    { name = "hydra-core", marker = "extra == 'dev'", specifier = ">=1.3.2" },
+    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.5" },
     { name = "matplotlib", specifier = ">=3.9.3" },
     { name = "multipledispatch", specifier = ">=1.0.0" },
     { name = "myst-parser", specifier = ">=4.0.0" },
@@ -2780,7 +2737,7 @@ requires-dist = [
     { name = "notebook", specifier = ">=7.4.3" },
     { name = "numpy", specifier = ">=2.1.3" },
     { name = "numpyro", specifier = "==0.18.0" },
-    { name = "omegaconf", specifier = ">=2.3.0" },
+    { name = "omegaconf", marker = "extra == 'dev'", specifier = ">=2.3.0" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.4" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0" },
@@ -2791,7 +2748,7 @@ requires-dist = [
     { name = "sphinx", specifier = ">=8.1.3" },
     { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
     { name = "statsmodels", specifier = ">=0.14.4" },
-    { name = "umap-learn", specifier = ">=0.5.7" },
+    { name = "umap-learn", marker = "extra == 'dev'", specifier = ">=0.5.7" },
 ]
 provides-extras = ["dev"]
 
