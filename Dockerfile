@@ -29,6 +29,16 @@ ENV PATH=/root/.local/bin:$PATH
 COPY pyproject.toml ./
 COPY uv.lock* ./
 
+# Copy required files for setuptools
+COPY README.md ./
+COPY LICENSE ./
+
+# Copy the source code
+COPY src/ ./src/
+
+# Verify the directory structure
+RUN ls -la /app && ls -la /app/src && ls -la /app/src/scribe
+
 # Install dependencies using uv with the system Python
 ENV PYTHONPATH=/usr/lib/python3/dist-packages
 RUN --mount=type=cache,target=/root/.cache/uv \
