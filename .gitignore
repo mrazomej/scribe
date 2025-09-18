@@ -111,6 +111,7 @@ data/**
 sandbox/**
 # Output files
 output/**
+outputs/**
 **/output/**
 # Figures
 **/fig/**
