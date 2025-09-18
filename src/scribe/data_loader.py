@@ -5,6 +5,7 @@ from anndata import AnnData
 from omegaconf import DictConfig
 from typing import Optional
 import os
+from omegaconf import OmegaConf
 
 # ==============================================================================
 # Data Loader
@@ -70,5 +71,65 @@ def load_and_preprocess_anndata(
             sc.pp.filter_genes(adata, **prep_config.filter_genes)
             print(f"Shape after filtering genes: {adata.shape}")
 
-    # Return the processed count data as an AnnData object
-    return adata
+        # If highly variable gene selection is specified, apply the steps
+        if "highly_variable_genes" in prep_config:
+            print("Selecting highly variable genes...")
+
+            # Make a copy to avoid modifying the original data during HVG selection
+            adata_hvg = adata.copy()
+            hvg_config = prep_config.highly_variable_genes
+
+            # OmegaConf DictConfig needs to be converted to a regular dict for modification
+            hvg_config_dict = (
+                OmegaConf.to_container(hvg_config, resolve=True)
+                if isinstance(hvg_config, DictConfig)
+                else dict(hvg_config)
+            )
+
+            flavor = hvg_config_dict.get("flavor", "seurat")
+
+            # Flavors like 'seurat' expect log-normalized data.
+            # Flavors like 'seurat_v3' expect raw counts.
+            if flavor not in ["seurat_v3", "seurat_v3_paper"]:
+                print(
+                    f"Flavor '{flavor}' expects log-normalized data. Preprocessing a copy..."
+                )
+                if "normalize_total" in prep_config:
+                    print(
+                        f"Normalizing total with {prep_config.normalize_total}"
+                    )
+                    sc.pp.normalize_total(
+                        adata_hvg, **prep_config.normalize_total
+                    )
+
+                if "log1p" in prep_config:
+                    print("Applying log1p transformation")
+                    sc.pp.log1p(adata_hvg)
+            else:
+                print(
+                    f"Flavor '{flavor}' expects raw counts. Skipping normalization."
+                )
+
+            # We handle subsetting manually to ensure raw counts are preserved.
+            # So we force subset=False and inplace=True for the annotation step.
+            hvg_config_dict["subset"] = False
+            hvg_config_dict["inplace"] = True
+
+            print(
+                f"Finding highly variable genes with config: {hvg_config_dict}"
+            )
+            sc.pp.highly_variable_genes(adata_hvg, **hvg_config_dict)
+
+            # Filter the original adata object using the mask from the processed one
+            if "highly_variable" in adata_hvg.var.columns:
+                adata = adata[:, adata_hvg.var.highly_variable].copy()
+                print(
+                    f"Shape after selecting highly variable genes: {adata.shape}"
+                )
+            else:
+                print(
+                    "Warning: 'highly_variable' mask not found. No genes were filtered."
+                )
+
+    # Convert the processed AnnData matrix to a JAX numpy array and return
+    return jnp.array(adata.X.toarray())
