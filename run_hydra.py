@@ -29,7 +29,8 @@ def main(cfg: DictConfig) -> None:
 
     # Remove keys that are not arguments to run_scribe
     del kwargs["data"]
-    del kwargs["hydra"]
+    if "hydra" in kwargs:
+        del kwargs["hydra"]
 
     # Run the inference
     results = scribe.run_scribe(counts=counts, **kwargs)
