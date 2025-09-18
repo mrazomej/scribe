@@ -1,12 +1,5 @@
 # @package _global_
 
-# --- Hydra settings ---
-hydra:
-  run:
-    dir: outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
-  job:
-    name: ${data.name}_${inference.method}
-
 # --- Defaults ---
 defaults:
   - data: singer
@@ -46,3 +39,10 @@ mixing_prior: null
 mu_prior: null
 phi_prior: null
 phi_capture_prior: null
+
+# --- Hydra settings ---
+hydra:
+  run:
+    dir: outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
+  job:
+    name: ${data.name}_${inference.method}
