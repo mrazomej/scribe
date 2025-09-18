@@ -11,6 +11,7 @@ from scribe.data_loader import load_and_preprocess_anndata
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print("Running with config:\n", OmegaConf.to_yaml(cfg))
+    print(f"Current working directory: {os.getcwd()}")
 
     # Load data
     data_path = hydra.utils.to_absolute_path(cfg.data.path)
@@ -37,9 +38,13 @@ def main(cfg: DictConfig) -> None:
 
     print("Inference complete.")
 
-    # Save the results
-    output_file = "scribe_results.pkl"
-    print(f"Saving results to {os.getcwd()}/{output_file}")
+    # Save the results in the Hydra output directory
+    from hydra.core.hydra_config import HydraConfig
+
+    hydra_cfg = HydraConfig.get()
+    output_dir = hydra_cfg.runtime.output_dir
+    output_file = os.path.join(output_dir, "scribe_results.pkl")
+    print(f"Saving results to {output_file}")
     with open(output_file, "wb") as f:
         pickle.dump(results, f)
 

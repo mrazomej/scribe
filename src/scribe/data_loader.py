@@ -132,4 +132,8 @@ def load_and_preprocess_anndata(
                 )
 
     # Convert the processed AnnData matrix to a JAX numpy array and return
-    return jnp.array(adata.X.toarray())
+    # Handle both sparse and dense matrices
+    if hasattr(adata.X, "toarray"):
+        return jnp.array(adata.X.toarray())
+    else:
+        return jnp.array(adata.X)
