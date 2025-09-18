@@ -1,4 +1,4 @@
-# @package _group_
+# @package inference
 method: "vae"
 
 # SVI parameters used by VAE
