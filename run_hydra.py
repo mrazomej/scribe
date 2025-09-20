@@ -32,6 +32,10 @@ def main(cfg: DictConfig) -> None:
     del kwargs["data"]
     if "hydra" in kwargs:
         del kwargs["hydra"]
+    if "viz" in kwargs:
+        del kwargs[
+            "viz"
+        ]  # Remove visualization config - not needed for inference
 
     # Run the inference
     results = scribe.run_scribe(counts=counts, **kwargs)
