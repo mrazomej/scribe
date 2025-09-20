@@ -2688,15 +2688,11 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anndata" },
-    { name = "corner" },
     { name = "flax" },
     { name = "graphviz" },
     { name = "matplotlib" },
     { name = "multipledispatch" },
     { name = "myst-parser" },
-    { name = "nbclient" },
-    { name = "nbformat" },
-    { name = "notebook" },
     { name = "numpy" },
     { name = "numpyro" },
     { name = "pandas" },
@@ -2704,6 +2700,7 @@ dependencies = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "sphinx" },
+    { name = "sphinx-gallery" },
     { name = "sphinx-rtd-theme" },
     { name = "statsmodels" },
 ]
@@ -2711,8 +2708,12 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "arviz" },
+    { name = "corner" },
     { name = "hydra-core" },
     { name = "ipykernel" },
+    { name = "nbclient" },
+    { name = "nbformat" },
+    { name = "notebook" },
     { name = "omegaconf" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -2724,7 +2725,7 @@ dev = [
 requires-dist = [
     { name = "anndata", specifier = ">=0.11.1" },
     { name = "arviz", marker = "extra == 'dev'", specifier = ">=0.20.0" },
-    { name = "corner", specifier = ">=2.2.3" },
+    { name = "corner", marker = "extra == 'dev'", specifier = ">=2.2.3" },
     { name = "flax", specifier = ">=0.10.7" },
     { name = "graphviz", specifier = ">=0.20.3" },
     { name = "hydra-core", marker = "extra == 'dev'", specifier = ">=1.3.2" },
@@ -2732,9 +2733,9 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.9.3" },
     { name = "multipledispatch", specifier = ">=1.0.0" },
     { name = "myst-parser", specifier = ">=4.0.0" },
-    { name = "nbclient", specifier = ">=0.10.2" },
-    { name = "nbformat", specifier = ">=5.10.4" },
-    { name = "notebook", specifier = ">=7.4.3" },
+    { name = "nbclient", marker = "extra == 'dev'", specifier = ">=0.10.2" },
+    { name = "nbformat", marker = "extra == 'dev'", specifier = ">=5.10.4" },
+    { name = "notebook", marker = "extra == 'dev'", specifier = ">=7.4.3" },
     { name = "numpy", specifier = ">=2.1.3" },
     { name = "numpyro", specifier = "==0.18.0" },
     { name = "omegaconf", marker = "extra == 'dev'", specifier = ">=2.3.0" },
@@ -2746,6 +2747,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.14.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "sphinx", specifier = ">=8.1.3" },
+    { name = "sphinx-gallery", specifier = ">=0.19.0" },
     { name = "sphinx-rtd-theme", specifier = ">=3.0.2" },
     { name = "statsmodels", specifier = ">=0.14.4" },
     { name = "umap-learn", marker = "extra == 'dev'", specifier = ">=0.5.7" },
@@ -2916,6 +2918,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6f/6d/be0b61178fe2cdcb67e2a92fc9ebb488e3c51c4f74a36a7824c0adf23425/sphinx-8.1.3.tar.gz", hash = "sha256:43c1911eecb0d3e161ad78611bc905d1ad0e523e4ddc202a58a821773dc4c927", size = 8184611, upload-time = "2024-10-13T20:27:13.93Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/26/60/1ddff83a56d33aaf6f10ec8ce84b4c007d9368b21008876fceda7e7381ef/sphinx-8.1.3-py3-none-any.whl", hash = "sha256:09719015511837b76bf6e03e42eb7595ac8c2e41eeb9c29c5b755c6b677992a2", size = 3487125, upload-time = "2024-10-13T20:27:10.448Z" },
+]
+
+[[package]]
+name = "sphinx-gallery"
+version = "0.19.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pillow" },
+    { name = "sphinx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cd/e5/9ccd6ecd492043123adb465cba504217b9f0a82e2cb5b1d7249c648497c6/sphinx_gallery-0.19.0.tar.gz", hash = "sha256:8400cb5240ad642e28a612fdba0667f725d0505a9be0222d0243de60e8af2eb3", size = 471479, upload-time = "2025-02-13T03:24:50.081Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/c7/52b48aec16b26c52aba854d03a3a31e0681150301dac1bea2243645a69e7/sphinx_gallery-0.19.0-py3-none-any.whl", hash = "sha256:4c28751973f81769d5bbbf5e4ebaa0dc49dff8c48eb7f11131eb5f6e4aa25f0e", size = 455923, upload-time = "2025-02-13T03:24:47.697Z" },
 ]
 
 [[package]]

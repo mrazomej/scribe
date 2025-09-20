@@ -24,22 +24,29 @@ expression levels, SCRIBE learns probability distributions that capture:
    :width: 350
    :alt: Example posterior distribution
    
-   Rather than single values, SCRIBE learns complete probability distributions for model parameters. Here, the posterior distribution for the success probability parameter shows the range of plausible values given the data.
+   Rather than single values, SCRIBE learns complete probability distributions 
+   for model parameters. Here, the posterior distribution for the success 
+   probability parameter shows the range of plausible values given the data.
 
-Why `Variational Inference <https://en.wikipedia.org/wiki/Variational_Bayesian_methods>`_?
-------------------------------------------------------------------------------------------
+A Unified Framework for Inference
+---------------------------------
 
-With such high-dimensional data, traditional Bayesian methods such as `Markov
-Chain Monte Carlo (MCMC)
-<https://en.wikipedia.org/wiki/Markov_chain_Monte_Carlo>`_ would take
-prohibitively long to converge. SCRIBE uses variational inference—a method that
-transforms Bayesian inference into an optimization problem—to learn approximate
-posterior distributions efficiently. This allows SCRIBE to:
+With high-dimensional data, no single inference method is perfect. SCRIBE
+provides three powerful, complementary methods accessible through a single,
+unified interface:
 
-* Scale to datasets with millions of cells
-* Accelerate inference with GPUs
-* Provide results in minutes to hours rather than days
-* Maintain uncertainty quantification despite approximations
+* **Stochastic Variational Inference (SVI)**: An optimization-based method that
+  is extremely fast and scalable, perfect for exploring large datasets quickly.
+* **Markov Chain Monte Carlo (MCMC)**: A sampling-based method that provides the
+  gold-standard, exact posterior distribution for rigorous, publication-quality
+  analysis. This requires specialized hardware such as GPUs with double
+  precision support and a lot of memory (e.g., NVIDIA H100).
+* **Variational Autoencoders (VAE)**: A deep learning approach that combines
+  fast inference with powerful representation learning, ideal for tasks like
+  dimensionality reduction and discovering latent structure.
+
+This unified framework allows you to easily switch between speed and accuracy,
+choosing the right tool for the right stage of your analysis.
 
 What Can You Do with SCRIBE?
 ----------------------------
@@ -56,21 +63,26 @@ Once SCRIBE learns your model, you can:
    :width: 350
    :alt: Posterior predictive checks
    
-   SCRIBE can generate synthetic data (blue bands) that matches the statistical properties of your real data (black line), allowing you to validate model fit and make predictions.
+   SCRIBE can generate synthetic data (blue bands) that matches the statistical 
+   properties of your real data (black line), allowing you to validate model fit
+   and make predictions.
 
 The Bayesian Advantage
 ----------------------
 
 The Bayesian framework provides several key benefits for single-cell analysis:
 
-* **Uncertainty Quantification**: Every estimate comes with credible regions
-  (what most scientist confuse with confidence intervals from the frequentist
-  world)
-* **Model Comparison**: Rigorous ways to choose between competing models
-* **Missing Data**: Principled handling of dropouts and technical zeros
-* **Integration**: Natural ways to combine data from multiple experiments (to be
-  developed)
-* **Predictions**: Generate synthetic data with realistic properties
+* **Specialized Models**: Choose from models tailored to scRNA-seq data, such as
+  the Zero-Inflated Negative Binomial (ZINB) and models that account for
+  Variable Capture Probability (VCP).
+* **Uncertainty Quantification**: Every estimate comes with credible regions.
+* **Model Comparison**: Rigorously choose between competing biological
+  hypotheses.
+* **Principled Handling of Zeros**: Distinguish between technical dropouts and
+  true biological absence.
+* **Integration**: A natural framework for combining data from multiple
+  experiments (to be developed).
+* **Prediction**: Generate realistic synthetic data for model validation.
 
 SCRIBE makes these powerful Bayesian methods accessible through a simple Python
 interface, while maintaining the mathematical rigor necessary for proper
