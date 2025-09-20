@@ -12,6 +12,7 @@ from .models.model_config import ModelConfig
 from . import viz
 from . import utils
 from . import stats
+from . import data_loader
 
 # ------------------------------------------------------------------------------
 # Register KL with NumPyro on import (idempotent)
@@ -99,4 +100,5 @@ __all__ = [
     "stats",
     # Utility functions
     "apply_distribution_mode_patches",
+    "data_loader",
 ]
