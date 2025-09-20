@@ -40,6 +40,22 @@ mu_prior: null
 phi_prior: null
 phi_capture_prior: null
 
+# --- Visualization Configuration (for viz_hydra.py) ---
+viz:
+  loss: true
+  ecdf: true
+  ppc: true
+  format: png  # Output format: png, pdf, svg, eps, etc.
+  
+  # ECDF plot options
+  ecdf_opts:
+    n_genes: 25
+  
+  # PPC plot options  
+  ppc_opts:
+    n_genes: 25
+    n_samples: 1500
+
 # --- Hydra settings ---
 hydra:
   run:

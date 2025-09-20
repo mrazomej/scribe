@@ -1,0 +1,19 @@
+# @package _global_
+
+# Path to the hydra run directory containing the inference results
+run_dir: ???
+
+# Plotting options
+viz:
+  loss: true
+  ecdf: true
+  ppc: true
+
+  # ECDF plot options
+  ecdf_opts:
+    n_genes: 25
+
+  # PPC plot options
+  ppc_opts:
+    n_genes: 25
+    n_samples: 1500
