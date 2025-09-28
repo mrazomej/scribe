@@ -13,6 +13,7 @@ from . import viz
 from . import utils
 from . import stats
 from . import data_loader
+from .catalog import ExperimentCatalog
 
 # ------------------------------------------------------------------------------
 # Register KL with NumPyro on import (idempotent)
@@ -94,6 +95,8 @@ __all__ = [
     "ScribeSVIResults",
     "ScribeMCMCResults",
     "ScribeVAEResults",
+    # Experiment management
+    "ExperimentCatalog",
     # Other modules
     "viz",
     "utils",
