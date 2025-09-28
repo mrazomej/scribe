@@ -113,6 +113,8 @@ sandbox/**
 output/**
 outputs/**
 **/output/**
+# Cache folder for docs
+CACHE/
 # Figures
 **/fig/**
 !code/fig/**
@@ -122,5 +124,5 @@ paper/_*.html
 paper/_*.pdf
 paper/_output/*
 paper/site_libs/*
-
+# Random folder
 /.luarc.json
