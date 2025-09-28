@@ -11,6 +11,10 @@ import yaml
 from dataclasses import dataclass
 import hydra
 
+# ==============================================================================
+# ExperimentRun class
+# ==============================================================================
+
 
 @dataclass
 class ExperimentRun:
@@ -20,6 +24,8 @@ class ExperimentRun:
 
     path: str
     metadata: Dict[str, Any]
+
+    # --------------------------------------------------------------------------
 
     def load_results(self):
         """Load the scribe results pickle file."""
@@ -71,17 +77,26 @@ class ExperimentRun:
 
     # --------------------------------------------------------------------------
 
-    def load_data(self):
+    def load_data(self, return_jax: bool = False):
         """
         Load and preprocess the original data used in this experiment.
 
         Uses the data path and preprocessing configuration from the experiment's
         Hydra config to recreate the exact data that was used during inference.
 
+        Parameters
+        ----------
+        return_jax : bool, default True
+            If True, return the data as a JAX numpy array. If False, return the
+            original AnnData object with all preprocessing applied.
+
         Returns
         -------
-        jnp.ndarray
-            The preprocessed count data as a JAX numpy array (cells x genes)
+        jnp.ndarray or AnnData
+            - If return_jax=True: The preprocessed count data as a JAX numpy
+              array (cells x genes).
+            - If return_jax=False: The processed AnnData object with all
+              metadata preserved.
         """
         from .data_loader import load_and_preprocess_anndata
 
@@ -115,12 +130,19 @@ class ExperimentRun:
             print(f"Preprocessing config: {prep_config}")
 
         # Load and preprocess the data
-        return load_and_preprocess_anndata(data_path, prep_config)
+        return load_and_preprocess_anndata(
+            data_path, prep_config, return_jax=return_jax
+        )
 
     # --------------------------------------------------------------------------
 
     def __repr__(self):
         return f"ExperimentRun({self.path}, metadata={self.metadata})"
+
+
+# ==============================================================================
+# ExperimentCatalog class
+# ==============================================================================
 
 
 class ExperimentCatalog:
@@ -488,20 +510,24 @@ class ExperimentCatalog:
 
     # --------------------------------------------------------------------------
 
-    def load_data(self, **filters):
+    def load_data(self, return_jax: bool = True, **filters):
         """
         Convenience method to load the original data directly.
 
         Parameters
         ----------
+        return_jax : bool, default True
+            If True, return the data as a JAX numpy array. If False, return the
+            original AnnData object with all preprocessing applied.
         **filters
             Key-value pairs to filter experiments by
 
         Returns
         -------
-        jnp.ndarray
-            The preprocessed count data. If multiple experiments match,
-            returns data from the first one.
+        jnp.ndarray or AnnData
+            If return_jax=True: The preprocessed count data as a JAX numpy array.
+            If return_jax=False: The processed AnnData object.
+            If multiple experiments match, returns data from the first one.
 
         Raises
         ------
@@ -523,7 +549,7 @@ class ExperimentCatalog:
             for exp in experiments:
                 print(f"  - {exp.path}")
 
-        return experiments[0].load_data()
+        return experiments[0].load_data(return_jax=return_jax)
 
     # --------------------------------------------------------------------------
 
@@ -531,3 +557,35 @@ class ExperimentCatalog:
         """Refresh the catalog by re-scanning the base directory."""
         self.experiments = self._scan_experiments()
         print(f"Refreshed catalog. Found {len(self.experiments)} experiments.")
+
+    # --------------------------------------------------------------------------
+    # Make the catalog indexable and iterable
+    # --------------------------------------------------------------------------
+
+    def __len__(self) -> int:
+        """Return the number of experiments in the catalog."""
+        return len(self.experiments)
+
+    # --------------------------------------------------------------------------
+
+    def __getitem__(
+        self, index: Union[int, slice]
+    ) -> Union[ExperimentRun, List[ExperimentRun]]:
+        """
+        Get experiment(s) by index.
+
+        Parameters
+        ----------
+        index : int or slice
+            Index or slice to select experiments
+
+        Returns
+        -------
+        ExperimentRun or List[ExperimentRun]
+            The selected experiment(s)
+        """
+        return self.experiments[index]
+
+    def __iter__(self):
+        """Make the catalog iterable over experiments."""
+        return iter(self.experiments)

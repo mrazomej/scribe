@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import scanpy as sc
 from anndata import AnnData
 from omegaconf import DictConfig
-from typing import Optional
+from typing import Optional, Union
 import os
 from omegaconf import OmegaConf
 
@@ -13,8 +13,8 @@ from omegaconf import OmegaConf
 
 
 def load_and_preprocess_anndata(
-    path: str, prep_config: Optional[DictConfig] = None
-) -> jnp.ndarray:
+    path: str, prep_config: Optional[DictConfig] = None, return_jax: bool = True
+) -> Union[jnp.ndarray, AnnData]:
     """
     Load count data from a CSV or h5ad file and optionally apply scanpy
     preprocessing steps.
@@ -29,11 +29,15 @@ def load_and_preprocess_anndata(
         preprocessing steps. Supported keys:
             - "filter_cells": dict of arguments for scanpy.pp.filter_cells
             - "filter_genes": dict of arguments for scanpy.pp.filter_genes
+    return_jax : bool, default True
+        If True, return the data as a JAX numpy array. If False, return the
+        original AnnData object with all preprocessing applied.
 
     Returns
     -------
-    jnp.ndarray
-        The processed count data as a JAX numpy array (cells x genes).
+    jnp.ndarray or AnnData
+        If return_jax=True: The processed count data as a JAX numpy array (cells x genes).
+        If return_jax=False: The processed AnnData object with all metadata preserved.
     """
     # Print the path from which data will be loaded
     print(f"Loading data from {path}...")
@@ -131,9 +135,14 @@ def load_and_preprocess_anndata(
                     "Warning: 'highly_variable' mask not found. No genes were filtered."
                 )
 
-    # Convert the processed AnnData matrix to a JAX numpy array and return
-    # Handle both sparse and dense matrices
-    if hasattr(adata.X, "toarray"):
-        return jnp.array(adata.X.toarray())
+    # Return either JAX array or AnnData object based on return_jax parameter
+    if return_jax:
+        # Convert the processed AnnData matrix to a JAX numpy array
+        # Handle both sparse and dense matrices
+        if hasattr(adata.X, "toarray"):
+            return jnp.array(adata.X.toarray())
+        else:
+            return jnp.array(adata.X)
     else:
-        return jnp.array(adata.X)
+        # Return the processed AnnData object with all metadata preserved
+        return adata
