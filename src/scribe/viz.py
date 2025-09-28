@@ -14,6 +14,7 @@ import scipy.stats as stats
 
 # Import typing
 from typing import Union
+from dataclasses import dataclass
 
 # ------------------------------------------------------------------------------
 # General plotting functions
@@ -84,6 +85,12 @@ def matplotlib_style():
 # ------------------------------------------------------------------------------
 
 
+def _hexcolor(hex_code: str) -> tuple[float, float, float]:
+    """Convert hex color to RGB tuple (0-1 scale)."""
+    hex_code = hex_code.lstrip("#")
+    return tuple(int(hex_code[i : i + 2], 16) / 255 for i in (0, 2, 4))
+
+
 def colors():
     """
     Returns dictionary with personal color palette.
@@ -124,6 +131,54 @@ def colors():
         colors[key] = rgb
 
     return colors
+
+
+@dataclass
+class Colors:
+    """
+    Personal color palette with tab completion support.
+    All colors are RGB tuples on 0-1 scale.
+    """
+
+    # Black variations
+    dark_black: tuple[float, float, float] = _hexcolor("#000000")
+    black: tuple[float, float, float] = _hexcolor("#000000")
+    light_black: tuple[float, float, float] = _hexcolor("#05080F")
+    pale_black: tuple[float, float, float] = _hexcolor("#1F1F1F")
+
+    # Blue variations
+    dark_blue: tuple[float, float, float] = _hexcolor("#2957A8")
+    blue: tuple[float, float, float] = _hexcolor("#3876C0")
+    light_blue: tuple[float, float, float] = _hexcolor("#81A9DA")
+    pale_blue: tuple[float, float, float] = _hexcolor("#C0D4ED")
+
+    # Green variations
+    dark_green: tuple[float, float, float] = _hexcolor("#2E5C0A")
+    green: tuple[float, float, float] = _hexcolor("#468C12")
+    light_green: tuple[float, float, float] = _hexcolor("#6EBC24")
+    pale_green: tuple[float, float, float] = _hexcolor("#A9EB70")
+
+    # Red variations
+    dark_red: tuple[float, float, float] = _hexcolor("#912E27")
+    red: tuple[float, float, float] = _hexcolor("#CB4338")
+    light_red: tuple[float, float, float] = _hexcolor("#D57A72")
+    pale_red: tuple[float, float, float] = _hexcolor("#E8B5B0")
+
+    # Gold variations
+    dark_gold: tuple[float, float, float] = _hexcolor("#B68816")
+    gold: tuple[float, float, float] = _hexcolor("#EBC21F")
+    light_gold: tuple[float, float, float] = _hexcolor("#F2D769")
+    pale_gold: tuple[float, float, float] = _hexcolor("#F7E6A1")
+
+    # Purple variations
+    dark_purple: tuple[float, float, float] = _hexcolor("#5E315E")
+    purple: tuple[float, float, float] = _hexcolor("#934D93")
+    light_purple: tuple[float, float, float] = _hexcolor("#BC7FBC")
+    pale_purple: tuple[float, float, float] = _hexcolor("#D5AFD5")
+
+
+# Create an instance for easy access
+colors = Colors()
 
 
 # ------------------------------------------------------------------------------
