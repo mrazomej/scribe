@@ -39,10 +39,14 @@ COPY src/ ./src/
 # Verify the directory structure
 RUN ls -la /app && ls -la /app/src && ls -la /app/src/scribe
 
+# Fix JAX CUDA plugin version mismatch
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --break-system-packages --upgrade jax-cuda12-plugin
+
 # Install dependencies using uv with the system Python
 ENV PYTHONPATH=/usr/lib/python3/dist-packages
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --break-system-packages -e ".[dev]"
+    uv pip install --system --break-system-packages -e ".[dev]" --group dev
 
 # Set the locale for UTF-8 used for Sphinx docs
 ENV LANG=C.UTF-8
