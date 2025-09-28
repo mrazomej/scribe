@@ -2171,30 +2171,35 @@ class ScribeSVIResults:
         -------
         Dict[str, Union[jnp.ndarray, object]]
             Dictionary containing normalized expression profiles. Keys depend on
-            input arguments: - 'samples': Raw Dirichlet samples (if
-            store_samples=True) - 'concentrations': Fitted concentration
-            parameters (if fit_distribution=True) - 'mean_probabilities': Mean
-            probabilities from fitted distribution (if fit_distribution=True) -
-            'distributions': Dirichlet distribution objects (if
-            fit_distribution=True) - 'original_concentrations': Original r
-            parameter samples (if return_concentrations=True)
+            input arguments:
+                - 'samples': Raw Dirichlet samples (if store_samples=True)
+                - 'concentrations': Fitted concentration parameters (if
+                  fit_distribution=True)
+                - 'mean_probabilities': Mean probabilities from fitted
+                  distribution (if fit_distribution=True)
+                - 'distributions': Dirichlet distribution objects (if
+                  fit_distribution=True)
+                - 'original_concentrations': Original r parameter samples (if
+                  return_concentrations=True)
 
-            For non-mixture models: - samples: shape (n_posterior_samples,
-            n_genes, n_samples_dirichlet) or
-                      (n_posterior_samples, n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_genes,) - single fitted distribution
-            - mean_probabilities: shape (n_genes,) - single fitted distribution
-            - distributions: single Dirichlet distribution object
+            For non-mixture models:
+                - samples: shape (n_posterior_samples, n_genes,
+                  n_samples_dirichlet) or (n_posterior_samples, n_genes) if
+                  n_samples_dirichlet=1
+                - concentrations: shape (n_genes,) - single fitted distribution
+                - mean_probabilities: shape (n_genes,) - single fitted
+                  distribution
+                - distributions: single Dirichlet distribution object
 
-            For mixture models: - samples: shape (n_posterior_samples,
-            n_components, n_genes, n_samples_dirichlet) or
-                      (n_posterior_samples, n_components, n_genes) if
-                      n_samples_dirichlet=1
-            - concentrations: shape (n_components, n_genes) - one fitted
-              distribution per component
-            - mean_probabilities: shape (n_components, n_genes) - one fitted
-              distribution per component
-            - distributions: list of n_components Dirichlet distribution objects
+            For mixture models:
+                - samples: shape (n_posterior_samples, n_components, n_genes,
+                  n_samples_dirichlet) or (n_posterior_samples, n_components,
+                  n_genes) if n_samples_dirichlet=1
+                - concentrations: shape (n_components, n_genes) - one fitted
+                distribution per component - mean_probabilities: shape
+                (n_components, n_genes) - one fitted distribution per component
+                - distributions: list of n_components Dirichlet distribution
+                objects
 
         Raises
         ------
