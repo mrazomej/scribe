@@ -112,31 +112,21 @@ class ScribeMCMCSubset:
         if samples is None:
             return None
 
-        # List of gene-specific keys to subset
-        gene_keys = []
-        # r
-        if "r" in samples:
-            gene_keys.append("r")
-        # mu
-        if "mu" in samples:
-            gene_keys.append("mu")
-        # gate
-        if "gate" in samples:
-            gene_keys.append("gate")
-        # r_unconstrained
-        if "r_unconstrained" in samples:
-            gene_keys.append("r_unconstrained")
-        # gate_unconstrained
-        if "gate_unconstrained" in samples:
-            gene_keys.append("gate_unconstrained")
-        # (extend here for other gene-specific keys if needed)
+        new_samples = {}
+        # Get the original number of genes before subsetting, which is stored
+        # in the instance variable self.n_genes.
+        original_n_genes = self.n_genes
 
-        new_samples = dict(samples)
-        for key in gene_keys:
-            if self.n_components is not None:
-                new_samples[key] = samples[key][..., index]
+        for key, value in samples.items():
+            # The gene dimension is typically the last one in the posterior sample arrays.
+            # We check if the last dimension's size matches the original number of genes.
+            if value.ndim > 0 and value.shape[-1] == original_n_genes:
+                # This is a gene-specific parameter, so we subset it along the last axis.
+                new_samples[key] = value[..., index]
             else:
-                new_samples[key] = samples[key][..., index]
+                # This is not a gene-specific parameter (e.g., global, cell-specific),
+                # so we keep it as is.
+                new_samples[key] = value
         return new_samples
 
     # --------------------------------------------------------------------------
@@ -1260,31 +1250,21 @@ class ScribeMCMCResults(MCMC):
         if samples is None:
             return None
 
-        # List of gene-specific keys to subset
-        gene_keys = []
-        # r
-        if "r" in samples:
-            gene_keys.append("r")
-        # mu
-        if "mu" in samples:
-            gene_keys.append("mu")
-        # gate
-        if "gate" in samples:
-            gene_keys.append("gate")
-        # r_unconstrained
-        if "r_unconstrained" in samples:
-            gene_keys.append("r_unconstrained")
-        # gate_unconstrained
-        if "gate_unconstrained" in samples:
-            gene_keys.append("gate_unconstrained")
-        # (extend here for other gene-specific keys if needed)
+        new_samples = {}
+        # Get the original number of genes before subsetting, which is stored
+        # in the instance variable self.n_genes.
+        original_n_genes = self.n_genes
 
-        new_samples = dict(samples)
-        for key in gene_keys:
-            if self.n_components is not None:
-                new_samples[key] = samples[key][..., index]
+        for key, value in samples.items():
+            # The gene dimension is typically the last one in the posterior sample arrays.
+            # We check if the last dimension's size matches the original number of genes.
+            if value.ndim > 0 and value.shape[-1] == original_n_genes:
+                # This is a gene-specific parameter, so we subset it along the last axis.
+                new_samples[key] = value[..., index]
             else:
-                new_samples[key] = samples[key][..., index]
+                # This is not a gene-specific parameter (e.g., global, cell-specific),
+                # so we keep it as is.
+                new_samples[key] = value
         return new_samples
 
     def __getitem__(self, index):

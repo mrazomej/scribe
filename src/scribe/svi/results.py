@@ -646,30 +646,26 @@ class ScribeSVIResults:
 
     def _subset_params(self, params: Dict, index) -> Dict:
         """
-        Create a new parameter dictionary for the given index.
+        Create a new parameter dictionary for the given index using a dynamic,
+        shape-based approach.
         """
-        new_params = dict(params)
-        gene_specific_params = [
-            "r_loc",
-            "r_scale",
-            "gate_alpha",
-            "gate_beta",
-            "mu_loc",
-            "mu_scale",
-            "r_unconstrained_loc",
-            "r_unconstrained_scale",
-            "gate_unconstrained_loc",
-            "gate_unconstrained_scale",
-        ]
+        new_params = {}
+        original_n_genes = self.n_genes
 
-        for param_name in gene_specific_params:
-            if param_name in params:
-                param = params[param_name]
-                if param.ndim == 1:  # (n_genes,)
-                    new_params[param_name] = param[index]
-                elif param.ndim == 2:  # (n_components, n_genes)
-                    new_params[param_name] = param[:, index]
-
+        for key, value in params.items():
+            # Find the axis that corresponds to the number of genes.
+            # This is safer than assuming the position of the gene axis.
+            try:
+                # Find the first occurrence of an axis with size `original_n_genes`.
+                gene_axis = value.shape.index(original_n_genes)
+                # Build a slicer tuple to index the correct axis.
+                slicer = [slice(None)] * value.ndim
+                slicer[gene_axis] = index
+                new_params[key] = value[tuple(slicer)]
+            except ValueError:
+                # This parameter is not gene-specific (no axis matches n_genes),
+                # so we keep it as is.
+                new_params[key] = value
         return new_params
 
     # --------------------------------------------------------------------------
