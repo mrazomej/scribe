@@ -5,8 +5,10 @@ Sampling utilities for SCRIBE.
 from jax import random
 import jax.numpy as jnp
 from numpyro.infer import Predictive
-from typing import Dict, Optional, Union, Callable
+from typing import Dict, Optional, Union, Callable, List
 from numpyro.infer import SVI
+from numpyro.handlers import block
+
 
 # ------------------------------------------------------------------------------
 # Posterior predictive samples
@@ -16,9 +18,11 @@ from numpyro.infer import SVI
 def sample_variational_posterior(
     guide: Callable,
     params: Dict,
+    model: Callable,
     model_args: Dict,
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_samples: int = 100,
+    return_sites: Optional[Union[str, List[str]]] = None,
 ) -> Dict:
     """
     Sample parameters from the variational posterior distribution.
@@ -29,6 +33,8 @@ def sample_variational_posterior(
         Guide function
     params : Dict
         Dictionary containing optimized variational parameters
+    model : Callable
+        Model function
     model_args : Dict
         Dictionary containing model arguments. For standard models, this is
         just the number of cells and genes. For mixture models, this is the
@@ -37,6 +43,8 @@ def sample_variational_posterior(
         JAX random number generator key
     n_samples : int, optional
         Number of posterior samples to generate (default: 100)
+    return_sites : Optional[Union[str, List[str]]], optional
+        Sites to return from the model. If None, returns all sites.
 
     Returns
     -------
@@ -47,7 +55,20 @@ def sample_variational_posterior(
     predictive_param = Predictive(guide, params=params, num_samples=n_samples)
 
     # Sample parameters from the variational posterior
-    return predictive_param(rng_key, **model_args)
+    posterior_samples = predictive_param(rng_key, **model_args)
+
+    # Also run the model to get deterministic sites.
+    # We block the 'counts' site to prevent Predictive from sampling it,
+    # which avoids a potentially huge memory allocation.
+    blocked_model = block(model, hide=["counts"])
+    predictive_model = Predictive(
+        blocked_model, posterior_samples=posterior_samples
+    )
+    model_samples = predictive_model(rng_key, **model_args)
+
+    # Combine samples from guide and model
+    posterior_samples.update(model_samples)
+    return posterior_samples
 
 
 # ------------------------------------------------------------------------------
@@ -147,7 +168,7 @@ def generate_ppc_samples(
 
     # Sample from variational posterior
     posterior_param_samples = sample_variational_posterior(
-        guide, params, model_args, key_params, n_samples
+        guide, params, model, model_args, key_params, n_samples
     )
 
     # Generate predictive samples

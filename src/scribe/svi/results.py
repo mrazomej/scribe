@@ -1242,8 +1242,15 @@ class ScribeSVIResults:
         parameterization = self.model_config.parameterization or ""
         inference_method = self.model_config.inference_method or ""
         prior_type = self.model_config.vae_prior_type or ""
+        unconstrained = getattr(self.model_config, "unconstrained", False)
+        guide_rank = self.model_config.guide_rank
         return get_model_and_guide(
-            self.model_type, parameterization, inference_method, prior_type
+            self.model_type,
+            parameterization,
+            inference_method,
+            prior_type,
+            unconstrained=unconstrained,
+            guide_rank=guide_rank,
         )
 
     # --------------------------------------------------------------------------
@@ -1281,11 +1288,10 @@ class ScribeSVIResults:
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
         store_samples: bool = True,
-        canonical: bool = False,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
         # Get the guide function
-        _, guide = self._model_and_guide()
+        model, guide = self._model_and_guide()
 
         if guide is None:
             raise ValueError(
@@ -1301,16 +1307,17 @@ class ScribeSVIResults:
 
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
-            guide, self.params, model_args, rng_key=rng_key, n_samples=n_samples
+            guide,
+            self.params,
+            model,
+            model_args,
+            rng_key=rng_key,
+            n_samples=n_samples,
         )
 
         # Store samples if requested
         if store_samples:
             self.posterior_samples = posterior_samples
-
-        # Convert to canonical form if requested
-        if canonical:
-            self._convert_to_canonical()
 
         return posterior_samples
 
@@ -1321,49 +1328,7 @@ class ScribeSVIResults:
         rng_key: random.PRNGKey = random.PRNGKey(42),
         batch_size: Optional[int] = None,
         store_samples: bool = True,
-    ) -> jnp.ndarray:
-        """Generate predictive samples using posterior parameter samples."""
-        # Get the model and guide functions
-        model, _ = self._model_and_guide()
-
-        # Prepare base model arguments
-        model_args = {
-            "n_cells": self.n_cells,
-            "n_genes": self.n_genes,
-            "model_config": self.model_config,
-        }
-
-        # Check if posterior samples exist
-        if self.posterior_samples is None:
-            raise ValueError(
-                "No posterior samples found. Call get_posterior_samples() first."
-            )
-
-        # Generate predictive samples
-        predictive_samples = generate_predictive_samples(
-            model,
-            self.posterior_samples,
-            model_args,
-            rng_key=rng_key,
-            batch_size=batch_size,
-        )
-
-        # Store samples if requested
-        if store_samples:
-            self.predictive_samples = predictive_samples
-
-        return predictive_samples
-
-    # --------------------------------------------------------------------------
-
-    def get_ppc_samples(
-        self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
-        n_samples: int = 100,
-        batch_size: Optional[int] = None,
-        store_samples: bool = True,
         resample_parameters: bool = False,
-        canonical: bool = False,
     ) -> Dict:
         """Generate posterior predictive check samples."""
         # Check if we need to resample parameters
@@ -1376,7 +1341,43 @@ class ScribeSVIResults:
                 rng_key=rng_key,
                 n_samples=n_samples,
                 store_samples=store_samples,
-                canonical=canonical,
+            )
+
+        # Generate predictive samples using existing parameters
+        _, key_pred = random.split(rng_key)
+
+        self.get_predictive_samples(
+            rng_key=key_pred,
+            batch_size=batch_size,
+            store_samples=store_samples,
+        )
+
+        return {
+            "parameter_samples": self.posterior_samples,
+            "predictive_samples": self.predictive_samples,
+        }
+
+    # --------------------------------------------------------------------------
+
+    def get_ppc_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 100,
+        batch_size: Optional[int] = None,
+        store_samples: bool = True,
+        resample_parameters: bool = False,
+    ) -> Dict:
+        """Generate posterior predictive check samples."""
+        # Check if we need to resample parameters
+        need_params = resample_parameters or self.posterior_samples is None
+
+        # Generate posterior samples if needed
+        if need_params:
+            # Sample parameters and generate predictive samples
+            self.get_posterior_samples(
+                rng_key=rng_key,
+                n_samples=n_samples,
+                store_samples=store_samples,
             )
 
         # Generate predictive samples using existing parameters
@@ -2254,100 +2255,16 @@ class ScribeSVIResults:
 
     def _convert_to_canonical(self):
         """
-        Convert posterior samples to canonical (p, r) form.
+        [DEPRECATED] Convert posterior samples to canonical (p, r) form.
 
-        Returns
-        -------
-        self : ScribeSVIResults
-            Returns self for method chaining
+        This method is deprecated and will be removed in a future version. The
+        posterior sampling process now automatically returns both constrained and
+        unconstrained parameters.
         """
-        # If no posterior samples, return self
-        if self.posterior_samples is None:
-            return self
-
-        # Get samples
-        samples = self.posterior_samples
-
-        # Handle unconstrained parameterization (r_unconstrained,
-        # p_unconstrained, etc.)
-        if "r_unconstrained" in samples and "r" not in samples:
-            # compute r from r_unconstrained
-            samples["r"] = jnp.exp(samples["r_unconstrained"])
-
-        if "p_unconstrained" in samples and "p" not in samples:
-            # Compute p from p_unconstrained
-            samples["p"] = sigmoid(samples["p_unconstrained"])
-
-        if "gate_unconstrained" in samples and "gate" not in samples:
-            # Compute gate from gate_unconstrained
-            samples["gate"] = sigmoid(samples["gate_unconstrained"])
-
-        # Handle VCP capture probability conversions
-        if "phi_capture" in samples and "p_capture" not in samples:
-            # Extract phi_capture
-            phi_capture = samples["phi_capture"]
-            # Compute p_capture from phi_capture
-            samples["p_capture"] = 1.0 / (1.0 + phi_capture)
-
-        if "p_capture_unconstrained" in samples and "p_capture" not in samples:
-            # Compute p_capture from p_capture_unconstrained
-            samples["p_capture"] = sigmoid(samples["p_capture_unconstrained"])
-
-        # Handle mixing weights computation for mixture models
-        if (
-            "mixing_logits_unconstrained" in samples
-            and "mixing_weights" not in samples
-        ):
-            # Compute mixing weights from mixing_logits_unconstrained using
-            # softmax
-            samples["mixing_weights"] = softmax(
-                samples["mixing_logits_unconstrained"], axis=-1
-            )
-
-        # Convert parameters to canonical form based on what's available
-        if "phi" in samples and "mu" in samples:
-            # Extract phi and mu
-            phi = samples["phi"]
-            mu = samples["mu"]
-            # Compute p from phi
-            samples["p"] = 1.0 / (1.0 + phi)
-
-            # Reshape phi to broadcast with mu based on mixture model and
-            # component specificity
-            if self.n_components is not None:
-                # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                if self.model_config.component_specific_params:
-                    # Component-specific phi: shape (n_samples, n_components)
-                    phi_reshaped = phi[:, :, None]
-                else:
-                    # Shared phi: shape (n_samples,) ->
-                    # broadcast to (n_samples, 1, 1)
-                    phi_reshaped = phi[:, None, None]
-            else:
-                # Non-mixture model: mu has shape (n_samples, n_genes)
-                phi_reshaped = phi[:, None]
-            # Compute r from mu and phi
-            samples["r"] = mu * phi_reshaped
-
-        # Handle linked parameterization (mu, p -> r)
-        elif "mu" in samples and "p" in samples and "r" not in samples:
-            # Extract p and mu
-            p = samples["p"]
-            mu = samples["mu"]
-            # Reshape p to broadcast with mu based on mixture model and
-            # component specificity
-            if self.n_components is not None:
-                if self.model_config.component_specific_params:
-                    # Component-specific p: shape (n_samples, n_components)
-                    p_reshaped = p[:, :, None]
-                else:
-                    # Shared p: shape (n_samples,) ->
-                    # broadcast to (n_samples, 1, 1)
-                    p_reshaped = p[:, None, None]
-            else:
-                # Non-mixture model: mu has shape (n_samples, n_genes)
-                p_reshaped = p[:, None]
-            # Compute r from mu and p
-            samples["r"] = mu * (1.0 - p_reshaped) / p_reshaped
-
+        warnings.warn(
+            "The '_convert_to_canonical' method is deprecated and will be removed. "
+            "Posterior samples are now automatically converted.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self
