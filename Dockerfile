@@ -1,6 +1,8 @@
 # Use the NVIDIA JAX image as the base
 # FROM nvcr.io/nvidia/jax:25.04-py3
-FROM ghcr.io/nvidia/jax:jax-2025-06-18
+# CUDA 12.6 compatible
+FROM ghcr.io/nvidia/jax:jax-2025-07-02  
+# FROM ghcr.io/nvidia/jax:jax  # Latest may have compatibility issues
 
 # Install zsh and other required packages
 RUN apt-get update && apt-get install -y \
@@ -39,9 +41,9 @@ COPY src/ ./src/
 # Verify the directory structure
 RUN ls -la /app && ls -la /app/src && ls -la /app/src/scribe
 
-# Fix JAX CUDA plugin version mismatch
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --break-system-packages --upgrade jax-cuda12-plugin
+# JAX-Toolbox image should have compatible JAX/CUDA plugin versions
+# RUN --mount=type=cache,target=/root/.cache/uv \
+#     uv pip install --system --break-system-packages --upgrade jax-cuda12-plugin
 
 # Install dependencies using uv with the system Python
 ENV PYTHONPATH=/usr/lib/python3/dist-packages
@@ -51,6 +53,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Set the locale for UTF-8 used for Sphinx docs
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
+
+# XLA flags to prevent GEMM fusion autotuner errors
+ENV XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
 
 # Set the user and group ID (these will be filled in when building)
 ARG USER_ID
