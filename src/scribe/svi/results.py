@@ -680,30 +680,24 @@ class ScribeSVIResults:
         """
         if samples is None:
             return None
-        # List of gene-specific keys to subset
-        gene_keys = []
-        # r
-        if "r" in samples:
-            gene_keys.append("r")
-        # mu
-        if "mu" in samples:
-            gene_keys.append("mu")
-        # gate
-        if "gate" in samples:
-            gene_keys.append("gate")
-        # r_unconstrained
-        if "r_unconstrained" in samples:
-            gene_keys.append("r_unconstrained")
-        # gate_unconstrained
-        if "gate_unconstrained" in samples:
-            gene_keys.append("gate_unconstrained")
-        # (extend here for other gene-specific keys if needed)
-        new_samples = dict(samples)
-        for key in gene_keys:
-            if self.n_components is not None:
-                new_samples[key] = samples[key][..., index]
+
+        new_samples = {}
+        # Get the original number of genes before subsetting, which is stored
+        # in the instance variable self.n_genes.
+        original_n_genes = self.n_genes
+
+        for key, value in samples.items():
+            # The gene dimension is typically the last one in the posterior
+            # sample arrays. We check if the last dimension's size matches the
+            # original number of genes.
+            if value.ndim > 0 and value.shape[-1] == original_n_genes:
+                # This is a gene-specific parameter, so we subset it along the
+                # last axis.
+                new_samples[key] = value[..., index]
             else:
-                new_samples[key] = samples[key][..., index]
+                # This is not a gene-specific parameter (e.g., global,
+                # cell-specific), so we keep it as is.
+                new_samples[key] = value
         return new_samples
 
     # --------------------------------------------------------------------------
@@ -1328,34 +1322,49 @@ class ScribeSVIResults:
         rng_key: random.PRNGKey = random.PRNGKey(42),
         batch_size: Optional[int] = None,
         store_samples: bool = True,
-        resample_parameters: bool = False,
-    ) -> Dict:
-        """Generate posterior predictive check samples."""
-        # Check if we need to resample parameters
-        need_params = resample_parameters or self.posterior_samples is None
+    ) -> jnp.ndarray:
+        """Generate predictive samples using posterior parameter samples."""
+        from ..models.model_registry import get_model_and_guide
 
-        # Generate posterior samples if needed
-        if need_params:
-            # Sample parameters and generate predictive samples
-            self.get_posterior_samples(
-                rng_key=rng_key,
-                n_samples=n_samples,
-                store_samples=store_samples,
-            )
-
-        # Generate predictive samples using existing parameters
-        _, key_pred = random.split(rng_key)
-
-        self.get_predictive_samples(
-            rng_key=key_pred,
-            batch_size=batch_size,
-            store_samples=store_samples,
+        # For predictive sampling, we need the *constrained* model, which has the
+        # 'counts' sample site. The posterior samples from the unconstrained guide
+        # can be used with the constrained model.
+        model, _ = get_model_and_guide(
+            self.model_type,
+            self.model_config.parameterization,
+            self.model_config.inference_method,
+            self.model_config.vae_prior_type,
+            unconstrained=False,  # Explicitly get the constrained model
+            guide_rank=None,  # Not relevant for the model
         )
 
-        return {
-            "parameter_samples": self.posterior_samples,
-            "predictive_samples": self.predictive_samples,
+        # Prepare base model arguments
+        model_args = {
+            "n_cells": self.n_cells,
+            "n_genes": self.n_genes,
+            "model_config": self.model_config,
         }
+
+        # Check if posterior samples exist
+        if self.posterior_samples is None:
+            raise ValueError(
+                "No posterior samples found. Call get_posterior_samples() first."
+            )
+
+        # Generate predictive samples
+        predictive_samples = generate_predictive_samples(
+            model,
+            self.posterior_samples,
+            model_args,
+            rng_key=rng_key,
+            batch_size=batch_size,
+        )
+
+        # Store samples if requested
+        if store_samples:
+            self.predictive_samples = predictive_samples
+
+        return predictive_samples
 
     # --------------------------------------------------------------------------
 
@@ -1365,11 +1374,10 @@ class ScribeSVIResults:
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
-        resample_parameters: bool = False,
     ) -> Dict:
         """Generate posterior predictive check samples."""
         # Check if we need to resample parameters
-        need_params = resample_parameters or self.posterior_samples is None
+        need_params = self.posterior_samples is None
 
         # Generate posterior samples if needed
         if need_params:
