@@ -257,124 +257,156 @@ class ExperimentCatalog:
         """
         Scan the base directory for experiment runs.
 
-        Looks for directories containing experiment indicators (*.log files,
-        scribe_results.pkl, or .hydra directories) and extracts metadata from
-        the directory structure.
+        Looks for directories containing both *.log files and *.pkl files
+        (saved model files) and extracts metadata from the Hydra config.yaml files.
+        Filters out parameters where all experiments have null values and excludes
+        any 'viz' related parameters.
 
         Returns
         -------
         List[ExperimentRun]
             List of found experiment runs
         """
-        experiments = []
-
+        temp_experiments = []
+        
         # Walk through the directory structure
         for root, dirs, files in os.walk(self.base_dir):
             root_path = Path(root)
 
             # Check if this directory contains experiment indicators
             has_log_file = any(f.endswith(".log") for f in files)
-            has_scribe_results = "scribe_results.pkl" in files
+            has_pkl_file = any(f.endswith(".pkl") for f in files)
             has_hydra_dir = ".hydra" in dirs
 
-            # This is an experiment directory if it has any of these indicators
-            if has_log_file or (has_scribe_results and has_hydra_dir):
+            # This is an experiment directory if it has both log and pkl files
+            if has_log_file and has_pkl_file and has_hydra_dir:
                 try:
-                    relative_path = root_path.relative_to(self.base_dir)
-                    path_parts = relative_path.parts
-
-                    # Initialize metadata with what we can extract from path
-                    metadata = {}
-
-                    # Try to extract data name and inference method from path
-                    # structure
-                    if len(path_parts) >= 1:
-                        # First part is likely the data name
-                        metadata["data"] = path_parts[0]
-
-                    if len(path_parts) >= 2:
-                        # Second part is likely the inference method
-                        metadata["inference"] = path_parts[1]
-
-                    # The last part (or parts) might contain override
-                    # information
-                    if len(path_parts) >= 3:
-                        # Try to parse the last part as override dirname
-                        override_dirname = path_parts[-1]
-                        override_metadata = self._parse_override_dirname(
-                            override_dirname
-                        )
-                        metadata.update(override_metadata)
-
-                    # If we have a .hydra directory, try to get more accurate
-                    # metadata from config
-                    if has_hydra_dir:
-                        try:
-                            config_path = root_path / ".hydra" / "config.yaml"
-                            if config_path.exists():
-                                with open(config_path, "r") as f:
-                                    config = yaml.safe_load(f)
-
-                                # Extract data name from config if available
-                                if (
-                                    "data" in config
-                                    and "name" in config["data"]
-                                ):
-                                    metadata["data"] = config["data"]["name"]
-
-                                # Extract inference method from config if
-                                # available
-                                if (
-                                    "inference" in config
-                                    and "method" in config["inference"]
-                                ):
-                                    metadata["inference"] = config["inference"][
-                                        "method"
-                                    ]
-
-                                # Extract other config parameters
-                                for key in [
-                                    "parameterization",
-                                    "variable_capture",
-                                    "zero_inflated",
-                                    "mixture_model",
-                                ]:
-                                    if key in config:
-                                        metadata[key] = config[key]
-
-                                # Extract nested inference parameters
-                                if "inference" in config:
-                                    for key, value in config[
-                                        "inference"
-                                    ].items():
-                                        if (
-                                            key != "method"
-                                        ):  # Skip method as we already have it
-                                            metadata[f"inference.{key}"] = value
-
-                        except Exception as e:
-                            print(
-                                f"Warning: Could not parse config from "
-                                f"{config_path}: {e}"
-                            )
+                    # Load metadata from config.yaml
+                    config_path = root_path / ".hydra" / "config.yaml"
+                    if not config_path.exists():
+                        print(f"Warning: No config.yaml found in {root_path}/.hydra/")
+                        continue
+                        
+                    with open(config_path, "r") as f:
+                        config = yaml.safe_load(f)
+                    
+                    # Extract metadata from config, excluding 'viz' related parameters
+                    metadata = self._extract_config_metadata(config)
 
                     print(
-                        f"Found experiment: {root_path} with metadata: "
-                        f"{metadata}"
+                        f"Found experiment: {root_path} with metadata keys: "
+                        f"{list(metadata.keys())}"
                     )
-
-                    experiments.append(
+                    
+                    temp_experiments.append(
                         ExperimentRun(path=str(root_path), metadata=metadata)
                     )
 
-                except ValueError as e:
+                except Exception as e:
                     print(
                         f"Warning: Could not process experiment directory "
                         f"{root_path}: {e}"
                     )
                     continue
 
-        return experiments
+        # Filter out parameters where all experiments have null/None values
+        filtered_experiments = self._filter_null_parameters(temp_experiments)
+        
+        return filtered_experiments
+
+    # --------------------------------------------------------------------------
+    
+    def _extract_config_metadata(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract metadata from a Hydra config dictionary.
+        
+        Recursively flattens the config into a flat dictionary with dot notation
+        for nested keys, excluding any parameters related to 'viz'.
+        
+        Parameters
+        ----------
+        config : Dict[str, Any]
+            The loaded Hydra config dictionary
+            
+        Returns
+        -------
+        Dict[str, Any]
+            Flattened metadata dictionary
+        """
+        metadata = {}
+        
+        def flatten_config(obj, prefix=""):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    # Skip anything related to 'viz'
+                    if 'viz' in key.lower():
+                        continue
+                        
+                    new_key = f"{prefix}{key}" if prefix else key
+                    
+                    if isinstance(value, dict):
+                        flatten_config(value, f"{new_key}.")
+                    else:
+                        metadata[new_key] = value
+            else:
+                # This shouldn't happen at the top level, but handle gracefully
+                if prefix and 'viz' not in prefix.lower():
+                    metadata[prefix.rstrip('.')] = obj
+        
+        flatten_config(config)
+        return metadata
+    
+    # --------------------------------------------------------------------------
+    
+    def _filter_null_parameters(self, experiments: List[ExperimentRun]) -> List[ExperimentRun]:
+        """
+        Filter out parameters where all experiments have null/None values.
+        
+        Parameters
+        ----------
+        experiments : List[ExperimentRun]
+            List of experiments to filter
+            
+        Returns
+        -------
+        List[ExperimentRun]
+            Experiments with filtered metadata
+        """
+        if not experiments:
+            return experiments
+            
+        # Collect all parameter keys across all experiments
+        all_params = set()
+        for exp in experiments:
+            all_params.update(exp.metadata.keys())
+        
+        # Find parameters where all experiments have null/None values
+        params_to_remove = set()
+        for param in all_params:
+            all_null = True
+            for exp in experiments:
+                value = exp.metadata.get(param)
+                if value is not None and value != "null":
+                    all_null = False
+                    break
+            if all_null:
+                params_to_remove.add(param)
+        
+        # Remove null parameters from all experiments
+        filtered_experiments = []
+        for exp in experiments:
+            filtered_metadata = {
+                k: v for k, v in exp.metadata.items() 
+                if k not in params_to_remove
+            }
+            filtered_experiments.append(
+                ExperimentRun(path=exp.path, metadata=filtered_metadata)
+            )
+        
+        if params_to_remove:
+            print(f"Filtered out {len(params_to_remove)} parameters with all null values: {sorted(params_to_remove)}")
+            
+        return filtered_experiments
 
     # --------------------------------------------------------------------------
 
