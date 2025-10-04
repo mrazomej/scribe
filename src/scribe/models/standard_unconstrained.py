@@ -99,7 +99,8 @@ def nbdm_model(
         "p_unconstrained", dist.Normal(*p_prior_params)
     )
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", dist.Normal(*r_prior_params).expand([n_genes])
+        "r_unconstrained",
+        dist.Normal(*r_prior_params).expand([n_genes]).to_event(1),
     )
 
     # Transform to constrained space
@@ -290,7 +291,8 @@ def zinb_model(
         "p_unconstrained", dist.Normal(*p_prior_params)
     )
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", dist.Normal(*r_prior_params).expand([n_genes])
+        "r_unconstrained",
+        dist.Normal(*r_prior_params).expand([n_genes]).to_event(1),
     )
     gate_unconstrained = numpyro.sample(
         "gate_unconstrained", dist.Normal(*gate_prior_params).expand([n_genes])
@@ -511,7 +513,8 @@ def nbvcp_model(
         "p_unconstrained", dist.Normal(*p_prior_params)
     )
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", dist.Normal(*r_prior_params).expand([n_genes])
+        "r_unconstrained",
+        dist.Normal(*r_prior_params).expand([n_genes]).to_event(1),
     )
 
     # Transform to constrained space
@@ -802,7 +805,8 @@ def zinbvcp_model(
         "p_unconstrained", dist.Normal(*p_prior_params)
     )
     r_unconstrained = numpyro.sample(
-        "r_unconstrained", dist.Normal(*r_prior_params).expand([n_genes])
+        "r_unconstrained",
+        dist.Normal(*r_prior_params).expand([n_genes]).to_event(1),
     )
     gate_unconstrained = numpyro.sample(
         "gate_unconstrained", dist.Normal(*gate_prior_params).expand([n_genes])
@@ -1139,7 +1143,9 @@ def nbdm_mixture_model(
     # Sample unconstrained r for each component and gene
     r_unconstrained = numpyro.sample(
         "r_unconstrained",
-        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*r_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(2),
     )
 
     # Deterministic transformations to constrained space
@@ -1415,7 +1421,9 @@ def zinb_mixture_model(
 
     r_unconstrained = numpyro.sample(
         "r_unconstrained",
-        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*r_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(2),
     )
 
     gate_unconstrained = numpyro.sample(
@@ -1713,7 +1721,9 @@ def nbvcp_mixture_model(
     # Sample r unconstrained
     r_unconstrained = numpyro.sample(
         "r_unconstrained",
-        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*r_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(2),
     )
 
     # Sample component-specific or shared parameters depending on config
@@ -2050,7 +2060,9 @@ def zinbvcp_mixture_model(
     # Sample r unconstrained
     r_unconstrained = numpyro.sample(
         "r_unconstrained",
-        dist.Normal(*r_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*r_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(2),
     )
 
     # Sample gate unconstrained

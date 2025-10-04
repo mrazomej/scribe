@@ -47,6 +47,9 @@ def nbdm_model(
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     # Define base distribution
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
 
@@ -145,6 +148,9 @@ def zinb_model(
     )
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
+
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
 
     # Construct the base Negative Binomial distribution using r and p
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
@@ -262,6 +268,9 @@ def nbvcp_model(
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     # If observed counts are provided, use them as observations
     if counts is not None:
         if batch_size is None:
@@ -271,6 +280,11 @@ def nbvcp_model(
                 # Sample cell-specific capture probability from Beta prior
                 phi_capture = numpyro.sample(
                     "phi_capture", BetaPrime(*phi_capture_prior_params)
+                )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
                 )
                 # Reshape phi_capture for broadcasting to (n_cells, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
@@ -291,6 +305,11 @@ def nbvcp_model(
                 phi_capture = numpyro.sample(
                     "phi_capture", BetaPrime(*phi_capture_prior_params)
                 )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
+                )
                 # Reshape phi_capture for broadcasting to (batch_size, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
                 # Compute the logits for the Negative Binomial distribution
@@ -308,6 +327,11 @@ def nbvcp_model(
             # Sample cell-specific capture probability from Beta prior
             phi_capture = numpyro.sample(
                 "phi_capture", BetaPrime(*phi_capture_prior_params)
+            )
+            # Compute canonical p_capture for log likelihood computation
+            # p_capture = 1 / (1 + phi_capture)
+            p_capture = numpyro.deterministic(
+                "p_capture", 1.0 / (1.0 + phi_capture)
             )
             # Reshape phi_capture for broadcasting to (n_cells, n_genes)
             phi_capture_reshaped = phi_capture[:, None]
@@ -427,6 +451,9 @@ def zinbvcp_model(
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     if counts is not None:
         # If observed counts are provided
         if batch_size is None:
@@ -435,6 +462,11 @@ def zinbvcp_model(
                 # Sample cell-specific capture probability (Beta prior)
                 phi_capture = numpyro.sample(
                     "phi_capture", BetaPrime(*phi_capture_prior_params)
+                )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
                 )
                 # Reshape phi_capture for broadcasting to genes
                 phi_capture_reshaped = phi_capture[:, None]
@@ -457,6 +489,11 @@ def zinbvcp_model(
                 phi_capture = numpyro.sample(
                     "phi_capture", BetaPrime(*phi_capture_prior_params)
                 )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
+                )
                 # Reshape phi_capture for broadcasting to genes
                 phi_capture_reshaped = phi_capture[:, None]
                 # Compute the logits for the Negative Binomial distribution
@@ -475,6 +512,11 @@ def zinbvcp_model(
             # Sample cell-specific capture probability (Beta prior)
             phi_capture = numpyro.sample(
                 "phi_capture", BetaPrime(*phi_capture_prior_params)
+            )
+            # Compute canonical p_capture for log likelihood computation
+            # p_capture = 1 / (1 + phi_capture)
+            p_capture = numpyro.deterministic(
+                "p_capture", 1.0 / (1.0 + phi_capture)
             )
             # Reshape phi_capture for broadcasting to genes
             phi_capture_reshaped = phi_capture[:, None]
@@ -631,6 +673,9 @@ def nbdm_mixture_model(
 
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
+
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
 
     # Define the base distribution for each component (Negative Binomial)
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
@@ -792,6 +837,9 @@ def zinb_mixture_model(
 
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
+
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
 
     # Define the base distribution for each component (Negative Binomial)
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
@@ -963,6 +1011,9 @@ def nbvcp_mixture_model(
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     # Define plate context for sampling
     plate_context = (
         numpyro.plate("cells", n_cells, subsample_size=batch_size)
@@ -973,6 +1024,11 @@ def nbvcp_mixture_model(
         # Sample cell-specific capture probability
         phi_capture = numpyro.sample(
             "phi_capture", BetaPrime(*phi_capture_prior_params)
+        )
+        # Compute canonical p_capture for log likelihood computation
+        # p_capture = 1 / (1 + phi_capture)
+        p_capture = numpyro.deterministic(
+            "p_capture", 1.0 / (1.0 + phi_capture)
         )
         # Reshape phi_capture for broadcasting with components
         phi_capture_reshaped = phi_capture[:, None, None]
@@ -1152,6 +1208,9 @@ def zinbvcp_mixture_model(
     # Compute r
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     plate_context = (
         numpyro.plate("cells", n_cells, subsample_size=batch_size)
         if counts is not None and batch_size is not None
@@ -1161,6 +1220,11 @@ def zinbvcp_mixture_model(
         # Sample cell-specific capture probability
         phi_capture = numpyro.sample(
             "phi_capture", BetaPrime(*phi_capture_prior_params)
+        )
+        # Compute canonical p_capture for log likelihood computation
+        # p_capture = 1 / (1 + phi_capture)
+        p_capture = numpyro.deterministic(
+            "p_capture", 1.0 / (1.0 + phi_capture)
         )
         # Reshape phi_capture for broadcasting with components
         phi_capture_reshaped = phi_capture[:, None, None]
