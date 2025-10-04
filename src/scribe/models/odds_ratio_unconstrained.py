@@ -117,6 +117,9 @@ def nbdm_model(
     # Compute r using the odds ratio relationship
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     # Define base distribution
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
 
@@ -321,6 +324,9 @@ def zinb_model(
 
     # Compute r using the odds ratio relationship
     r = numpyro.deterministic("r", mu * phi)
+
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
 
     # Define distributions
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
@@ -550,6 +556,9 @@ def nbvcp_model(
     # Compute r using the odds ratio relationship
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     # If observed counts are provided, use them as observations
     if counts is not None:
         if batch_size is None:
@@ -561,9 +570,14 @@ def nbvcp_model(
                     "phi_capture_unconstrained",
                     dist.Normal(*phi_capture_prior_params),
                 )
-                # Transform to constrained space
+                # Transform to constrained space (phi_capture in odds ratio space)
                 phi_capture = numpyro.deterministic(
                     "phi_capture", jnp.exp(phi_capture_unconstrained)
+                )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
                 )
                 # Reshape phi_capture for broadcasting to (n_cells, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
@@ -585,9 +599,14 @@ def nbvcp_model(
                     "phi_capture_unconstrained",
                     dist.Normal(*phi_capture_prior_params),
                 )
-                # Transform to constrained space
+                # Transform to constrained space (phi_capture in odds ratio space)
                 phi_capture = numpyro.deterministic(
                     "phi_capture", jnp.exp(phi_capture_unconstrained)
+                )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
                 )
                 # Reshape phi_capture for broadcasting to (batch_size, n_genes)
                 phi_capture_reshaped = phi_capture[:, None]
@@ -608,9 +627,14 @@ def nbvcp_model(
                 "phi_capture_unconstrained",
                 dist.Normal(*phi_capture_prior_params),
             )
-            # Transform to constrained space
+            # Transform to constrained space (phi_capture in odds ratio space)
             phi_capture = numpyro.deterministic(
                 "phi_capture", jnp.exp(phi_capture_unconstrained)
+            )
+            # Compute canonical p_capture for log likelihood computation
+            # p_capture = 1 / (1 + phi_capture)
+            p_capture = numpyro.deterministic(
+                "p_capture", 1.0 / (1.0 + phi_capture)
             )
             # Reshape phi_capture for broadcasting to (n_cells, n_genes)
             phi_capture_reshaped = phi_capture[:, None]
@@ -871,6 +895,9 @@ def zinbvcp_model(
     # Compute r using the odds ratio relationship
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     if counts is not None:
         # If observed counts are provided
         if batch_size is None:
@@ -882,9 +909,14 @@ def zinbvcp_model(
                     "phi_capture_unconstrained",
                     dist.Normal(*phi_capture_prior_params),
                 )
-                # Transform to constrained space
+                # Transform to constrained space (phi_capture in odds ratio space)
                 phi_capture = numpyro.deterministic(
                     "phi_capture", jnp.exp(phi_capture_unconstrained)
+                )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
                 )
                 # Reshape phi_capture for broadcasting to genes
                 phi_capture_reshaped = phi_capture[:, None]
@@ -909,9 +941,14 @@ def zinbvcp_model(
                     "phi_capture_unconstrained",
                     dist.Normal(*phi_capture_prior_params),
                 )
-                # Transform to constrained space
+                # Transform to constrained space (phi_capture in odds ratio space)
                 phi_capture = numpyro.deterministic(
                     "phi_capture", jnp.exp(phi_capture_unconstrained)
+                )
+                # Compute canonical p_capture for log likelihood computation
+                # p_capture = 1 / (1 + phi_capture)
+                p_capture = numpyro.deterministic(
+                    "p_capture", 1.0 / (1.0 + phi_capture)
                 )
                 # Reshape phi_capture for broadcasting to genes
                 phi_capture_reshaped = phi_capture[:, None]
@@ -933,9 +970,14 @@ def zinbvcp_model(
                 "phi_capture_unconstrained",
                 dist.Normal(*phi_capture_prior_params),
             )
-            # Transform to constrained space
+            # Transform to constrained space (phi_capture in odds ratio space)
             phi_capture = numpyro.deterministic(
                 "phi_capture", jnp.exp(phi_capture_unconstrained)
+            )
+            # Compute canonical p_capture for log likelihood computation
+            # p_capture = 1 / (1 + phi_capture)
+            p_capture = numpyro.deterministic(
+                "p_capture", 1.0 / (1.0 + phi_capture)
             )
             # Reshape phi_capture for broadcasting to genes
             phi_capture_reshaped = phi_capture[:, None]
@@ -1174,6 +1216,9 @@ def nbdm_mixture_model(
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     # Define component distribution
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi)).to_event(1)
     mixture = dist.MixtureSameFamily(mixing_dist, base_dist)
@@ -1352,6 +1397,9 @@ def zinb_mixture_model(
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
     r = numpyro.deterministic("r", mu * phi)
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
+
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
 
     # Define distributions
     base_dist = dist.NegativeBinomialLogits(r, -jnp.log(phi))
@@ -1543,6 +1591,9 @@ def nbvcp_mixture_model(
     mu = numpyro.deterministic("mu", jnp.exp(mu_unconstrained))
     r = numpyro.deterministic("r", mu * phi)
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     plate_context = (
         numpyro.plate("cells", n_cells, subsample_size=batch_size)
         if counts is not None and batch_size is not None
@@ -1557,9 +1608,14 @@ def nbvcp_mixture_model(
             # Use Normal prior for unconstrained phi_capture
             dist.Normal(*phi_capture_prior_params),
         )
-        # Transform to constrained (positive) space
+        # Transform to constrained (positive) space (phi_capture in odds ratio space)
         phi_capture = numpyro.deterministic(
             "phi_capture", jnp.exp(phi_capture_unconstrained)
+        )
+        # Compute canonical p_capture for log likelihood computation
+        # p_capture = 1 / (1 + phi_capture)
+        p_capture = numpyro.deterministic(
+            "p_capture", 1.0 / (1.0 + phi_capture)
         )
         # Reshape for broadcasting to (cells, components, genes)
         phi_capture_reshaped = phi_capture[:, None, None]
@@ -1767,6 +1823,9 @@ def zinbvcp_mixture_model(
     r = numpyro.deterministic("r", mu * phi)
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
+    # Compute canonical p parameter for log likelihood computation
+    p = numpyro.deterministic("p", 1.0 / (1.0 + phi))
+
     plate_context = (
         numpyro.plate("cells", n_cells, subsample_size=batch_size)
         if counts is not None and batch_size is not None
@@ -1781,9 +1840,14 @@ def zinbvcp_mixture_model(
             "phi_capture_unconstrained",
             dist.Normal(*phi_capture_prior_params),
         )
-        # Transform unconstrained phi_capture to constrained (positive) space
+        # Transform unconstrained phi_capture to constrained (positive) space (phi_capture in odds ratio space)
         phi_capture = numpyro.deterministic(
             "phi_capture", jnp.exp(phi_capture_unconstrained)
+        )
+        # Compute canonical p_capture for log likelihood computation
+        # p_capture = 1 / (1 + phi_capture)
+        p_capture = numpyro.deterministic(
+            "p_capture", 1.0 / (1.0 + phi_capture)
         )
         # Reshape phi_capture for broadcasting to (cells, components, genes)
         phi_capture_reshaped = phi_capture[:, None, None]
