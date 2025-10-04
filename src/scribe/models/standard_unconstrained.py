@@ -206,7 +206,7 @@ def nbdm_guide(
         jnp.full(n_genes, r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
 
 # ------------------------------------------------------------------------------
@@ -408,7 +408,7 @@ def zinb_guide(
         jnp.full(n_genes, r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
     # Register unconstrained gate parameters
     gate_loc = numpyro.param(
@@ -681,7 +681,7 @@ def nbvcp_guide(
         jnp.full(n_genes, r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
     # Set up cell-specific capture probability parameters
     p_capture_loc = numpyro.param(
@@ -990,7 +990,7 @@ def zinbvcp_guide(
         jnp.full(n_genes, r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
     gate_loc = numpyro.param(
         "gate_unconstrained_loc", jnp.full(n_genes, gate_guide_params[0])
@@ -1300,7 +1300,7 @@ def nbdm_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
 
 # ------------------------------------------------------------------------------
@@ -1592,7 +1592,7 @@ def zinb_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
     # Register gate parameters
     gate_loc = numpyro.param(
@@ -1889,7 +1889,7 @@ def nbvcp_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
     if model_config.component_specific_params:
         # Each component has its own p
@@ -2246,7 +2246,7 @@ def zinbvcp_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
 
     # Register gate parameters
     gate_loc = numpyro.param(
