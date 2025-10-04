@@ -6,6 +6,7 @@ import os
 ALL_METHODS = ["svi", "mcmc"]
 ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio"]
 ALL_UNCONSTRAINED = [False, True]
+ALL_GUIDE_RANKS = [None, 5]  # None = mean-field, 5 = low-rank
 
 # ------------------------------------------------------------------------------
 # Dynamic matrix parametrization
@@ -15,7 +16,7 @@ ALL_UNCONSTRAINED = [False, True]
 def pytest_generate_tests(metafunc):
     """
     Dynamically generate test combinations for inference methods,
-    parameterizations, and unconstrained variants.
+    parameterizations, unconstrained variants, and guide ranks.
 
     Handles command-line options for selective testing.
     """
@@ -25,11 +26,13 @@ def pytest_generate_tests(metafunc):
         "inference_method",
         "parameterization",
         "unconstrained",
+        "guide_rank",
     }.issubset(metafunc.fixturenames):
-        # Get command-line options for method, parameterization, and unconstrained
+        # Get command-line options
         method_opt = metafunc.config.getoption("--method")
         param_opt = metafunc.config.getoption("--parameterization")
         unconstrained_opt = metafunc.config.getoption("--unconstrained")
+        guide_rank_opt = metafunc.config.getoption("--guide-rank")
 
         # Determine which methods to test based on command-line option
         methods = ALL_METHODS if method_opt == "all" else [method_opt]
@@ -43,17 +46,34 @@ def pytest_generate_tests(metafunc):
         else:
             unconstrained_variants = [unconstrained_opt == "true"]
 
+        # Determine which guide ranks to test based on command-line option
+        if guide_rank_opt == "all":
+            guide_ranks = ALL_GUIDE_RANKS
+        elif guide_rank_opt.lower() == "none":
+            guide_ranks = [None]
+        else:
+            try:
+                guide_ranks = [int(guide_rank_opt)]
+            except ValueError:
+                raise ValueError(
+                    f"Invalid guide-rank option: {guide_rank_opt}. "
+                    "Must be 'all', 'none', or an integer."
+                )
+
         # Generate all valid combinations
+        # Skip guide_rank for MCMC (it doesn't use guides)
         combinations = [
-            (m, p, u)
+            (m, p, u, g)
             for m in methods
             for p in params
             for u in unconstrained_variants
+            for g in guide_ranks
+            if not (m == "mcmc" and g is not None)  # MCMC doesn't use guides
         ]
 
         # Parametrize the test with the generated combinations
         metafunc.parametrize(
-            "inference_method,parameterization,unconstrained",
+            "inference_method,parameterization,unconstrained,guide_rank",
             combinations,
         )
 
@@ -79,10 +99,17 @@ def nbdm_results(
     device_type,
     parameterization,
     unconstrained,
+    guide_rank,
     small_dataset,
     rng_key,
 ):
-    key = (inference_method, device_type, parameterization, unconstrained)
+    key = (
+        inference_method,
+        device_type,
+        parameterization,
+        unconstrained,
+        guide_rank,
+    )
     if key in _nbdm_results_cache:
         return _nbdm_results_cache[key]
     # Configure JAX device
@@ -115,6 +142,7 @@ def nbdm_results(
             mixture_model=False,
             parameterization=parameterization,
             unconstrained=unconstrained,
+            guide_rank=guide_rank,
             n_steps=3,
             batch_size=5,
             seed=42,
@@ -160,19 +188,26 @@ def test_inference_run(nbdm_results):
 # ------------------------------------------------------------------------------
 
 
-def test_parameterization_config(nbdm_results, parameterization, unconstrained):
+def test_parameterization_config(
+    nbdm_results, parameterization, unconstrained, guide_rank
+):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert nbdm_results.model_config.parameterization == parameterization
     # Check that the unconstrained flag is properly set in the model config
     # Note: This may need to be adjusted based on how the model config stores this information
     if hasattr(nbdm_results.model_config, "unconstrained"):
         assert nbdm_results.model_config.unconstrained == unconstrained
+    # Check that the guide_rank is properly set in the model config
+    if hasattr(nbdm_results.model_config, "guide_rank"):
+        assert nbdm_results.model_config.guide_rank == guide_rank
 
 
 # ------------------------------------------------------------------------------
 
 
-def test_parameter_ranges(nbdm_results, parameterization, unconstrained):
+def test_parameter_ranges(
+    nbdm_results, parameterization, unconstrained, guide_rank
+):
     """Test that parameters have correct ranges and relationships."""
     # For SVI, we need to get posterior samples to access transformed parameters
     # For MCMC, we can use either params or samples
@@ -291,7 +326,7 @@ def test_parameter_ranges(nbdm_results, parameterization, unconstrained):
 
 
 def test_posterior_sampling(
-    nbdm_results, rng_key, parameterization, unconstrained
+    nbdm_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     # For SVI, must call get_posterior_samples with parameters; for MCMC, just call
     # get_posterior_samples without parameters
@@ -393,7 +428,7 @@ def test_predictive_sampling(nbdm_results, rng_key):
 # ------------------------------------------------------------------------------
 
 
-def test_get_map(nbdm_results, parameterization, unconstrained):
+def test_get_map(nbdm_results, parameterization, unconstrained, guide_rank):
     map_est = (
         nbdm_results.get_map() if hasattr(nbdm_results, "get_map") else None
     )
@@ -556,7 +591,7 @@ def test_svi_loss_history(nbdm_results, inference_method):
 
 
 def test_mcmc_samples_shape(
-    nbdm_results, inference_method, parameterization, unconstrained
+    nbdm_results, inference_method, parameterization, unconstrained, guide_rank
 ):
     if inference_method == "mcmc":
         samples = nbdm_results.get_posterior_samples()
@@ -617,7 +652,9 @@ def test_mcmc_samples_shape(
 # ------------------------------------------------------------------------------
 
 
-def test_unconstrained_parameter_handling(nbdm_results, unconstrained):
+def test_unconstrained_parameter_handling(
+    nbdm_results, unconstrained, guide_rank
+):
     """Test that unconstrained parameters are handled correctly."""
     if unconstrained:
         # For unconstrained models, we should be able to get the raw parameters
@@ -629,3 +666,71 @@ def test_unconstrained_parameter_handling(nbdm_results, unconstrained):
         # For constrained models, parameters should respect their constraints
         # This is already tested in test_parameter_ranges
         pass
+
+
+# ------------------------------------------------------------------------------
+# Low-Rank Guide Tests
+# ------------------------------------------------------------------------------
+
+
+def test_low_rank_guide_params(nbdm_results, inference_method, guide_rank):
+    """Test that low-rank guide parameters are correctly stored."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Low-rank guides should have specific parameters
+        assert hasattr(nbdm_results, "params")
+        params = nbdm_results.params
+
+        # Check for low-rank-specific parameters (loc, scale_tril for LowRankMultivariateNormal)
+        # The exact parameter names depend on the implementation
+        # This is a basic check that the guide was actually used
+        assert len(params) > 0, "Low-rank guide should have parameters"
+
+        # Debug: print available parameters
+        print(f"DEBUG: Low-rank guide params keys: {list(params.keys())}")
+
+
+def test_low_rank_covariance_structure(
+    nbdm_results, inference_method, guide_rank, parameterization, rng_key
+):
+    """Test that low-rank guides produce samples with appropriate covariance structure."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Generate multiple samples
+        samples = nbdm_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=50, store_samples=True
+        )
+
+        # Get gene-specific parameters (r, mu, or both depending on parameterization)
+        if parameterization == "standard":
+            gene_params = samples.get("r")
+        elif parameterization == "linked":
+            gene_params = samples.get("mu")
+        elif parameterization == "odds_ratio":
+            gene_params = samples.get("mu")
+        else:
+            raise ValueError(f"Unknown parameterization: {parameterization}")
+
+        if gene_params is not None:
+            # Check that we have multiple samples and multiple genes
+            assert (
+                gene_params.ndim == 2
+            ), f"Expected 2D array, got shape {gene_params.shape}"
+            n_samples_actual, n_genes = gene_params.shape
+            assert (
+                n_samples_actual > 1
+            ), "Need multiple samples to check covariance"
+            assert n_genes > 1, "Need multiple genes to check covariance"
+
+            # Compute empirical covariance matrix
+            cov_matrix = jnp.cov(gene_params.T)
+
+            # For low-rank guides, the covariance should have rank <= guide_rank
+            # We can't easily check the rank, but we can verify that samples vary
+            assert jnp.any(
+                jnp.abs(cov_matrix) > 1e-6
+            ), "Low-rank guide should produce samples with non-zero covariance"
+
+            # Debug: print covariance statistics
+            print(
+                f"DEBUG: Covariance matrix shape: {cov_matrix.shape}, "
+                f"mean abs value: {jnp.mean(jnp.abs(cov_matrix)):.6f}"
+            )
