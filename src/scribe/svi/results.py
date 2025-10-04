@@ -425,10 +425,31 @@ class ScribeSVIResults:
         # Get distributions with NumPyro backend
         distributions = self.get_distributions(backend="numpyro")
         # Get estimate of map
-        map_estimates = {
-            param: dist.mode if hasattr(dist, "mode") else dist.mean
-            for param, dist in distributions.items()
-        }
+        map_estimates = {}
+        for param, dist_obj in distributions.items():
+            # Handle transformed distributions (dict with 'base' and 'transform')
+            # This is used for low-rank guides with transformations
+            if (
+                isinstance(dist_obj, dict)
+                and "base" in dist_obj
+                and "transform" in dist_obj
+            ):
+                # For transformed distributions, MAP is transform(base.loc)
+                base_dist = dist_obj["base"]
+                transform = dist_obj["transform"]
+                if hasattr(base_dist, "loc"):
+                    map_estimates[param] = transform(base_dist.loc)
+                else:
+                    # Fallback to mean if loc not available
+                    map_estimates[param] = transform(base_dist.mean)
+            # Handle multivariate distributions (like LowRankMultivariateNormal)
+            # For multivariate normals, mode = mean = loc
+            elif hasattr(dist_obj, "loc") and not hasattr(dist_obj, "mode"):
+                map_estimates[param] = dist_obj.loc
+            elif hasattr(dist_obj, "mode"):
+                map_estimates[param] = dist_obj.mode
+            else:
+                map_estimates[param] = dist_obj.mean
 
         # Replace NaN values with means if requested
         if use_mean:
