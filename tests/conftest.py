@@ -35,6 +35,11 @@ def pytest_addoption(parser):
         choices=["false", "true", "all"],
         help="Whether to test unconstrained variants: false, true, or all",
     )
+    parser.addoption(
+        "--guide-rank",
+        default="all",
+        help="Guide rank to test: none (mean-field), integer (low-rank), or all",
+    )
 
 
 @pytest.fixture(scope="session")
