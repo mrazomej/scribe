@@ -10,6 +10,7 @@ import os
 ALL_METHODS = ["svi", "mcmc"]
 ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio"]
 ALL_UNCONSTRAINED = [False, True]
+ALL_GUIDE_RANKS = [None, 5]  # None = mean-field, 5 = low-rank
 
 # ------------------------------------------------------------------------------
 # Dynamic matrix parametrization
@@ -19,7 +20,7 @@ ALL_UNCONSTRAINED = [False, True]
 def pytest_generate_tests(metafunc):
     """
     Dynamically generate test combinations for inference methods,
-    parameterizations, and unconstrained variants.
+    parameterizations, unconstrained variants, and guide ranks.
 
     Handles command-line options for selective testing.
     """
@@ -29,11 +30,13 @@ def pytest_generate_tests(metafunc):
         "inference_method",
         "parameterization",
         "unconstrained",
+        "guide_rank",
     }.issubset(metafunc.fixturenames):
-        # Get command-line options for method, parameterization, and unconstrained
+        # Get command-line options
         method_opt = metafunc.config.getoption("--method")
         param_opt = metafunc.config.getoption("--parameterization")
         unconstrained_opt = metafunc.config.getoption("--unconstrained")
+        guide_rank_opt = metafunc.config.getoption("--guide-rank")
 
         # Determine which methods to test based on command-line option
         methods = ALL_METHODS if method_opt == "all" else [method_opt]
@@ -41,23 +44,41 @@ def pytest_generate_tests(metafunc):
         # Determine which parameterizations to test based on command-line option
         params = ALL_PARAMETERIZATIONS if param_opt == "all" else [param_opt]
 
-        # Determine which unconstrained variants to test based on command-line option
+        # Determine which unconstrained variants to test based on command-line
+        # option
         if unconstrained_opt == "all":
             unconstrained_variants = ALL_UNCONSTRAINED
         else:
             unconstrained_variants = [unconstrained_opt == "true"]
 
+        # Determine which guide ranks to test based on command-line option
+        if guide_rank_opt == "all":
+            guide_ranks = ALL_GUIDE_RANKS
+        elif guide_rank_opt.lower() == "none":
+            guide_ranks = [None]
+        else:
+            try:
+                guide_ranks = [int(guide_rank_opt)]
+            except ValueError:
+                raise ValueError(
+                    f"Invalid guide-rank option: {guide_rank_opt}. "
+                    "Must be 'all', 'none', or an integer."
+                )
+
         # Generate all valid combinations
+        # Skip guide_rank for MCMC (it doesn't use guides)
         combinations = [
-            (m, p, u)
+            (m, p, u, g)
             for m in methods
             for p in params
             for u in unconstrained_variants
+            for g in guide_ranks
+            if not (m == "mcmc" and g is not None)  # MCMC doesn't use guides
         ]
 
         # Parametrize the test with the generated combinations
         metafunc.parametrize(
-            "inference_method,parameterization,unconstrained",
+            "inference_method,parameterization,unconstrained,guide_rank",
             combinations,
         )
 
@@ -83,10 +104,17 @@ def zinb_results(
     device_type,
     parameterization,
     unconstrained,
+    guide_rank,
     small_dataset,
     rng_key,
 ):
-    key = (inference_method, device_type, parameterization, unconstrained)
+    key = (
+        inference_method,
+        device_type,
+        parameterization,
+        unconstrained,
+        guide_rank,
+    )
     if key in _zinb_results_cache:
         return _zinb_results_cache[key]
     # Configure JAX device
@@ -119,6 +147,7 @@ def zinb_results(
             mixture_model=False,
             parameterization=parameterization,
             unconstrained=unconstrained,
+            guide_rank=guide_rank,
             n_steps=3,
             batch_size=5,
             seed=42,
@@ -166,19 +195,27 @@ def test_inference_run(zinb_results):
 # ------------------------------------------------------------------------------
 
 
-def test_parameterization_config(zinb_results, parameterization, unconstrained):
+def test_parameterization_config(
+    zinb_results, parameterization, unconstrained, guide_rank
+):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert zinb_results.model_config.parameterization == parameterization
     # Check that the unconstrained flag is properly set in the model config
-    # Note: This may need to be adjusted based on how the model config stores this information
+    # Note: This may need to be adjusted based on how the model config stores
+    # this information
     if hasattr(zinb_results.model_config, "unconstrained"):
         assert zinb_results.model_config.unconstrained == unconstrained
+    # Check that the guide_rank is properly set in the model config
+    if hasattr(zinb_results.model_config, "guide_rank"):
+        assert zinb_results.model_config.guide_rank == guide_rank
 
 
 # ------------------------------------------------------------------------------
 
 
-def test_parameter_ranges(zinb_results, parameterization, unconstrained):
+def test_parameter_ranges(
+    zinb_results, parameterization, unconstrained, guide_rank
+):
     """Test that parameters have correct ranges and relationships."""
     # For SVI, we need to get posterior samples to access transformed parameters
     # For MCMC, we can use either params or samples
@@ -186,23 +223,22 @@ def test_parameter_ranges(zinb_results, parameterization, unconstrained):
         zinb_results, "get_posterior_samples"
     ):
         # SVI case: get transformed parameters from posterior samples
-        samples = zinb_results.get_posterior_samples(
-            n_samples=1, canonical=True
-        )
+        samples = zinb_results.get_posterior_samples(n_samples=1)
         params = samples
     elif hasattr(zinb_results, "params"):
         # MCMC case: params might contain transformed parameters
-        params = zinb_results.get_posterior_samples(canonical=True)
+        params = zinb_results.get_posterior_samples()
     else:
         # Fallback: try to get samples
-        samples = zinb_results.get_posterior_samples(canonical=True)
+        samples = zinb_results.get_posterior_samples()
         params = samples
 
     # Check parameters based on parameterization
     if parameterization == "standard":
         # Standard parameterization: p, r, and gate
         if unconstrained:
-            # Unconstrained models should have both constrained and unconstrained parameters
+            # Unconstrained models should have both constrained and
+            # unconstrained parameters
             assert "p" in params or "p_unconstrained" in params
             assert "r" in params or "r_unconstrained" in params
             assert "gate" in params or "gate_unconstrained" in params
@@ -210,8 +246,8 @@ def test_parameter_ranges(zinb_results, parameterization, unconstrained):
             # Check constrained parameters if they exist
             if "p" in params and "r" in params and "gate" in params:
                 p, r, gate = params["p"], params["r"], params["gate"]
-                # In unconstrained models, p, r, and gate are transformed from unconstrained space
-                # but should still be finite
+                # In unconstrained models, p, r, and gate are transformed from
+                # unconstrained space but should still be finite
                 assert jnp.all(jnp.isfinite(p))
                 assert jnp.all(jnp.isfinite(r))
                 assert jnp.all(jnp.isfinite(gate))
@@ -228,7 +264,8 @@ def test_parameter_ranges(zinb_results, parameterization, unconstrained):
     elif parameterization == "linked":
         # Linked parameterization: p, mu, and gate
         if unconstrained:
-            # Unconstrained models should have both constrained and unconstrained parameters
+            # Unconstrained models should have both constrained and
+            # unconstrained parameters
             assert "p" in params or "p_unconstrained" in params
             assert "mu" in params or "mu_unconstrained" in params
             assert "gate" in params or "gate_unconstrained" in params
@@ -236,8 +273,8 @@ def test_parameter_ranges(zinb_results, parameterization, unconstrained):
             # Check constrained parameters if they exist
             if "p" in params and "mu" in params and "gate" in params:
                 p, mu, gate = params["p"], params["mu"], params["gate"]
-                # In unconstrained models, p, mu, and gate are transformed from unconstrained space
-                # but should still be finite
+                # In unconstrained models, p, mu, and gate are transformed from
+                # unconstrained space but should still be finite
                 assert jnp.all(jnp.isfinite(p))
                 assert jnp.all(jnp.isfinite(mu))
                 assert jnp.all(jnp.isfinite(gate))
@@ -270,8 +307,8 @@ def test_parameter_ranges(zinb_results, parameterization, unconstrained):
             # Check constrained parameters if they exist
             if "phi" in params and "mu" in params and "gate" in params:
                 phi, mu, gate = params["phi"], params["mu"], params["gate"]
-                # In unconstrained models, phi, mu, and gate are transformed from unconstrained space
-                # but should still be finite
+                # In unconstrained models, phi, mu, and gate are transformed
+                # from unconstrained space but should still be finite
                 assert jnp.all(jnp.isfinite(phi))
                 assert jnp.all(jnp.isfinite(mu))
                 assert jnp.all(jnp.isfinite(gate))
@@ -308,7 +345,7 @@ def test_parameter_ranges(zinb_results, parameterization, unconstrained):
 
 
 def test_posterior_sampling(
-    zinb_results, rng_key, parameterization, unconstrained
+    zinb_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     # For SVI, must call get_posterior_samples with parameters; for MCMC, just
     # call get_posterior_samples without parameters
@@ -353,7 +390,8 @@ def test_posterior_sampling(
             assert samples["gate"].shape[-1] == zinb_results.n_genes
     elif parameterization == "linked":
         if unconstrained:
-            # Unconstrained models may have either constrained or unconstrained parameters
+            # Unconstrained models may have either constrained or unconstrained
+            # parameters
             has_p = "p" in samples or "p_unconstrained" in samples
             has_mu = "mu" in samples or "mu_unconstrained" in samples
             has_gate = "gate" in samples or "gate_unconstrained" in samples
@@ -381,7 +419,8 @@ def test_posterior_sampling(
             assert samples["gate"].shape[-1] == zinb_results.n_genes
     elif parameterization == "odds_ratio":
         if unconstrained:
-            # Unconstrained models may have either constrained or unconstrained parameters
+            # Unconstrained models may have either constrained or unconstrained
+            # parameters
             has_phi = "phi" in samples or "phi_unconstrained" in samples
             has_mu = "mu" in samples or "mu_unconstrained" in samples
             has_gate = "gate" in samples or "gate_unconstrained" in samples
@@ -436,7 +475,7 @@ def test_predictive_sampling(zinb_results, rng_key):
 # ------------------------------------------------------------------------------
 
 
-def test_get_map(zinb_results, parameterization, unconstrained):
+def test_get_map(zinb_results, parameterization, unconstrained, guide_rank):
     map_est = (
         zinb_results.get_map() if hasattr(zinb_results, "get_map") else None
     )
@@ -444,7 +483,8 @@ def test_get_map(zinb_results, parameterization, unconstrained):
 
     # Debug: print what parameters are actually available
     print(
-        f"DEBUG: MAP parameters for {parameterization} (unconstrained={unconstrained}): {list(map_est.keys())}"
+        f"DEBUG: MAP parameters for {parameterization} "
+        f"(unconstrained={unconstrained}): {list(map_est.keys())}"
     )
 
     # Check parameters based on parameterization
@@ -454,11 +494,13 @@ def test_get_map(zinb_results, parameterization, unconstrained):
             # This appears to be expected behavior for some unconstrained models
             if len(map_est) == 0:
                 print(
-                    f"DEBUG: Empty MAP for unconstrained {parameterization}, checking model params"
+                    f"DEBUG: Empty MAP for unconstrained {parameterization}, "
+                    f"checking model params"
                 )
                 if hasattr(zinb_results, "params"):
                     print(
-                        f"DEBUG: Model params keys: {list(zinb_results.params.keys())}"
+                        f"DEBUG: Model params keys: "
+                        f"{list(zinb_results.params.keys())}"
                     )
                 # For SVI unconstrained models, empty MAP is acceptable
                 # as they use variational parameters (alpha/beta, loc/scale)
@@ -477,11 +519,13 @@ def test_get_map(zinb_results, parameterization, unconstrained):
         if unconstrained:
             if len(map_est) == 0:
                 print(
-                    f"DEBUG: Empty MAP for unconstrained {parameterization}, checking model params"
+                    f"DEBUG: Empty MAP for unconstrained {parameterization}, "
+                    f"checking model params"
                 )
                 if hasattr(zinb_results, "params"):
                     print(
-                        f"DEBUG: Model params keys: {list(zinb_results.params.keys())}"
+                        f"DEBUG: Model params keys: "
+                        f"{list(zinb_results.params.keys())}"
                     )
                 # For SVI unconstrained models, empty MAP is acceptable
                 pass
@@ -498,11 +542,13 @@ def test_get_map(zinb_results, parameterization, unconstrained):
         if unconstrained:
             if len(map_est) == 0:
                 print(
-                    f"DEBUG: Empty MAP for unconstrained {parameterization}, checking model params"
+                    f"DEBUG: Empty MAP for unconstrained {parameterization}, "
+                    f"checking model params"
                 )
                 if hasattr(zinb_results, "params"):
                     print(
-                        f"DEBUG: Model params keys: {list(zinb_results.params.keys())}"
+                        f"DEBUG: Model params keys: "
+                        f"{list(zinb_results.params.keys())}"
                     )
                 # For SVI unconstrained models, empty MAP is acceptable
                 pass
@@ -598,7 +644,8 @@ def test_parameter_relationships(zinb_results, parameterization):
         params = samples
 
     if parameterization == "linked":
-        # In linked parameterization, r should be computed as r = mu * (1 - p) / p
+        # In linked parameterization, r should be computed as
+        # r = mu * (1 - p) / p
         if "p" in params and "mu" in params and "r" in params:
             p, mu, r = params["p"], params["mu"], params["r"]
             # p is scalar per sample, mu is gene-specific per sample
@@ -695,7 +742,7 @@ def test_svi_loss_history(zinb_results, inference_method):
 
 
 def test_mcmc_samples_shape(
-    zinb_results, inference_method, parameterization, unconstrained
+    zinb_results, inference_method, parameterization, unconstrained, guide_rank
 ):
     if inference_method == "mcmc":
         samples = zinb_results.get_posterior_samples()
@@ -703,7 +750,8 @@ def test_mcmc_samples_shape(
         # Check parameters based on parameterization
         if parameterization == "standard":
             if unconstrained:
-                # Unconstrained models may have either constrained or unconstrained parameters
+                # Unconstrained models may have either constrained or
+                # unconstrained parameters
                 has_p = "p" in samples or "p_unconstrained" in samples
                 has_r = "r" in samples or "r_unconstrained" in samples
                 has_gate = "gate" in samples or "gate_unconstrained" in samples
@@ -725,7 +773,8 @@ def test_mcmc_samples_shape(
                 assert samples["gate"].ndim >= 2
         elif parameterization == "linked":
             if unconstrained:
-                # Unconstrained models may have either constrained or unconstrained parameters
+                # Unconstrained models may have either constrained or
+                # unconstrained parameters
                 has_p = "p" in samples or "p_unconstrained" in samples
                 has_mu = "mu" in samples or "mu_unconstrained" in samples
                 has_gate = "gate" in samples or "gate_unconstrained" in samples
@@ -747,7 +796,8 @@ def test_mcmc_samples_shape(
                 assert samples["gate"].ndim >= 2
         elif parameterization == "odds_ratio":
             if unconstrained:
-                # Unconstrained models may have either constrained or unconstrained parameters
+                # Unconstrained models may have either constrained or
+                # unconstrained parameters
                 has_p = "p" in samples or "p_unconstrained" in samples
                 has_mu = "mu" in samples or "mu_unconstrained" in samples
                 has_gate = "gate" in samples or "gate_unconstrained" in samples
@@ -776,7 +826,9 @@ def test_mcmc_samples_shape(
 # ------------------------------------------------------------------------------
 
 
-def test_unconstrained_parameter_handling(zinb_results, unconstrained):
+def test_unconstrained_parameter_handling(
+    zinb_results, unconstrained, guide_rank
+):
     """Test that unconstrained parameters are handled correctly."""
     if unconstrained:
         # For unconstrained models, we should be able to get the raw parameters
@@ -788,3 +840,74 @@ def test_unconstrained_parameter_handling(zinb_results, unconstrained):
         # For constrained models, parameters should respect their constraints
         # This is already tested in test_parameter_ranges
         pass
+
+
+# ------------------------------------------------------------------------------
+# Low-Rank Guide Tests
+# ------------------------------------------------------------------------------
+
+
+def test_low_rank_guide_params(zinb_results, inference_method, guide_rank):
+    """Test that low-rank guide parameters are correctly stored."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Low-rank guides should have specific parameters
+        assert hasattr(zinb_results, "params")
+        params = zinb_results.params
+
+        # Check for low-rank-specific parameters
+        # (loc, scale_tril for LowRankMultivariateNormal)
+        # The exact parameter names depend on the implementation
+        # This is a basic check that the guide was actually used
+        assert len(params) > 0, "Low-rank guide should have parameters"
+
+        # Debug: print available parameters
+        print(f"DEBUG: Low-rank guide params keys: {list(params.keys())}")
+
+
+def test_low_rank_covariance_structure(
+    zinb_results, inference_method, guide_rank, parameterization, rng_key
+):
+    """Test that low-rank guides produce samples with appropriate covariance structure."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Generate multiple samples
+        samples = zinb_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=50, store_samples=True
+        )
+
+        # Get gene-specific parameters (r, mu, or both depending on
+        # parameterization)
+        if parameterization == "standard":
+            gene_params = samples.get("r")
+        elif parameterization == "linked":
+            gene_params = samples.get("mu")
+        elif parameterization == "odds_ratio":
+            gene_params = samples.get("mu")
+        else:
+            raise ValueError(f"Unknown parameterization: {parameterization}")
+
+        if gene_params is not None:
+            # Check that we have multiple samples and multiple genes
+            assert (
+                gene_params.ndim == 2
+            ), f"Expected 2D array, got shape {gene_params.shape}"
+            n_samples_actual, n_genes = gene_params.shape
+            assert (
+                n_samples_actual > 1
+            ), "Need multiple samples to check covariance"
+            assert n_genes > 1, "Need multiple genes to check covariance"
+
+            # Compute empirical covariance matrix
+            cov_matrix = jnp.cov(gene_params.T)
+
+            # For low-rank guides, the covariance should have rank <= guide_rank
+            # We can't easily check the rank, but we can verify that samples
+            # vary
+            assert jnp.any(
+                jnp.abs(cov_matrix) > 1e-6
+            ), "Low-rank guide should produce samples with non-zero covariance"
+
+            # Debug: print covariance statistics
+            print(
+                f"DEBUG: Covariance matrix shape: {cov_matrix.shape}, "
+                f"mean abs value: {jnp.mean(jnp.abs(cov_matrix)):.6f}"
+            )
