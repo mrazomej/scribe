@@ -1783,9 +1783,8 @@ def nbvcp_mixture_model(
         )
 
     # Transform to constrained space
-    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
-    r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
     p = numpyro.deterministic("p", sigmoid(p_unconstrained))
+    r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
 
     # Define plate context for sampling
     plate_context = (
@@ -2145,9 +2144,8 @@ def zinbvcp_mixture_model(
         )
 
     # Transform to constrained space
-    p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
-    r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
     p = numpyro.deterministic("p", sigmoid(p_unconstrained))
+    r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     # Define plate context for sampling
