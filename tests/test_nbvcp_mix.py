@@ -10,6 +10,7 @@ import os
 ALL_METHODS = ["svi", "mcmc"]
 ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio"]
 ALL_UNCONSTRAINED = [False, True]
+ALL_GUIDE_RANKS = [None, 5]
 
 # ------------------------------------------------------------------------------
 # Dynamic matrix parametrization
@@ -19,7 +20,7 @@ ALL_UNCONSTRAINED = [False, True]
 def pytest_generate_tests(metafunc):
     """
     Dynamically generate test combinations for inference methods,
-    parameterizations, and unconstrained variants.
+    parameterizations, unconstrained variants, and guide ranks.
 
     Handles command-line options for selective testing.
     """
@@ -29,6 +30,7 @@ def pytest_generate_tests(metafunc):
         "inference_method",
         "parameterization",
         "unconstrained",
+        "guide_rank",
     }.issubset(metafunc.fixturenames):
         # Get command-line options for method, parameterization, and unconstrained
         method_opt = metafunc.config.getoption("--method")
@@ -48,16 +50,19 @@ def pytest_generate_tests(metafunc):
             unconstrained_variants = [unconstrained_opt == "true"]
 
         # Generate all valid combinations
+        # Note: Low-rank guides are only supported for SVI
         combinations = [
-            (m, p, u)
+            (m, p, u, g)
             for m in methods
             for p in params
             for u in unconstrained_variants
+            for g in ALL_GUIDE_RANKS
+            if not (g is not None and m == "mcmc")  # Skip low-rank for MCMC
         ]
 
         # Parametrize the test with the generated combinations
         metafunc.parametrize(
-            "inference_method,parameterization,unconstrained",
+            "inference_method,parameterization,unconstrained,guide_rank",
             combinations,
         )
 
@@ -77,13 +82,20 @@ def nbvcp_mix_results(
     inference_method,
     parameterization,
     unconstrained,
+    guide_rank,
     small_dataset,
     rng_key,
 ):
     # Get device type from command-line option for cache key
     device_type = request.config.getoption("--device")
-    
-    key = (inference_method, device_type, parameterization, unconstrained)
+
+    key = (
+        inference_method,
+        device_type,
+        parameterization,
+        unconstrained,
+        guide_rank,
+    )
     if key in _nbvcp_mix_results_cache:
         return _nbvcp_mix_results_cache[key]
 
@@ -125,6 +137,7 @@ def nbvcp_mix_results(
             n_components=2,  # Test with 2 components
             parameterization=parameterization,
             unconstrained=unconstrained,
+            guide_rank=guide_rank,
             n_steps=3,
             batch_size=5,
             seed=42,
@@ -168,7 +181,7 @@ def nbvcp_mix_results(
 # ------------------------------------------------------------------------------
 
 
-def test_inference_run(nbvcp_mix_results):
+def test_inference_run(nbvcp_mix_results, guide_rank):
     """Test that inference runs and produces expected results."""
     assert nbvcp_mix_results.n_cells > 0
     assert nbvcp_mix_results.n_genes > 0
@@ -176,9 +189,13 @@ def test_inference_run(nbvcp_mix_results):
     assert hasattr(nbvcp_mix_results, "model_config")
     assert nbvcp_mix_results.n_components == 2
 
+    # Check guide_rank configuration
+    if guide_rank is not None:
+        assert nbvcp_mix_results.model_config.guide_rank == guide_rank
+
 
 def test_parameterization_config(
-    nbvcp_mix_results, parameterization, unconstrained
+    nbvcp_mix_results, parameterization, unconstrained, guide_rank
 ):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert nbvcp_mix_results.model_config.parameterization == parameterization
@@ -188,7 +205,9 @@ def test_parameterization_config(
         assert nbvcp_mix_results.model_config.unconstrained == unconstrained
 
 
-def test_parameter_ranges(nbvcp_mix_results, parameterization, unconstrained):
+def test_parameter_ranges(
+    nbvcp_mix_results, parameterization, unconstrained, guide_rank
+):
     """Test that parameters have correct ranges and relationships."""
     # For SVI, we need to get posterior samples to access transformed parameters
     # For MCMC, we can use either params or samples
@@ -318,7 +337,7 @@ def test_parameter_ranges(nbvcp_mix_results, parameterization, unconstrained):
 
 
 def test_posterior_sampling(
-    nbvcp_mix_results, rng_key, parameterization, unconstrained
+    nbvcp_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test sampling from the variational posterior."""
     # For SVI, must call get_posterior_samples with parameters; for MCMC, just call
@@ -472,7 +491,7 @@ def test_posterior_sampling(
         )
 
 
-def test_predictive_sampling(nbvcp_mix_results, rng_key):
+def test_predictive_sampling(nbvcp_mix_results, rng_key, guide_rank):
     """Test generating predictive samples."""
     # For SVI, must generate posterior samples first
     if hasattr(nbvcp_mix_results, "get_posterior_samples"):
@@ -497,7 +516,9 @@ def test_predictive_sampling(nbvcp_mix_results, rng_key):
     assert jnp.all(pred >= 0)
 
 
-def test_get_map(nbvcp_mix_results, parameterization, unconstrained):
+def test_get_map(
+    nbvcp_mix_results, parameterization, unconstrained, guide_rank
+):
     """Test getting MAP estimates."""
     map_est = (
         nbvcp_mix_results.get_map()
@@ -606,7 +627,7 @@ def test_get_map(nbvcp_mix_results, parameterization, unconstrained):
         )
 
 
-def test_indexing_integer(nbvcp_mix_results):
+def test_indexing_integer(nbvcp_mix_results, guide_rank):
     """Test indexing with an integer."""
     subset = nbvcp_mix_results[0]
     assert subset.n_genes == 1
@@ -614,7 +635,7 @@ def test_indexing_integer(nbvcp_mix_results):
     assert subset.n_components == nbvcp_mix_results.n_components
 
 
-def test_indexing_slice(nbvcp_mix_results):
+def test_indexing_slice(nbvcp_mix_results, guide_rank):
     """Test indexing with a slice."""
     end_idx = min(2, nbvcp_mix_results.n_genes)
     subset = nbvcp_mix_results[0:end_idx]
@@ -623,7 +644,7 @@ def test_indexing_slice(nbvcp_mix_results):
     assert subset.n_components == nbvcp_mix_results.n_components
 
 
-def test_indexing_boolean(nbvcp_mix_results):
+def test_indexing_boolean(nbvcp_mix_results, guide_rank):
     """Test indexing with a boolean array."""
     mask = jnp.zeros(nbvcp_mix_results.n_genes, dtype=bool)
     mask = mask.at[0].set(True)
@@ -634,7 +655,7 @@ def test_indexing_boolean(nbvcp_mix_results):
     assert subset.n_components == nbvcp_mix_results.n_components
 
 
-def test_log_likelihood(nbvcp_mix_results, small_dataset, rng_key):
+def test_log_likelihood(nbvcp_mix_results, small_dataset, rng_key, guide_rank):
     """Test computing log likelihood."""
     counts, _ = small_dataset
 
@@ -662,7 +683,9 @@ def test_log_likelihood(nbvcp_mix_results, small_dataset, rng_key):
     assert jnp.all(jnp.isfinite(ll_components))
 
 
-def test_parameter_relationships(nbvcp_mix_results, parameterization):
+def test_parameter_relationships(
+    nbvcp_mix_results, parameterization, guide_rank
+):
     """Test that parameter relationships are correctly maintained."""
     # Get parameters
     params = None
@@ -744,7 +767,7 @@ def test_parameter_relationships(nbvcp_mix_results, parameterization):
 
 
 def test_cell_specific_parameters(
-    nbvcp_mix_results, parameterization, unconstrained
+    nbvcp_mix_results, parameterization, unconstrained, guide_rank
 ):
     """Test that cell-specific parameters have correct shapes and ranges."""
     # Get parameters
@@ -810,7 +833,7 @@ def test_cell_specific_parameters(
                 ), "p_capture should be in [0, 1]"
 
 
-def test_variable_capture_behavior(nbvcp_mix_results, rng_key):
+def test_variable_capture_behavior(nbvcp_mix_results, rng_key, guide_rank):
     """Test that the model exhibits variable capture behavior."""
     # Generate predictive samples
     if hasattr(nbvcp_mix_results, "get_posterior_samples"):
@@ -842,7 +865,7 @@ def test_variable_capture_behavior(nbvcp_mix_results, rng_key):
 # ------------------------------------------------------------------------------
 
 
-def test_svi_loss_history(nbvcp_mix_results, inference_method):
+def test_svi_loss_history(nbvcp_mix_results, inference_method, guide_rank):
     if inference_method == "svi":
         assert hasattr(nbvcp_mix_results, "loss_history")
         assert len(nbvcp_mix_results.loss_history) > 0
@@ -854,7 +877,11 @@ def test_svi_loss_history(nbvcp_mix_results, inference_method):
 
 
 def test_mcmc_samples_shape(
-    nbvcp_mix_results, inference_method, parameterization, unconstrained
+    nbvcp_mix_results,
+    inference_method,
+    parameterization,
+    unconstrained,
+    guide_rank,
 ):
     if inference_method == "mcmc":
         samples = nbvcp_mix_results.get_posterior_samples()
@@ -988,7 +1015,7 @@ def test_mcmc_samples_shape(
 # ------------------------------------------------------------------------------
 
 
-def test_component_selection(nbvcp_mix_results):
+def test_component_selection(nbvcp_mix_results, guide_rank):
     """Test selecting a specific component from the mixture."""
     # Select the first component
     component = nbvcp_mix_results.get_component(0)
@@ -1003,7 +1030,7 @@ def test_component_selection(nbvcp_mix_results):
 
 
 def test_component_selection_with_posterior_samples(
-    nbvcp_mix_results, rng_key, parameterization, unconstrained
+    nbvcp_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test component selection with posterior samples."""
     # Generate posterior samples
@@ -1221,7 +1248,9 @@ def test_component_selection_with_posterior_samples(
             )
 
 
-def test_cell_type_assignments(nbvcp_mix_results, small_dataset, rng_key):
+def test_cell_type_assignments(
+    nbvcp_mix_results, small_dataset, rng_key, guide_rank
+):
     """Test computing cell type assignments."""
     counts, _ = small_dataset
 
@@ -1261,7 +1290,7 @@ def test_cell_type_assignments(nbvcp_mix_results, small_dataset, rng_key):
 
 
 def test_subset_with_posterior_samples(
-    nbvcp_mix_results, rng_key, parameterization, unconstrained
+    nbvcp_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test that subsetting preserves posterior samples."""
     # Generate posterior samples
@@ -1535,7 +1564,7 @@ def test_subset_with_posterior_samples(
             )
 
 
-def test_component_then_gene_indexing(nbvcp_mix_results):
+def test_component_then_gene_indexing(nbvcp_mix_results, guide_rank):
     """Test selecting a component and then indexing genes."""
     # First select a component
     component = nbvcp_mix_results.get_component(0)
@@ -1555,7 +1584,9 @@ def test_component_then_gene_indexing(nbvcp_mix_results):
 # ------------------------------------------------------------------------------
 
 
-def test_unconstrained_parameter_handling(nbvcp_mix_results, unconstrained):
+def test_unconstrained_parameter_handling(
+    nbvcp_mix_results, unconstrained, guide_rank
+):
     """Test that unconstrained parameters are handled correctly."""
     if unconstrained:
         # For unconstrained models, we should be able to get the raw parameters
@@ -1567,3 +1598,107 @@ def test_unconstrained_parameter_handling(nbvcp_mix_results, unconstrained):
         # For constrained models, parameters should respect their constraints
         # This is already tested in test_parameter_ranges
         pass
+
+
+# ------------------------------------------------------------------------------
+# Low-rank guide specific tests
+# ------------------------------------------------------------------------------
+
+
+def test_low_rank_guide_params(
+    nbvcp_mix_results, inference_method, guide_rank, parameterization
+):
+    """Test that low-rank guide parameters are present when guide_rank is not None."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Check that low-rank guide parameters are present
+        assert hasattr(nbvcp_mix_results, "params")
+        params = nbvcp_mix_results.params
+
+        # For NBVCP models, the low-rank guide should be applied to mu
+        # (linked/odds_ratio)
+        # or r (standard)
+        if parameterization == "standard":
+            # Standard parameterization uses r
+            if nbvcp_mix_results.model_config.unconstrained:
+                # Unconstrained: look for r_unconstrained low-rank parameters
+                assert (
+                    "r_unconstrained_loc" in params
+                ), "Low-rank guide should have r_unconstrained_loc"
+                assert (
+                    "r_unconstrained_W" in params
+                ), "Low-rank guide should have r_unconstrained_W (cov_factor)"
+                assert (
+                    "r_unconstrained_raw_diag" in params
+                ), "Low-rank guide should have r_unconstrained_raw_diag (cov_diag)"
+            else:
+                # Constrained: look for log_r low-rank parameters
+                assert (
+                    "log_r_loc" in params
+                ), "Low-rank guide should have log_r_loc"
+                assert (
+                    "log_r_W" in params
+                ), "Low-rank guide should have log_r_W (cov_factor)"
+                assert (
+                    "log_r_raw_diag" in params
+                ), "Low-rank guide should have log_r_raw_diag (cov_diag)"
+        elif parameterization in ["linked", "odds_ratio"]:
+            # Linked and odds_ratio use mu
+            if nbvcp_mix_results.model_config.unconstrained:
+                # Unconstrained: look for mu_unconstrained low-rank parameters
+                assert (
+                    "mu_unconstrained_loc" in params
+                ), "Low-rank guide should have mu_unconstrained_loc"
+                assert (
+                    "mu_unconstrained_W" in params
+                ), "Low-rank guide should have mu_unconstrained_W (cov_factor)"
+                assert (
+                    "mu_unconstrained_raw_diag" in params
+                ), "Low-rank guide should have mu_unconstrained_raw_diag (cov_diag)"
+            else:
+                # Constrained: look for log_mu low-rank parameters
+                assert (
+                    "log_mu_loc" in params
+                ), "Low-rank guide should have log_mu_loc"
+                assert (
+                    "log_mu_W" in params
+                ), "Low-rank guide should have log_mu_W (cov_factor)"
+                assert (
+                    "log_mu_raw_diag" in params
+                ), "Low-rank guide should have log_mu_raw_diag (cov_diag)"
+
+        # Note: p_capture/phi_capture uses mean-field (not low-rank) for all NBVCP mixture models
+        # Only r/mu get the low-rank approximation
+
+
+def test_low_rank_covariance_structure(
+    nbvcp_mix_results, inference_method, guide_rank, parameterization
+):
+    """Test that low-rank covariance matrix has correct rank."""
+    if inference_method == "svi" and guide_rank is not None:
+        assert hasattr(nbvcp_mix_results, "params")
+        params = nbvcp_mix_results.params
+
+        # Check the shape of W (cov_factor) to verify rank
+        if parameterization == "standard":
+            if nbvcp_mix_results.model_config.unconstrained:
+                W = params.get("r_unconstrained_W")
+            else:
+                W = params.get("log_r_W")
+        elif parameterization in ["linked", "odds_ratio"]:
+            if nbvcp_mix_results.model_config.unconstrained:
+                W = params.get("mu_unconstrained_W")
+            else:
+                W = params.get("log_mu_W")
+
+        if W is not None:
+            # W should have shape (n_components, n_genes, guide_rank)
+            assert W.shape[-1] == guide_rank, (
+                f"Covariance factor W should have rank {guide_rank}, "
+                f"but has shape {W.shape}"
+            )
+            assert (
+                W.shape[-2] == nbvcp_mix_results.n_genes
+            ), "W should have n_genes dimension"
+            assert (
+                W.shape[-3] == nbvcp_mix_results.n_components
+            ), "W should have n_components dimension"
