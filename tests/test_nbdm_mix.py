@@ -13,6 +13,7 @@ ALL_METHODS = [
 ]  # Both SVI and MCMC are supported for mixture models
 ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio"]
 ALL_UNCONSTRAINED = [False, True]
+ALL_GUIDE_RANKS = [None, 5]  # None = mean-field, 5 = low-rank
 
 # ------------------------------------------------------------------------------
 # Dynamic matrix parametrization
@@ -22,7 +23,7 @@ ALL_UNCONSTRAINED = [False, True]
 def pytest_generate_tests(metafunc):
     """
     Dynamically generate test combinations for inference methods,
-    parameterizations, and unconstrained variants.
+    parameterizations, unconstrained variants, and guide ranks.
 
     Handles command-line options for selective testing.
     """
@@ -32,11 +33,13 @@ def pytest_generate_tests(metafunc):
         "inference_method",
         "parameterization",
         "unconstrained",
+        "guide_rank",
     }.issubset(metafunc.fixturenames):
-        # Get command-line options for method, parameterization, and unconstrained
+        # Get command-line options
         method_opt = metafunc.config.getoption("--method")
         param_opt = metafunc.config.getoption("--parameterization")
         unconstrained_opt = metafunc.config.getoption("--unconstrained")
+        guide_rank_opt = metafunc.config.getoption("--guide-rank")
 
         # Determine which methods to test based on command-line option
         methods = ALL_METHODS if method_opt == "all" else [method_opt]
@@ -50,17 +53,34 @@ def pytest_generate_tests(metafunc):
         else:
             unconstrained_variants = [unconstrained_opt == "true"]
 
+        # Determine which guide ranks to test based on command-line option
+        if guide_rank_opt == "all":
+            guide_ranks = ALL_GUIDE_RANKS
+        elif guide_rank_opt.lower() == "none":
+            guide_ranks = [None]
+        else:
+            try:
+                guide_ranks = [int(guide_rank_opt)]
+            except ValueError:
+                raise ValueError(
+                    f"Invalid guide-rank option: {guide_rank_opt}. "
+                    "Must be 'all', 'none', or an integer."
+                )
+
         # Generate all valid combinations
+        # Skip guide_rank for MCMC (it doesn't use guides)
         combinations = [
-            (m, p, u)
+            (m, p, u, g)
             for m in methods
             for p in params
             for u in unconstrained_variants
+            for g in guide_ranks
+            if not (m == "mcmc" and g is not None)  # MCMC doesn't use guides
         ]
 
         # Parametrize the test with the generated combinations
         metafunc.parametrize(
-            "inference_method,parameterization,unconstrained",
+            "inference_method,parameterization,unconstrained,guide_rank",
             combinations,
         )
 
@@ -69,40 +89,34 @@ def pytest_generate_tests(metafunc):
 # Fixtures
 # ------------------------------------------------------------------------------
 
-
-@pytest.fixture(scope="session")
-def device_type():
-    # Default to CPU for matrix tests; can override with env var if needed
-    return os.environ.get("SCRIBE_TEST_DEVICE", "cpu")
-
-
 # Global cache for results
 _nbdm_mix_results_cache = {}
 
 
 @pytest.fixture(scope="function")
 def nbdm_mix_results(
+    request,
     inference_method,
-    device_type,
     parameterization,
     unconstrained,
+    guide_rank,
     small_dataset,
     rng_key,
 ):
-    key = (inference_method, device_type, parameterization, unconstrained)
+    # Get device type from command-line option for cache key
+    device_type = request.config.getoption("--device")
+
+    key = (
+        inference_method,
+        device_type,
+        parameterization,
+        unconstrained,
+        guide_rank,
+    )
     if key in _nbdm_mix_results_cache:
         return _nbdm_mix_results_cache[key]
 
-    # Configure JAX device
-    if device_type == "cpu":
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
-        import jax
-
-        jax.config.update("jax_platform_name", "cpu")
-    else:
-        if "JAX_PLATFORM_NAME" in os.environ:
-            del os.environ["JAX_PLATFORM_NAME"]
-
+    # Device is already configured in conftest.py via pytest_configure
     counts, _ = small_dataset
 
     # Set up priors based on parameterization
@@ -127,6 +141,7 @@ def nbdm_mix_results(
             n_components=2,  # Test with 2 components
             parameterization=parameterization,
             unconstrained=unconstrained,
+            guide_rank=guide_rank,
             n_steps=3,
             batch_size=5,
             seed=42,
@@ -178,7 +193,7 @@ def test_inference_run(nbdm_mix_results):
 
 
 def test_parameterization_config(
-    nbdm_mix_results, parameterization, unconstrained
+    nbdm_mix_results, parameterization, unconstrained, guide_rank
 ):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert nbdm_mix_results.model_config.parameterization == parameterization
@@ -186,12 +201,17 @@ def test_parameterization_config(
     # Note: This may need to be adjusted based on how the model config stores this information
     if hasattr(nbdm_mix_results.model_config, "unconstrained"):
         assert nbdm_mix_results.model_config.unconstrained == unconstrained
+    # Check that the guide_rank is properly set in the model config
+    if hasattr(nbdm_mix_results.model_config, "guide_rank"):
+        assert nbdm_mix_results.model_config.guide_rank == guide_rank
 
 
 # ------------------------------------------------------------------------------
 
 
-def test_parameter_ranges(nbdm_mix_results, parameterization, unconstrained):
+def test_parameter_ranges(
+    nbdm_mix_results, parameterization, unconstrained, guide_rank
+):
     """Test that parameters have correct ranges and relationships."""
     # For SVI, we need to get posterior samples to access transformed parameters
     # For MCMC, we can use either params or samples
@@ -299,7 +319,7 @@ def test_parameter_ranges(nbdm_mix_results, parameterization, unconstrained):
 
 
 def test_posterior_sampling(
-    nbdm_mix_results, rng_key, parameterization, unconstrained
+    nbdm_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test sampling from the variational posterior."""
     # For SVI, must call get_posterior_samples with parameters; for MCMC, just call
@@ -438,7 +458,7 @@ def test_predictive_sampling(nbdm_mix_results, rng_key):
 # ------------------------------------------------------------------------------
 
 
-def test_get_map(nbdm_mix_results, parameterization, unconstrained):
+def test_get_map(nbdm_mix_results, parameterization, unconstrained, guide_rank):
     map_est = (
         nbdm_mix_results.get_map()
         if hasattr(nbdm_mix_results, "get_map")
@@ -580,7 +600,7 @@ def test_log_likelihood(nbdm_mix_results, small_dataset, rng_key):
             pass
         else:  # SVI case
             nbdm_mix_results.get_posterior_samples(
-                rng_key=rng_key, n_samples=3, store_samples=True, canonical=True
+                rng_key=rng_key, n_samples=3, store_samples=True
             )
 
     # Test marginal log likelihood (across components)
@@ -613,7 +633,11 @@ def test_svi_loss_history(nbdm_mix_results, inference_method):
 
 
 def test_mcmc_samples_shape(
-    nbdm_mix_results, inference_method, parameterization, unconstrained
+    nbdm_mix_results,
+    inference_method,
+    parameterization,
+    unconstrained,
+    guide_rank,
 ):
     if inference_method == "mcmc":
         samples = nbdm_mix_results.get_posterior_samples()
@@ -720,7 +744,7 @@ def test_component_selection(nbdm_mix_results):
 
 
 def test_component_selection_with_posterior_samples(
-    nbdm_mix_results, rng_key, parameterization, unconstrained
+    nbdm_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test component selection with posterior samples."""
     # Generate posterior samples
@@ -921,7 +945,7 @@ def test_cell_type_assignments(nbdm_mix_results, small_dataset, rng_key):
 
 
 def test_subset_with_posterior_samples(
-    nbdm_mix_results, rng_key, parameterization, unconstrained
+    nbdm_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test that subsetting preserves posterior samples."""
     # Generate posterior samples
@@ -1155,7 +1179,9 @@ def test_component_then_gene_indexing(nbdm_mix_results):
 # ------------------------------------------------------------------------------
 
 
-def test_unconstrained_parameter_handling(nbdm_mix_results, unconstrained):
+def test_unconstrained_parameter_handling(
+    nbdm_mix_results, unconstrained, guide_rank
+):
     """Test that unconstrained parameters are handled correctly."""
     if unconstrained:
         # For unconstrained models, we should be able to get the raw parameters
@@ -1167,3 +1193,79 @@ def test_unconstrained_parameter_handling(nbdm_mix_results, unconstrained):
         # For constrained models, parameters should respect their constraints
         # This is already tested in test_parameter_ranges
         pass
+
+
+# ------------------------------------------------------------------------------
+# Low-Rank Guide Tests
+# ------------------------------------------------------------------------------
+
+
+def test_low_rank_guide_params(nbdm_mix_results, inference_method, guide_rank):
+    """Test that low-rank guide parameters are correctly stored."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Low-rank guides should have specific parameters
+        assert hasattr(nbdm_mix_results, "params")
+        params = nbdm_mix_results.params
+
+        # Check for low-rank-specific parameters
+        # (loc, scale_tril for LowRankMultivariateNormal)
+        # The exact parameter names depend on the implementation
+        # This is a basic check that the guide was actually used
+        assert len(params) > 0, "Low-rank guide should have parameters"
+
+        # Debug: print available parameters
+        print(f"DEBUG: Low-rank guide params keys: {list(params.keys())}")
+
+
+def test_low_rank_covariance_structure(
+    nbdm_mix_results, inference_method, guide_rank, parameterization, rng_key
+):
+    """Test that low-rank guides produce samples with appropriate covariance structure."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Generate multiple samples
+        samples = nbdm_mix_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=50, store_samples=True
+        )
+
+        # Get gene-specific parameters (r or mu depending on parameterization)
+        # For mixture models, these have shape (n_samples, n_components, n_genes)
+        if parameterization == "standard":
+            gene_params = samples.get("r")
+        elif parameterization in ["linked", "odds_ratio"]:
+            gene_params = samples.get("mu")
+        else:
+            raise ValueError(f"Unknown parameterization: {parameterization}")
+
+        if gene_params is not None:
+            # Check that we have multiple samples, components, and genes
+            assert (
+                gene_params.ndim == 3
+            ), f"Expected 3D array, got shape {gene_params.shape}"
+            n_samples_actual, n_components, n_genes = gene_params.shape
+            assert (
+                n_samples_actual > 1
+            ), "Need multiple samples to check covariance"
+            assert n_genes > 1, "Need multiple genes to check covariance"
+            assert n_components == nbdm_mix_results.n_components
+
+            # For each component, compute empirical covariance matrix across genes
+            for comp_idx in range(n_components):
+                comp_params = gene_params[
+                    :, comp_idx, :
+                ]  # (n_samples, n_genes)
+                cov_matrix = jnp.cov(comp_params.T)
+
+                # For low-rank guides, the covariance should have rank <= guide_rank
+                # We can't easily check the rank, but we can verify that samples
+                # vary
+                assert jnp.any(jnp.abs(cov_matrix) > 1e-6), (
+                    f"Low-rank guide should produce samples with non-zero "
+                    f"covariance for component {comp_idx}"
+                )
+
+                # Debug: print covariance statistics
+                print(
+                    f"DEBUG: Component {comp_idx} - Covariance matrix shape: "
+                    f"{cov_matrix.shape}, mean abs value: "
+                    f"{jnp.mean(jnp.abs(cov_matrix)):.6f}"
+                )
