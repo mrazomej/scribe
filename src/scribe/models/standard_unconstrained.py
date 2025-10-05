@@ -1436,7 +1436,9 @@ def zinb_mixture_model(
 
     gate_unconstrained = numpyro.sample(
         "gate_unconstrained",
-        dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*gate_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(2),
     )
 
     # Transform to constrained space
@@ -2122,7 +2124,9 @@ def zinbvcp_mixture_model(
     # Sample gate unconstrained
     gate_unconstrained = numpyro.sample(
         "gate_unconstrained",
-        dist.Normal(*gate_prior_params).expand([n_components, n_genes]),
+        dist.Normal(*gate_prior_params)
+        .expand([n_components, n_genes])
+        .to_event(2),
     )
 
     # Sample component-specific or shared parameters depending on config
