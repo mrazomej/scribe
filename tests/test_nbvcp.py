@@ -88,30 +88,26 @@ def pytest_generate_tests(metafunc):
 # ------------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def device_type():
-    # Default to CPU for matrix tests; can override with env var if needed
-    return os.environ.get("SCRIBE_TEST_DEVICE", "cpu")
-
-
 # Global cache for results
 _nbvcp_results_cache = {}
 
 
 @pytest.fixture(scope="function")
 def nbvcp_results(
+    request,
     inference_method,
-    device_type,
     parameterization,
     unconstrained,
     guide_rank,
     small_dataset,
     rng_key,
 ):
+    # Get device type from command-line option for cache key
+    device_type = request.config.getoption("--device")
+    
     key = (
         inference_method,
-        device_type,
-        parameterization,
+            parameterization,
         unconstrained,
         guide_rank,
     )
