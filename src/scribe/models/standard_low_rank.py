@@ -16,7 +16,6 @@ from numpyro.distributions import constraints
 # Import model config
 from .model_config import ModelConfig
 
-
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
@@ -426,7 +425,7 @@ def zinb_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific gate from a Beta prior
-    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta).to_event(1))
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
     if model_config.component_specific_params:
         # Define parameters for p
@@ -624,7 +623,7 @@ def zinbvcp_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific gate from a Beta prior
-    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta).to_event(1))
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
     # Define parameters for p
     if model_config.component_specific_params:

@@ -17,7 +17,6 @@ from typing import Dict, Optional
 # Import model config
 from .model_config import ModelConfig
 
-
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
