@@ -436,7 +436,9 @@ def zinb_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific gate_unconstrained from a Normal prior
-    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
+    numpyro.sample(
+        "gate_unconstrained", dist.Normal(gate_loc, gate_scale).to_event(2)
+    )
 
     if model_config.component_specific_params:
         # Define parameters for p_unconstrained
@@ -654,7 +656,9 @@ def zinbvcp_mixture_guide(
         constraint=constraints.positive,
     )
     # Sample the gene-specific gate_unconstrained from a Normal prior
-    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
+    numpyro.sample(
+        "gate_unconstrained", dist.Normal(gate_loc, gate_scale).to_event(2)
+    )
 
     # Define parameters for p_unconstrained
     if model_config.component_specific_params:
