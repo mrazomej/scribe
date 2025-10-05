@@ -339,7 +339,7 @@ def nbdm_mixture_guide(
     D = softplus(raw) + 1e-4
 
     base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-    numpyro.sample("r_unconstrained", base)
+    numpyro.sample("r_unconstrained", base.to_event(1))
 
     if model_config.component_specific_params:
         # Define parameters for p_unconstrained
@@ -424,7 +424,7 @@ def zinb_mixture_guide(
     D = softplus(raw) + 1e-4
 
     base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-    numpyro.sample("r_unconstrained", base)
+    numpyro.sample("r_unconstrained", base.to_event(1))
 
     # Define parameters for gate_unconstrained
     gate_loc = numpyro.param(
@@ -527,7 +527,7 @@ def nbvcp_mixture_guide(
     D = softplus(raw) + 1e-4
 
     base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-    numpyro.sample("r_unconstrained", base)
+    numpyro.sample("r_unconstrained", base.to_event(1))
 
     if model_config.component_specific_params:
         # Define parameters for p_unconstrained
@@ -642,7 +642,7 @@ def zinbvcp_mixture_guide(
     D = softplus(raw) + 1e-4
 
     base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-    numpyro.sample("r_unconstrained", base)
+    numpyro.sample("r_unconstrained", base.to_event(1))
 
     # Define parameters for gate_unconstrained
     gate_loc = numpyro.param(
