@@ -925,6 +925,24 @@ class ScribeSVIResults:
             "phi_unconstrained_scale",
             "gate_unconstrained_loc",
             "gate_unconstrained_scale",
+            # Low-rank guide parameters (standard constrained)
+            "log_r_loc",
+            "log_r_W",
+            "log_r_raw_diag",
+            # Low-rank guide parameters (standard unconstrained)
+            "r_unconstrained_W",
+            "r_unconstrained_raw_diag",
+            # Low-rank guide parameters (linked/odds_ratio constrained)
+            "log_mu_loc",
+            "log_mu_W",
+            "log_mu_raw_diag",
+            # Low-rank guide parameters (linked/odds_ratio unconstrained)
+            "mu_unconstrained_loc",
+            "mu_unconstrained_W",
+            "mu_unconstrained_raw_diag",
+            # Low-rank guide parameters (gate - unconstrained)
+            "gate_unconstrained_W",
+            "gate_unconstrained_raw_diag",
         ]
 
         # Component-specific parameters (shape: [n_components])
