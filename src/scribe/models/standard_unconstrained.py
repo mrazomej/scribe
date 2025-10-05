@@ -9,7 +9,7 @@ samples them in unconstrained space using Normal distributions.
 # Import JAX-related libraries
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jax.nn import softmax
+from jax.nn import softmax, sigmoid
 
 # Import Pyro-related libraries
 import numpyro
@@ -1122,6 +1122,13 @@ def nbdm_mixture_model(
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
 
+    # Compute mixing weights from logits
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights",
+        jnp.exp(mixing_logits_unconstrained)
+        / jnp.sum(jnp.exp(mixing_logits_unconstrained)),
+    )
+
     # Define mixing distribution
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
@@ -1150,6 +1157,7 @@ def nbdm_mixture_model(
 
     # Deterministic transformations to constrained space
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
+    p = numpyro.deterministic("p", sigmoid(p_unconstrained))
 
     # Define component distribution using logits parameterization
     base_dist = dist.NegativeBinomialLogits(
@@ -1300,7 +1308,7 @@ def nbdm_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(2))
 
 
 # ------------------------------------------------------------------------------
@@ -1433,9 +1441,24 @@ def zinb_mixture_model(
 
     # Transform to constrained space
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
+    p = numpyro.deterministic("p", sigmoid(p_unconstrained))
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     # Define distributions
+    # Compute mixing weights from logits using softmax
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights",
+        jnp.exp(
+            mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained)
+        )
+        / jnp.sum(
+            jnp.exp(
+                mixing_logits_unconstrained
+                - jnp.max(mixing_logits_unconstrained)
+            )
+        ),
+    )
+
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     base_nb_dist = dist.NegativeBinomialLogits(
@@ -1592,7 +1615,7 @@ def zinb_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(2))
 
     # Register gate parameters
     gate_loc = numpyro.param(
@@ -1604,7 +1627,9 @@ def zinb_mixture_guide(
         jnp.full((n_components, n_genes), gate_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
+    numpyro.sample(
+        "gate_unconstrained", dist.Normal(gate_loc, gate_scale).to_event(2)
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -1716,6 +1741,20 @@ def nbvcp_mixture_model(
     )
 
     # Define global mixing distribution
+    # Compute mixing weights from logits using softmax
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights",
+        jnp.exp(
+            mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained)
+        )
+        / jnp.sum(
+            jnp.exp(
+                mixing_logits_unconstrained
+                - jnp.max(mixing_logits_unconstrained)
+            )
+        ),
+    )
+
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     # Sample r unconstrained
@@ -1744,6 +1783,7 @@ def nbvcp_mixture_model(
     # Transform to constrained space
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
+    p = numpyro.deterministic("p", sigmoid(p_unconstrained))
 
     # Define plate context for sampling
     plate_context = (
@@ -1889,7 +1929,7 @@ def nbvcp_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(2))
 
     if model_config.component_specific_params:
         # Each component has its own p
@@ -2055,6 +2095,20 @@ def zinbvcp_mixture_model(
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
     # Define global mixing distribution
+    # Compute mixing weights from logits using softmax
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights",
+        jnp.exp(
+            mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained)
+        )
+        / jnp.sum(
+            jnp.exp(
+                mixing_logits_unconstrained
+                - jnp.max(mixing_logits_unconstrained)
+            )
+        ),
+    )
+
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     # Sample r unconstrained
@@ -2089,6 +2143,7 @@ def zinbvcp_mixture_model(
     # Transform to constrained space
     p = numpyro.deterministic("p", jsp.special.expit(p_unconstrained))
     r = numpyro.deterministic("r", jnp.exp(r_unconstrained))
+    p = numpyro.deterministic("p", sigmoid(p_unconstrained))
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     # Define plate context for sampling
@@ -2246,7 +2301,7 @@ def zinbvcp_mixture_guide(
         jnp.full((n_components, n_genes), r_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(1))
+    numpyro.sample("r_unconstrained", dist.Normal(r_loc, r_scale).to_event(2))
 
     # Register gate parameters
     gate_loc = numpyro.param(
@@ -2258,7 +2313,9 @@ def zinbvcp_mixture_guide(
         jnp.full((n_components, n_genes), gate_guide_params[1]),
         constraint=constraints.positive,
     )
-    numpyro.sample("gate_unconstrained", dist.Normal(gate_loc, gate_scale))
+    numpyro.sample(
+        "gate_unconstrained", dist.Normal(gate_loc, gate_scale).to_event(2)
+    )
 
     if model_config.component_specific_params:
         # Each component has its own p

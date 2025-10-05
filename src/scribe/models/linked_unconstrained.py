@@ -98,8 +98,20 @@ def nbdm_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
 
     # Sample unconstrained parameters
     p_unconstrained = numpyro.sample(
@@ -193,8 +205,8 @@ def nbdm_guide(
         inference machinery.
     """
     # Define guide parameters with proper defaults
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -299,9 +311,27 @@ def zinb_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    gate_prior_params = model_config.gate_unconstrained_prior if model_config.gate_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
 
     # Sample unconstrained parameters
     p_unconstrained = numpyro.sample(
@@ -409,9 +439,9 @@ def zinb_guide(
         This function defines the variational guide for use with NumPyro.
     """
     # Define guide parameters
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
+    gate_guide_params = model_config.gate_unconstrained_guide if model_config.gate_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -528,11 +558,26 @@ def nbvcp_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior if model_config.p_capture_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
     )
 
     # Sample unconstrained parameters
@@ -703,12 +748,9 @@ def nbvcp_guide(
         inference machinery.
     """
     # Define guide parameters
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide if model_config.p_capture_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -848,12 +890,33 @@ def zinbvcp_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Get prior parameters from model_config, or use defaults if not provided
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    gate_prior_params = model_config.gate_unconstrained_prior if model_config.gate_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior if model_config.p_capture_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
     )
 
     # Sample unconstrained parameters
@@ -1041,13 +1104,10 @@ def zinbvcp_guide(
         inference machinery.
     """
     # Define guide parameters
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
+    gate_guide_params = model_config.gate_unconstrained_guide if model_config.gate_unconstrained_guide is not None else (0.0, 1.0)
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide if model_config.p_capture_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -1165,17 +1225,37 @@ def nbdm_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters
-    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior if model_config.mixing_logits_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
     )
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
 
     # Sample unconstrained mixing logits
     mixing_logits_unconstrained = numpyro.sample(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
+    )
+
+    # Compute mixing weights from logits
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights", jnp.exp(mixing_logits_unconstrained) / jnp.sum(jnp.exp(mixing_logits_unconstrained))
     )
 
     # Define mixing distribution
@@ -1267,12 +1347,9 @@ def nbdm_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide if model_config.mixing_logits_unconstrained_guide is not None else (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register mixing weights parameters
     mixing_loc = numpyro.param(
@@ -1355,13 +1432,34 @@ def zinb_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters
-    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior if model_config.mixing_logits_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
     )
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    gate_prior_params = model_config.gate_unconstrained_prior if model_config.gate_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
 
     # Sample unconstrained mixing logits
     mixing_logits_unconstrained = numpyro.sample(
@@ -1400,6 +1498,13 @@ def zinb_mixture_model(
     numpyro.deterministic("gate", jsp.special.expit(gate_unconstrained))
 
     # Define distributions
+    # Compute mixing weights from logits using softmax
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights",
+        jnp.exp(mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained))
+        / jnp.sum(jnp.exp(mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained))),
+    )
+
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
     base_nb_dist = dist.NegativeBinomialLogits(
         total_count=r, logits=p_unconstrained
@@ -1453,13 +1558,10 @@ def zinb_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide if model_config.mixing_logits_unconstrained_guide is not None else (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
+    gate_guide_params = model_config.gate_unconstrained_guide if model_config.gate_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register mixing weights parameters
     mixing_loc = numpyro.param(
@@ -1552,15 +1654,33 @@ def nbvcp_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters
-    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior if model_config.mixing_logits_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
     )
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior if model_config.p_capture_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
     )
 
     # Sample global unconstrained parameters
@@ -1568,6 +1688,13 @@ def nbvcp_mixture_model(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
+    # Compute mixing weights from logits using softmax
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights",
+        jnp.exp(mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained))
+        / jnp.sum(jnp.exp(mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained))),
+    )
+
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     if model_config.component_specific_params:
@@ -1647,16 +1774,10 @@ def nbvcp_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide if model_config.mixing_logits_unconstrained_guide is not None else (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide if model_config.p_capture_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register global parameters
     mixing_loc = numpyro.param(
@@ -1761,16 +1882,40 @@ def zinbvcp_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters
-    mixing_prior_params = model_config.mixing_logits_unconstrained_prior or (
+    mixing_prior_params = model_config.mixing_logits_unconstrained_prior if model_config.mixing_logits_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
     )
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    mu_prior_params = model_config.mu_unconstrained_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.p_unconstrained_prior if model_config.p_unconstrained_prior is not None else (
+
         0.0,
+
         1.0,
+
+    )
+    mu_prior_params = model_config.mu_unconstrained_prior if model_config.mu_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    gate_prior_params = model_config.gate_unconstrained_prior if model_config.gate_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
+    )
+    p_capture_prior_params = model_config.p_capture_unconstrained_prior if model_config.p_capture_unconstrained_prior is not None else (
+
+        0.0,
+
+        1.0,
+
     )
 
     # Sample global unconstrained parameters
@@ -1778,6 +1923,13 @@ def zinbvcp_mixture_model(
         "mixing_logits_unconstrained",
         dist.Normal(*mixing_prior_params).expand([n_components]),
     )
+    # Compute mixing weights from logits using softmax
+    mixing_weights = numpyro.deterministic(
+        "mixing_weights",
+        jnp.exp(mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained))
+        / jnp.sum(jnp.exp(mixing_logits_unconstrained - jnp.max(mixing_logits_unconstrained))),
+    )
+
     mixing_dist = dist.Categorical(logits=mixing_logits_unconstrained)
 
     gate_unconstrained = numpyro.sample(
@@ -1867,17 +2019,11 @@ def zinbvcp_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    mu_guide_params = model_config.mu_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
-        0.0,
-        1.0,
-    )
+    mixing_guide_params = model_config.mixing_logits_unconstrained_guide if model_config.mixing_logits_unconstrained_guide is not None else (0.0, 1.0)
+    p_guide_params = model_config.p_unconstrained_guide if model_config.p_unconstrained_guide is not None else (0.0, 1.0)
+    mu_guide_params = model_config.mu_unconstrained_guide if model_config.mu_unconstrained_guide is not None else (0.0, 1.0)
+    gate_guide_params = model_config.gate_unconstrained_guide if model_config.gate_unconstrained_guide is not None else (0.0, 1.0)
+    p_capture_guide_params = model_config.p_capture_unconstrained_guide if model_config.p_capture_unconstrained_guide is not None else (0.0, 1.0)
 
     # Register global parameters
     mixing_loc = numpyro.param(
