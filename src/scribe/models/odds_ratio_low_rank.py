@@ -20,7 +20,6 @@ from ..stats import BetaPrime
 # Import model config
 from .model_config import ModelConfig
 
-
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
@@ -179,6 +178,93 @@ def nbvcp_guide(
     exp_tr = dist.transforms.ExpTransform()
     mu_dist = dist.TransformedDistribution(base, exp_tr)
     numpyro.sample("mu", mu_dist)
+
+    # Set up cell-specific capture probability parameters
+    phi_capture_alpha = numpyro.param(
+        "phi_capture_alpha",
+        jnp.full(n_cells, phi_capture_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    phi_capture_beta = numpyro.param(
+        "phi_capture_beta",
+        jnp.full(n_cells, phi_capture_prior_params[1]),
+        constraint=constraints.positive,
+    )
+
+    # Sample phi_capture depending on batch size
+    if batch_size is None:
+        with numpyro.plate("cells", n_cells):
+            numpyro.sample(
+                "phi_capture", BetaPrime(phi_capture_alpha, phi_capture_beta)
+            )
+    else:
+        with numpyro.plate("cells", n_cells, subsample_size=batch_size) as idx:
+            numpyro.sample(
+                "phi_capture",
+                BetaPrime(phi_capture_alpha[idx], phi_capture_beta[idx]),
+            )
+
+
+# ------------------------------------------------------------------------------
+# Zero-Inflated Negative Binomial with Variable Capture Probability
+# ------------------------------------------------------------------------------
+
+
+def zinbvcp_guide(
+    n_cells: int,
+    n_genes: int,
+    model_config: ModelConfig,
+    counts=None,
+    batch_size=None,
+):
+    """
+    Mean-field variational guide for the Zero-Inflated Negative Binomial with
+    Variable Capture Probability (ZINBVCP) model with a low-rank approximation
+    for `mu`.
+    """
+    # Define guide parameters for phi, mu, gate, and phi_capture
+    phi_prior_params = model_config.phi_param_guide or (1.0, 1.0)
+    gate_prior_params = model_config.gate_param_guide or (1.0, 1.0)
+    phi_capture_prior_params = model_config.phi_capture_param_guide or (
+        1.0,
+        1.0,
+    )
+
+    # Register variational parameters for phi (odds ratio)
+    phi_alpha = numpyro.param(
+        "phi_alpha", phi_prior_params[0], constraint=constraints.positive
+    )
+    phi_beta = numpyro.param(
+        "phi_beta", phi_prior_params[1], constraint=constraints.positive
+    )
+    numpyro.sample("phi", BetaPrime(phi_alpha, phi_beta))
+
+    # Low-rank multivariate normal for mu
+    G = n_genes
+    k = model_config.guide_rank
+
+    loc = numpyro.param("log_mu_loc", jnp.zeros(G))
+    W = numpyro.param("log_mu_W", 0.01 * jnp.ones((G, k)))
+    raw = numpyro.param("log_mu_raw_diag", -3.0 * jnp.ones(G))
+    D = softplus(raw) + 1e-4
+
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+    exp_tr = dist.transforms.ExpTransform()
+    mu_dist = dist.TransformedDistribution(base, exp_tr)
+    numpyro.sample("mu", mu_dist)
+
+    # Register variational parameters for gate (zero-inflation probability)
+    gate_alpha = numpyro.param(
+        "gate_alpha",
+        jnp.full(n_genes, gate_prior_params[0]),
+        constraint=constraints.positive,
+    )
+    gate_beta = numpyro.param(
+        "gate_beta",
+        jnp.full(n_genes, gate_prior_params[1]),
+        constraint=constraints.positive,
+    )
+    numpyro.sample("gate", dist.Beta(gate_alpha, gate_beta))
 
     # Set up cell-specific capture probability parameters
     phi_capture_alpha = numpyro.param(
