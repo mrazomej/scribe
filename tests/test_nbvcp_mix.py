@@ -67,38 +67,27 @@ def pytest_generate_tests(metafunc):
 # ------------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def device_type():
-    # Default to CPU for matrix tests; can override with env var if needed
-    return os.environ.get("SCRIBE_TEST_DEVICE", "cpu")
-
-
 # Global cache for results
 _nbvcp_mix_results_cache = {}
 
 
 @pytest.fixture(scope="function")
 def nbvcp_mix_results(
+    request,
     inference_method,
-    device_type,
     parameterization,
     unconstrained,
     small_dataset,
     rng_key,
 ):
+    # Get device type from command-line option for cache key
+    device_type = request.config.getoption("--device")
+    
     key = (inference_method, device_type, parameterization, unconstrained)
     if key in _nbvcp_mix_results_cache:
         return _nbvcp_mix_results_cache[key]
 
-    # Configure JAX device
-    if device_type == "cpu":
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
-        import jax
-
-        jax.config.update("jax_platform_name", "cpu")
-    else:
-        if "JAX_PLATFORM_NAME" in os.environ:
-            del os.environ["JAX_PLATFORM_NAME"]
+    # Device is already configured in conftest.py via pytest_configure
 
     counts, _ = small_dataset
 
