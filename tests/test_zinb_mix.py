@@ -13,6 +13,7 @@ ALL_METHODS = [
 ]  # Both SVI and MCMC are supported for mixture models
 ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio"]
 ALL_UNCONSTRAINED = [False, True]
+ALL_GUIDE_RANKS = [None, 5]
 
 # ------------------------------------------------------------------------------
 # Dynamic matrix parametrization
@@ -22,7 +23,7 @@ ALL_UNCONSTRAINED = [False, True]
 def pytest_generate_tests(metafunc):
     """
     Dynamically generate test combinations for inference methods,
-    parameterizations, and unconstrained variants.
+    parameterizations, unconstrained variants, and guide ranks.
 
     Handles command-line options for selective testing.
     """
@@ -32,6 +33,7 @@ def pytest_generate_tests(metafunc):
         "inference_method",
         "parameterization",
         "unconstrained",
+        "guide_rank",
     }.issubset(metafunc.fixturenames):
         # Get command-line options for method, parameterization, and unconstrained
         method_opt = metafunc.config.getoption("--method")
@@ -51,16 +53,19 @@ def pytest_generate_tests(metafunc):
             unconstrained_variants = [unconstrained_opt == "true"]
 
         # Generate all valid combinations
+        # Note: Low-rank guides are only supported for SVI
         combinations = [
-            (m, p, u)
+            (m, p, u, g)
             for m in methods
             for p in params
             for u in unconstrained_variants
+            for g in ALL_GUIDE_RANKS
+            if not (g is not None and m == "mcmc")  # Skip low-rank for MCMC
         ]
 
         # Parametrize the test with the generated combinations
         metafunc.parametrize(
-            "inference_method,parameterization,unconstrained",
+            "inference_method,parameterization,unconstrained,guide_rank",
             combinations,
         )
 
@@ -70,38 +75,34 @@ def pytest_generate_tests(metafunc):
 # ------------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def device_type():
-    # Default to CPU for matrix tests; can override with env var if needed
-    return os.environ.get("SCRIBE_TEST_DEVICE", "cpu")
-
-
 # Global cache for results
 _zinb_mix_results_cache = {}
 
 
 @pytest.fixture(scope="function")
 def zinb_mix_results(
+    request,
     inference_method,
-    device_type,
     parameterization,
     unconstrained,
+    guide_rank,
     small_dataset,
     rng_key,
 ):
-    key = (inference_method, device_type, parameterization, unconstrained)
+    # Get device type from command-line option for cache key
+    device_type = request.config.getoption("--device")
+
+    key = (
+        inference_method,
+        device_type,
+        parameterization,
+        unconstrained,
+        guide_rank,
+    )
     if key in _zinb_mix_results_cache:
         return _zinb_mix_results_cache[key]
 
-    # Configure JAX device
-    if device_type == "cpu":
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
-        import jax
-
-        jax.config.update("jax_platform_name", "cpu")
-    else:
-        if "JAX_PLATFORM_NAME" in os.environ:
-            del os.environ["JAX_PLATFORM_NAME"]
+    # Device is already configured in conftest.py via pytest_configure
 
     counts, _ = small_dataset
 
@@ -127,6 +128,7 @@ def zinb_mix_results(
             n_components=2,  # Test with 2 components
             parameterization=parameterization,
             unconstrained=unconstrained,
+            guide_rank=guide_rank,
             n_steps=3,
             batch_size=5,
             seed=42,
@@ -168,19 +170,23 @@ def zinb_mix_results(
 # ------------------------------------------------------------------------------
 
 
-def test_inference_run(zinb_mix_results):
+def test_inference_run(zinb_mix_results, guide_rank):
     assert zinb_mix_results.n_cells > 0
     assert zinb_mix_results.n_genes > 0
     assert zinb_mix_results.model_type == "zinb_mix"
     assert hasattr(zinb_mix_results, "model_config")
     assert zinb_mix_results.n_components == 2
 
+    # Check guide_rank configuration
+    if guide_rank is not None:
+        assert zinb_mix_results.model_config.guide_rank == guide_rank
+
 
 # ------------------------------------------------------------------------------
 
 
 def test_parameterization_config(
-    zinb_mix_results, parameterization, unconstrained
+    zinb_mix_results, parameterization, unconstrained, guide_rank
 ):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert zinb_mix_results.model_config.parameterization == parameterization
@@ -193,7 +199,9 @@ def test_parameterization_config(
 # ------------------------------------------------------------------------------
 
 
-def test_parameter_ranges(zinb_mix_results, parameterization, unconstrained):
+def test_parameter_ranges(
+    zinb_mix_results, parameterization, unconstrained, guide_rank
+):
     """Test that parameters have correct ranges and relationships."""
     # For SVI, we need to get posterior samples to access transformed parameters
     # For MCMC, we can use either params or samples
@@ -316,7 +324,7 @@ def test_parameter_ranges(zinb_mix_results, parameterization, unconstrained):
 
 
 def test_posterior_sampling(
-    zinb_mix_results, rng_key, parameterization, unconstrained
+    zinb_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test sampling from the variational posterior."""
     # For SVI, must call get_posterior_samples with parameters; for MCMC, just call
@@ -478,7 +486,7 @@ def test_posterior_sampling(
 # ------------------------------------------------------------------------------
 
 
-def test_predictive_sampling(zinb_mix_results, rng_key):
+def test_predictive_sampling(zinb_mix_results, rng_key, guide_rank):
     """Test generating predictive samples."""
     # For SVI, must generate posterior samples first
     if hasattr(zinb_mix_results, "get_posterior_samples"):
@@ -506,7 +514,7 @@ def test_predictive_sampling(zinb_mix_results, rng_key):
 # ------------------------------------------------------------------------------
 
 
-def test_get_map(zinb_mix_results, parameterization, unconstrained):
+def test_get_map(zinb_mix_results, parameterization, unconstrained, guide_rank):
     map_est = (
         zinb_mix_results.get_map()
         if hasattr(zinb_mix_results, "get_map")
@@ -603,7 +611,7 @@ def test_get_map(zinb_mix_results, parameterization, unconstrained):
 # ------------------------------------------------------------------------------
 
 
-def test_indexing_integer(zinb_mix_results):
+def test_indexing_integer(zinb_mix_results, guide_rank):
     """Test indexing with an integer."""
     subset = zinb_mix_results[0]
     assert subset.n_genes == 1
@@ -614,7 +622,7 @@ def test_indexing_integer(zinb_mix_results):
 # ------------------------------------------------------------------------------
 
 
-def test_indexing_slice(zinb_mix_results):
+def test_indexing_slice(zinb_mix_results, guide_rank):
     """Test indexing with a slice."""
     end_idx = min(2, zinb_mix_results.n_genes)
     subset = zinb_mix_results[0:end_idx]
@@ -626,7 +634,7 @@ def test_indexing_slice(zinb_mix_results):
 # ------------------------------------------------------------------------------
 
 
-def test_indexing_boolean(zinb_mix_results):
+def test_indexing_boolean(zinb_mix_results, guide_rank):
     """Test indexing with a boolean array."""
     mask = jnp.zeros(zinb_mix_results.n_genes, dtype=bool)
     mask = mask.at[0].set(True)
@@ -640,7 +648,7 @@ def test_indexing_boolean(zinb_mix_results):
 # ------------------------------------------------------------------------------
 
 
-def test_log_likelihood(zinb_mix_results, small_dataset, rng_key):
+def test_log_likelihood(zinb_mix_results, small_dataset, rng_key, guide_rank):
     counts, _ = small_dataset
 
     # For SVI, must generate posterior samples first
@@ -651,7 +659,7 @@ def test_log_likelihood(zinb_mix_results, small_dataset, rng_key):
             pass
         else:  # SVI case
             zinb_mix_results.get_posterior_samples(
-                rng_key=rng_key, n_samples=3, store_samples=True, canonical=True
+                rng_key=rng_key, n_samples=3, store_samples=True
             )
 
     # Test marginal log likelihood (across components)
@@ -672,7 +680,7 @@ def test_log_likelihood(zinb_mix_results, small_dataset, rng_key):
 # ------------------------------------------------------------------------------
 
 
-def test_svi_loss_history(zinb_mix_results, inference_method):
+def test_svi_loss_history(zinb_mix_results, inference_method, guide_rank):
     if inference_method == "svi":
         assert hasattr(zinb_mix_results, "loss_history")
         assert len(zinb_mix_results.loss_history) > 0
@@ -684,7 +692,11 @@ def test_svi_loss_history(zinb_mix_results, inference_method):
 
 
 def test_mcmc_samples_shape(
-    zinb_mix_results, inference_method, parameterization, unconstrained
+    zinb_mix_results,
+    inference_method,
+    parameterization,
+    unconstrained,
+    guide_rank,
 ):
     if inference_method == "mcmc":
         samples = zinb_mix_results.get_posterior_samples()
@@ -811,7 +823,7 @@ def test_mcmc_samples_shape(
 # ------------------------------------------------------------------------------
 
 
-def test_component_selection(zinb_mix_results):
+def test_component_selection(zinb_mix_results, guide_rank):
     """Test selecting a specific component from the mixture."""
     # Select the first component
     component = zinb_mix_results.get_component(0)
@@ -829,7 +841,7 @@ def test_component_selection(zinb_mix_results):
 
 
 def test_component_selection_with_posterior_samples(
-    zinb_mix_results, rng_key, parameterization, unconstrained
+    zinb_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test component selection with posterior samples."""
     # Generate posterior samples
@@ -1050,7 +1062,9 @@ def test_component_selection_with_posterior_samples(
 # ------------------------------------------------------------------------------
 
 
-def test_cell_type_assignments(zinb_mix_results, small_dataset, rng_key):
+def test_cell_type_assignments(
+    zinb_mix_results, small_dataset, rng_key, guide_rank
+):
     """Test computing cell type assignments."""
     counts, _ = small_dataset
 
@@ -1093,7 +1107,7 @@ def test_cell_type_assignments(zinb_mix_results, small_dataset, rng_key):
 
 
 def test_subset_with_posterior_samples(
-    zinb_mix_results, rng_key, parameterization, unconstrained
+    zinb_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):
     """Test that subsetting preserves posterior samples."""
     # Generate posterior samples
@@ -1373,7 +1387,7 @@ def test_subset_with_posterior_samples(
 # ------------------------------------------------------------------------------
 
 
-def test_component_then_gene_indexing(zinb_mix_results):
+def test_component_then_gene_indexing(zinb_mix_results, guide_rank):
     """Test selecting a component and then indexing genes."""
     # First select a component
     component = zinb_mix_results.get_component(0)
@@ -1394,7 +1408,7 @@ def test_component_then_gene_indexing(zinb_mix_results):
 
 
 def test_gate_parameter_ranges(
-    zinb_mix_results, parameterization, unconstrained
+    zinb_mix_results, parameterization, unconstrained, guide_rank
 ):
     """Test that gate parameters are in valid probability range [0, 1]."""
     # Get parameters
@@ -1425,7 +1439,7 @@ def test_gate_parameter_ranges(
             ), "Gate parameters must be in [0, 1]"
 
 
-def test_zero_inflation_behavior(zinb_mix_results, rng_key):
+def test_zero_inflation_behavior(zinb_mix_results, rng_key, guide_rank):
     """Test that the model exhibits zero-inflation behavior."""
     # Generate predictive samples
     if hasattr(zinb_mix_results, "get_posterior_samples"):
@@ -1461,7 +1475,9 @@ def test_zero_inflation_behavior(zinb_mix_results, rng_key):
 # ------------------------------------------------------------------------------
 
 
-def test_unconstrained_parameter_handling(zinb_mix_results, unconstrained):
+def test_unconstrained_parameter_handling(
+    zinb_mix_results, unconstrained, guide_rank
+):
     """Test that unconstrained parameters are handled correctly."""
     if unconstrained:
         # For unconstrained models, we should be able to get the raw parameters
@@ -1473,3 +1489,106 @@ def test_unconstrained_parameter_handling(zinb_mix_results, unconstrained):
         # For constrained models, parameters should respect their constraints
         # This is already tested in test_parameter_ranges
         pass
+
+
+# ------------------------------------------------------------------------------
+# Low-rank guide specific tests
+# ------------------------------------------------------------------------------
+
+
+def test_low_rank_guide_params(
+    zinb_mix_results, inference_method, guide_rank, parameterization
+):
+    """Test that low-rank guide parameters are present when guide_rank is not None."""
+    if inference_method == "svi" and guide_rank is not None:
+        # Check that low-rank guide parameters are present
+        assert hasattr(zinb_mix_results, "params")
+        params = zinb_mix_results.params
+
+        # For ZINB models, the low-rank guide should be applied to mu (linked/odds_ratio)
+        # or r (standard)
+        if parameterization == "standard":
+            # Standard parameterization uses r
+            if zinb_mix_results.model_config.unconstrained:
+                # Unconstrained: look for r_unconstrained low-rank parameters
+                assert (
+                    "r_unconstrained_loc" in params
+                ), "Low-rank guide should have r_unconstrained_loc"
+                assert (
+                    "r_unconstrained_W" in params
+                ), "Low-rank guide should have r_unconstrained_W (cov_factor)"
+                assert (
+                    "r_unconstrained_raw_diag" in params
+                ), "Low-rank guide should have r_unconstrained_raw_diag (cov_diag)"
+            else:
+                # Constrained: look for log_r low-rank parameters
+                assert (
+                    "log_r_loc" in params
+                ), "Low-rank guide should have log_r_loc"
+                assert (
+                    "log_r_W" in params
+                ), "Low-rank guide should have log_r_W (cov_factor)"
+                assert (
+                    "log_r_raw_diag" in params
+                ), "Low-rank guide should have log_r_raw_diag (cov_diag)"
+        elif parameterization in ["linked", "odds_ratio"]:
+            # Linked and odds_ratio use mu
+            if zinb_mix_results.model_config.unconstrained:
+                # Unconstrained: look for mu_unconstrained low-rank parameters
+                assert (
+                    "mu_unconstrained_loc" in params
+                ), "Low-rank guide should have mu_unconstrained_loc"
+                assert (
+                    "mu_unconstrained_W" in params
+                ), "Low-rank guide should have mu_unconstrained_W (cov_factor)"
+                assert (
+                    "mu_unconstrained_raw_diag" in params
+                ), "Low-rank guide should have mu_unconstrained_raw_diag (cov_diag)"
+            else:
+                # Constrained: look for log_mu low-rank parameters
+                assert (
+                    "log_mu_loc" in params
+                ), "Low-rank guide should have log_mu_loc"
+                assert (
+                    "log_mu_W" in params
+                ), "Low-rank guide should have log_mu_W (cov_factor)"
+                assert (
+                    "log_mu_raw_diag" in params
+                ), "Low-rank guide should have log_mu_raw_diag (cov_diag)"
+
+        # Note: gate uses mean-field (not low-rank) for all ZINB mixture models
+        # Only r/mu get the low-rank approximation
+
+
+def test_low_rank_covariance_structure(
+    zinb_mix_results, inference_method, guide_rank, parameterization
+):
+    """Test that low-rank covariance matrix has correct rank."""
+    if inference_method == "svi" and guide_rank is not None:
+        assert hasattr(zinb_mix_results, "params")
+        params = zinb_mix_results.params
+
+        # Check the shape of W (cov_factor) to verify rank
+        if parameterization == "standard":
+            if zinb_mix_results.model_config.unconstrained:
+                W = params.get("r_unconstrained_W")
+            else:
+                W = params.get("log_r_W")
+        elif parameterization in ["linked", "odds_ratio"]:
+            if zinb_mix_results.model_config.unconstrained:
+                W = params.get("mu_unconstrained_W")
+            else:
+                W = params.get("log_mu_W")
+
+        if W is not None:
+            # W should have shape (n_components, n_genes, guide_rank)
+            assert W.shape[-1] == guide_rank, (
+                f"Covariance factor W should have rank {guide_rank}, "
+                f"but has shape {W.shape}"
+            )
+            assert (
+                W.shape[-2] == zinb_mix_results.n_genes
+            ), "W should have n_genes dimension"
+            assert (
+                W.shape[-3] == zinb_mix_results.n_components
+            ), "W should have n_components dimension"
