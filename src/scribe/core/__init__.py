@@ -6,6 +6,7 @@ This module contains shared functionality used by both SVI and MCMC inference me
 
 from .input_processor import InputProcessor
 from .normalization import normalize_counts_from_posterior
+from .normalization_logistic import fit_logistic_normal_from_posterior
 
 # from .cell_type_assignment import (
 #     compute_cell_type_probabilities,
@@ -19,6 +20,7 @@ from .normalization import normalize_counts_from_posterior
 __all__ = [
     "InputProcessor",
     "normalize_counts_from_posterior",
+    "fit_logistic_normal_from_posterior",
     "compute_cell_type_probabilities",
     "compute_cell_type_probabilities_map",
     "temperature_scaling",
