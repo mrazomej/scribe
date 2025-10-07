@@ -151,7 +151,11 @@ class ExperimentCatalog:
 
     Usage:
     ------
+    # Single directory
     catalog = ExperimentCatalog("outputs/")
+
+    # Multiple directories
+    catalog = ExperimentCatalog(["outputs/", "results/", "archived/"])
 
     # List all experiments
     catalog.list()
@@ -171,23 +175,42 @@ class ExperimentCatalog:
     )
     """
 
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: Union[str, List[str]]):
         """
         Initialize the experiment catalog.
 
         Parameters
         ----------
-        base_dir : str
-            Base directory containing experiment outputs (e.g., "outputs/")
+        base_dir : str or List[str]
+            Base directory (or list of directories) containing experiment
+            outputs (e.g., "outputs/" or ["outputs/", "results/"])
         """
-        self.base_dir = Path(base_dir).resolve()
-        if not self.base_dir.exists():
-            raise FileNotFoundError(
-                f"Base directory does not exist: {self.base_dir}"
-            )
+        # Convert single directory to list for uniform handling
+        if isinstance(base_dir, str):
+            base_dir = [base_dir]
+
+        # Resolve and validate all directories
+        self.base_dirs = []
+        for dir_path in base_dir:
+            resolved_path = Path(dir_path).resolve()
+            if not resolved_path.exists():
+                raise FileNotFoundError(
+                    f"Base directory does not exist: {resolved_path}"
+                )
+            self.base_dirs.append(resolved_path)
+
+        # For backward compatibility, keep base_dir as single path if only one
+        # provided
+        self.base_dir = self.base_dirs[0] if len(self.base_dirs) == 1 else None
 
         self.experiments = self._scan_experiments()
-        print(f"Found {len(self.experiments)} experiments in {self.base_dir}")
+        dir_summary = ", ".join(str(d) for d in self.base_dirs)
+        print(
+            f"Found {len(self.experiments)} experiments across "
+            f"{len(self.base_dirs)} "
+            f"director{'y' if len(self.base_dirs) == 1 else 'ies'}: "
+            f"{dir_summary}"
+        )
 
     # --------------------------------------------------------------------------
 
@@ -255,12 +278,12 @@ class ExperimentCatalog:
 
     def _scan_experiments(self) -> List[ExperimentRun]:
         """
-        Scan the base directory for experiment runs.
+        Scan the base directories for experiment runs.
 
-        Looks for directories containing both *.log files and *.pkl files
-        (saved model files) and extracts metadata from the Hydra config.yaml files.
-        Filters out parameters where all experiments have null values and excludes
-        any 'viz' related parameters.
+        Looks for directories containing both *.log files and *.pkl files (saved
+        model files) and extracts metadata from the Hydra config.yaml files.
+        Filters out parameters where all experiments have null values and
+        excludes any 'viz' related parameters.
 
         Returns
         -------
@@ -268,105 +291,117 @@ class ExperimentCatalog:
             List of found experiment runs
         """
         temp_experiments = []
-        
-        # Walk through the directory structure
-        for root, dirs, files in os.walk(self.base_dir):
-            root_path = Path(root)
 
-            # Check if this directory contains experiment indicators
-            has_log_file = any(f.endswith(".log") for f in files)
-            has_pkl_file = any(f.endswith(".pkl") for f in files)
-            has_hydra_dir = ".hydra" in dirs
+        # Walk through each base directory
+        for base_dir in self.base_dirs:
+            # Walk through the directory structure
+            for root, dirs, files in os.walk(base_dir):
+                root_path = Path(root)
 
-            # This is an experiment directory if it has both log and pkl files
-            if has_log_file and has_pkl_file and has_hydra_dir:
-                try:
-                    # Load metadata from config.yaml
-                    config_path = root_path / ".hydra" / "config.yaml"
-                    if not config_path.exists():
-                        print(f"Warning: No config.yaml found in {root_path}/.hydra/")
+                # Check if this directory contains experiment indicators
+                has_log_file = any(f.endswith(".log") for f in files)
+                has_pkl_file = any(f.endswith(".pkl") for f in files)
+                has_hydra_dir = ".hydra" in dirs
+
+                # This is an experiment directory if it has both log and pkl files
+                if has_log_file and has_pkl_file and has_hydra_dir:
+                    try:
+                        # Load metadata from config.yaml
+                        config_path = root_path / ".hydra" / "config.yaml"
+                        if not config_path.exists():
+                            print(
+                                f"Warning: No config.yaml found in "
+                                f"{root_path}/.hydra/"
+                            )
+                            continue
+
+                        with open(config_path, "r") as f:
+                            config = yaml.safe_load(f)
+
+                        # Extract metadata from config, excluding 'viz' related
+                        # parameters
+                        metadata = self._extract_config_metadata(config)
+
+                        print(
+                            f"Found experiment: {root_path} with metadata keys: "
+                            f"{list(metadata.keys())}"
+                        )
+
+                        temp_experiments.append(
+                            ExperimentRun(
+                                path=str(root_path), metadata=metadata
+                            )
+                        )
+
+                    except Exception as e:
+                        print(
+                            f"Warning: Could not process experiment directory "
+                            f"{root_path}: {e}"
+                        )
                         continue
-                        
-                    with open(config_path, "r") as f:
-                        config = yaml.safe_load(f)
-                    
-                    # Extract metadata from config, excluding 'viz' related parameters
-                    metadata = self._extract_config_metadata(config)
-
-                    print(
-                        f"Found experiment: {root_path} with metadata keys: "
-                        f"{list(metadata.keys())}"
-                    )
-                    
-                    temp_experiments.append(
-                        ExperimentRun(path=str(root_path), metadata=metadata)
-                    )
-
-                except Exception as e:
-                    print(
-                        f"Warning: Could not process experiment directory "
-                        f"{root_path}: {e}"
-                    )
-                    continue
 
         # Filter out parameters where all experiments have null/None values
         filtered_experiments = self._filter_null_parameters(temp_experiments)
-        
+
         return filtered_experiments
 
     # --------------------------------------------------------------------------
-    
-    def _extract_config_metadata(self, config: Dict[str, Any]) -> Dict[str, Any]:
+
+    def _extract_config_metadata(
+        self, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Extract metadata from a Hydra config dictionary.
-        
+
         Recursively flattens the config into a flat dictionary with dot notation
         for nested keys, excluding any parameters related to 'viz'.
-        
+
         Parameters
         ----------
         config : Dict[str, Any]
             The loaded Hydra config dictionary
-            
+
         Returns
         -------
         Dict[str, Any]
             Flattened metadata dictionary
         """
         metadata = {}
-        
+
         def flatten_config(obj, prefix=""):
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     # Skip anything related to 'viz'
-                    if 'viz' in key.lower():
+                    if "viz" in key.lower():
                         continue
-                        
+
                     new_key = f"{prefix}{key}" if prefix else key
-                    
+
                     if isinstance(value, dict):
                         flatten_config(value, f"{new_key}.")
                     else:
                         metadata[new_key] = value
             else:
                 # This shouldn't happen at the top level, but handle gracefully
-                if prefix and 'viz' not in prefix.lower():
-                    metadata[prefix.rstrip('.')] = obj
-        
+                if prefix and "viz" not in prefix.lower():
+                    metadata[prefix.rstrip(".")] = obj
+
         flatten_config(config)
         return metadata
-    
+
     # --------------------------------------------------------------------------
-    
-    def _filter_null_parameters(self, experiments: List[ExperimentRun]) -> List[ExperimentRun]:
+
+    def _filter_null_parameters(
+        self, experiments: List[ExperimentRun]
+    ) -> List[ExperimentRun]:
         """
         Filter out parameters where all experiments have null/None values.
-        
+
         Parameters
         ----------
         experiments : List[ExperimentRun]
             List of experiments to filter
-            
+
         Returns
         -------
         List[ExperimentRun]
@@ -374,12 +409,12 @@ class ExperimentCatalog:
         """
         if not experiments:
             return experiments
-            
+
         # Collect all parameter keys across all experiments
         all_params = set()
         for exp in experiments:
             all_params.update(exp.metadata.keys())
-        
+
         # Find parameters where all experiments have null/None values
         params_to_remove = set()
         for param in all_params:
@@ -391,21 +426,25 @@ class ExperimentCatalog:
                     break
             if all_null:
                 params_to_remove.add(param)
-        
+
         # Remove null parameters from all experiments
         filtered_experiments = []
         for exp in experiments:
             filtered_metadata = {
-                k: v for k, v in exp.metadata.items() 
+                k: v
+                for k, v in exp.metadata.items()
                 if k not in params_to_remove
             }
             filtered_experiments.append(
                 ExperimentRun(path=exp.path, metadata=filtered_metadata)
             )
-        
+
         if params_to_remove:
-            print(f"Filtered out {len(params_to_remove)} parameters with all null values: {sorted(params_to_remove)}")
-            
+            print(
+                f"Filtered out {len(params_to_remove)} parameters with all "
+                f"null values: {sorted(params_to_remove)}"
+            )
+
         return filtered_experiments
 
     # --------------------------------------------------------------------------
