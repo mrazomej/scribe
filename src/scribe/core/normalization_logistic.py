@@ -9,11 +9,12 @@ posterior.
 from typing import Dict, Optional, Union, Tuple
 import jax.numpy as jnp
 from jax import random
-import warnings
 
-import numpyro.distributions as dist
-from ..stats import sample_dirichlet_from_parameters
-from ..utils import numpyro_to_scipy
+from ..stats import (
+    sample_dirichlet_from_parameters,
+    SoftmaxNormal,
+    LowRankLogisticNormal,
+)
 
 try:
     from tqdm.auto import tqdm
@@ -21,6 +22,33 @@ except ImportError:
     # Fallback if tqdm is not available
     def tqdm(iterable, **kwargs):
         return iterable
+
+
+# ------------------------------------------------------------------------------
+# Distribution Factory Functions
+# ------------------------------------------------------------------------------
+
+
+def _create_softmax_distribution(loc, cov_factor, cov_diag):
+    """Create SoftmaxNormal distribution (symmetric, D-dimensional)."""
+    return SoftmaxNormal(loc=loc, cov_factor=cov_factor, cov_diag=cov_diag)
+
+
+def _create_alr_distribution(loc, cov_factor, cov_diag):
+    """Create LowRankLogisticNormal distribution (ALR-based, (D-1)-dimensional)."""
+    alr_loc = loc[:-1]
+    alr_cov_factor = cov_factor[:-1, :]
+    alr_cov_diag = cov_diag[:-1]
+    return LowRankLogisticNormal(
+        loc=alr_loc, cov_factor=alr_cov_factor, cov_diag=alr_cov_diag
+    )
+
+
+# Factory dispatch dictionary
+DISTRIBUTION_FACTORY = {
+    SoftmaxNormal: _create_softmax_distribution,
+    LowRankLogisticNormal: _create_alr_distribution,
+}
 
 
 # ------------------------------------------------------------------------------
@@ -34,7 +62,7 @@ def fit_logistic_normal_from_posterior(
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_samples_dirichlet: int = 1,
     rank: Optional[int] = None,
-    backend: str = "numpyro",
+    distribution_class: type = SoftmaxNormal,
     verbose: bool = True,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """
@@ -64,10 +92,10 @@ def fit_logistic_normal_from_posterior(
     rank : Optional[int], default=None
         Rank of the low-rank covariance approximation. If None, uses
         min(n_genes, 50)
-    backend : str, default="numpyro"
-        Statistical package to use for distributions. Must be one of: -
-        "numpyro": Returns numpyro.distributions - "scipy": Returns scipy.stats
-        distributions
+    distribution_class : type, default=SoftmaxNormal
+        Type of compositional distribution to fit. Can be:
+        - SoftmaxNormal: Symmetric distribution for sampling
+        - LowRankLogisticNormal: ALR-based for log_prob evaluation
     verbose : bool, default=True
         If True, prints progress messages and shows progress bars
 
@@ -79,22 +107,27 @@ def fit_logistic_normal_from_posterior(
             - 'cov_factor': Low-rank covariance factor W
             - 'cov_diag': Diagonal component of covariance D
             - 'mean_probabilities': Mean probabilities on the simplex
-            - 'distributions': Distribution objects
+            - 'distribution': SoftmaxNormal distribution (symmetric, for sampling)
+            - 'distribution_alr': LowRankLogisticNormal distribution (ALR-based,
+              for log_prob evaluation)
+            - 'base_distribution': Underlying LowRankMultivariateNormal in log-space
+              (for backward compatibility)
 
         For non-mixture models:
             - loc: shape (n_genes,)
             - cov_factor: shape (n_genes, rank)
             - cov_diag: shape (n_genes,)
             - mean_probabilities: shape (n_genes,)
-            - distributions: single TransformedDistribution object
+            - distribution: SoftmaxNormal object (symmetric, D-dimensional)
+            - distribution_alr: LowRankLogisticNormal object (ALR, (D-1)-dimensional)
 
         For mixture models:
             - loc: shape (n_components, n_genes)
             - cov_factor: shape (n_components, n_genes, rank)
             - cov_diag: shape (n_components, n_genes)
             - mean_probabilities: shape (n_components, n_genes)
-            - distributions: list of n_components TransformedDistribution
-              objects
+            - distributions: list of n_components SoftmaxNormal objects
+            - distributions_alr: list of n_components LowRankLogisticNormal objects
 
     Raises
     ------
@@ -107,6 +140,37 @@ def fit_logistic_normal_from_posterior(
     genes, which is important for co-regulated gene modules. This correlation
     structure is inherited from the low-rank structure in the posterior over r
     parameters.
+
+    Two Types of Distributions Returned
+    ------------------------------------
+    1. **SoftmaxNormal** (symmetric):
+       - All genes treated equally (no reference gene)
+       - Use for sampling and visualization
+       - Cannot evaluate log_prob (softmax transform is singular)
+
+    2. **LowRankLogisticNormal** (ALR-based):
+       - Uses last gene as reference (asymmetric)
+       - Can evaluate log_prob for observed data
+       - Use for Bayesian inference or likelihood evaluation
+
+    Examples
+    --------
+    Sampling from the distribution:
+
+        >>> from jax import random
+        >>> result = fit_logistic_normal_from_posterior(...)
+        >>> # Sample from SoftmaxNormal (symmetric)
+        >>> samples = result['distribution'].sample(random.PRNGKey(0), (100,))
+        >>> # Samples are on the simplex (sum to 1)
+        >>> assert samples.sum(axis=-1).allclose(1.0)
+
+    Evaluating log probability:
+
+        >>> # Use LowRankLogisticNormal for log_prob
+        >>> log_prob = result['distribution_alr'].log_prob(samples[0])
+
+    Note: For backward compatibility, `base_distribution` provides access to
+    the underlying LowRankMultivariateNormal in log-space.
     """
     # Validate inputs
     if "r" not in posterior_samples:
@@ -114,11 +178,6 @@ def fit_logistic_normal_from_posterior(
             "'r' parameter not found in posterior_samples. "
             "This method requires posterior samples of the dispersion "
             "parameter. Please run get_posterior_samples() first."
-        )
-
-    if backend not in ["scipy", "numpyro"]:
-        raise ValueError(
-            f"Invalid backend: {backend}. Must be 'scipy' or 'numpyro'"
         )
 
     # Get r parameter samples
@@ -143,7 +202,7 @@ def fit_logistic_normal_from_posterior(
             rng_key,
             n_samples_dirichlet,
             rank,
-            backend,
+            distribution_class,
             verbose,
         )
     # Process non-mixture model
@@ -155,7 +214,7 @@ def fit_logistic_normal_from_posterior(
             rng_key,
             n_samples_dirichlet,
             rank,
-            backend,
+            distribution_class,
             verbose,
         )
 
@@ -168,7 +227,7 @@ def _fit_logistic_normal_non_mixture(
     rng_key: random.PRNGKey,
     n_samples_dirichlet: int,
     rank: Optional[int],
-    backend: str,
+    distribution_class: type,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """Fit Logistic-Normal distribution for non-mixture models."""
@@ -254,27 +313,21 @@ def _fit_logistic_normal_non_mixture(
     }
 
     if verbose:
-        print(f"Creating Logistic-Normal distribution with {backend} backend")
+        print(f"Creating {distribution_class.__name__} distribution")
 
-    # Create numpyro distribution
-    base = dist.LowRankMultivariateNormal(
-        loc=loc, cov_factor=cov_factor, cov_diag=cov_diag
+    # Create distribution using factory
+    distribution = DISTRIBUTION_FACTORY[distribution_class](
+        loc, cov_factor, cov_diag
     )
-    # Transform to simplex using softmax
-    softmax_transform = dist.transforms.SoftmaxTransform()
-    logistic_normal_dist = dist.TransformedDistribution(base, softmax_transform)
 
-    if backend == "scipy":
-        # Note: scipy doesn't have a direct Logistic-Normal distribution
-        # We'll return the base MVN and note that it needs softmax transform
-        warnings.warn(
-            "scipy backend returns the base multivariate normal in log-space. "
-            "Apply softmax transformation to get samples on the simplex.",
-            UserWarning,
-        )
-        logistic_normal_dist = numpyro_to_scipy(base)
-
-    results["distributions"] = logistic_normal_dist
+    # Store in results with appropriate key
+    if distribution_class == SoftmaxNormal:
+        results["distribution"] = distribution
+        results["base_distribution"] = (
+            distribution.base_dist
+        )  # Backward compatibility
+    else:  # LowRankLogisticNormal
+        results["distribution_alr"] = distribution
 
     return results
 
@@ -288,7 +341,7 @@ def _fit_logistic_normal_mixture(
     rng_key: random.PRNGKey,
     n_samples_dirichlet: int,
     rank: Optional[int],
-    backend: str,
+    distribution_class: type,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """Fit Logistic-Normal distribution for mixture models."""
@@ -319,6 +372,7 @@ def _fit_logistic_normal_mixture(
     cov_diags = []
     mean_probs = []
     distributions = []
+    distributions_alr = []
 
     # Fit one Logistic-Normal per component
     for c in range(n_components):
@@ -382,24 +436,16 @@ def _fit_logistic_normal_mixture(
         mean_prob = exp_loc / jnp.sum(exp_loc)
         mean_probs.append(mean_prob)
 
-        # Step 4: Create distribution for this component
-        base = dist.LowRankMultivariateNormal(
-            loc=loc, cov_factor=cov_factor, cov_diag=cov_diag
-        )
-        softmax_transform = dist.transforms.SoftmaxTransform()
-        logistic_normal_dist = dist.TransformedDistribution(
-            base, softmax_transform
+        # Step 4: Create distribution for this component using factory
+        distribution = DISTRIBUTION_FACTORY[distribution_class](
+            loc, cov_factor, cov_diag
         )
 
-        if backend == "scipy":
-            warnings.warn(
-                "scipy backend returns the base multivariate normal in log-space. "
-                "Apply softmax transformation to get samples on the simplex.",
-                UserWarning,
-            )
-            logistic_normal_dist = numpyro_to_scipy(base)
-
-        distributions.append(logistic_normal_dist)
+        # Append to appropriate list
+        if distribution_class == SoftmaxNormal:
+            distributions.append(distribution)
+        else:  # LowRankLogisticNormal
+            distributions_alr.append(distribution)
 
     # Stack results
     results = {
@@ -411,11 +457,23 @@ def _fit_logistic_normal_mixture(
         "mean_probabilities": jnp.stack(
             mean_probs, axis=0
         ),  # (n_components, n_genes)
-        "distributions": distributions,  # list of n_components distributions
     }
 
+    # Add appropriate distribution key
+    if distribution_class == SoftmaxNormal:
+        results["distributions"] = distributions
+    else:  # LowRankLogisticNormal
+        results["distributions_alr"] = distributions_alr
+
     if verbose:
-        print(f"\nCreated {len(distributions)} Logistic-Normal distributions")
+        dist_list = (
+            distributions
+            if distribution_class == SoftmaxNormal
+            else distributions_alr
+        )
+        print(
+            f"\nCreated {len(dist_list)} {distribution_class.__name__} distributions"
+        )
 
     return results
 
@@ -465,33 +523,49 @@ def _fit_low_rank_mvn(
     # Center the data
     centered = samples - loc
 
-    # Compute empirical covariance
-    # Using (1/(n-1)) for unbiased estimate
-    cov = jnp.cov(centered, rowvar=False, bias=False)
+    if verbose:
+        print(
+            f"  Computing SVD of centered data ({n_samples} x {n_features})..."
+        )
 
-    # Ensure cov is 2D (can be 0D or 1D for edge cases)
-    if cov.ndim == 0:
-        # Single feature case - make it a 1x1 matrix
-        cov = cov.reshape(1, 1)
-    elif cov.ndim == 1:
-        # This shouldn't happen with rowvar=False, but just in case
-        cov = jnp.diag(cov)
+    # Use SVD on the centered data matrix directly (more memory efficient)
+    # For X (n_samples x n_features): X = U @ S @ V.T
+    # Then: Cov(X) = (1/(n-1)) * X.T @ X = V @ (S^2/(n-1)) @ V.T
+    # So V contains the eigenvectors of the covariance, and S^2/(n-1) are the
+    # eigenvalues
 
-    # Use SVD for low-rank approximation
-    # cov = U @ S @ U.T where S is diagonal
-    # We want W @ W.T + D ≈ cov
+    # This is much more memory efficient when n_samples << n_features (e.g., 100
+    # << 32K) because we only compute SVD of (n_samples x n_features) matrix
+    # rather than eigendecomposition of (n_features x n_features) covariance
+    # matrix
 
-    # Compute eigendecomposition
-    eigenvalues, eigenvectors = jnp.linalg.eigh(cov)
+    U, singular_values, Vt = jnp.linalg.svd(centered, full_matrices=False)
+    # U: (n_samples, min(n_samples, n_features))
+    # singular_values: (min(n_samples, n_features),)
+    # Vt: (min(n_samples, n_features), n_features)
 
-    # Sort in descending order
+    # Convert singular values to eigenvalues of covariance
+    eigenvalues = (singular_values**2) / (n_samples - 1)
+    # Eigenvectors are rows of Vt, we want columns, so transpose
+    eigenvectors = Vt.T  # (n_features, min(n_samples, n_features))
+
+    # Sort in descending order (SVD already returns in descending order, but be
+    # explicit)
     idx = jnp.argsort(eigenvalues)[::-1]
     eigenvalues = eigenvalues[idx]
     eigenvectors = eigenvectors[:, idx]
 
+    # Clamp rank to available components
+    # (can't extract more components than min(n_samples, n_features))
+    effective_rank = min(rank, len(eigenvalues))
+    if verbose and effective_rank < rank:
+        print(
+            f"  Clamping rank from {rank} to {effective_rank} (max available)"
+        )
+
     # Take top k eigenvalues/eigenvectors for low-rank part
-    top_k_eigenvalues = eigenvalues[:rank]
-    top_k_eigenvectors = eigenvectors[:, :rank]
+    top_k_eigenvalues = eigenvalues[:effective_rank]
+    top_k_eigenvectors = eigenvectors[:, :effective_rank]
 
     # Construct W = U_k @ sqrt(S_k)
     # This gives W @ W.T = U_k @ S_k @ U_k.T
@@ -501,7 +575,7 @@ def _fit_low_rank_mvn(
 
     # Construct D as residual variance (remaining eigenvalues averaged)
     # Plus a small constant for numerical stability
-    residual_eigenvalues = eigenvalues[rank:]
+    residual_eigenvalues = eigenvalues[effective_rank:]
     if len(residual_eigenvalues) > 0:
         # Use mean of residual eigenvalues for diagonal
         diag_value = jnp.mean(residual_eigenvalues)
