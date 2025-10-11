@@ -5,7 +5,8 @@ bibliography: references.bib
 csl: ieee.csl
 ---
 
-# Low-Rank Logistic-Normal Approximation for Normalized Expression {#sec-normalization}
+# Low-Rank Logistic-Normal Approximation for Normalized Expression
+{#sec-normalization}
 
 In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model for
 single-cell RNA-seq data, showing that the joint distribution of UMI counts can
@@ -34,7 +35,8 @@ After performing variational inference or MCMC sampling, we obtain samples from
 the posterior distribution,
 
 $$
-\underline{r}^{(1)}, \underline{r}^{(2)}, \ldots, \underline{r}^{(S)} \sim \pi(\underline{r} \mid \underline{\underline{U}}).
+\underline{r}^{(1)}, \underline{r}^{(2)}, \ldots, \underline{r}^{(S)} \sim 
+\pi(\underline{r} \mid \underline{\underline{U}}).
 $${#eq-norm-posterior-samples}
 
 For each posterior sample $s$, we can draw normalized expression proportions
@@ -47,13 +49,17 @@ $${#eq-norm-rho-samples}
 The key observation is that the collection of samples
 $\{\underline{\rho}^{(s)}\}_{s=1}^{S}$ exhibits correlation structure that is
 absent when conditioning on a single value of $\underline{r}$. This correlation
-arises from the variation in $\underline{r}$ across posterior samples.
+arises from the variation in $\underline{r}$ across posterior samples. An
+exception to this is when using variational inference with a full mean field
+approximation, where the correlation structure is completely ignored.
 
-To see this mathematically, consider the variance of a single component $\rho_g$
-under the full posterior predictive distribution,
+To see this correlation structure mathematically, consider the variance of a
+single component $\rho_g$ under the full posterior predictive distribution,
 
 $$
-\text{Var}(\rho_g) = \mathbb{E}_{\underline{r}}\left[\text{Var}(\rho_g \mid \underline{r})\right] + \text{Var}_{\underline{r}}\left(\mathbb{E}[\rho_g \mid \underline{r}]\right).
+\text{Var}(\rho_g) = 
+\left\langle \text{Var}(\rho_g \mid \underline{r}) \right\rangle_{\underline{r}} 
++ \text{Var}_{\underline{r}}\left(\langle \rho_g \mid \underline{r} \rangle\right).
 $${#eq-norm-variance-decomposition}
 
 The first term represents the inherent variance of the Dirichlet distribution
@@ -62,7 +68,8 @@ variance induced by posterior uncertainty in $\underline{r}$. For the Dirichlet
 distribution, we have
 
 $$
-\mathbb{E}[\rho_g \mid \underline{r}] = \frac{r_g}{r_T}, \quad r_T = \sum_{j=1}^{G} r_j,
+\langle \rho_g \mid \underline{r} \rangle = \frac{r_g}{r_T}, \quad 
+r_T = \sum_{j=1}^{G} r_j,
 $${#eq-norm-dirichlet-mean}
 
 and
@@ -72,7 +79,7 @@ $$
 $${#eq-norm-dirichlet-variance}
 
 When $\underline{r}$ varies across posterior samples, the mean
-$\mathbb{E}[\rho_g \mid \underline{r}]$ also varies, contributing additional
+$\langle \rho_g \mid \underline{r} \rangle$ also varies, contributing additional
 variance through the second term in @eq-norm-variance-decomposition.
 
 ### Why not fit a single Dirichlet distribution?
@@ -87,7 +94,7 @@ $${#eq-norm-mean-rho}
 and attempt to find parameters $\bar{\underline{r}}$ such that
 
 $$
-\bar{\underline{\rho}} \approx \mathbb{E}[\text{Dirichlet}(\bar{\underline{r}})].
+\bar{\underline{\rho}} \approx \langle \text{Dirichlet}(\bar{\underline{r}}) \rangle.
 $${#eq-norm-single-dirichlet}
 
 While this approach captures the mean normalized expression, it fundamentally
@@ -103,11 +110,11 @@ $${#eq-norm-dirichlet-covariance}
 
 This covariance structure is entirely determined by the parameters
 $\underline{r}$ and does not account for the additional covariance induced by
-posterior uncertainty. From @eq-norm-variance-decomposition, we see that fitting
-a single Dirichlet distribution captures only
-$\mathbb{E}_{\underline{r}}[\text{Var}(\rho_g \mid \underline{r})]$ but
-completely misses $\text{Var}_{\underline{r}}(\mathbb{E}[\rho_g \mid
-\underline{r}])$.
+posterior uncertainty. From @eq-norm-variance-decomposition, we see that 
+fitting a single Dirichlet distribution captures only
+$\left\langle \text{Var}(\rho_g \mid \underline{r}) 
+\right\rangle_{\underline{r}}$ but completely misses 
+$\text{Var}_{\underline{r}}(\langle \rho_g \mid \underline{r} \rangle)$.
 
 Moreover, when the posterior over $\underline{r}$ exhibits correlation
 structure—as is often the case with low-rank variational guides (see
@@ -127,7 +134,8 @@ Normalized expression proportions $\underline{\rho}$ are constrained to lie on
 the unit simplex, defined as
 
 $$
-\Delta^{G-1} = \left\{\underline{\rho} \in \mathbb{R}^{G} : \rho_g \geq 0 \text{ for all } g, \sum_{g=1}^{G} \rho_g = 1\right\}.
+\Delta^{G-1} = \left\{\underline{\rho} \in \mathbb{R}^{G} : 
+\rho_g \geq 0 \text{ for all } g, \sum_{g=1}^{G} \rho_g = 1\right\}.
 $${#eq-norm-simplex-definition}
 
 The simplex $\Delta^{G-1}$ is a $(G-1)$-dimensional manifold embedded in
@@ -154,9 +162,10 @@ component. This transformation is bijective and has a well-defined Jacobian,
 allowing for proper probability density calculations.
 
 2. **Softmax Transformation**: Maps Euclidean space to the simplex via the
-softmax function. While this transformation is surjective (many-to-one), it
-provides a symmetric treatment of all components and is particularly convenient
-for sampling.
+softmax function (popular in machine learning and related to the Boltzmann
+distribution in statistical physics). While this transformation is surjective
+(many-to-one), it provides a symmetric treatment of all components and is
+particularly convenient for sampling.
 
 In the following sections, we develop both approaches and explain their
 complementary roles in modeling normalized gene expression.
@@ -198,7 +207,8 @@ $${#eq-norm-alr-rho-G}
 Substituting back into @eq-norm-alr-rho-relation yields
 
 $$
-\rho_i = \frac{\exp(z_i)}{1 + \sum_{j=1}^{G-1} \exp(z_j)}, \quad i = 1, 2, \ldots, G-1.
+\rho_i = \frac{\exp(z_i)}{1 + \sum_{j=1}^{G-1} \exp(z_j)}, \quad 
+i = 1, 2, \ldots, G-1.
 $${#eq-norm-alr-rho-i}
 
 This defines the inverse ALR transformation, which we denote as
@@ -253,7 +263,8 @@ $\pi(\underline{z})$ defined on $\mathbb{R}^{G-1}$. The induced distribution on
 $\Delta^{G-1}$ is given by
 
 $$
-\pi(\underline{\rho}) = \pi(\underline{z}) \left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right|,
+\pi(\underline{\rho}) = \pi(\underline{z}) 
+\left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right|,
 $${#eq-norm-change-of-variables}
 
 where $\frac{\partial \underline{z}}{\partial \underline{\rho}}$ is the Jacobian
@@ -297,7 +308,8 @@ We then multiply the last column by $\rho_G$ and divide each of the first $G-1$
 columns by their corresponding diagonal entries, giving
 
 $$
-\det(\underline{\underline{J}}) = \frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}} \det\begin{bmatrix}
+\det(\underline{\underline{J}}) = 
+\frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}} \det\begin{bmatrix}
 1 & 0 & \cdots & 0 & -\rho_G/\rho_1 \\
 1 & 1 & \cdots & 0 & -\rho_G/\rho_2 \\
 \vdots & \vdots & \ddots & \vdots & \vdots \\
@@ -309,14 +321,18 @@ Adding the first column to the last column yields a lower triangular matrix with
 ones on the diagonal, so the determinant of the matrix is 1. We thus obtain
 
 $$
-\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right) = \frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}}.
+\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right) = 
+\frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}}.
 $${#eq-norm-jacobian-result-intermediate}
 
 Using the constraint $\sum_{g=1}^{G} \rho_g = 1$ and $\prod_{g=1}^{G} \rho_g =
 \prod_{i=1}^{G-1} \rho_i \cdot \rho_G$, we can equivalently write
 
 $$
-\left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right| = \frac{1}{\prod_{i=1}^{G-1} \rho_i} = \frac{1}{\prod_{g=1}^{G} \rho_g / \rho_G} = \frac{\rho_G}{\prod_{g=1}^{G} \rho_g}.
+\left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right| 
+= \frac{1}{\prod_{i=1}^{G-1} \rho_i} 
+= \frac{1}{\prod_{g=1}^{G} \rho_g / \rho_G} 
+= \frac{\rho_G}{\prod_{g=1}^{G} \rho_g}.
 $${#eq-norm-jacobian-final}
 
 For practical purposes, the key result is that the Jacobian determinant depends
@@ -333,7 +349,8 @@ $$
 $${#eq-norm-inverse-alr-rhoG}
 
 $$
-\rho_i = \frac{\exp(z_i)}{1 + \sum_{j=1}^{G-1} \exp(z_j)}, \quad i = 1, \ldots, G-1.
+\rho_i = \frac{\exp(z_i)}{1 + \sum_{j=1}^{G-1} \exp(z_j)}, \quad 
+i = 1, \ldots, G-1.
 $${#eq-norm-inverse-alr-rhoi}
 
 Equivalently, we can embed $\underline{z}$ into $\mathbb{R}^{G}$ by appending a
@@ -378,7 +395,11 @@ The probability density function of $\underline{\rho}$ is obtained via the
 change of variables formula @eq-norm-change-of-variables,
 
 $$
-\pi(\underline{\rho}) = \frac{1}{(2\pi)^{(G-1)/2} |\underline{\underline{\Sigma}}|^{1/2}} \exp\left(-\frac{1}{2}(\underline{z} - \underline{\mu})^{\top} \underline{\underline{\Sigma}}^{-1} (\underline{z} - \underline{\mu})\right) \left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right|,
+\pi(\underline{\rho}) = 
+\frac{1}{(2\pi)^{(G-1)/2} |\underline{\underline{\Sigma}}|^{1/2}} 
+\exp\left(-\frac{1}{2}(\underline{z} - \underline{\mu})^{\top} 
+\underline{\underline{\Sigma}}^{-1} (\underline{z} - \underline{\mu})\right) 
+\left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right|,
 $${#eq-norm-logistic-normal-density-prelim}
 
 where $\underline{z}$ is related to $\underline{\rho}$ through
@@ -386,7 +407,11 @@ where $\underline{z}$ is related to $\underline{\rho}$ through
 we obtain
 
 $$
-\pi(\underline{\rho}) = \frac{1}{(2\pi)^{(G-1)/2} |\underline{\underline{\Sigma}}|^{1/2} \prod_{i=1}^{G-1} \rho_i} \exp\left(-\frac{1}{2}(\underline{z} - \underline{\mu})^{\top} \underline{\underline{\Sigma}}^{-1} (\underline{z} - \underline{\mu})\right),
+\pi(\underline{\rho}) = 
+\frac{1}{(2\pi)^{(G-1)/2} |\underline{\underline{\Sigma}}|^{1/2} 
+\prod_{i=1}^{G-1} \rho_i} 
+\exp\left(-\frac{1}{2}(\underline{z} - \underline{\mu})^{\top} 
+\underline{\underline{\Sigma}}^{-1} (\underline{z} - \underline{\mu})\right),
 $${#eq-norm-logistic-normal-density}
 
 where $z_i = \log(\rho_i) - \log(\rho_G)$ for $i = 1, \ldots, G-1$.
@@ -415,7 +440,7 @@ moments. The mean of $\rho_g$ under Dirichlet$(\underline{r})$ is given by
 parameters such that
 
 $$
-\mathbb{E}[\rho_g] = \frac{r_g}{r_T}.
+\langle \rho_g \rangle = \frac{r_g}{r_T}.
 $${#eq-norm-moment-match-mean}
 
 For the covariance, we match @eq-norm-dirichlet-covariance. This moment matching
@@ -481,7 +506,9 @@ limitation: it is not injective (one-to-one). Specifically, for any constant $c
 \in \mathbb{R}$, we have
 
 $$
-\frac{\exp(w_g + c)}{\sum_{j=1}^{G} \exp(w_j + c)} = \frac{\exp(w_g) \exp(c)}{\sum_{j=1}^{G} \exp(w_j) \exp(c)} = \frac{\exp(w_g)}{\sum_{j=1}^{G} \exp(w_j)}.
+\frac{\exp(w_g + c)}{\sum_{j=1}^{G} \exp(w_j + c)} = 
+\frac{\exp(w_g) \exp(c)}{\sum_{j=1}^{G} \exp(w_j) \exp(c)} = 
+\frac{\exp(w_g)}{\sum_{j=1}^{G} \exp(w_j)}.
 $${#eq-norm-softmax-invariance}
 
 This means that $\underline{w}$ and $\underline{w} + c\underline{1}$ (where
@@ -494,7 +521,8 @@ compute $\pi(\underline{\rho})$ from $\pi(\underline{w})$, we would need to use
 the change of variables formula,
 
 $$
-\pi(\underline{\rho}) = \pi(\underline{w}) \left|\det\left(\frac{\partial \underline{w}}{\partial \underline{\rho}}\right)\right|^{-1}.
+\pi(\underline{\rho}) = \pi(\underline{w}) 
+\left|\det\left(\frac{\partial \underline{w}}{\partial \underline{\rho}}\right)\right|^{-1}.
 $${#eq-norm-softmax-change-of-variables}
 
 However, because the softmax transformation is many-to-one, the inverse
@@ -516,7 +544,8 @@ The Jacobian matrix $\underline{\underline{J}}_{\text{softmax}} = \frac{\partial
 \underline{\rho}}{\partial \underline{w}}$ is thus
 
 $$
-\underline{\underline{J}}_{\text{softmax}} = \text{diag}(\underline{\rho}) - \underline{\rho}\underline{\rho}^{\top},
+\underline{\underline{J}}_{\text{softmax}} = 
+\text{diag}(\underline{\rho}) - \underline{\rho}\underline{\rho}^{\top},
 $${#eq-norm-softmax-jacobian}
 
 where $\text{diag}(\underline{\rho})$ is a diagonal matrix with entries
@@ -584,7 +613,8 @@ structure.
 We parameterize the covariance matrix as
 
 $$
-\underline{\underline{\Sigma}} = \underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}},
+\underline{\underline{\Sigma}} = 
+\underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}},
 $${#eq-norm-low-rank-structure}
 
 where $\underline{\underline{W}} \in \mathbb{R}^{(G-1) \times k}$ is a factor
@@ -608,7 +638,8 @@ rather than $O(G^2)$. Sampling from $\mathcal{N}(\underline{\mu},
 representation
 
 $$
-\underline{z} = \underline{\mu} + \underline{\underline{W}}\underline{\varepsilon}_w + \sqrt{\underline{d}} \odot \underline{\varepsilon}_d,
+\underline{z} = \underline{\mu} + \underline{\underline{W}}\underline{\varepsilon}_w 
++ \sqrt{\underline{d}} \odot \underline{\varepsilon}_d,
 $${#eq-norm-low-rank-sampling}
 
 where $\underline{\varepsilon}_w \sim \mathcal{N}(\underline{0},
@@ -619,7 +650,8 @@ denotes element-wise multiplication. This requires only $O(kG)$ operations.
 For density evaluation, the matrix determinant lemma gives
 
 $$
-|\underline{\underline{\Sigma}}| = |\underline{\underline{D}}| \cdot |\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}\underline{\underline{D}}^{-1}\underline{\underline{W}}|,
+|\underline{\underline{\Sigma}}| = |\underline{\underline{D}}| \cdot |\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}
+\underline{\underline{D}}^{-1}\underline{\underline{W}}|,
 $${#eq-norm-low-rank-determinant}
 
 which can be computed in $O(k^2 G)$ time since $|\underline{\underline{D}}| =
@@ -639,7 +671,9 @@ For the covariance, the standard approach would compute the sample covariance
 matrix
 
 $$
-\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} \sum_{n=1}^{N} (\underline{z}^{(n)} - \hat{\underline{\mu}})(\underline{z}^{(n)} - \hat{\underline{\mu}})^{\top},
+\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} \sum_{n=1}^{N} 
+(\underline{z}^{(n)} - \hat{\underline{\mu}})
+(\underline{z}^{(n)} - \hat{\underline{\mu}})^{\top},
 $${#eq-norm-covariance-estimate}
 
 and then perform an eigendecomposition to obtain the low-rank approximation.
@@ -658,16 +692,21 @@ $$
 \end{bmatrix} \in \mathbb{R}^{N \times (G-1)},
 $${#eq-norm-centered-data-matrix}
 
-so that the $n$-th row of $\underline{\underline{X}}$ is the $n$-th centered sample. Then
+so that the $n$-th row of $\underline{\underline{X}}$ is the $n$-th centered 
+sample. Then
 
 $$
-\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} \underline{\underline{X}}^{\top}\underline{\underline{X}}.
+\hat{\underline{\underline{\Sigma}}} = 
+\frac{1}{N-1} \underline{\underline{X}}^{\top}\underline{\underline{X}}.
 $${#eq-norm-covariance-via-data-matrix}
 
 The SVD of $\underline{\underline{X}}$ is
 
 $$
-\underline{\underline{X}} = \underline{\underline{U}}\underline{\underline{S}}\underline{\underline{V}}^{\top},
+\underline{\underline{X}} = 
+\underline{\underline{U}}\;
+\underline{\underline{S}}\;
+\underline{\underline{V}}^{\top},
 $${#eq-norm-svd-decomposition}
 
 where $\underline{\underline{U}} \in \mathbb{R}^{N \times m}$ has orthonormal
@@ -677,10 +716,16 @@ $\underline{\underline{V}} \in \mathbb{R}^{(G-1) \times m}$ has orthonormal
 columns, and $m = \min(N, G-1)$. For typical single-cell applications with $N
 \approx 1{,}500$ and $G \approx 30{,}000$, we have $m = N \ll G-1$.
 
-Substituting @eq-norm-svd-decomposition into @eq-norm-covariance-via-data-matrix yields
+Substituting @eq-norm-svd-decomposition into 
+@eq-norm-covariance-via-data-matrix yields
 
 $$
-\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} \underline{\underline{V}}\underline{\underline{S}}^{\top}\underline{\underline{U}}^{\top}\underline{\underline{U}}\underline{\underline{S}}\underline{\underline{V}}^{\top} = \frac{1}{N-1} \underline{\underline{V}}\underline{\underline{S}}^2\underline{\underline{V}}^{\top},
+\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} 
+\underline{\underline{V}}\;\underline{\underline{S}}^{\top}\;
+\underline{\underline{U}}^{\top}\underline{\underline{U}}\;
+\underline{\underline{S}}\;\underline{\underline{V}}^{\top} = 
+\frac{1}{N-1} \underline{\underline{V}}\;\underline{\underline{S}}^2\;
+\underline{\underline{V}}^{\top},
 $${#eq-norm-covariance-svd-form}
 
 where we used the orthonormality
@@ -704,7 +749,10 @@ $k$ columns of $\underline{\underline{V}}$ and $\underline{s}_k = (s_1, \ldots,
 s_k)$ the first $k$ singular values. Then
 
 $$
-\underline{\underline{W}} = \underline{\underline{V}}_k \text{diag}\left(\frac{\underline{s}_k}{\sqrt{N-1}}\right) = \underline{\underline{V}}_k \text{diag}(\sqrt{\underline{\lambda}_k}),
+\underline{\underline{W}} = \underline{\underline{V}}_k 
+\operatorname{diag}\left(\frac{\underline{s}_k}{\sqrt{N-1}}\right) = 
+\underline{\underline{V}}_k 
+\operatorname{diag}\left(\sqrt{\underline{\lambda}_k}\right),
 $${#eq-norm-W-from-svd}
 
 where $\underline{\lambda}_k = (\lambda_1, \ldots, \lambda_k)$.
@@ -713,7 +761,8 @@ For the diagonal component, we use the residual variance—the average of the
 discarded eigenvalues,
 
 $$
-d_i = \frac{1}{m-k} \sum_{j=k+1}^{m} \lambda_j + \epsilon, \quad i = 1, \ldots, G-1,
+d_i = \frac{1}{m-k} \sum_{j=k+1}^{m} \lambda_j + \epsilon, \quad 
+i = 1, \ldots, G-1,
 $${#eq-norm-diagonal-residual}
 
 where $\epsilon > 0$ is a small constant (e.g., $10^{-6}$) for numerical
@@ -783,7 +832,8 @@ proportions $\underline{\rho}^{(s)} \sim \text{Dirichlet}(\underline{r}^{(s)})$.
 
 3. **Apply ALR transformation**: Transform each sample to ALR coordinates,
 $$
-z_i^{(s)} = \log(\rho_i^{(s)}) - \log(\rho_G^{(s)}), \quad i = 1, \ldots, G-1.
+z_i^{(s)} = \log(\rho_i^{(s)}) - \log(\rho_G^{(s)}), \quad 
+i = 1, \ldots, G-1.
 $${#eq-norm-alr-transform-step}
 
 4. **Optional mean centering**: If desired, compute $\bar{\underline{z}} =
@@ -819,7 +869,9 @@ Mathematically, fitting to centered data $\{\tilde{\underline{z}}^{(s)}\}$
 yields a covariance matrix that represents
 
 $$
-\text{Cov}(\underline{z} - \bar{\underline{z}}) = \mathbb{E}[(\underline{z} - \bar{\underline{z}})(\underline{z} - \bar{\underline{z}})^{\top}],
+\text{Cov}(\underline{z} - \bar{\underline{z}}) = 
+\left\langle (\underline{z} - \bar{\underline{z}})
+(\underline{z} - \bar{\underline{z}})^{\top} \right\rangle,
 $${#eq-norm-centered-covariance}
 
 which is identical to $\text{Cov}(\underline{z})$ but is estimated in a way that
@@ -828,7 +880,9 @@ prevents the mean from dominating the principal components.
 The final distribution is
 
 $$
-\underline{z} \sim \mathcal{N}(\bar{\underline{z}}, \underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}}),
+\underline{z} \sim \mathcal{N}(\bar{\underline{z}}, 
+\underline{\underline{W}}\underline{\underline{W}}^{\top} 
++ \underline{\underline{D}}),
 $${#eq-norm-final-centered-distribution}
 
 which correctly models both the mean $\bar{\underline{z}}$ and the covariance
@@ -843,8 +897,11 @@ $\underline{\underline{W}}_{\text{ALR}} \in \mathbb{R}^{(G-1) \times k}$, and
 $\underline{d}_{\text{ALR}} \in \mathbb{R}^{G-1}$, we construct
 
 $$
-\underline{\mu} = \begin{bmatrix} \underline{\mu}_{\text{ALR}} \\ 0 \end{bmatrix}, \quad
-\underline{\underline{W}} = \begin{bmatrix} \underline{\underline{W}}_{\text{ALR}} \\ \underline{0}^{\top} \end{bmatrix}, \quad
+\underline{\mu} = \begin{bmatrix} \underline{\mu}_{\text{ALR}} \\ 0 \end{bmatrix}, 
+\quad
+\underline{\underline{W}} = \begin{bmatrix} 
+\underline{\underline{W}}_{\text{ALR}} \\ \underline{0}^{\top} \end{bmatrix}, 
+\quad
 \underline{d} = \begin{bmatrix} \underline{d}_{\text{ALR}} \\ 0 \end{bmatrix},
 $${#eq-norm-alr-to-softmax-embedding}
 
@@ -896,7 +953,7 @@ Gaussian [@aitchison1986].
 
 Second, moment matching provides a practical method for approximating any
 Dirichlet distribution with a logistic-normal. Given target moments
-$\mathbb{E}[\rho_g]$ and $\text{Cov}(\rho_g, \rho_h)$ from a Dirichlet
+$\langle \rho_g \rangle$ and $\text{Cov}(\rho_g, \rho_h)$ from a Dirichlet
 distribution, we can solve for logistic-normal parameters $\underline{\mu}$ and
 $\underline{\underline{\Sigma}}$ that approximately match these moments. While
 exact moment matching for all moments is generally impossible (since the
@@ -912,7 +969,11 @@ distribution. Recall from @eq-norm-variance-decomposition that the total
 variance decomposes as
 
 $$
-\text{Var}(\rho_g) = \underbrace{\mathbb{E}_{\underline{r}}[\text{Var}(\rho_g \mid \underline{r})]}_{\text{within-Dirichlet variance}} + \underbrace{\text{Var}_{\underline{r}}(\mathbb{E}[\rho_g \mid \underline{r}])}_{\text{between-sample variance}}.
+\text{Var}(\rho_g) = 
+\underbrace{\left\langle \text{Var}(\rho_g \mid \underline{r}) 
+\right\rangle_{\underline{r}}}_{\text{within-Dirichlet variance}} + 
+\underbrace{\text{Var}_{\underline{r}}(\langle \rho_g \mid \underline{r} 
+\rangle)}_{\text{between-sample variance}}.
 $${#eq-norm-variance-decomposition-repeat}
 
 A single Dirichlet distribution fitted to the mean $\bar{\underline{\rho}}$
@@ -933,7 +994,8 @@ correlation structure (i.e., a few dominant principal components), this
 structure approximately transfers to the ALR-transformed space through the chain
 
 $$
-\underline{r} \xrightarrow{\text{Dirichlet}} \underline{\rho} \xrightarrow{\text{ALR}} \underline{z}.
+\underline{r} \xrightarrow{\text{Dirichlet}} \underline{\rho} 
+\xrightarrow{\text{ALR}} \underline{z}.
 $${#eq-norm-transformation-chain}
 
 While the Dirichlet sampling and ALR transformation are both nonlinear, the
@@ -956,20 +1018,22 @@ posterior predictive distribution:
 **Approach 1 (Single Dirichlet)**: Compute the mean normalized expression
 $\bar{\underline{\rho}}$ from @eq-norm-mean-rho and fit parameters
 $\bar{\underline{r}}$ such that
-$\mathbb{E}[\text{Dirichlet}(\bar{\underline{r}})] = \bar{\underline{\rho}}$.
+$\langle \text{Dirichlet}(\bar{\underline{r}}) \rangle = 
+\bar{\underline{\rho}}$.
 From @eq-norm-dirichlet-mean, this gives $\bar{r}_g = \bar{r}_T \bar{\rho}_g$
 for any choice of total concentration $\bar{r}_T$.
 
 The expected value is
 
 $$
-\mathbb{E}[\rho_g] = \frac{\bar{r}_g}{\bar{r}_T} = \bar{\rho}_g,
+\langle \rho_g \rangle = \frac{\bar{r}_g}{\bar{r}_T} = \bar{\rho}_g,
 $${#eq-norm-single-dirichlet-mean}
 
 which correctly matches the posterior mean. However, the covariance is
 
 $$
-\text{Cov}(\rho_g, \rho_h) = -\frac{\bar{r}_g \bar{r}_h}{\bar{r}_T^2(\bar{r}_T + 1)}
+\text{Cov}(\rho_g, \rho_h) = 
+-\frac{\bar{r}_g \bar{r}_h}{\bar{r}_T^2(\bar{r}_T + 1)}
 $${#eq-norm-single-dirichlet-cov}
 
 for $g \neq h$, which depends only on $\bar{\underline{r}}$ and cannot capture
@@ -981,11 +1045,13 @@ samples $\{\underline{z}^{(s)}\}$ as described above. The resulting distribution
 has
 
 $$
-\mathbb{E}[\underline{z}] = \underline{\mu},
+\langle \underline{z} \rangle = \underline{\mu},
 $${#eq-norm-logistic-normal-mean}
 
 $$
-\text{Cov}(\underline{z}) = \underline{\underline{\Sigma}} = \underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}},
+\text{Cov}(\underline{z}) = \underline{\underline{\Sigma}} = 
+\underline{\underline{W}}\underline{\underline{W}}^{\top} 
++ \underline{\underline{D}},
 $${#eq-norm-logistic-normal-cov}
 
 which directly captures the empirical covariance structure in ALR space. This
@@ -994,8 +1060,9 @@ variation induced by the posterior over $\underline{r}$.
 
 The difference is precisely captured by @eq-norm-variance-decomposition-repeat:
 the logistic-normal captures the full variance $\text{Var}(\rho_g)$, while the
-single Dirichlet captures only $\mathbb{E}_{\underline{r}}[\text{Var}(\rho_g
-\mid \underline{r})]$.
+single Dirichlet captures only 
+$\left\langle \text{Var}(\rho_g \mid \underline{r}) 
+\right\rangle_{\underline{r}}$.
 
 ## Computational Considerations
 
@@ -1007,12 +1074,14 @@ choices. In this section, we quantify the memory and runtime advantages.
 For datasets with $G \approx 30{,}000$ genes and $N \approx 1{,}500$ posterior
 samples, the memory requirements for different approaches are:
 
-| Operation | Full Covariance | Low-Rank ($k = 50$) | Memory Ratio |
-|-----------|----------------|---------------------|--------------|
-| Store covariance matrix | $(G-1)^2 \approx 900M$ floats = 3.6 GB | $(k+1)(G-1) \approx 1.5M$ floats = 6 MB | 600:1 |
-| Compute covariance | $O(NG^2)$ operations | $O(NG \min(N,G))$ operations | 20:1 |
-| Sample | $O(G^2)$ per sample | $O(kG)$ per sample | $G/k = 600$:1 |
-| Matrix inversion | $O(G^3)$ operations | Avoid inversion entirely | — |
+| Operation                               | Full Covariance                        | Low-Rank ($k = 50$)      | Memory Ratio  |
+| --------------------------------------- | -------------------------------------- | ------------------------ | ------------- |
+| Store covariance matrix                 | $(G-1)^2 \approx 900M$ floats = 3.6 GB |                          |               |
+| $(k+1)(G-1) \approx 1.5M$ floats = 6 MB | 600:1                                  |                          |               |
+| Compute covariance                      | $O(NG^2)$ operations                   |                          |               |
+| $O(NG \min(N,G))$ operations            | 20:1                                   |                          |               |
+| Sample                                  | $O(G^2)$ per sample                    | $O(kG)$ per sample       | $G/k = 600$:1 |
+| Matrix inversion                        | $O(G^3)$ operations                    | Avoid inversion entirely | —             |
 
 These dramatic savings make the low-rank approach essential for practical
 application to high-dimensional gene expression data.
@@ -1078,7 +1147,8 @@ $$
 $${#eq-norm-svd-cost-numerical}
 
 $$
-\text{Cost}_{\text{eigh}} = O(1{,}500 \times 30{,}000^2) + O(30{,}000^3) = O(1.35 \times 10^{12}) + O(2.7 \times 10^{13}),
+\text{Cost}_{\text{eigh}} = O(1{,}500 \times 30{,}000^2) + O(30{,}000^3) 
+= O(1.35 \times 10^{12}) + O(2.7 \times 10^{13}),
 $${#eq-norm-eigh-cost-numerical}
 
 showing that the SVD approach is approximately 400 times faster.
@@ -1100,7 +1170,9 @@ deeper understanding of the mathematical foundations.
 139-160. [Foundational work introducing the log-ratio approach to compositional
 data]
 
-- Aitchison, J. (1986). *The Statistical Analysis of Compositional Data*. Chapman and Hall. [Comprehensive treatment of compositional data analysis, including the ALR and other transformations]
+- Aitchison, J. (1986). *The Statistical Analysis of Compositional Data*. 
+Chapman and Hall. [Comprehensive treatment of compositional data analysis, 
+including the ALR and other transformations]
 
 - Aitchison, J., & Shen, S. M. (1980). "Logistic-normal distributions: Some
 properties and uses." *Biometrika*, 67(2), 261-272. [Original introduction of
