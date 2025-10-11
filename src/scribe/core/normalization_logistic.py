@@ -25,6 +25,111 @@ except ImportError:
 
 
 # ------------------------------------------------------------------------------
+# ALR (Additive Log-Ratio) Transform Helpers
+# ------------------------------------------------------------------------------
+
+
+def _apply_alr_transform(
+    log_samples: jnp.ndarray, reference_index: Optional[int] = None
+) -> jnp.ndarray:
+    """
+    Apply ALR (additive log-ratio) transformation to log-simplex samples.
+
+    This computes ALR coordinates without materializing the full transformation
+    matrix, making it memory-efficient for high-dimensional data.
+
+    If the reference is r ∈ {0, ..., D-1}, the ALR coordinates are:
+        z_i = log(ρ_i) - log(ρ_r)  for i ≠ r
+
+    Parameters
+    ----------
+    log_samples : jnp.ndarray, shape (..., D)
+        Log of simplex samples (can be batched)
+    reference_index : Optional[int]
+        Which component to use as the denominator in ALR. If None, use D-1.
+
+    Returns
+    -------
+    alr_samples : jnp.ndarray, shape (..., D-1)
+        ALR coordinates (reference component removed)
+    """
+    if log_samples.ndim < 1:
+        raise ValueError("log_samples must have at least 1 dimension")
+
+    D = log_samples.shape[-1]
+    if D < 2:
+        raise ValueError("ALR requires D >= 2.")
+
+    r = D - 1 if reference_index is None else int(reference_index)
+    if not (0 <= r < D):
+        raise ValueError(f"reference_index must be in [0, {D-1}]")
+
+    # Extract reference column: (..., 1)
+    log_ref = jnp.expand_dims(log_samples[..., r], axis=-1)
+
+    # Compute differences: log(ρ_i) - log(ρ_r) for all i
+    log_diff = log_samples - log_ref  # (..., D)
+
+    # Remove reference column to get ALR coordinates
+    if r == D - 1:
+        alr_samples = log_diff[..., :-1]
+    elif r == 0:
+        alr_samples = log_diff[..., 1:]
+    else:
+        alr_samples = jnp.concatenate(
+            [log_diff[..., :r], log_diff[..., r + 1 :]], axis=-1
+        )
+
+    return alr_samples
+
+
+# ------------------------------------------------------------------------------
+
+
+def _inverse_alr(
+    z: jnp.ndarray, reference_index: Optional[int] = None
+) -> jnp.ndarray:
+    """
+    Map ALR coordinates back to the simplex via softmax.
+
+    The inverse ALR is implemented by embedding z ∈ R^{D-1} to R^D by
+    inserting a 0 for the reference log-coordinate, then applying softmax.
+
+    Parameters
+    ----------
+    z : jnp.ndarray, shape (..., D-1)
+        ALR coordinates.
+    reference_index : Optional[int]
+        Index of the reference component. If None, use the last component.
+
+    Returns
+    -------
+    rho : jnp.ndarray, shape (..., D)
+        Simplex points, each row sums to 1 and is in (0,1)^D.
+    """
+    *batch, d_minus_1 = z.shape
+    D = d_minus_1 + 1
+    r = D - 1 if reference_index is None else int(reference_index)
+    if not (0 <= r < D):
+        raise ValueError(f"reference_index must be in [0, {D-1}]")
+
+    # Build logits z_full ∈ R^D by inserting 0 at the reference index
+    zeros = jnp.zeros((*batch, 1))
+    if r == D - 1:
+        z_full = jnp.concatenate([z, zeros], axis=-1)
+    elif r == 0:
+        z_full = jnp.concatenate([zeros, z], axis=-1)
+    else:
+        z_full = jnp.concatenate([z[..., :r], zeros, z[..., r:]], axis=-1)
+
+    # Softmax—invariant to constant shift—yields the inverse ALR map
+    z_full = z_full - jnp.max(z_full, axis=-1, keepdims=True)  # stability
+    exp = jnp.exp(z_full)
+    rho = exp / jnp.sum(exp, axis=-1, keepdims=True)
+    return rho
+
+
+# ------------------------------------------------------------------------------
 # Distribution Factory Functions
 # ------------------------------------------------------------------------------
 
@@ -35,7 +140,9 @@ def _create_softmax_distribution(loc, cov_factor, cov_diag):
 
 
 def _create_alr_distribution(loc, cov_factor, cov_diag):
-    """Create LowRankLogisticNormal distribution (ALR-based, (D-1)-dimensional)."""
+    """
+    Create LowRankLogisticNormal distribution (ALR-based, (D-1)-dimensional).
+    """
     alr_loc = loc[:-1]
     alr_cov_factor = cov_factor[:-1, :]
     alr_cov_diag = cov_diag[:-1]
@@ -63,6 +170,7 @@ def fit_logistic_normal_from_posterior(
     n_samples_dirichlet: int = 1,
     rank: Optional[int] = None,
     distribution_class: type = SoftmaxNormal,
+    remove_mean: bool = False,
     verbose: bool = True,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """
@@ -93,9 +201,14 @@ def fit_logistic_normal_from_posterior(
         Rank of the low-rank covariance approximation. If None, uses
         min(n_genes, 50)
     distribution_class : type, default=SoftmaxNormal
-        Type of compositional distribution to fit. Can be:
-        - SoftmaxNormal: Symmetric distribution for sampling
-        - LowRankLogisticNormal: ALR-based for log_prob evaluation
+        Type of compositional distribution to fit. Can be: - SoftmaxNormal:
+        Symmetric distribution for sampling - LowRankLogisticNormal: ALR-based
+        for log_prob evaluation
+    remove_mean : bool, default=False
+        If True, removes the grand mean from ALR-transformed samples before
+        fitting, focusing on co-variation patterns rather than mean composition.
+        Recommended for single cell type data where PC1 >> PC2 (dominant mean
+        effect).
     verbose : bool, default=True
         If True, prints progress messages and shows progress bars
 
@@ -107,11 +220,12 @@ def fit_logistic_normal_from_posterior(
             - 'cov_factor': Low-rank covariance factor W
             - 'cov_diag': Diagonal component of covariance D
             - 'mean_probabilities': Mean probabilities on the simplex
-            - 'distribution': SoftmaxNormal distribution (symmetric, for sampling)
+            - 'distribution': SoftmaxNormal distribution (symmetric, for
+              sampling)
             - 'distribution_alr': LowRankLogisticNormal distribution (ALR-based,
               for log_prob evaluation)
-            - 'base_distribution': Underlying LowRankMultivariateNormal in log-space
-              (for backward compatibility)
+            - 'base_distribution': Underlying LowRankMultivariateNormal in
+              log-space (for backward compatibility)
 
         For non-mixture models:
             - loc: shape (n_genes,)
@@ -119,7 +233,8 @@ def fit_logistic_normal_from_posterior(
             - cov_diag: shape (n_genes,)
             - mean_probabilities: shape (n_genes,)
             - distribution: SoftmaxNormal object (symmetric, D-dimensional)
-            - distribution_alr: LowRankLogisticNormal object (ALR, (D-1)-dimensional)
+            - distribution_alr: LowRankLogisticNormal object (ALR,
+              (D-1)-dimensional)
 
         For mixture models:
             - loc: shape (n_components, n_genes)
@@ -127,7 +242,8 @@ def fit_logistic_normal_from_posterior(
             - cov_diag: shape (n_components, n_genes)
             - mean_probabilities: shape (n_components, n_genes)
             - distributions: list of n_components SoftmaxNormal objects
-            - distributions_alr: list of n_components LowRankLogisticNormal objects
+            - distributions_alr: list of n_components LowRankLogisticNormal
+              objects
 
     Raises
     ------
@@ -143,15 +259,13 @@ def fit_logistic_normal_from_posterior(
 
     Two Types of Distributions Returned
     ------------------------------------
-    1. **SoftmaxNormal** (symmetric):
-       - All genes treated equally (no reference gene)
-       - Use for sampling and visualization
-       - Cannot evaluate log_prob (softmax transform is singular)
+    1. **SoftmaxNormal** (symmetric): - All genes treated equally (no reference
+       gene) - Use for sampling and visualization - Cannot evaluate log_prob
+       (softmax transform is singular)
 
-    2. **LowRankLogisticNormal** (ALR-based):
-       - Uses last gene as reference (asymmetric)
-       - Can evaluate log_prob for observed data
-       - Use for Bayesian inference or likelihood evaluation
+    2. **LowRankLogisticNormal** (ALR-based): - Uses last gene as reference
+       (asymmetric) - Can evaluate log_prob for observed data - Use for Bayesian
+       inference or likelihood evaluation
 
     Examples
     --------
@@ -169,8 +283,8 @@ def fit_logistic_normal_from_posterior(
         >>> # Use LowRankLogisticNormal for log_prob
         >>> log_prob = result['distribution_alr'].log_prob(samples[0])
 
-    Note: For backward compatibility, `base_distribution` provides access to
-    the underlying LowRankMultivariateNormal in log-space.
+    Note: For backward compatibility, `base_distribution` provides access to the
+    underlying LowRankMultivariateNormal in log-space.
     """
     # Validate inputs
     if "r" not in posterior_samples:
@@ -203,6 +317,7 @@ def fit_logistic_normal_from_posterior(
             n_samples_dirichlet,
             rank,
             distribution_class,
+            remove_mean,
             verbose,
         )
     # Process non-mixture model
@@ -215,6 +330,7 @@ def fit_logistic_normal_from_posterior(
             n_samples_dirichlet,
             rank,
             distribution_class,
+            remove_mean,
             verbose,
         )
 
@@ -228,6 +344,7 @@ def _fit_logistic_normal_non_mixture(
     n_samples_dirichlet: int,
     rank: Optional[int],
     distribution_class: type,
+    remove_mean: bool,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """Fit Logistic-Normal distribution for non-mixture models."""
@@ -274,7 +391,8 @@ def _fit_logistic_normal_non_mixture(
             print(f"  log_samples shape after indexing: {log_samples.shape}")
             print(f"  log_samples.T shape: {log_samples.T.shape}")
 
-        # When n_samples_dirichlet=1, need to ensure we keep the sample dimension
+        # When n_samples_dirichlet=1, need to ensure we keep the sample
+        # dimension
         if log_samples.ndim == 1:
             log_samples = log_samples.reshape(-1, 1)  # (n_genes, 1)
 
@@ -290,19 +408,64 @@ def _fit_logistic_normal_non_mixture(
 
     if verbose:
         print(
-            f"Fitting low-rank Logistic-Normal to {all_log_samples.shape[0]} samples "
+            f"Collected {all_log_samples.shape[0]} log-Dirichlet samples "
             f"with {all_log_samples.shape[1]} features"
         )
 
-    # Step 2: Fit low-rank MVN to log samples
-    loc, cov_factor, cov_diag = _fit_low_rank_mvn(
-        all_log_samples, rank=rank, verbose=verbose
+    # Step 2: Apply ALR transformation before fitting
+    # This is critical! We must transform to ALR space BEFORE fitting the MVN
+    # Otherwise we're fitting in the wrong space (D-dimensional vs
+    # (D-1)-dimensional)
+    if verbose:
+        print(
+            f"Applying ALR transformation to map to (D-1)-dimensional space..."
+        )
+
+    # Use memory-efficient ALR transform (no matrix materialization)
+    alr_samples = _apply_alr_transform(
+        all_log_samples, reference_index=None
+    )  # (n_samples, n_genes-1)
+
+    # Step 2b: Optionally remove grand mean to focus on co-variation
+    if remove_mean:
+        alr_grand_mean = jnp.mean(alr_samples, axis=0, keepdims=True)
+        alr_samples_centered = alr_samples - alr_grand_mean
+        if verbose:
+            print(
+                f"Removed grand mean from ALR samples "
+                f"(focusing on co-variation patterns)"
+            )
+    else:
+        alr_samples_centered = alr_samples
+        alr_grand_mean = None
+
+    if verbose:
+        print(
+            f"Fitting low-rank Logistic-Normal in ALR space: "
+            f"{alr_samples_centered.shape[0]} samples, "
+            f"{alr_samples_centered.shape[1]} ALR dimensions"
+        )
+
+    # Step 3: Fit low-rank MVN in ALR space
+    alr_loc, alr_cov_factor, alr_cov_diag = _fit_low_rank_mvn(
+        alr_samples_centered, rank=rank, verbose=verbose
     )
 
-    # Step 3: Compute mean probabilities on the simplex
-    # Use softmax(loc) as the mode of the Logistic-Normal
-    exp_loc = jnp.exp(loc)
-    mean_probabilities = exp_loc / jnp.sum(exp_loc)
+    # Step 3b: Add back the grand mean if it was removed
+    # (so the returned distribution still represents the full data)
+    if remove_mean and alr_grand_mean is not None:
+        alr_loc = alr_loc + alr_grand_mean.squeeze()
+
+    # Step 4: Embed ALR parameters back to D dimensions for SoftmaxNormal
+    # Insert 0 at reference position (last component) to get D-dimensional params
+    loc = jnp.concatenate([alr_loc, jnp.array([0.0])], axis=0)
+    cov_factor = jnp.concatenate(
+        [alr_cov_factor, jnp.zeros((1, alr_cov_factor.shape[1]))], axis=0
+    )
+    cov_diag = jnp.concatenate([alr_cov_diag, jnp.array([0.0])], axis=0)
+
+    # Step 5: Compute mean probabilities on the simplex using inverse ALR
+    mean_probabilities = _inverse_alr(alr_loc, reference_index=None)
 
     # Step 4: Create distribution objects
     results = {
@@ -342,6 +505,7 @@ def _fit_logistic_normal_mixture(
     n_samples_dirichlet: int,
     rank: Optional[int],
     distribution_class: type,
+    remove_mean: bool,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """Fit Logistic-Normal distribution for mixture models."""
@@ -378,7 +542,8 @@ def _fit_logistic_normal_mixture(
     for c in range(n_components):
         if verbose:
             print(
-                f"\nFitting Logistic-Normal for component {c + 1}/{n_components}"
+                f"\nFitting Logistic-Normal for component "
+                f"{c + 1}/{n_components}"
             )
 
         # Step 1: Sample from Dirichlet for this component
@@ -404,7 +569,8 @@ def _fit_logistic_normal_mixture(
                 dirichlet_samples[0]
             )  # (n_genes, n_samples_dirichlet)
 
-            # When n_samples_dirichlet=1, need to ensure we keep the sample dimension
+            # When n_samples_dirichlet=1, need to ensure we keep the sample
+            # dimension
             if log_samples.ndim == 1:
                 log_samples = log_samples.reshape(-1, 1)  # (n_genes, 1)
 
@@ -420,20 +586,53 @@ def _fit_logistic_normal_mixture(
             all_log_samples = all_log_samples.reshape(1, -1)
 
         if verbose:
-            print(f"  Fitting to {all_log_samples.shape[0]} samples")
+            print(
+                f"  Collected {all_log_samples.shape[0]} log-Dirichlet samples"
+            )
 
-        # Step 2: Fit low-rank MVN to log samples
-        loc, cov_factor, cov_diag = _fit_low_rank_mvn(
-            all_log_samples, rank=rank, verbose=False
+        # Step 2: Apply ALR transformation before fitting
+        alr_samples = _apply_alr_transform(
+            all_log_samples, reference_index=None
+        )  # (n_samples, n_genes-1)
+
+        if verbose:
+            print(
+                f"  Applying ALR transformation: "
+                f"{alr_samples.shape[1]} ALR dimensions"
+            )
+
+        # Step 2b: Optionally remove grand mean
+        if remove_mean:
+            alr_grand_mean = jnp.mean(alr_samples, axis=0, keepdims=True)
+            alr_samples_centered = alr_samples - alr_grand_mean
+            if verbose:
+                print(f"  Removed grand mean (focusing on co-variation)")
+        else:
+            alr_samples_centered = alr_samples
+            alr_grand_mean = None
+
+        # Step 3: Fit low-rank MVN in ALR space
+        alr_loc, alr_cov_factor, alr_cov_diag = _fit_low_rank_mvn(
+            alr_samples_centered, rank=rank, verbose=False
         )
+
+        # Step 3b: Add back grand mean if removed
+        if remove_mean and alr_grand_mean is not None:
+            alr_loc = alr_loc + alr_grand_mean.squeeze()
+
+        # Step 4: Embed ALR parameters back to D dimensions
+        loc = jnp.concatenate([alr_loc, jnp.array([0.0])], axis=0)
+        cov_factor = jnp.concatenate(
+            [alr_cov_factor, jnp.zeros((1, alr_cov_factor.shape[1]))], axis=0
+        )
+        cov_diag = jnp.concatenate([alr_cov_diag, jnp.array([0.0])], axis=0)
 
         locs.append(loc)
         cov_factors.append(cov_factor)
         cov_diags.append(cov_diag)
 
-        # Step 3: Compute mean probabilities on the simplex
-        exp_loc = jnp.exp(loc)
-        mean_prob = exp_loc / jnp.sum(exp_loc)
+        # Step 5: Compute mean probabilities on the simplex using inverse ALR
+        mean_prob = _inverse_alr(alr_loc, reference_index=None)
         mean_probs.append(mean_prob)
 
         # Step 4: Create distribution for this component using factory
@@ -472,7 +671,8 @@ def _fit_logistic_normal_mixture(
             else distributions_alr
         )
         print(
-            f"\nCreated {len(dist_list)} {distribution_class.__name__} distributions"
+            f"\nCreated {len(dist_list)} {distribution_class.__name__} "
+            "distributions"
         )
 
     return results
@@ -591,6 +791,25 @@ def _fit_low_rank_mvn(
         print(
             f"  Low-rank approximation explains "
             f"{100 * explained_var / total_var:.1f}% of variance"
+        )
+        print(f"  Top 5 eigenvalues: {eigenvalues[:5].tolist()}")
+
+        # Check for dominant first eigenvalue (may indicate mean effect)
+        if len(eigenvalues) >= 2 and eigenvalues[0] > 10 * eigenvalues[1]:
+            ratio = float(eigenvalues[0] / eigenvalues[1])
+            print(
+                f"  ⚠️  First eigenvalue is {ratio:.1f}× larger than second "
+                f"(may indicate strong mean effect)"
+            )
+
+        # Detailed variance breakdown
+        ev1 = 100 * eigenvalues[0] / total_var
+        print(
+            f"  Variance distribution: "
+            f"PC1={ev1:.1f}%, "
+            f"top 10={100 * jnp.sum(eigenvalues[:10]) / total_var:.1f}%, "
+            f"top 50={100 * jnp.sum(eigenvalues[:50]) / total_var:.1f}%, "
+            f"top 100={100 * jnp.sum(eigenvalues[:100]) / total_var:.1f}%"
         )
 
     return loc, cov_factor, cov_diag
