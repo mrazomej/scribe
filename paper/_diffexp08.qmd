@@ -1,0 +1,388 @@
+## Summary and Conclusions
+
+In this work, we have developed a comprehensive mathematical framework for
+Bayesian differential expression analysis on compositional data. Our approach
+addresses the fundamental challenges posed by the compositional nature of
+normalized gene expression while maintaining computational tractability for
+high-dimensional single-cell datasets.
+
+### Key Results
+
+**Log-ratio coordinate systems.** We provided rigorous treatments of the
+centered log-ratio (CLR) and isometric log-ratio (ILR) transformations,
+including:
+
+- A complete derivation of the relationship between ALR and CLR coordinates
+(@eq-diffexp-alr-to-clr-claim through @eq-diffexp-alr-to-clr-component-g-final)
+- A constructive proof of the Helmert basis for the ILR transformation
+(@eq-diffexp-helmert-formula through @eq-diffexp-helmert-orthog-zero)
+- Interpretations of these coordinate systems for differential expression
+analysis
+
+The CLR transformation provides reference-free coordinates ideal for gene-level
+inference, while the ILR transformation provides orthonormal coordinates ideal
+for gene-set testing. Both respect the compositional constraint while enabling
+standard multivariate Gaussian methods.
+
+**Transformation of Gaussian parameters.** We derived explicit formulas for
+transforming low-rank Gaussian models between coordinate systems, including:
+
+- Mean transformations via centering and orthonormal projections
+(@eq-diffexp-mean-clr and @eq-diffexp-mean-ilr)
+- Low-rank factor transformations (@eq-diffexp-w-clr and @eq-diffexp-w-ilr)
+- **The exact CLR diagonal formula** (@eq-diffexp-d-exact-final), which enables
+$O(D)$ computation of per-gene posterior variances and is critical for accurate
+gene-level inference
+
+This exact diagonal calculation was emphasized in expert feedback and
+distinguishes our approach from naïve implementations that would either
+materialize full covariance matrices (intractable for large $D$) or use
+incorrect approximations (biasing posterior variances).
+
+**Gene-level differential expression.** We showed that the difference between
+independent Gaussian models is Gaussian with closed-form parameters
+(@eq-diffexp-delta-distribution), leading to:
+
+- Efficient computation of per-gene posterior means, standard deviations, and
+tail probabilities in $O(D)$ total time
+- The local false sign rate (lfsr) as a natural Bayesian measure of evidence
+for differential expression (@eq-diffexp-lfsr-definition)
+- Direct posterior probability interpretations that avoid the conceptual
+difficulties of frequentist p-values in compositional settings
+
+**Gene-set and pathway analysis.** We developed methods for testing linear
+contrasts and balances, including:
+
+- $O(kD)$ algorithms for computing contrast statistics using low-rank structure
+(@eq-diffexp-contrast-variance-final)
+- Construction of balance contrasts for comparing gene groups
+(@eq-diffexp-balance-contrast-raw)
+- Direct testing in ILR space where orthogonality simplifies interpretation
+- A framework for pathway enrichment that respects compositionality
+
+**Bayesian error control.** We introduced the posterior expected false discovery
+proportion (PEFP) and derived an optimal threshold-finding algorithm:
+
+- The PEFP as a direct Bayesian analog of the false discovery rate
+(@eq-diffexp-pefp-definition and @eq-diffexp-pefp-lfsr)
+- Proof of PEFP monotonicity enabling efficient threshold search
+(@eq-diffexp-pefp-monotone)
+- An $O(D \log D)$ algorithm that maximizes discoveries subject to PEFP control
+(@eq-diffexp-algorithm-step1 through @eq-diffexp-algorithm-step4)
+- Extensions to practical significance thresholds for biologically-informed
+decision making (@eq-diffexp-lfsr-tau)
+
+**Computational efficiency.** Every operation in our framework scales as $O(k^2
+D)$ or better, where $k \ll D$ is the rank of the low-rank approximation:
+
+- No full covariance matrices are ever materialized
+- The Woodbury identity enables $O(k^2 D)$ inversions and determinant
+computations
+- For typical datasets ($D = 30{,}000$, $k = 50$), complete analyses run in
+seconds rather than hours
+
+### Comparison to Existing Approaches
+
+Our framework offers several advantages over existing differential expression
+methods:
+
+**Versus standard RNA-seq methods (DESeq2, edgeR).** These methods operate on
+count data and model absolute abundances using negative binomial distributions.
+While appropriate for unnormalized counts, they do not naturally handle the
+compositional structure of normalized proportions. Our approach explicitly works
+in compositional coordinates, ensuring that all inferences respect the
+constraint that proportions sum to unity.
+
+**Versus compositional methods (ALDEx2, ANCOM-BC).** Existing compositional
+methods typically:
+- Use Monte Carlo sampling to propagate uncertainty, requiring many samples and
+lacking closed-form inference
+- Work with centered log-ratio coordinates but do not provide low-rank
+covariance structure
+- Lack integrated frameworks for gene-set testing and error control
+
+Our approach combines:
+- Closed-form Gaussian inference with efficient low-rank representations
+- Unified treatment of gene-level and gene-set testing
+- Bayesian error control via PEFP
+
+**Versus Bayesian methods (e.g., scVI, Seurat).** Deep learning methods like
+scVI and standard Bayesian tools like Seurat often:
+- Use complex nonlinear models that are difficult to interpret
+- Require extensive computational resources for inference
+- Lack rigorous multiple testing correction
+
+Our approach provides:
+- Explicit Gaussian models with clear interpretations
+- Linear-time scalability to large datasets
+- Principled Bayesian error control
+
+### Limitations and Extensions
+
+While our framework provides a rigorous foundation for compositional
+differential expression analysis, several limitations and potential extensions
+deserve mention.
+
+**Gaussian assumption.** Our entire framework rests on the Gaussian
+approximation to the posterior predictive distribution of normalized expression.
+As discussed in @sec-normalization, this approximation is justified when
+concentration parameters are moderate to large, but may be less accurate for
+genes with very low expression or in settings with extreme sparsity. Extensions
+to more flexible distributional families (e.g., mixtures of Gaussians or
+copula-based models) could address these cases.
+
+**Independence between conditions.** We assume that models for conditions A and
+B are independent. This is appropriate for independent biological replicates but
+may be violated in paired designs (e.g., before/after treatment on the same
+individuals) or when conditions share unmeasured confounders. Extending the
+framework to correlated conditions would require modeling the joint distribution
+$(\underline{z}_A, \underline{z}_B)$, which would complicate both the theory and
+computation.
+
+**Fixed low-rank structure.** We assume the rank $k$ is chosen in advance based
+on the initial model fitting. In principle, one could use Bayesian model
+selection to choose $k$ or even allow $k$ to vary across genes. However, the
+computational benefits of a fixed $k$ are substantial, and in practice,
+choosing $k$ to capture $\approx 80-90\%$ of variance works well across diverse
+datasets.
+
+**Gene-set overlap.** Our pathway enrichment methods test each pathway
+independently, ignoring the fact that many pathways share genes. More
+sophisticated approaches could model the hierarchical structure of pathway
+databases (e.g., the Gene Ontology DAG) or use Bayesian hierarchical models to
+share information across related pathways.
+
+**Temporal dynamics.** For time-series or trajectory data, differential
+expression is often a function of time or pseudotime. Extending our framework to
+functional differential expression (e.g., using Gaussian processes) would enable
+inference on temporal patterns while respecting compositionality.
+
+Despite these limitations, the framework developed here provides a solid
+foundation for compositional differential expression analysis, with rigor,
+efficiency, and interpretability as core design principles.
+
+### Software Implementation
+
+The methods described in this work are implemented in the `scribe` software
+package, available at [repository URL]. The implementation uses JAX
+[@bradbury2018] for automatic differentiation and just-in-time compilation,
+NumPyro [@phan2019] for probabilistic programming, and follows the mathematical
+specifications given in this document.
+
+Key features of the software include:
+
+- **Modular design**: Transformations, divergences, gene-level tests, gene-set
+tests, and error control are implemented as separate, composable functions
+- **Numerical stability**: All recommendations from Section 7 are incorporated,
+including epsilon additions, contrast validation, and log-space computations
+- **Extensive testing**: Unit tests verify mathematical correctness against
+known analytical results and numerical accuracy across a range of problem sizes
+- **Documentation**: Functions use NumPy-style docstrings with complete
+mathematical specifications
+
+Users can perform a complete differential expression analysis with a few lines
+of code, while having full access to intermediate quantities (transformed
+parameters, contrast statistics, etc.) for custom analyses.
+
+### Impact and Future Directions
+
+The framework developed here addresses a long-standing challenge in single-cell
+transcriptomics: how to perform statistically rigorous differential expression
+analysis that respects the compositional nature of normalized data. By combining
+compositional data analysis, low-rank Gaussian models, and Bayesian error
+control, we provide a principled alternative to existing approaches that either
+ignore compositionality or lack computational scalability.
+
+**Immediate applications** of this work include:
+
+- **Cell-type-specific differential expression**: Comparing gene expression
+between cell types or cellular states
+- **Perturbation response analysis**: Identifying genes and pathways responding
+to experimental perturbations
+- **Developmental trajectory inference**: Testing for differential expression
+along pseudotime or lineage trajectories
+- **Spatial transcriptomics**: Analyzing spatially-resolved differential
+expression while accounting for compositional effects
+
+**Future methodological directions** include:
+
+- **Integration with causal inference**: Combining compositional differential
+expression with causal graphical models to distinguish direct from indirect
+effects
+- **Multimodal analysis**: Extending to joint analysis of transcriptomics and
+other modalities (proteomics, chromatin accessibility) while respecting their
+respective compositional structures
+- **Bayesian meta-analysis**: Combining differential expression results across
+multiple studies using hierarchical Bayesian models
+- **Nonparametric extensions**: Relaxing the Gaussian assumption using
+Dirichlet process mixtures or other nonparametric priors
+
+The mathematical framework developed here—combining rigorous compositional data
+analysis with efficient computational methods—provides a template for addressing
+similar challenges in other high-dimensional compositional data settings, from
+microbiome analysis to geological compositional data.
+
+## References to Consult
+
+The methods developed in this work draw on several areas of mathematics and
+statistics. We provide key references for readers interested in deeper study.
+
+### Compositional Data Analysis
+
+**Foundational works:**
+
+- Aitchison, J. (1982). "The statistical analysis of compositional data."
+*Journal of the Royal Statistical Society: Series B (Methodological)*, 44(2),
+139-160. [Original introduction of log-ratio transformations]
+
+- Aitchison, J. (1986). *The Statistical Analysis of Compositional Data*.
+Chapman and Hall. [Comprehensive treatment including CLR and ALR]
+
+- Aitchison, J., & Shen, S. M. (1980). "Logistic-normal distributions: Some
+properties and uses." *Biometrika*, 67(2), 261-272. [Logistic-normal
+distribution]
+
+**Modern perspectives:**
+
+- Egozcue, J. J., Pawlowsky-Glahn, V., Mateu-Figueras, G., & Barceló-Vidal, C.
+(2003). "Isometric logratio transformations for compositional data analysis."
+*Mathematical Geology*, 35(3), 279-300. [ILR transformation and balances]
+
+- Pawlowsky-Glahn, V., Egozcue, J. J., & Tolosana-Delgado, R. (2015). *Modeling
+and Analysis of Compositional Data*. John Wiley & Sons. [Contemporary textbook]
+
+- Filzmoser, P., Hron, K., & Templ, M. (2018). *Applied Compositional Data
+Analysis*. Springer. [Applied methods with software]
+
+### Matrix Computations and Low-Rank Methods
+
+**Matrix computations:**
+
+- Golub, G. H., & Van Loan, C. F. (2013). *Matrix Computations* (4th ed.).
+Johns Hopkins University Press. [Authoritative reference for Woodbury identity,
+SVD, and numerical linear algebra]
+
+**Probabilistic dimensionality reduction:**
+
+- Tipping, M. E., & Bishop, C. M. (1999). "Probabilistic principal component
+analysis." *Journal of the Royal Statistical Society: Series B (Statistical
+Methodology)*, 61(3), 611-622. [Probabilistic PCA and low-rank covariance models]
+
+- Bishop, C. M. (2006). *Pattern Recognition and Machine Learning*. Springer.
+[Chapters 2 and 12 on Gaussian distributions and dimensionality reduction]
+
+**Randomized methods:**
+
+- Halko, N., Martinsson, P. G., & Tropp, J. A. (2011). "Finding structure with
+randomness: Probabilistic algorithms for constructing approximate matrix
+decompositions." *SIAM Review*, 53(2), 217-288. [Randomized SVD for large-scale
+problems]
+
+### Bayesian Multiple Testing
+
+**Bayesian FDR:**
+
+- Newton, M. A., Noueiry, A., Sarkar, D., & Ahlquist, P. (2004). "Detecting
+differential gene expression with a semiparametric hierarchical mixture method."
+*Biostatistics*, 5(2), 155-176. [Bayesian FDR for gene expression]
+
+- Müller, P., Parmigiani, G., Robert, C., & Rousseau, J. (2004). "Optimal
+sample size for multiple testing: the case of gene expression microarrays."
+*Journal of the American Statistical Association*, 99(468), 990-1001. [Bayesian
+decision theory for multiple testing]
+
+**Local false discovery rate and lfsr:**
+
+- Efron, B. (2007). "Size, power and false discovery rates." *The Annals of
+Statistics*, 35(4), 1351-1377. [Local false discovery rate (lfdr)]
+
+- Stephens, M. (2016). "False discovery rates: a new deal." *Biostatistics*,
+18(2), 275-294. [Local false sign rate and ashr method]
+
+**Bayesian error control:**
+
+- Bogdan, M., Ghosh, J. K., & Doerge, R. W. (2004). "Modifying the Schwarz
+Bayesian information criterion to locate multiple interacting quantitative trait
+loci." *Genetics*, 167(2), 989-999. [mBIC and Bayesian error control]
+
+- Scott, J. G., & Berger, J. O. (2010). "Bayes and empirical-Bayes multiplicity
+adjustment in the variable-selection problem." *The Annals of Statistics*,
+38(5), 2587-2619. [Bayesian multiplicity adjustment]
+
+### Differential Expression for RNA-Seq
+
+**Count-based methods:**
+
+- Robinson, M. D., McCarthy, D. J., & Smyth, G. K. (2010). "edgeR: a
+Bioconductor package for differential expression analysis of digital gene
+expression data." *Bioinformatics*, 26(1), 139-140. [edgeR for count data]
+
+- Love, M. I., Huber, W., & Anders, S. (2014). "Moderated estimation of fold
+change and dispersion for RNA-seq data with DESeq2." *Genome Biology*, 15(12),
+550. [DESeq2 for count data]
+
+**Compositional methods:**
+
+- Fernandes, A. D., Reid, J. N., Macklaim, J. M., McMurrough, T. A., Edgell, D.
+R., & Gloor, G. B. (2014). "Unifying the analysis of high-throughput sequencing
+datasets: characterizing RNA-seq, 16S rRNA gene sequencing and selective growth
+experiments by compositional data analysis." *Microbiome*, 2(1), 15. [ALDEx2]
+
+- Lin, H., & Peddada, S. D. (2020). "Analysis of compositions of microbiomes
+with bias correction." *Nature Communications*, 11(1), 3514. [ANCOM-BC]
+
+**Bayesian methods for single-cell:**
+
+- Lopez, R., Regier, J., Cole, M. B., Jordan, M. I., & Yosef, N. (2018). "Deep
+generative modeling for single-cell transcriptomics." *Nature Methods*, 15(12),
+1053-1058. [scVI deep learning framework]
+
+- Stuart, T., Butler, A., Hoffman, P., Hafemeister, C., Papalexi, E., Mauck, W.
+M., ... & Satija, R. (2019). "Comprehensive integration of single-cell data."
+*Cell*, 177(7), 1888-1902. [Seurat framework]
+
+### Gene-Set Analysis
+
+**Classical methods:**
+
+- Subramanian, A., Tamayo, P., Mootha, V. K., Mukherjee, S., Ebert, B. L.,
+Gillette, M. A., ... & Mesirov, J. P. (2005). "Gene set enrichment analysis: a
+knowledge-based approach for interpreting genome-wide expression profiles."
+*Proceedings of the National Academy of Sciences*, 102(43), 15545-15550. [GSEA]
+
+- Ashburner, M., Ball, C. A., Blake, J. A., Botstein, D., Butler, H., Cherry, J.
+M., ... & Sherlock, G. (2000). "Gene ontology: tool for the unification of
+biology." *Nature Genetics*, 25(1), 25-29. [Gene Ontology]
+
+**Pathway databases:**
+
+- Kanehisa, M., & Goto, S. (2000). "KEGG: Kyoto encyclopedia of genes and
+genomes." *Nucleic Acids Research*, 28(1), 27-30. [KEGG pathways]
+
+- Jassal, B., Matthews, L., Viteri, G., Gong, C., Lorente, P., Fabregat, A., ...
+& D'Eustachio, P. (2020). "The reactome pathway knowledgebase." *Nucleic Acids
+Research*, 48(D1), D498-D503. [Reactome pathways]
+
+**Compositional gene-set analysis:**
+
+- Quinn, T. P., Erb, I., Richardson, M. F., & Crowley, T. M. (2018).
+"Understanding sequencing data as compositions: an outlook and review."
+*Bioinformatics*, 34(16), 2870-2878. [Review of compositional methods for
+sequencing data]
+
+### Software and Computational Tools
+
+**JAX and NumPyro:**
+
+- Bradbury, J., Frostig, R., Hawkins, P., Johnson, M. J., Leary, C., Maclaurin,
+D., ... & Wanderman-Milne, S. (2018). "JAX: composable transformations of
+Python+NumPy programs." [http://github.com/google/jax]
+
+- Phan, D., Pradhan, N., & Jankowiak, M. (2019). "Composable effects for
+flexible and accelerated probabilistic programming in NumPyro." *arXiv preprint
+arXiv:1912.11554*. [NumPyro probabilistic programming]
+
+These references provide comprehensive coverage of the mathematical,
+statistical, and computational foundations underlying the methods developed in
+this work.
+

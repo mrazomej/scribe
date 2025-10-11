@@ -1,0 +1,282 @@
+## Computational Considerations
+
+The methods developed in this work are designed for scalability to
+high-dimensional single-cell transcriptomics datasets with tens of thousands of
+genes. In this section, we summarize the computational complexity of each major
+operation and discuss numerical stability considerations that ensure robust
+performance in practice.
+
+### Scalability to High Dimensions
+
+#### Complexity summary
+
+The following table summarizes the computational complexity of key operations in
+our differential expression framework:
+
+| **Operation** | **Complexity** | **Description** |
+|--------------|----------------|-----------------|
+| ALR → CLR mean | $O(D)$ | Centering the ALR mean vector |
+| ALR → CLR low-rank factor | $O(kD)$ | Applying centering matrix to factor matrix |
+| ALR → CLR diagonal (exact) | $O(D)$ | Exact diagonal formula @eq-diffexp-d-exact-final |
+| CLR → ILR mean | $O(D)$ to $O(D^2)$ | Applying ILR basis (depends on sparsity) |
+| CLR → ILR low-rank factor | $O(kD)$ to $O(kD^2)$ | Matrix-matrix multiplication (depends on sparsity) |
+| Per-gene statistics (all genes) | $O(D)$ | Marginal means, variances, lfsr for $D$ genes |
+| Contrast statistic | $O(kD)$ | Quadratic form using low-rank structure |
+| Sorting for PEFP control | $O(D \log D)$ | Sorting lfsr values |
+| PEFP threshold finding | $O(D)$ | Single pass after sorting |
+
+The key observation is that **all operations scale linearly or near-linearly
+with the number of genes $D$**, with the exception of sorting (which is
+$O(D \log D)$) and the CLR → ILR transformation (which depends on the sparsity
+structure of the ILR basis).
+
+#### Low-rank approximation is essential
+
+For a dataset with $D = 30{,}000$ genes and low-rank factors of dimension $k =
+50$:
+
+**Memory requirements:**
+
+- Full covariance matrix: $D \times D = 900{,}000{,}000$ entries ≈ 3.6 GB
+(single precision)
+- Low-rank plus diagonal: $k \times D + D = 1{,}500{,}050$ entries ≈ 6 MB
+- **Memory reduction factor**: 600×
+
+**Computational requirements** (for a single quadratic form $\underline{v}^{\top}\underline{\underline{\Sigma}}^{-1}\underline{v}$):
+
+- Dense computation: $O(D^2) = 900{,}000{,}000$ operations
+- Low-rank computation: $O(kD) = 1{,}500{,}000$ operations
+- **Speedup factor**: 600×
+
+For operations involving matrix inversion or determinant computation, the
+speedup is even more dramatic:
+
+- Dense matrix inversion: $O(D^3) = 27{,}000{,}000{,}000{,}000$ operations
+- Low-rank inversion (via Woodbury): $O(k^2 D + k^3) \approx 75{,}075{,}000$
+operations
+- **Speedup factor**: 360,000×
+
+These factors make the difference between computations that are entirely
+infeasible (taking days or weeks on a single machine) and computations that
+complete in seconds.
+
+#### Example: time complexity for typical workflows
+
+Consider a differential expression analysis comparing two conditions with $D =
+30{,}000$ genes and low-rank factors of rank $k = 50$:
+
+1. **Transform ALR models to CLR**: $O(kD) = 1.5$ million operations per
+condition, total ≈ 3 million operations ≈ **5 milliseconds** on a modern CPU.
+
+2. **Compute difference distribution**: Concatenating factors and summing
+diagonals, $O(kD) = 1.5$ million operations ≈ **2 milliseconds**.
+
+3. **Compute per-gene statistics** (means, SDs, lfsr): $O(D) = 30{,}000$
+operations per statistic, total for all statistics ≈ **5 milliseconds**.
+
+4. **Sort for PEFP control**: $O(D \log D) \approx 450{,}000$ operations ≈ **1
+millisecond**.
+
+5. **Compute 100 pathway contrasts**: Each contrast requires $O(kD)$ operations,
+total $100 \times 1.5$ million = 150 million operations ≈ **300 milliseconds**.
+
+**Total time for complete analysis**: Less than 1 second (dominated by contrast
+computations for pathways).
+
+This stands in stark contrast to methods that require:
+- Full covariance matrix operations: hours to days
+- Permutation testing: minutes to hours (depending on number of permutations)
+- MCMC sampling: minutes to hours (depending on number of samples)
+
+### Numerical Stability
+
+While the low-rank plus diagonal structure provides computational efficiency, it
+also requires careful attention to numerical stability. We discuss several
+important considerations.
+
+#### Epsilon addition to diagonals
+
+When computing matrix inversions via the Woodbury identity or evaluating
+log-determinants, we encounter division by diagonal entries $d_g$. If any $d_g$
+is zero or very small, numerical instability can result.
+
+To guard against this, we add a small positive constant $\epsilon$ to all
+diagonal entries:
+
+$$
+\underline{d}_{\text{stable}} = \underline{d} + \epsilon \underline{1},
+$${#eq-diffexp-epsilon-addition}
+
+where $\epsilon = 10^{-8}$ is a typical choice. This ensures that all diagonal
+entries satisfy $d_g \geq \epsilon > 0$, preventing division by zero.
+
+**Effect on inference.** Adding $\epsilon$ slightly inflates all posterior
+variances, making inference slightly more conservative. For genes with large
+posterior variance (weak evidence), the effect is negligible. For genes with
+very small posterior variance (strong evidence), the relative effect
+$\epsilon/d_g$ is larger, but such genes typically have lfsr very close to 0
+already, so the impact on multiple testing decisions is minimal.
+
+**Choosing $\epsilon$.** The value $\epsilon = 10^{-8}$ is chosen to be:
+- Large enough to prevent numerical underflow in standard double-precision
+arithmetic (which has machine epsilon $\approx 2.2 \times 10^{-16}$)
+- Small enough to be negligible compared to typical posterior variances in
+single-cell data (which are often in the range $10^{-2}$ to $10^{1}$)
+
+For datasets with very high sequencing depth and strong evidence for differential
+expression, a smaller value such as $\epsilon = 10^{-10}$ may be appropriate.
+For datasets with low depth or high noise, a larger value such as $\epsilon =
+10^{-6}$ may be preferable.
+
+#### Contrast validation
+
+When users provide custom contrasts for gene-set testing, we must validate that
+the contrast is well-defined:
+
+**Sum-to-zero check.** After centering, verify that
+
+$$
+\left|\sum_{g=1}^{D} c_g\right| < \epsilon_{\text{sum}},
+$${#eq-diffexp-contrast-sum-check}
+
+where $\epsilon_{\text{sum}} = 10^{-6}$ is a tolerance for numerical error. If
+this check fails, the centering operation may have failed due to numerical
+issues, and an error should be raised.
+
+**Non-triviality check.** Verify that
+
+$$
+\|\underline{c}\|^2 = \sum_{g=1}^{D} c_g^2 > \epsilon_{\text{norm}},
+$${#eq-diffexp-contrast-norm-check}
+
+where $\epsilon_{\text{norm}} = 10^{-10}$. If this check fails, the contrast is
+effectively zero and should be rejected.
+
+**Guard against large contrasts.** For numerical stability in downstream
+computations, it is advisable to normalize contrasts to unit norm:
+
+$$
+\underline{c}_{\text{normalized}} = \frac{\underline{c}}{\|\underline{c}\|}.
+$${#eq-diffexp-contrast-normalization}
+
+This ensures that the contrast statistic $\gamma = \underline{c}^{\top}
+\underline{\Delta}$ has a scale comparable to individual gene effects, which can
+aid interpretation and prevent overflow in extreme cases.
+
+#### Log-space computations for probabilities
+
+The Gaussian CDF $\Phi(x)$ can be numerically challenging to evaluate for large
+$|x|$ due to underflow or overflow. For example, $\Phi(-10) \approx 7.6 \times
+10^{-24}$ is below the typical double-precision underflow threshold.
+
+To compute tail probabilities and lfsr values accurately, we use
+**log-space arithmetic**:
+
+$$
+\log P(\Delta_g > 0 \mid \text{data}) = \log \Phi(z_g).
+$${#eq-diffexp-log-prob}
+
+Modern numerical libraries provide stable implementations of $\log \Phi(x)$ that
+avoid underflow for large negative $x$ and overflow for large positive $x$. For
+very extreme z-scores, we can use asymptotic approximations such as
+
+$$
+\log \Phi(x) \approx -\frac{x^2}{2} - \log\sqrt{2\pi} - \log|x| \quad 
+\text{for } x \ll -1,
+$${#eq-diffexp-log-phi-asymptotic}
+
+which is accurate for $x < -5$.
+
+When combining probabilities, we use the log-sum-exp trick to avoid underflow:
+
+$$
+\log(e^{a} + e^{b}) = \max(a, b) + \log(1 + e^{-|a-b|}).
+$${#eq-diffexp-logsumexp}
+
+This ensures numerical stability even when $|a - b|$ is very large.
+
+#### Woodbury matrix inversion conditioning
+
+The Woodbury identity @eq-diffexp-woodbury-sigma-inverse requires inverting the
+$k \times k$ matrix
+
+$$
+\underline{\underline{M}} = \underline{\underline{I}}_k + 
+\underline{\underline{W}}^{\top} \text{diag}(\underline{d})^{-1} 
+\underline{\underline{W}}.
+$${#eq-diffexp-woodbury-inner-matrix}
+
+For well-conditioned problems, this matrix is positive definite and easy to
+invert. However, in some cases, $\underline{\underline{M}}$ can become
+ill-conditioned, leading to numerical instability.
+
+**Condition number check.** Before inverting $\underline{\underline{M}}$, we
+can compute its condition number
+
+$$
+\kappa(\underline{\underline{M}}) = 
+\frac{\lambda_{\max}(\underline{\underline{M}})}{\lambda_{\min}(\underline{\underline{M}})},
+$${#eq-diffexp-condition-number}
+
+where $\lambda_{\max}$ and $\lambda_{\min}$ are the largest and smallest
+eigenvalues. If $\kappa(\underline{\underline{M}}) > 10^{10}$ (a threshold
+appropriate for double-precision arithmetic), the matrix is ill-conditioned and
+inversion may be unreliable.
+
+**Regularization.** If ill-conditioning is detected, we can add a small ridge
+regularization:
+
+$$
+\underline{\underline{M}}_{\text{reg}} = \underline{\underline{M}} + 
+\lambda \underline{\underline{I}}_k,
+$${#eq-diffexp-regularization}
+
+where $\lambda = 10^{-6}$ is a small regularization parameter. This ensures that
+$\underline{\underline{M}}_{\text{reg}}$ is well-conditioned at the cost of a
+slight bias in the inverse.
+
+**Practical experience.** In practice, ill-conditioning of
+$\underline{\underline{M}}$ is rare when the low-rank factors
+$\underline{\underline{W}}$ are obtained from SVD of posterior samples, as the
+SVD naturally produces well-conditioned factors. Ill-conditioning is more likely
+to occur when factors are constructed manually or when $k$ is chosen to be close
+to the number of samples.
+
+### Implementation Recommendations
+
+Based on the analysis in this section, we recommend the following implementation
+strategies:
+
+1. **Use low-rank representations throughout.** Store covariance matrices as
+$(W, d)$ pairs, never materializing the full $D \times D$ matrix.
+
+2. **Apply Woodbury identity for all inversions.** Never compute
+$\underline{\underline{\Sigma}}^{-1}$ explicitly; always use @eq-diffexp-woodbury-quadratic
+for quadratic forms.
+
+3. **Add epsilon to diagonals early.** Immediately after constructing or
+transforming diagonal components, add $\epsilon = 10^{-8}$ for stability.
+
+4. **Validate all contrasts.** Check sum-to-zero and non-triviality before
+computing contrast statistics.
+
+5. **Use log-space for small probabilities.** When computing lfsr values or
+tail probabilities, work in log-space to avoid underflow.
+
+6. **Exploit sparsity in ILR bases.** For the Helmert basis or other structured
+ILR bases, use specialized implementations that exploit sparsity to achieve
+$O(D)$ rather than $O(D^2)$ complexity.
+
+7. **Profile and optimize hot paths.** The contrast computation for many
+pathways is often the computational bottleneck; optimize this operation using
+vectorization or parallelization.
+
+8. **Test on synthetic data.** Validate implementations on synthetic datasets
+with known ground truth to ensure numerical accuracy across a range of problem
+sizes and conditioning.
+
+These recommendations ensure that differential expression analyses can be
+performed efficiently and reliably on large-scale single-cell datasets,
+producing results that are both statistically rigorous and computationally
+tractable.
+

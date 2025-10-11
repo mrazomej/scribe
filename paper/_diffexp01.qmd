@@ -1,0 +1,162 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# Bayesian Differential Expression for Compositional Data
+{#sec-diffexp}
+
+In @sec-normalization, we developed a low-rank logistic-normal approximation for
+modeling normalized gene expression proportions on the simplex. We showed that
+the posterior predictive distribution of normalized expression
+$\underline{\rho} = (\rho_1, \rho_2, \ldots, \rho_D)$ can be approximated by a
+logistic-normal distribution in additive log-ratio (ALR) space,
+
+$$
+\underline{z}_{\text{ALR}} \sim \mathcal{N}(\underline{\mu}_{\text{ALR}}, 
+\underline{\underline{\Sigma}}_{\text{ALR}}),
+$${#eq-diffexp-alr-distribution}
+
+where $\underline{\underline{\Sigma}}_{\text{ALR}} = 
+\underline{\underline{W}}_{\text{ALR}}\underline{\underline{W}}_{\text{ALR}}^{\top} 
++ \text{diag}(\underline{d}_{\text{ALR}})$ is a low-rank plus diagonal
+covariance matrix. This representation captures both the mean composition and
+the correlation structure induced by posterior uncertainty in the underlying
+Dirichlet-Multinomial model parameters.
+
+A central question in single-cell transcriptomics is identifying genes whose
+expression differs between experimental conditions—a task known as *differential
+expression analysis*. When we have fitted logistic-normal models for two
+conditions A and B, we wish to perform statistical inference on the differences
+in gene expression between these conditions. However, differential expression
+analysis on compositional data presents unique challenges that are absent when
+working with unconstrained data.
+
+## Differential Expression on the Simplex
+
+### The compositionality problem
+
+Normalized gene expression proportions are fundamentally *compositional*: they
+represent parts of a whole, constrained to sum to unity. This constraint has
+profound implications for differential expression analysis. To see why,
+consider a simple example with three genes. Suppose gene 1 increases its
+absolute expression level between condition A and condition B, while genes 2
+and 3 remain constant in absolute terms. Despite genes 2 and 3 being
+unchanging, their *proportions* $\rho_2$ and $\rho_3$ must decrease to maintain
+the constraint $\rho_1 + \rho_2 + \rho_3 = 1$. In a compositional analysis,
+these genes would appear to be differentially expressed, even though their
+absolute expression levels are unchanged.
+
+This phenomenon, known as the *closure problem* [@aitchison1986], illustrates
+that compositional data do not carry information about absolute quantities—only
+about relative quantities. The mathematical structure of the simplex
+$\Delta^{D-1}$ fundamentally differs from Euclidean space $\mathbb{R}^{D}$, and
+statistical methods that ignore this distinction can produce misleading results
+[@pawlowsky2015].
+
+### Challenges with standard differential expression methods
+
+Traditional differential expression methods for RNA-seq data, such as those
+based on the negative binomial distribution [@robinson2010; @love2014], operate
+on count data and model absolute transcript abundances. When applied to
+normalized proportions, these methods encounter several difficulties:
+
+1. **Violation of independence**: In compositional data, an increase in one
+component necessarily induces decreases in others, creating spurious negative
+correlations that are purely artifacts of the closure constraint.
+
+2. **Reference dependence**: Methods that work with log-ratios relative to a
+single reference gene [@aitchison1986] produce results that depend on the
+arbitrary choice of reference, complicating interpretation.
+
+3. **Loss of multivariate structure**: Testing each gene independently ignores
+the correlation structure captured by the low-rank covariance matrix, reducing
+statistical power and failing to account for coordinated changes in gene
+modules or pathways.
+
+4. **Scale ambiguity**: Because compositional data encode only relative
+information, statements about "fold-changes" must be carefully interpreted as
+changes in *relative abundance* rather than absolute expression.
+
+### Our approach: Bayesian inference in log-ratio coordinates
+
+To address these challenges, we develop a comprehensive framework for Bayesian
+differential expression analysis that respects the compositional nature of
+normalized gene expression. Our approach rests on three key principles:
+
+**Principle 1: Work in appropriate coordinate systems.** Rather than analyzing
+proportions directly on the simplex, we transform to log-ratio coordinate
+systems where standard multivariate Gaussian methods apply. We employ two
+complementary systems:
+
+- The *centered log-ratio* (CLR) transformation [@aitchison1986] provides a
+reference-free representation suitable for gene-level inference, where each
+coordinate has a natural interpretation as a log-ratio relative to the
+geometric mean.
+
+- The *isometric log-ratio* (ILR) transformation [@egozcue2003] provides an
+orthonormal basis suitable for gene-set and pathway analysis, where each
+coordinate represents a compositional *balance* between groups of genes.
+
+**Principle 2: Propagate parameter uncertainty.** Having fitted low-rank
+Gaussian models in ALR space, we transform these models to CLR and ILR spaces,
+carefully tracking how the mean vectors and covariance matrices change under
+these transformations. This ensures that posterior uncertainty is correctly
+propagated through all downstream analyses.
+
+**Principle 3: Use Bayesian error control.** Rather than relying on p-values
+and false discovery rate (FDR) control from frequentist hypothesis testing, we
+employ fully Bayesian measures of evidence. The *local false sign rate* (lfsr)
+quantifies the posterior probability of incorrectly signing a gene's
+differential expression [@stephens2016], and the *posterior expected false
+discovery proportion* (PEFP) provides a Bayesian analog of the FDR
+[@newton2004].
+
+### Preview of key results
+
+In the sections that follow, we develop the complete mathematical theory for
+Bayesian differential expression on compositional data. The main results are:
+
+**Log-ratio coordinate systems** (Section 2): We provide a rigorous treatment of
+the CLR and ILR transformations, including a full constructive derivation of
+the Helmert basis for the ILR transform. We show how these coordinate systems
+preserve the essential compositional structure while enabling standard
+multivariate analysis.
+
+**Transformation of Gaussian parameters** (Section 3): Given a low-rank
+Gaussian model in ALR space, we derive explicit formulas for transforming the
+mean vector and covariance matrix to CLR and ILR spaces. A critical result is
+the exact computation of the CLR covariance diagonal in $O(D)$ time, which is
+essential for accurate gene-level posterior inference.
+
+**Gene-level differential expression** (Section 4): We show that when two
+conditions have independent Gaussian models, the difference distribution is also
+Gaussian with parameters that preserve the low-rank structure. This enables
+efficient computation of per-gene posterior means, standard deviations, tail
+probabilities, and local false sign rates.
+
+**Gene-set and pathway analysis** (Section 5): We develop methods for testing
+linear contrasts in CLR space and balances in ILR space, enabling inference on
+coordinated changes in gene modules. The orthonormality of the ILR basis
+provides computational and interpretational advantages for pathway enrichment
+analysis.
+
+**Bayesian error control** (Section 6): We introduce the posterior expected
+false discovery proportion (PEFP) and derive an algorithm for finding lfsr
+thresholds that control PEFP at a specified level. This provides a principled
+approach to multiple testing correction that accounts for the uncertainty in
+each gene's differential expression status.
+
+**Computational efficiency** (Section 7): All methods are designed to operate in
+$O(k^2 D)$ time, where $k \ll D$ is the rank of the low-rank covariance
+approximation and $D$ is the number of genes. This ensures scalability to
+single-cell datasets with tens of thousands of genes.
+
+Throughout our development, we maintain complete mathematical rigor, showing
+every algebraic step explicitly. For datasets with $D \approx 30{,}000$ genes,
+these methods enable differential expression analysis that properly accounts for
+compositionality, posterior uncertainty, and gene-gene correlations—all within a
+fully Bayesian framework.
+
