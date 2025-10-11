@@ -51,14 +51,13 @@ html_theme_options = {
 from sphinx_gallery.sorting import FileNameSortKey
 
 sphinx_gallery_conf = {
-    "examples_dirs": "examples",  # path to your example scripts
-    "gallery_dirs": (
-        "auto_examples"
-    ),  # path to where to save gallery generated output
+    "examples_dirs": (
+        "_dummy_examples"
+    ),  # Dummy dir so gallery doesn't touch auto_examples
+    "gallery_dirs": "_dummy_gallery",  # Output to dummy location
     "within_subsection_order": FileNameSortKey,
-    "filename_pattern": r"\.py",
-    "run_stale_examples": False,  # Don't re-run examples (use pre-built)
-    "plot_gallery": False,  # BOOLEAN False - don't execute examples at all
+    "filename_pattern": r"^$",  # Match no files
+    "run_stale_examples": False,
 }
 
 # -- Extension configuration -------------------------------------------------
