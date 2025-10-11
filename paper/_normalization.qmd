@@ -1,0 +1,1157 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# Low-Rank Logistic-Normal Approximation for Normalized Expression {#sec-normalization}
+
+In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model for
+single-cell RNA-seq data, showing that the joint distribution of UMI counts can
+be expressed as the product of a negative binomial distribution for the total
+counts and a Dirichlet-Multinomial distribution for the normalized expression
+proportions. A key result from that derivation is that normalized expression
+proportions $\underline{\rho} = (\rho_1, \rho_2, \ldots, \rho_G)$ follow a
+Dirichlet distribution conditioned on the dispersion parameters $\underline{r}$,
+
+$$
+\underline{\rho} \mid \underline{r} \sim \text{Dirichlet}(\underline{r}).
+$${#eq-norm-dirichlet-conditional}
+
+When performing Bayesian inference on this model, we obtain a posterior
+distribution over the parameters $\pi(\underline{r}, \hat{p} \mid
+\underline{\underline{U}})$, where $\underline{\underline{U}}$ represents the
+observed UMI count matrix. In this section, we address a fundamental question:
+how do we characterize the distribution of normalized expression proportions
+$\underline{\rho}$ when accounting for posterior uncertainty in $\underline{r}$?
+
+## Posterior Predictive Distribution of Normalized Expression
+
+### The posterior over $\underline{r}$ induces correlation in $\underline{\rho}$
+
+After performing variational inference or MCMC sampling, we obtain samples from
+the posterior distribution,
+
+$$
+\underline{r}^{(1)}, \underline{r}^{(2)}, \ldots, \underline{r}^{(S)} \sim \pi(\underline{r} \mid \underline{\underline{U}}).
+$${#eq-norm-posterior-samples}
+
+For each posterior sample $s$, we can draw normalized expression proportions
+from the conditional Dirichlet distribution,
+
+$$
+\underline{\rho}^{(s)} \sim \text{Dirichlet}(\underline{r}^{(s)}).
+$${#eq-norm-rho-samples}
+
+The key observation is that the collection of samples
+$\{\underline{\rho}^{(s)}\}_{s=1}^{S}$ exhibits correlation structure that is
+absent when conditioning on a single value of $\underline{r}$. This correlation
+arises from the variation in $\underline{r}$ across posterior samples.
+
+To see this mathematically, consider the variance of a single component $\rho_g$
+under the full posterior predictive distribution,
+
+$$
+\text{Var}(\rho_g) = \mathbb{E}_{\underline{r}}\left[\text{Var}(\rho_g \mid \underline{r})\right] + \text{Var}_{\underline{r}}\left(\mathbb{E}[\rho_g \mid \underline{r}]\right).
+$${#eq-norm-variance-decomposition}
+
+The first term represents the inherent variance of the Dirichlet distribution
+for a fixed $\underline{r}$, while the second term captures the additional
+variance induced by posterior uncertainty in $\underline{r}$. For the Dirichlet
+distribution, we have
+
+$$
+\mathbb{E}[\rho_g \mid \underline{r}] = \frac{r_g}{r_T}, \quad r_T = \sum_{j=1}^{G} r_j,
+$${#eq-norm-dirichlet-mean}
+
+and
+
+$$
+\text{Var}(\rho_g \mid \underline{r}) = \frac{r_g(r_T - r_g)}{r_T^2(r_T + 1)}.
+$${#eq-norm-dirichlet-variance}
+
+When $\underline{r}$ varies across posterior samples, the mean
+$\mathbb{E}[\rho_g \mid \underline{r}]$ also varies, contributing additional
+variance through the second term in @eq-norm-variance-decomposition.
+
+### Why not fit a single Dirichlet distribution?
+
+A natural question arises: why not simply fit a single Dirichlet distribution to
+the mean normalized expression $\bar{\underline{\rho}}$? Let us define
+
+$$
+\bar{\underline{\rho}} = \frac{1}{S} \sum_{s=1}^{S} \underline{\rho}^{(s)},
+$${#eq-norm-mean-rho}
+
+and attempt to find parameters $\bar{\underline{r}}$ such that
+
+$$
+\bar{\underline{\rho}} \approx \mathbb{E}[\text{Dirichlet}(\bar{\underline{r}})].
+$${#eq-norm-single-dirichlet}
+
+While this approach captures the mean normalized expression, it fundamentally
+fails to preserve the correlation structure. The covariance of a Dirichlet
+distribution is given by
+
+$$
+\text{Cov}(\rho_g, \rho_h \mid \underline{r}) = \begin{cases}
+\frac{r_g(r_T - r_g)}{r_T^2(r_T + 1)} & \text{if } g = h, \\
+-\frac{r_g r_h}{r_T^2(r_T + 1)} & \text{if } g \neq h.
+\end{cases}
+$${#eq-norm-dirichlet-covariance}
+
+This covariance structure is entirely determined by the parameters
+$\underline{r}$ and does not account for the additional covariance induced by
+posterior uncertainty. From @eq-norm-variance-decomposition, we see that fitting
+a single Dirichlet distribution captures only
+$\mathbb{E}_{\underline{r}}[\text{Var}(\rho_g \mid \underline{r})]$ but
+completely misses $\text{Var}_{\underline{r}}(\mathbb{E}[\rho_g \mid
+\underline{r}])$.
+
+Moreover, when the posterior over $\underline{r}$ exhibits correlation
+structure—as is often the case with low-rank variational guides (see
+@sec-reparam)—this correlation manifests in the covariance of
+$\underline{\rho}$. A single Dirichlet distribution cannot capture such
+inter-gene correlations beyond those imposed by the simplex constraint.
+
+This motivates the need for a richer distributional family that can flexibly
+model both the mean and covariance structure of normalized expression while
+accounting for posterior uncertainty.
+
+## Compositional Data and the Simplex
+
+### The simplex constraint and its implications
+
+Normalized expression proportions $\underline{\rho}$ are constrained to lie on
+the unit simplex, defined as
+
+$$
+\Delta^{G-1} = \left\{\underline{\rho} \in \mathbb{R}^{G} : \rho_g \geq 0 \text{ for all } g, \sum_{g=1}^{G} \rho_g = 1\right\}.
+$${#eq-norm-simplex-definition}
+
+The simplex $\Delta^{G-1}$ is a $(G-1)$-dimensional manifold embedded in
+$\mathbb{R}^{G}$. This geometric structure has profound implications for
+statistical modeling. Standard multivariate distributions, such as the
+multivariate Gaussian, are defined on unconstrained Euclidean space
+$\mathbb{R}^{G}$ and cannot be directly applied to model data on the simplex.
+
+The field of *compositional data analysis* [@aitchison1982; @aitchison1986]
+provides a principled framework for statistical inference on the simplex. The
+central insight is that compositional data should be analyzed in an appropriate
+transformed space where standard statistical tools apply, and then the results
+can be mapped back to the simplex.
+
+### Transformations to Euclidean space
+
+To work with distributions on the simplex, we require bijective transformations
+that map between $\Delta^{G-1}$ and $\mathbb{R}^{G-1}$. Two prominent approaches
+have emerged in the literature:
+
+1. **Additive Log-Ratio (ALR) Transformation** [@aitchison1982]: Maps the
+simplex to Euclidean space by taking log-ratios relative to a reference
+component. This transformation is bijective and has a well-defined Jacobian,
+allowing for proper probability density calculations.
+
+2. **Softmax Transformation**: Maps Euclidean space to the simplex via the
+softmax function. While this transformation is surjective (many-to-one), it
+provides a symmetric treatment of all components and is particularly convenient
+for sampling.
+
+In the following sections, we develop both approaches and explain their
+complementary roles in modeling normalized gene expression.
+
+## The Additive Log-Ratio (ALR) Transformation
+
+### Definition and properties
+
+The ALR transformation, introduced by @aitchison1982, maps a point
+$\underline{\rho} \in \Delta^{G-1}$ to coordinates $\underline{z} \in
+\mathbb{R}^{G-1}$ by taking log-ratios with respect to a reference component.
+Without loss of generality, we choose the last component as the reference and
+define
+
+$$
+z_i = \log(\rho_i) - \log(\rho_G), \quad i = 1, 2, \ldots, G-1.
+$${#eq-norm-alr-definition}
+
+This transformation is bijective: given any $\underline{z} \in
+\mathbb{R}^{G-1}$, we can uniquely recover $\underline{\rho} \in \Delta^{G-1}$.
+To see this, we first observe that @eq-norm-alr-definition implies
+
+$$
+\rho_i = \rho_G \exp(z_i), \quad i = 1, 2, \ldots, G-1.
+$${#eq-norm-alr-rho-relation}
+
+Using the simplex constraint $\sum_{g=1}^{G} \rho_g = 1$, we have
+
+$$
+\sum_{i=1}^{G-1} \rho_G \exp(z_i) + \rho_G = 1,
+$${#eq-norm-alr-sum-constraint}
+
+which gives
+
+$$
+\rho_G = \frac{1}{1 + \sum_{i=1}^{G-1} \exp(z_i)}.
+$${#eq-norm-alr-rho-G}
+
+Substituting back into @eq-norm-alr-rho-relation yields
+
+$$
+\rho_i = \frac{\exp(z_i)}{1 + \sum_{j=1}^{G-1} \exp(z_j)}, \quad i = 1, 2, \ldots, G-1.
+$${#eq-norm-alr-rho-i}
+
+This defines the inverse ALR transformation, which we denote as
+$\text{ALR}^{-1}: \mathbb{R}^{G-1} \rightarrow \Delta^{G-1}$.
+
+### Matrix representation and computational considerations
+
+The ALR transformation can be expressed in matrix form. Define the
+transformation matrix $\underline{\underline{A}} \in \mathbb{R}^{(G-1) \times
+G}$ as
+
+$$
+A_{ij} = \begin{cases}
+1 & \text{if } i = j, \\
+-1 & \text{if } j = G, \\
+0 & \text{otherwise}.
+\end{cases}
+$${#eq-norm-alr-matrix-definition}
+
+Then the ALR transformation can be written as
+
+$$
+\underline{z} = \underline{\underline{A}} \log(\underline{\rho}),
+$${#eq-norm-alr-matrix-form}
+
+where $\log(\underline{\rho})$ denotes element-wise logarithm.
+
+For single-cell transcriptomics datasets with $G \approx 30{,}000$ genes,
+materializing the matrix $\underline{\underline{A}}$ would require storing $G
+\times (G-1) \approx 900{,}000{,}000$ entries. At 32-bit floating point
+precision, this amounts to approximately 3.4 GB of memory—a prohibitive cost for
+a simple transformation.
+
+Fortunately, we can compute the ALR transformation directly from its definition
+without materializing $\underline{\underline{A}}$. From @eq-norm-alr-definition,
+we compute
+
+$$
+z_i = \log(\rho_i) - \log(\rho_G)
+$${#eq-norm-alr-direct-computation}
+
+for each $i = 1, \ldots, G-1$. This requires only $O(G)$ operations and $O(G)$
+memory, compared to $O(G^2)$ for the matrix-based approach. This computational
+consideration is crucial for scalability to high-dimensional gene expression
+data.
+
+### Jacobian of the ALR transformation
+
+To define probability distributions on the simplex via the ALR transformation,
+we must account for the change of variables. Consider a distribution
+$\pi(\underline{z})$ defined on $\mathbb{R}^{G-1}$. The induced distribution on
+$\Delta^{G-1}$ is given by
+
+$$
+\pi(\underline{\rho}) = \pi(\underline{z}) \left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right|,
+$${#eq-norm-change-of-variables}
+
+where $\frac{\partial \underline{z}}{\partial \underline{\rho}}$ is the Jacobian
+matrix of the transformation.
+
+Let us compute this Jacobian. From @eq-norm-alr-definition, we have
+
+$$
+\frac{\partial z_i}{\partial \rho_j} = \begin{cases}
+\frac{1}{\rho_i} & \text{if } i = j, \\
+-\frac{1}{\rho_G} & \text{if } j = G, \\
+0 & \text{otherwise}.
+\end{cases}
+$${#eq-norm-jacobian-entries}
+
+The Jacobian matrix $\underline{\underline{J}} = \frac{\partial
+\underline{z}}{\partial \underline{\rho}}$ is thus
+
+$$
+\underline{\underline{J}} = \begin{bmatrix}
+\frac{1}{\rho_1} & 0 & \cdots & 0 & -\frac{1}{\rho_G} \\
+0 & \frac{1}{\rho_2} & \cdots & 0 & -\frac{1}{\rho_G} \\
+\vdots & \vdots & \ddots & \vdots & \vdots \\
+0 & 0 & \cdots & \frac{1}{\rho_{G-1}} & -\frac{1}{\rho_G}
+\end{bmatrix}.
+$${#eq-norm-jacobian-matrix}
+
+To compute the determinant, we add the first row to all other rows (a row
+operation that does not change the determinant):
+
+$$
+\underline{\underline{J}}' = \begin{bmatrix}
+\frac{1}{\rho_1} & 0 & \cdots & 0 & -\frac{1}{\rho_G} \\
+\frac{1}{\rho_1} & \frac{1}{\rho_2} & \cdots & 0 & -\frac{1}{\rho_G} \\
+\vdots & \vdots & \ddots & \vdots & \vdots \\
+\frac{1}{\rho_1} & 0 & \cdots & \frac{1}{\rho_{G-1}} & -\frac{1}{\rho_G}
+\end{bmatrix}.
+$${#eq-norm-jacobian-row-operation}
+
+We then multiply the last column by $\rho_G$ and divide each of the first $G-1$
+columns by their corresponding diagonal entries, giving
+
+$$
+\det(\underline{\underline{J}}) = \frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}} \det\begin{bmatrix}
+1 & 0 & \cdots & 0 & -\rho_G/\rho_1 \\
+1 & 1 & \cdots & 0 & -\rho_G/\rho_2 \\
+\vdots & \vdots & \ddots & \vdots & \vdots \\
+1 & 0 & \cdots & 1 & -\rho_G/\rho_{G-1}
+\end{bmatrix}.
+$${#eq-norm-jacobian-factored}
+
+Adding the first column to the last column yields a lower triangular matrix with
+ones on the diagonal, so the determinant of the matrix is 1. We thus obtain
+
+$$
+\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right) = \frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}}.
+$${#eq-norm-jacobian-result-intermediate}
+
+Using the constraint $\sum_{g=1}^{G} \rho_g = 1$ and $\prod_{g=1}^{G} \rho_g =
+\prod_{i=1}^{G-1} \rho_i \cdot \rho_G$, we can equivalently write
+
+$$
+\left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right| = \frac{1}{\prod_{i=1}^{G-1} \rho_i} = \frac{1}{\prod_{g=1}^{G} \rho_g / \rho_G} = \frac{\rho_G}{\prod_{g=1}^{G} \rho_g}.
+$${#eq-norm-jacobian-final}
+
+For practical purposes, the key result is that the Jacobian determinant depends
+only on the $\rho_i$ values themselves.
+
+### Inverse ALR transformation
+
+Given ALR coordinates $\underline{z} \in \mathbb{R}^{G-1}$, we recover the
+simplex point $\underline{\rho}$ through the inverse transformation. From
+@eq-norm-alr-rho-G and @eq-norm-alr-rho-i, we have the explicit formulas
+
+$$
+\rho_G = \frac{1}{1 + \sum_{i=1}^{G-1} \exp(z_i)},
+$${#eq-norm-inverse-alr-rhoG}
+
+$$
+\rho_i = \frac{\exp(z_i)}{1 + \sum_{j=1}^{G-1} \exp(z_j)}, \quad i = 1, \ldots, G-1.
+$${#eq-norm-inverse-alr-rhoi}
+
+Equivalently, we can embed $\underline{z}$ into $\mathbb{R}^{G}$ by appending a
+zero component,
+
+$$
+\underline{w} = (\underline{z}, 0) = (z_1, z_2, \ldots, z_{G-1}, 0),
+$${#eq-norm-embed-z}
+
+and apply the softmax function,
+
+$$
+\rho_g = \frac{\exp(w_g)}{\sum_{j=1}^{G} \exp(w_j)}, \quad g = 1, \ldots, G.
+$${#eq-norm-inverse-alr-softmax}
+
+Since $w_G = 0$, we have $\exp(w_G) = 1$, and the denominator becomes $1 +
+\sum_{i=1}^{G-1} \exp(z_i)$, matching @eq-norm-inverse-alr-rhoG and
+@eq-norm-inverse-alr-rhoi.
+
+This observation connects the ALR transformation to the more familiar softmax
+function, which we explore in the next section.
+
+## The Logistic-Normal Distribution
+
+### Definition via ALR transformation
+
+The logistic-normal distribution, introduced by @aitchison1980, is defined by
+applying the inverse ALR transformation to a multivariate Gaussian distribution.
+Let $\underline{z} \in \mathbb{R}^{G-1}$ follow a multivariate Gaussian
+distribution,
+
+$$
+\underline{z} \sim \mathcal{N}(\underline{\mu}, \underline{\underline{\Sigma}}),
+$${#eq-norm-z-gaussian}
+
+where $\underline{\mu} \in \mathbb{R}^{G-1}$ is the mean vector and
+$\underline{\underline{\Sigma}} \in \mathbb{R}^{(G-1) \times (G-1)}$ is the
+covariance matrix. Then $\underline{\rho} = \text{ALR}^{-1}(\underline{z})$
+follows a logistic-normal distribution on $\Delta^{G-1}$.
+
+The probability density function of $\underline{\rho}$ is obtained via the
+change of variables formula @eq-norm-change-of-variables,
+
+$$
+\pi(\underline{\rho}) = \frac{1}{(2\pi)^{(G-1)/2} |\underline{\underline{\Sigma}}|^{1/2}} \exp\left(-\frac{1}{2}(\underline{z} - \underline{\mu})^{\top} \underline{\underline{\Sigma}}^{-1} (\underline{z} - \underline{\mu})\right) \left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right|,
+$${#eq-norm-logistic-normal-density-prelim}
+
+where $\underline{z}$ is related to $\underline{\rho}$ through
+@eq-norm-alr-definition. Substituting the Jacobian from @eq-norm-jacobian-final,
+we obtain
+
+$$
+\pi(\underline{\rho}) = \frac{1}{(2\pi)^{(G-1)/2} |\underline{\underline{\Sigma}}|^{1/2} \prod_{i=1}^{G-1} \rho_i} \exp\left(-\frac{1}{2}(\underline{z} - \underline{\mu})^{\top} \underline{\underline{\Sigma}}^{-1} (\underline{z} - \underline{\mu})\right),
+$${#eq-norm-logistic-normal-density}
+
+where $z_i = \log(\rho_i) - \log(\rho_G)$ for $i = 1, \ldots, G-1$.
+
+### Relationship to the Dirichlet distribution
+
+The logistic-normal distribution serves as a flexible approximation to the
+Dirichlet distribution. While the Dirichlet distribution is the natural choice
+for modeling compositional data when conjugacy with the multinomial is desired,
+it has limited flexibility in modeling covariance structure. Specifically, the
+covariance between components in a Dirichlet distribution is entirely determined
+by the concentration parameters through @eq-norm-dirichlet-covariance, which
+imposes negative correlations between all pairs of components.
+
+The logistic-normal distribution, in contrast, allows for arbitrary covariance
+structure through the choice of $\underline{\underline{\Sigma}}$. This
+flexibility makes it particularly suitable for capturing the complex correlation
+patterns that arise from posterior uncertainty in $\underline{r}$.
+
+For moderate to large concentration parameters, the Dirichlet distribution can
+be well-approximated by a logistic-normal distribution through moment matching.
+Given a Dirichlet distribution with parameters $\underline{r}$, we can choose
+$\underline{\mu}$ and $\underline{\underline{\Sigma}}$ to match the first two
+moments. The mean of $\rho_g$ under Dirichlet$(\underline{r})$ is given by
+@eq-norm-dirichlet-mean. To match this mean, we set the logistic-normal
+parameters such that
+
+$$
+\mathbb{E}[\rho_g] = \frac{r_g}{r_T}.
+$${#eq-norm-moment-match-mean}
+
+For the covariance, we match @eq-norm-dirichlet-covariance. This moment matching
+procedure [@aitchison1986] provides a principled way to approximate a Dirichlet
+distribution with a logistic-normal, though exact matching of all moments is
+generally not possible due to the different parametric families.
+
+### Asymmetry of the ALR transformation
+
+A notable property of the ALR-based logistic-normal distribution is its
+dependence on the choice of reference component. Different choices of reference
+lead to different distributions on the simplex. For example, if we had chosen
+component 1 as the reference instead of component $G$, the ALR coordinates would
+be
+
+$$
+z_i' = \log(\rho_i) - \log(\rho_1), \quad i = 2, 3, \ldots, G,
+$${#eq-norm-alr-alternative-reference}
+
+and the resulting logistic-normal distribution would differ from that defined by
+@eq-norm-alr-definition.
+
+This asymmetry is both a limitation and a feature. It is a limitation in that
+the choice of reference component must be made somewhat arbitrarily, and
+different choices lead to different results. However, it is also a feature in
+that the asymmetry allows for proper probability density calculations, as we
+have shown. For applications requiring likelihood evaluation or Bayesian
+inference, this property is essential.
+
+For applications where symmetry is desired—such as sampling or
+visualization—alternative transformations that treat all components equally are
+preferable, as we discuss in the next section.
+
+## The Softmax-Normal Distribution
+
+### Definition and symmetric treatment
+
+An alternative approach to modeling distributions on the simplex is through the
+softmax transformation. Rather than working in $\mathbb{R}^{G-1}$, we consider
+unconstrained vectors $\underline{w} \in \mathbb{R}^{G}$ and map them to the
+simplex via
+
+$$
+\rho_g = \frac{\exp(w_g)}{\sum_{j=1}^{G} \exp(w_j)}, \quad g = 1, \ldots, G.
+$${#eq-norm-softmax-definition}
+
+This is known as the softmax or normalized exponential transformation.
+
+If we let $\underline{w} \sim \mathcal{N}(\underline{\mu},
+\underline{\underline{\Sigma}})$ where $\underline{\mu} \in \mathbb{R}^{G}$ and
+$\underline{\underline{\Sigma}} \in \mathbb{R}^{G \times G}$, then
+$\underline{\rho}$ defined by @eq-norm-softmax-definition follows what we term a
+*softmax-normal distribution*.
+
+The key advantage of this approach is symmetry: all components $\rho_g$ are
+treated identically through the transformation. There is no distinguished
+reference component, making this representation natural for many applications.
+
+### Singular nature of the softmax transformation
+
+Despite its appealing symmetry, the softmax transformation has a fundamental
+limitation: it is not injective (one-to-one). Specifically, for any constant $c
+\in \mathbb{R}$, we have
+
+$$
+\frac{\exp(w_g + c)}{\sum_{j=1}^{G} \exp(w_j + c)} = \frac{\exp(w_g) \exp(c)}{\sum_{j=1}^{G} \exp(w_j) \exp(c)} = \frac{\exp(w_g)}{\sum_{j=1}^{G} \exp(w_j)}.
+$${#eq-norm-softmax-invariance}
+
+This means that $\underline{w}$ and $\underline{w} + c\underline{1}$ (where
+$\underline{1} = (1, 1, \ldots, 1)^{\top}$) map to the same point
+$\underline{\rho}$ on the simplex. The transformation is invariant to
+translations along the direction $\underline{1}$.
+
+This invariance has profound implications for defining probability densities. To
+compute $\pi(\underline{\rho})$ from $\pi(\underline{w})$, we would need to use
+the change of variables formula,
+
+$$
+\pi(\underline{\rho}) = \pi(\underline{w}) \left|\det\left(\frac{\partial \underline{w}}{\partial \underline{\rho}}\right)\right|^{-1}.
+$${#eq-norm-softmax-change-of-variables}
+
+However, because the softmax transformation is many-to-one, the inverse
+transformation $\underline{\rho} \mapsto \underline{w}$ is not uniquely defined.
+Consequently, the Jacobian matrix $\frac{\partial \underline{w}}{\partial
+\underline{\rho}}$ does not exist in the classical sense.
+
+We can examine this more rigorously by computing the Jacobian of the forward
+transformation. From @eq-norm-softmax-definition, we have
+
+$$
+\frac{\partial \rho_g}{\partial w_h} = \begin{cases}
+\rho_g(1 - \rho_g) & \text{if } g = h, \\
+-\rho_g \rho_h & \text{if } g \neq h.
+\end{cases}
+$${#eq-norm-softmax-jacobian-entry}
+
+The Jacobian matrix $\underline{\underline{J}}_{\text{softmax}} = \frac{\partial
+\underline{\rho}}{\partial \underline{w}}$ is thus
+
+$$
+\underline{\underline{J}}_{\text{softmax}} = \text{diag}(\underline{\rho}) - \underline{\rho}\underline{\rho}^{\top},
+$${#eq-norm-softmax-jacobian}
+
+where $\text{diag}(\underline{\rho})$ is a diagonal matrix with entries
+$\rho_g$. This is a $(G \times G)$ matrix of rank at most $G-1$ because
+$\sum_{g=1}^{G} \rho_g = 1$ imposes a linear constraint. Specifically, all rows
+sum to zero, so the matrix is singular and
+
+$$
+\det(\underline{\underline{J}}_{\text{softmax}}) = 0.
+$${#eq-norm-softmax-jacobian-determinant}
+
+This confirms that a unique probability density cannot be assigned to points on
+the simplex when using the softmax transformation with a distribution on
+$\mathbb{R}^{G}$.
+
+### Use cases for softmax-normal distributions
+
+Despite the inability to evaluate probability densities, softmax-normal
+distributions are highly useful for several purposes:
+
+1. **Sampling**: Given parameters $\underline{\mu}$ and
+$\underline{\underline{\Sigma}}$, we can easily generate samples
+$\underline{\rho}$ by first sampling $\underline{w} \sim
+\mathcal{N}(\underline{\mu}, \underline{\underline{\Sigma}})$ and then applying
+the softmax transformation @eq-norm-softmax-definition. This is computationally
+efficient and avoids the asymmetry of the ALR approach.
+
+2. **Visualization**: When visualizing distributions on the simplex (e.g.,
+through ternary plots for $G=3$ or through principal component projections for
+larger $G$), the symmetry of the softmax-normal representation provides a
+natural and unbiased view.
+
+3. **Posterior predictive sampling**: In applications where we only need to
+generate samples from the posterior predictive distribution of normalized
+expression, rather than evaluate likelihoods, the softmax-normal distribution
+suffices.
+
+For applications requiring likelihood evaluation—such as computing evidence
+lower bounds in variational inference or performing hypothesis testing—the
+ALR-based logistic-normal distribution must be used instead.
+
+## Low-Rank Covariance Approximation
+
+### Computational challenges in high dimensions
+
+For single-cell RNA-seq datasets with $G \approx 30{,}000$ genes, the covariance
+matrix $\underline{\underline{\Sigma}}$ in @eq-norm-z-gaussian is a $(G-1)
+\times (G-1)$ matrix containing approximately $(G-1)^2 \approx 900{,}000{,}000$
+parameters. Storing such a matrix at 32-bit floating point precision requires
+approximately 3.6 GB of memory. Moreover, operations on this matrix—such as
+computing $\underline{\underline{\Sigma}}^{-1}$ or evaluating the probability
+density @eq-norm-logistic-normal-density—have computational complexity $O(G^3)$,
+which is prohibitive for $G \approx 30{,}000$.
+
+Furthermore, estimating a full covariance matrix from data requires at least $G$
+samples to be identifiable, and many more to be reliably estimated. In typical
+posterior inference, we may have hundreds to thousands of posterior samples—far
+fewer than would be needed to reliably estimate all $G^2$ parameters.
+
+These considerations motivate a low-rank approximation to the covariance
+structure.
+
+### Low-rank plus diagonal parameterization
+
+We parameterize the covariance matrix as
+
+$$
+\underline{\underline{\Sigma}} = \underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}},
+$${#eq-norm-low-rank-structure}
+
+where $\underline{\underline{W}} \in \mathbb{R}^{(G-1) \times k}$ is a factor
+loading matrix with $k \ll G-1$, and $\underline{\underline{D}} =
+\text{diag}(\underline{d})$ is a diagonal matrix with $\underline{d} \in
+\mathbb{R}^{G-1}$. This is known as the *low-rank plus diagonal* structure
+[@tipping1999; @bishop2006].
+
+The low-rank component
+$\underline{\underline{W}}\underline{\underline{W}}^{\top}$ captures the
+dominant correlation structure among genes, while the diagonal component
+$\underline{\underline{D}}$ accounts for gene-specific variance. The total
+number of parameters is $k(G-1) + (G-1) = (k+1)(G-1)$, which for $k = 50$ and $G
+= 30{,}000$ gives approximately 1.5 million parameters—nearly three orders of
+magnitude fewer than the full covariance matrix.
+
+The computational benefits are substantial. Matrix-vector products
+$\underline{\underline{\Sigma}}\underline{v}$ can be computed in $O(kG)$ time
+rather than $O(G^2)$. Sampling from $\mathcal{N}(\underline{\mu},
+\underline{\underline{\Sigma}})$ can be performed efficiently using the
+representation
+
+$$
+\underline{z} = \underline{\mu} + \underline{\underline{W}}\underline{\varepsilon}_w + \sqrt{\underline{d}} \odot \underline{\varepsilon}_d,
+$${#eq-norm-low-rank-sampling}
+
+where $\underline{\varepsilon}_w \sim \mathcal{N}(\underline{0},
+\underline{\underline{I}}_k)$, $\underline{\varepsilon}_d \sim
+\mathcal{N}(\underline{0}, \underline{\underline{I}}_{G-1})$, and $\odot$
+denotes element-wise multiplication. This requires only $O(kG)$ operations.
+
+For density evaluation, the matrix determinant lemma gives
+
+$$
+|\underline{\underline{\Sigma}}| = |\underline{\underline{D}}| \cdot |\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}\underline{\underline{D}}^{-1}\underline{\underline{W}}|,
+$${#eq-norm-low-rank-determinant}
+
+which can be computed in $O(k^2 G)$ time since $|\underline{\underline{D}}| =
+\prod_i d_i$ and the second term involves a $k \times k$ matrix.
+
+### SVD-based parameter estimation
+
+Given $N$ samples $\{\underline{z}^{(n)}\}_{n=1}^{N}$ in $\mathbb{R}^{G-1}$, we
+wish to estimate the parameters $\underline{\mu}$, $\underline{\underline{W}}$,
+and $\underline{d}$ in the low-rank model. The mean is simply
+
+$$
+\hat{\underline{\mu}} = \frac{1}{N} \sum_{n=1}^{N} \underline{z}^{(n)}.
+$${#eq-norm-mean-estimate}
+
+For the covariance, the standard approach would compute the sample covariance
+matrix
+
+$$
+\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} \sum_{n=1}^{N} (\underline{z}^{(n)} - \hat{\underline{\mu}})(\underline{z}^{(n)} - \hat{\underline{\mu}})^{\top},
+$${#eq-norm-covariance-estimate}
+
+and then perform an eigendecomposition to obtain the low-rank approximation.
+However, forming $\hat{\underline{\underline{\Sigma}}}$ requires $O(NG^2)$
+operations and $O(G^2)$ memory—both prohibitive for $G \approx 30{,}000$.
+
+A more efficient approach leverages the singular value decomposition (SVD)
+directly on the centered data matrix. Define
+
+$$
+\underline{\underline{X}} = \begin{bmatrix}
+(\underline{z}^{(1)} - \hat{\underline{\mu}})^{\top} \\
+(\underline{z}^{(2)} - \hat{\underline{\mu}})^{\top} \\
+\vdots \\
+(\underline{z}^{(N)} - \hat{\underline{\mu}})^{\top}
+\end{bmatrix} \in \mathbb{R}^{N \times (G-1)},
+$${#eq-norm-centered-data-matrix}
+
+so that the $n$-th row of $\underline{\underline{X}}$ is the $n$-th centered sample. Then
+
+$$
+\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} \underline{\underline{X}}^{\top}\underline{\underline{X}}.
+$${#eq-norm-covariance-via-data-matrix}
+
+The SVD of $\underline{\underline{X}}$ is
+
+$$
+\underline{\underline{X}} = \underline{\underline{U}}\underline{\underline{S}}\underline{\underline{V}}^{\top},
+$${#eq-norm-svd-decomposition}
+
+where $\underline{\underline{U}} \in \mathbb{R}^{N \times m}$ has orthonormal
+columns, $\underline{\underline{S}} \in \mathbb{R}^{m \times m}$ is diagonal
+with non-negative entries $s_1 \geq s_2 \geq \cdots \geq s_m \geq 0$,
+$\underline{\underline{V}} \in \mathbb{R}^{(G-1) \times m}$ has orthonormal
+columns, and $m = \min(N, G-1)$. For typical single-cell applications with $N
+\approx 1{,}500$ and $G \approx 30{,}000$, we have $m = N \ll G-1$.
+
+Substituting @eq-norm-svd-decomposition into @eq-norm-covariance-via-data-matrix yields
+
+$$
+\hat{\underline{\underline{\Sigma}}} = \frac{1}{N-1} \underline{\underline{V}}\underline{\underline{S}}^{\top}\underline{\underline{U}}^{\top}\underline{\underline{U}}\underline{\underline{S}}\underline{\underline{V}}^{\top} = \frac{1}{N-1} \underline{\underline{V}}\underline{\underline{S}}^2\underline{\underline{V}}^{\top},
+$${#eq-norm-covariance-svd-form}
+
+where we used the orthonormality
+$\underline{\underline{U}}^{\top}\underline{\underline{U}} =
+\underline{\underline{I}}_m$.
+
+This shows that the eigenvalues of $\hat{\underline{\underline{\Sigma}}}$ are
+
+$$
+\lambda_i = \frac{s_i^2}{N-1}, \quad i = 1, \ldots, m,
+$${#eq-norm-eigenvalues-from-svd}
+
+and the corresponding eigenvectors are the columns of
+$\underline{\underline{V}}$. Crucially, we obtain these eigenvalues and
+eigenvectors without ever forming the $(G-1) \times (G-1)$ matrix
+$\hat{\underline{\underline{\Sigma}}}$.
+
+For the low-rank approximation with rank $k \leq m$, we take the top $k$
+eigenvalues and eigenvectors. Let $\underline{\underline{V}}_k$ denote the first
+$k$ columns of $\underline{\underline{V}}$ and $\underline{s}_k = (s_1, \ldots,
+s_k)$ the first $k$ singular values. Then
+
+$$
+\underline{\underline{W}} = \underline{\underline{V}}_k \text{diag}\left(\frac{\underline{s}_k}{\sqrt{N-1}}\right) = \underline{\underline{V}}_k \text{diag}(\sqrt{\underline{\lambda}_k}),
+$${#eq-norm-W-from-svd}
+
+where $\underline{\lambda}_k = (\lambda_1, \ldots, \lambda_k)$.
+
+For the diagonal component, we use the residual variance—the average of the
+discarded eigenvalues,
+
+$$
+d_i = \frac{1}{m-k} \sum_{j=k+1}^{m} \lambda_j + \epsilon, \quad i = 1, \ldots, G-1,
+$${#eq-norm-diagonal-residual}
+
+where $\epsilon > 0$ is a small constant (e.g., $10^{-6}$) for numerical
+stability. This assumes that the residual variance is approximately isotropic—a
+reasonable assumption given that we have already captured the dominant
+anisotropic structure in the low-rank component.
+
+### Memory and computational advantages
+
+The SVD approach provides significant memory and computational savings when $N
+\ll G$. Computing the SVD of the $N \times (G-1)$ matrix
+$\underline{\underline{X}}$ requires $O(NG \min(N, G))$ operations. For $N =
+1{,}500$ and $G = 30{,}000$, this is $O(NG \cdot N) = O(N^2 G) \approx 67.5$
+billion operations. In contrast, forming the covariance matrix via
+@eq-norm-covariance-estimate would require $O(N G^2) \approx 1.35$ trillion
+operations—about 20 times more expensive.
+
+The memory requirements are even more dramatic. The SVD stores three matrices:
+$\underline{\underline{U}}$ ($N \times N$), $\underline{S}$ ($N \times N$), and
+$\underline{\underline{V}}^{\top}$ ($N \times G$), totaling approximately $N^2 +
+NG$ floating point numbers. For $N = 1{,}500$ and $G = 30{,}000$, this is
+roughly 47 million numbers or 180 MB at 32-bit precision. The covariance matrix
+$\hat{\underline{\underline{\Sigma}}}$ would require $G^2 \approx 900$ million
+numbers or 3.6 GB—20 times more memory.
+
+These computational considerations make the SVD-based approach essential for
+scalability to high-dimensional gene expression data.
+
+### Variance explained and model selection
+
+The proportion of variance explained by the rank-$k$ approximation is
+
+$$
+\text{EVR}(k) = \frac{\sum_{i=1}^{k} \lambda_i}{\sum_{i=1}^{m} \lambda_i},
+$${#eq-norm-variance-explained}
+
+where EVR stands for "explained variance ratio." This quantity provides guidance
+for choosing the rank $k$.
+
+In the context of gene expression data, the interpretation of EVR requires care.
+A low EVR (e.g., 10-20%) for modest $k$ (e.g., $k = 50$) does not necessarily
+indicate a poor approximation. Rather, it reflects the genuinely
+high-dimensional nature of gene expression space after the nonlinear
+transformations from the original Dirichlet sampling.
+
+Specifically, even though the posterior over $\underline{r}$ may exhibit
+low-rank structure (e.g., from a low-rank variational guide), the composition of
+two nonlinear transformations—Dirichlet sampling followed by log-ratio
+transformation—can "unfold" this low-rank structure into many dimensions. The
+rank-$k$ approximation captures the $k$ most prominent directions of variation,
+which often correspond to biologically meaningful gene modules or expression
+programs [@blei2003; @stein2019].
+
+## Complete Fitting Procedure
+
+### Algorithm overview
+
+We now describe the complete procedure for fitting a low-rank logistic-normal
+distribution to posterior samples of normalized expression. The algorithm
+consists of the following steps:
+
+1. **Generate posterior samples**: From posterior inference, obtain $S$ samples
+of the dispersion parameters $\{\underline{r}^{(s)}\}_{s=1}^{S}$.
+
+2. **Sample from Dirichlet**: For each posterior sample $s$, draw normalized
+proportions $\underline{\rho}^{(s)} \sim \text{Dirichlet}(\underline{r}^{(s)})$.
+
+3. **Apply ALR transformation**: Transform each sample to ALR coordinates,
+$$
+z_i^{(s)} = \log(\rho_i^{(s)}) - \log(\rho_G^{(s)}), \quad i = 1, \ldots, G-1.
+$${#eq-norm-alr-transform-step}
+
+4. **Optional mean centering**: If desired, compute $\bar{\underline{z}} =
+\frac{1}{S}\sum_{s=1}^{S} \underline{z}^{(s)}$ and center the samples,
+$$
+\tilde{\underline{z}}^{(s)} = \underline{z}^{(s)} - \bar{\underline{z}}.
+$${#eq-norm-centering-step}
+
+5. **Fit low-rank MVN**: Use the SVD-based procedure from the previous section
+to estimate $\tilde{\underline{\mu}}$, $\underline{\underline{W}}$, and
+$\underline{d}$ from the samples $\{\tilde{\underline{z}}^{(s)}\}$.
+
+6. **Restore mean**: If centering was applied, set $\underline{\mu} =
+\tilde{\underline{\mu}} + \bar{\underline{z}} = \bar{\underline{z}}$ (since
+$\tilde{\underline{\mu}} = 0$ after centering).
+
+7. **Create distributions**: Form both an ALR-based logistic-normal distribution
+(for likelihood evaluation) and a softmax-normal distribution (for sampling).
+
+### The centering option
+
+The optional centering step in @eq-norm-centering-step serves to isolate
+covariation patterns from the mean composition. When samples come from a
+homogeneous cell population, the first principal component often captures the
+dominant mean composition, with $\lambda_1 \gg \lambda_2$. The subsequent
+components capture gene-gene correlations and cell-to-cell variability.
+
+By centering the data before fitting the covariance structure, we ensure that
+the low-rank approximation
+$\underline{\underline{W}}\underline{\underline{W}}^{\top}$ captures variation
+*around* the mean rather than variation dominated by the mean itself.
+Mathematically, fitting to centered data $\{\tilde{\underline{z}}^{(s)}\}$
+yields a covariance matrix that represents
+
+$$
+\text{Cov}(\underline{z} - \bar{\underline{z}}) = \mathbb{E}[(\underline{z} - \bar{\underline{z}})(\underline{z} - \bar{\underline{z}})^{\top}],
+$${#eq-norm-centered-covariance}
+
+which is identical to $\text{Cov}(\underline{z})$ but is estimated in a way that
+prevents the mean from dominating the principal components.
+
+The final distribution is
+
+$$
+\underline{z} \sim \mathcal{N}(\bar{\underline{z}}, \underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}}),
+$${#eq-norm-final-centered-distribution}
+
+which correctly models both the mean $\bar{\underline{z}}$ and the covariance
+structure around that mean.
+
+### Embedding ALR parameters for softmax-normal
+
+To create a softmax-normal distribution from ALR parameters, we embed the
+$(G-1)$-dimensional parameters into $G$ dimensions. Given ALR parameters
+$\underline{\mu}_{\text{ALR}} \in \mathbb{R}^{G-1}$,
+$\underline{\underline{W}}_{\text{ALR}} \in \mathbb{R}^{(G-1) \times k}$, and
+$\underline{d}_{\text{ALR}} \in \mathbb{R}^{G-1}$, we construct
+
+$$
+\underline{\mu} = \begin{bmatrix} \underline{\mu}_{\text{ALR}} \\ 0 \end{bmatrix}, \quad
+\underline{\underline{W}} = \begin{bmatrix} \underline{\underline{W}}_{\text{ALR}} \\ \underline{0}^{\top} \end{bmatrix}, \quad
+\underline{d} = \begin{bmatrix} \underline{d}_{\text{ALR}} \\ 0 \end{bmatrix},
+$${#eq-norm-alr-to-softmax-embedding}
+
+where the zeros correspond to the reference component.
+
+This embedding is equivalent to setting the $G$-th component to zero in the
+log-space representation. When we sample $\underline{w} \sim
+\mathcal{N}(\underline{\mu},
+\underline{\underline{W}}\underline{\underline{W}}^{\top} +
+\text{diag}(\underline{d}))$ and apply the softmax transformation
+@eq-norm-softmax-definition, the resulting $\underline{\rho}$ has the same
+distribution as if we had sampled $\underline{z} \sim
+\mathcal{N}(\underline{\mu}_{\text{ALR}},
+\underline{\underline{W}}_{\text{ALR}}\underline{\underline{W}}_{\text{ALR}}^{\top}
++ \text{diag}(\underline{d}_{\text{ALR}}))$ and applied the inverse ALR
+transformation.
+
+The key insight is that the softmax transformation is invariant to constant
+shifts (see @eq-norm-softmax-invariance), so fixing the reference component to
+have zero mean and zero variance does not restrict the distribution on the
+simplex. The softmax normalization ensures that $\sum_{g=1}^{G} \rho_g = 1$
+regardless of the parameters in $\underline{\mu}$ and
+$\underline{\underline{\Sigma}}$.
+
+## Mathematical Justification
+
+### Why logistic-normal approximates the Dirichlet
+
+The logistic-normal distribution provides a flexible approximation to the
+Dirichlet distribution through several mechanisms. First, for large
+concentration parameters, the Dirichlet distribution becomes increasingly
+concentrated and approximately Gaussian in appropriate coordinates
+[@aitchison1986]. Specifically, if $\underline{\rho} \sim
+\text{Dirichlet}(\alpha \underline{r})$ where $\alpha \to \infty$ and
+$\underline{r}$ is held fixed with $\sum r_g = 1$, then the ALR coordinates
+$\underline{z}$ converge in distribution to a multivariate Gaussian.
+
+To see this heuristically, note that for large $\alpha$, the Dirichlet
+concentrates near its mode. The mode of Dirichlet$(\underline{r})$ is
+
+$$
+\rho_g^* = \frac{r_g - 1}{r_T - G} \approx \frac{r_g}{r_T}
+$${#eq-norm-dirichlet-mode}
+
+for large $r_g$. Near the mode, a second-order Taylor expansion of the
+log-density yields an approximately Gaussian distribution. When this Gaussian
+approximation is transformed through the ALR mapping, it remains approximately
+Gaussian [@aitchison1986].
+
+Second, moment matching provides a practical method for approximating any
+Dirichlet distribution with a logistic-normal. Given target moments
+$\mathbb{E}[\rho_g]$ and $\text{Cov}(\rho_g, \rho_h)$ from a Dirichlet
+distribution, we can solve for logistic-normal parameters $\underline{\mu}$ and
+$\underline{\underline{\Sigma}}$ that approximately match these moments. While
+exact moment matching for all moments is generally impossible (since the
+Dirichlet and logistic-normal are different parametric families), matching the
+first two moments often provides an adequate approximation for practical
+purposes [@blei2003].
+
+### Preservation of correlation structure
+
+A key advantage of the logistic-normal approximation is its ability to capture
+posterior-induced correlations that are absent in any single Dirichlet
+distribution. Recall from @eq-norm-variance-decomposition that the total
+variance decomposes as
+
+$$
+\text{Var}(\rho_g) = \underbrace{\mathbb{E}_{\underline{r}}[\text{Var}(\rho_g \mid \underline{r})]}_{\text{within-Dirichlet variance}} + \underbrace{\text{Var}_{\underline{r}}(\mathbb{E}[\rho_g \mid \underline{r}])}_{\text{between-sample variance}}.
+$${#eq-norm-variance-decomposition-repeat}
+
+A single Dirichlet distribution fitted to the mean $\bar{\underline{\rho}}$
+captures only the first term. The logistic-normal, through its flexible
+covariance structure $\underline{\underline{\Sigma}}$, can capture both terms.
+
+Moreover, when the posterior over $\underline{r}$ exhibits correlation (as
+induced by low-rank variational guides; see @sec-reparam), this correlation
+propagates to $\underline{\rho}$ through @eq-norm-rho-samples. The
+logistic-normal covariance $\underline{\underline{\Sigma}}$ can represent these
+inter-gene correlations directly.
+
+The low-rank structure $\underline{\underline{\Sigma}} =
+\underline{\underline{W}}\underline{\underline{W}}^{\top} +
+\underline{\underline{D}}$ further connects to the low-rank structure in
+$\underline{r}$-space. If the posterior over $\underline{r}$ has low-rank
+correlation structure (i.e., a few dominant principal components), this
+structure approximately transfers to the ALR-transformed space through the chain
+
+$$
+\underline{r} \xrightarrow{\text{Dirichlet}} \underline{\rho} \xrightarrow{\text{ALR}} \underline{z}.
+$${#eq-norm-transformation-chain}
+
+While the Dirichlet sampling and ALR transformation are both nonlinear, the
+low-rank structure is approximately preserved when the posterior over
+$\underline{r}$ is sufficiently concentrated.
+
+When centering is applied, the covariance structure captures variation in
+$\underline{z}$ around its mean, which corresponds to variation in gene
+expression patterns after removing the dominant mean composition. This is
+particularly interpretable: the principal components of
+$\underline{\underline{W}}\underline{\underline{W}}^{\top}$ represent the
+dominant axes of variation in log-ratio space, often corresponding to
+co-regulated gene modules or biological processes.
+
+### Comparison to direct Dirichlet fitting
+
+To make the comparison concrete, consider two approaches to approximating the
+posterior predictive distribution:
+
+**Approach 1 (Single Dirichlet)**: Compute the mean normalized expression
+$\bar{\underline{\rho}}$ from @eq-norm-mean-rho and fit parameters
+$\bar{\underline{r}}$ such that
+$\mathbb{E}[\text{Dirichlet}(\bar{\underline{r}})] = \bar{\underline{\rho}}$.
+From @eq-norm-dirichlet-mean, this gives $\bar{r}_g = \bar{r}_T \bar{\rho}_g$
+for any choice of total concentration $\bar{r}_T$.
+
+The expected value is
+
+$$
+\mathbb{E}[\rho_g] = \frac{\bar{r}_g}{\bar{r}_T} = \bar{\rho}_g,
+$${#eq-norm-single-dirichlet-mean}
+
+which correctly matches the posterior mean. However, the covariance is
+
+$$
+\text{Cov}(\rho_g, \rho_h) = -\frac{\bar{r}_g \bar{r}_h}{\bar{r}_T^2(\bar{r}_T + 1)}
+$${#eq-norm-single-dirichlet-cov}
+
+for $g \neq h$, which depends only on $\bar{\underline{r}}$ and cannot capture
+the additional covariance from posterior variation in $\underline{r}$.
+
+**Approach 2 (Logistic-Normal)**: Fit a logistic-normal distribution with
+parameters $\underline{\mu}$ and $\underline{\underline{\Sigma}}$ estimated from
+samples $\{\underline{z}^{(s)}\}$ as described above. The resulting distribution
+has
+
+$$
+\mathbb{E}[\underline{z}] = \underline{\mu},
+$${#eq-norm-logistic-normal-mean}
+
+$$
+\text{Cov}(\underline{z}) = \underline{\underline{\Sigma}} = \underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}},
+$${#eq-norm-logistic-normal-cov}
+
+which directly captures the empirical covariance structure in ALR space. This
+covariance accounts for both within-Dirichlet variation and between-sample
+variation induced by the posterior over $\underline{r}$.
+
+The difference is precisely captured by @eq-norm-variance-decomposition-repeat:
+the logistic-normal captures the full variance $\text{Var}(\rho_g)$, while the
+single Dirichlet captures only $\mathbb{E}_{\underline{r}}[\text{Var}(\rho_g
+\mid \underline{r})]$.
+
+## Computational Considerations
+
+The computational efficiency of our approach relies on several key algorithmic
+choices. In this section, we quantify the memory and runtime advantages.
+
+### Memory complexity
+
+For datasets with $G \approx 30{,}000$ genes and $N \approx 1{,}500$ posterior
+samples, the memory requirements for different approaches are:
+
+| Operation | Full Covariance | Low-Rank ($k = 50$) | Memory Ratio |
+|-----------|----------------|---------------------|--------------|
+| Store covariance matrix | $(G-1)^2 \approx 900M$ floats = 3.6 GB | $(k+1)(G-1) \approx 1.5M$ floats = 6 MB | 600:1 |
+| Compute covariance | $O(NG^2)$ operations | $O(NG \min(N,G))$ operations | 20:1 |
+| Sample | $O(G^2)$ per sample | $O(kG)$ per sample | $G/k = 600$:1 |
+| Matrix inversion | $O(G^3)$ operations | Avoid inversion entirely | — |
+
+These dramatic savings make the low-rank approach essential for practical
+application to high-dimensional gene expression data.
+
+### ALR transformation without matrix materialization
+
+As discussed in Section 4, the ALR transformation can be computed directly from
+the definition @eq-norm-alr-definition without forming the transformation matrix
+$\underline{\underline{A}}$. For $G = 30{,}000$ genes, this saves approximately
+3.4 GB of memory.
+
+The computational cost of the direct approach is
+
+$$
+\text{Cost}_{\text{direct}} = O(G) \quad \text{operations per sample},
+$${#eq-norm-alr-direct-cost}
+
+compared to
+
+$$
+\text{Cost}_{\text{matrix}} = O(G^2) \quad \text{operations per sample}
+$${#eq-norm-alr-matrix-cost}
+
+for the matrix-based approach. For $N$ samples, this gives a total savings of
+$O(NG)$ operations, which is substantial for large $G$.
+
+### SVD memory advantage
+
+The SVD-based covariance estimation is particularly advantageous when $N \ll G$,
+as is typical in our application. The SVD of an $N \times G$ matrix stores:
+
+- Left singular vectors $\underline{\underline{U}}$: $N \times N$ matrix
+- Singular values $\underline{S}$: $N$ values
+- Right singular vectors $\underline{\underline{V}}^{\top}$: $N \times G$ matrix
+
+Total memory: $N^2 + N + NG \approx N(N + G)$ floating point numbers.
+
+For $N = 1{,}500$ and $G = 30{,}000$, this is approximately $1{,}500 \times
+31{,}500 = 47.25$ million numbers or 180 MB at 32-bit precision.
+
+In contrast, storing the full covariance matrix
+$\hat{\underline{\underline{\Sigma}}}$ requires $G^2 = 900$ million numbers or
+3.6 GB—a 20-fold reduction.
+
+The computational cost comparison is similarly favorable. Computing the SVD
+costs
+
+$$
+\text{Cost}_{\text{SVD}} = O(NG \min(N, G)) = O(N^2 G)
+$${#eq-norm-svd-cost}
+
+operations, while forming the covariance matrix and computing its
+eigendecomposition costs
+
+$$
+\text{Cost}_{\text{eigh}} = O(NG^2) + O(G^3).
+$${#eq-norm-eigh-cost}
+
+For $N = 1{,}500$ and $G = 30{,}000$, we have
+
+$$
+\text{Cost}_{\text{SVD}} = O(1{,}500^2 \times 30{,}000) = O(67.5 \times 10^9),
+$${#eq-norm-svd-cost-numerical}
+
+$$
+\text{Cost}_{\text{eigh}} = O(1{,}500 \times 30{,}000^2) + O(30{,}000^3) = O(1.35 \times 10^{12}) + O(2.7 \times 10^{13}),
+$${#eq-norm-eigh-cost-numerical}
+
+showing that the SVD approach is approximately 400 times faster.
+
+These computational advantages make the SVD-based approach not merely convenient
+but essential for scalability to realistic single-cell datasets.
+
+## References to Consult
+
+The methods described in this section draw on several streams of literature in
+compositional data analysis, probabilistic modeling, and computational
+statistics. We provide here a list of key references for readers interested in
+deeper understanding of the mathematical foundations.
+
+**Compositional Data Analysis:**
+
+- Aitchison, J. (1982). "The statistical analysis of compositional data."
+*Journal of the Royal Statistical Society: Series B (Methodological)*, 44(2),
+139-160. [Foundational work introducing the log-ratio approach to compositional
+data]
+
+- Aitchison, J. (1986). *The Statistical Analysis of Compositional Data*. Chapman and Hall. [Comprehensive treatment of compositional data analysis, including the ALR and other transformations]
+
+- Aitchison, J., & Shen, S. M. (1980). "Logistic-normal distributions: Some
+properties and uses." *Biometrika*, 67(2), 261-272. [Original introduction of
+the logistic-normal distribution]
+
+- Pawlowsky-Glahn, V., & Egozcue, J. J. (2001). "Geometric approach to
+statistical analysis on the simplex." *Stochastic Environmental Research and
+Risk Assessment*, 15(5), 384-398. [Modern geometric perspective on compositional
+data]
+
+- Pawlowsky-Glahn, V., Egozcue, J. J., & Tolosana-Delgado, R. (2015). *Modeling
+and Analysis of Compositional Data*. John Wiley & Sons. [Contemporary
+comprehensive treatment]
+
+**Probabilistic Modeling and Dirichlet-Multinomial Models:**
+
+- Blei, D. M., Ng, A. Y., & Jordan, M. I. (2003). "Latent Dirichlet allocation."
+*Journal of Machine Learning Research*, 3, 993-1022. [Influential work using
+Dirichlet-multinomial models for topic modeling]
+
+- Minka, T. (2000). "Estimating a Dirichlet distribution." Technical report,
+MIT. [Practical methods for fitting Dirichlet distributions]
+
+**Low-Rank Matrix Approximations and Probabilistic PCA:**
+
+- Tipping, M. E., & Bishop, C. M. (1999). "Probabilistic principal component
+analysis." *Journal of the Royal Statistical Society: Series B (Statistical
+Methodology)*, 61(3), 611-622. [Probabilistic interpretation of PCA and low-rank
+covariance models]
+
+- Bishop, C. M. (2006). *Pattern Recognition and Machine Learning*. Springer.
+Chapter 12. [Comprehensive treatment of dimensionality reduction and low-rank
+approximations]
+
+- Halko, N., Martinsson, P. G., & Tropp, J. A. (2011). "Finding structure with
+randomness: Probabilistic algorithms for constructing approximate matrix
+decompositions." *SIAM Review*, 53(2), 217-288. [Modern computational methods
+for SVD and low-rank approximations]
+
+**Applications to Single-Cell Genomics:**
+
+- Stein-O'Brien, G. L., Arora, R., Culhane, A. C., et al. (2018). "Enter the
+matrix: Factorization uncovers knowledge from omics." *Trends in Genetics*,
+34(10), 790-805. [Review of matrix factorization methods in genomics]
+
+- Risso, D., Perraudeau, F., Gribkova, S., Dudoit, S., & Vert, J. P. (2018). "A
+general and flexible method for signal extraction from single-cell RNA-seq
+data." *Nature Communications*, 9(1), 284. [Normalization methods for
+single-cell RNA-seq]
+
+These references provide mathematical foundations, computational algorithms, and
+domain-specific applications that complement the methods developed in this
+section.
+
