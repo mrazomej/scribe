@@ -58,7 +58,6 @@ sphinx_gallery_conf = {
     "within_subsection_order": FileNameSortKey,
     "filename_pattern": r"\.py",
     "run_stale_examples": False,  # Don't re-run examples (use pre-built)
-    "plot_gallery": "False",  # Use pre-generated gallery files
 }
 
 # -- Extension configuration -------------------------------------------------
