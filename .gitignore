@@ -53,6 +53,7 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
+docs/source/_dummy_gallery/
 
 # PyBuilder
 target/
@@ -104,6 +105,7 @@ Temporary Items
 
 # Hidden files
 .devcontainer/
+.github/dependabot.yml
 
 # Data Folders
 data/**
@@ -114,6 +116,7 @@ outputs/**
 **/output/**
 # Cache folder for docs
 CACHE/
+cache/
 # Figures
 **/fig/**
 !code/fig/**
