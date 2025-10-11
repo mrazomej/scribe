@@ -116,6 +116,7 @@ outputs/**
 **/output/**
 # Cache folder for docs
 CACHE/
+cache/
 # Figures
 **/fig/**
 !code/fig/**
