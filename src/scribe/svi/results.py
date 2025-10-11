@@ -2299,7 +2299,8 @@ class ScribeSVIResults:
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples_dirichlet: int = 1,
         rank: Optional[int] = None,
-        backend: str = "numpyro",
+        distribution_type: str = "softmax",
+        remove_mean: bool = False,
         verbose: bool = True,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
@@ -2333,10 +2334,31 @@ class ScribeSVIResults:
             Rank of the low-rank covariance approximation. If None,
             automatically uses min(n_genes, 50). Lower rank values use less
             memory and may improve generalization.
-        backend : str, default="numpyro"
-            Statistical package to use for distributions. Must be one of: -
-            "numpyro": Returns numpyro.distributions (TransformedDistribution) -
-            "scipy": Returns scipy.stats distributions (base MVN only)
+        distribution_type : str, default="softmax"
+            Type of compositional distribution to fit. Must be one of:
+                - "softmax": SoftmaxNormal (symmetric, all genes treated
+                  equally, cannot evaluate log_prob but good for
+                  sampling/visualization)
+                - "alr": LowRankLogisticNormal (ALR-based, uses last gene as
+                  reference, can evaluate log_prob for Bayesian inference)
+        remove_mean : bool, default=False
+            If True, removes the grand mean from ALR-transformed samples before
+            fitting the low-rank covariance structure. This is useful when:
+                - Data comes from a single cell type (homogeneous population)
+                - You want to focus on gene-gene co-expression patterns
+                - The first PC captures a dominant mean effect (>10× larger than
+                  PC2)
+
+            When False (default), the fitted distribution captures both the mean
+            composition and the covariance structure. When True, PC1 will
+            represent the largest source of *variation* rather than the mean
+            effect.
+
+            **Biological Interpretation**:
+                - remove_mean=False: Captures "what is the average expression +
+                  variability"
+                - remove_mean=True: Captures "how do genes co-vary relative to
+                  baseline"
         verbose : bool, default=True
             If True, prints progress messages and shows progress bars during the
             fitting process
@@ -2418,19 +2440,38 @@ class ScribeSVIResults:
         # Convert to canonical form to ensure r parameter is available
         self._convert_to_canonical()
 
+        # Validate distribution_type parameter
+        from ..stats import SoftmaxNormal, LowRankLogisticNormal
+
+        valid_types = ["softmax", "alr"]
+        if distribution_type not in valid_types:
+            raise ValueError(
+                f"Invalid distribution_type: {distribution_type}. "
+                f"Must be one of: {valid_types}"
+            )
+
+        # Map string to distribution class
+        dist_class_map = {
+            "softmax": SoftmaxNormal,
+            "alr": LowRankLogisticNormal,
+        }
+
+        distribution_class = dist_class_map[distribution_type]
+
         # Import the fitting function
         from ..core.normalization_logistic import (
             fit_logistic_normal_from_posterior,
         )
 
-        # Use the shared fitting function
+        # Use the shared fitting function with distribution class
         return fit_logistic_normal_from_posterior(
             posterior_samples=self.posterior_samples,
             n_components=self.n_components,
             rng_key=rng_key,
             n_samples_dirichlet=n_samples_dirichlet,
             rank=rank,
-            backend=backend,
+            distribution_class=distribution_class,
+            remove_mean=remove_mean,
             verbose=verbose,
         )
 
