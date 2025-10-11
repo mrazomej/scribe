@@ -1,0 +1,518 @@
+## Transforming Gaussian Parameters Between Coordinate Systems
+
+In @sec-normalization, we showed that the posterior predictive distribution of
+normalized gene expression can be approximated by a low-rank Gaussian
+distribution in ALR space:
+
+$$
+\underline{z}_{\text{ALR}} \sim \mathcal{N}(\underline{\mu}_{\text{ALR}}, 
+\underline{\underline{\Sigma}}_{\text{ALR}}),
+$${#eq-diffexp-alr-gaussian}
+
+where
+
+$$
+\underline{\underline{\Sigma}}_{\text{ALR}} = 
+\underline{\underline{W}}_{\text{ALR}} 
+\underline{\underline{W}}_{\text{ALR}}^{\top} + 
+\text{diag}(\underline{d}_{\text{ALR}}).
+$${#eq-diffexp-alr-covariance}
+
+For differential expression analysis, we require Gaussian distributions in CLR
+and ILR spaces. In this section, we derive explicit formulas for transforming
+the mean vector and covariance matrix from ALR space to these alternative
+coordinate systems. A critical result is the exact computation of the CLR
+covariance diagonal in $O(D)$ time—essential for accurate gene-level posterior
+inference.
+
+### From ALR to CLR Space
+
+#### Transformation of the mean vector
+
+The transformation of the mean vector from ALR to CLR space follows directly
+from the relationship @eq-diffexp-alr-to-clr-claim. We first embed the
+$(D-1)$-dimensional ALR mean into $\mathbb{R}^{D}$ by appending a zero:
+
+$$
+\underline{\mu}_{\text{full}} = \begin{bmatrix}
+\underline{\mu}_{\text{ALR}} \\
+0
+\end{bmatrix} \in \mathbb{R}^{D}.
+$${#eq-diffexp-mean-embed}
+
+Then we apply the centering matrix:
+
+$$
+\underline{\mu}_{\text{CLR}} = \underline{\underline{C}} 
+\underline{\mu}_{\text{full}}.
+$${#eq-diffexp-mean-clr}
+
+Expanding this using the definition of $\underline{\underline{C}}$:
+
+$$
+\mu_{\text{CLR},g} = \left(1 - \frac{1}{D}\right) \mu_{\text{full},g} - 
+\frac{1}{D} \sum_{j \neq g} \mu_{\text{full},j}.
+$${#eq-diffexp-mean-clr-component}
+
+For $g < D$, we have $\mu_{\text{full},g} = \mu_{\text{ALR},g}$, giving
+
+$$
+\mu_{\text{CLR},g} = \left(1 - \frac{1}{D}\right) \mu_{\text{ALR},g} - 
+\frac{1}{D} \sum_{j=1, j \neq g}^{D-1} \mu_{\text{ALR},j}, \quad g < D.
+$${#eq-diffexp-mean-clr-component-g}
+
+For $g = D$, we have $\mu_{\text{full},D} = 0$, giving
+
+$$
+\mu_{\text{CLR},D} = -\frac{1}{D} \sum_{j=1}^{D-1} \mu_{\text{ALR},j}.
+$${#eq-diffexp-mean-clr-component-D}
+
+This transformation requires $O(D)$ operations.
+
+#### Transformation of the covariance matrix
+
+The transformation of the covariance matrix is more involved. We begin by
+embedding the $(D-1) \times (D-1)$ ALR covariance into $\mathbb{R}^{D \times
+D}$:
+
+$$
+\underline{\underline{\Sigma}}_{\text{full}} = \begin{bmatrix}
+\underline{\underline{\Sigma}}_{\text{ALR}} & \underline{0} \\
+\underline{0}^{\top} & 0
+\end{bmatrix} \in \mathbb{R}^{D \times D}.
+$${#eq-diffexp-cov-embed}
+
+The CLR covariance is then obtained by a similarity transformation with the
+centering matrix:
+
+$$
+\underline{\underline{\Sigma}}_{\text{CLR}} = 
+\underline{\underline{C}} \underline{\underline{\Sigma}}_{\text{full}} 
+\underline{\underline{C}}^{\top}.
+$${#eq-diffexp-cov-clr}
+
+Since $\underline{\underline{C}}$ is symmetric
+($\underline{\underline{C}}^{\top} = \underline{\underline{C}}$), we can write
+
+$$
+\underline{\underline{\Sigma}}_{\text{CLR}} = 
+\underline{\underline{C}} \underline{\underline{\Sigma}}_{\text{full}} 
+\underline{\underline{C}}.
+$${#eq-diffexp-cov-clr-symmetric}
+
+#### Transformation of the low-rank component
+
+The low-rank component of the ALR covariance is
+$\underline{\underline{W}}_{\text{ALR}} 
+\underline{\underline{W}}_{\text{ALR}}^{\top}$, where
+$\underline{\underline{W}}_{\text{ALR}} \in \mathbb{R}^{(D-1) \times k}$. We
+embed this into $\mathbb{R}^{D \times k}$ by appending a row of zeros:
+
+$$
+\underline{\underline{W}}_{\text{full}} = \begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}} \\
+\underline{0}^{\top}
+\end{bmatrix} \in \mathbb{R}^{D \times k}.
+$${#eq-diffexp-w-embed}
+
+The CLR low-rank factor is then
+
+$$
+\underline{\underline{W}}_{\text{CLR}} = 
+\underline{\underline{C}} \underline{\underline{W}}_{\text{full}}.
+$${#eq-diffexp-w-clr}
+
+To see that this gives the correct low-rank component, observe that
+
+$$
+\underline{\underline{W}}_{\text{CLR}} 
+\underline{\underline{W}}_{\text{CLR}}^{\top} = 
+\underline{\underline{C}} \underline{\underline{W}}_{\text{full}} 
+\underline{\underline{W}}_{\text{full}}^{\top} \underline{\underline{C}}^{\top}.
+$${#eq-diffexp-w-clr-product-step1}
+
+Since
+
+$$
+\underline{\underline{W}}_{\text{full}} 
+\underline{\underline{W}}_{\text{full}}^{\top} = \begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}} 
+\underline{\underline{W}}_{\text{ALR}}^{\top} & \underline{0} \\
+\underline{0}^{\top} & 0
+\end{bmatrix},
+$${#eq-diffexp-w-full-product}
+
+we have
+
+$$
+\underline{\underline{W}}_{\text{CLR}} 
+\underline{\underline{W}}_{\text{CLR}}^{\top} = 
+\underline{\underline{C}} \begin{bmatrix}
+\underline{\underline{W}}_{\text{ALR}} 
+\underline{\underline{W}}_{\text{ALR}}^{\top} & \underline{0} \\
+\underline{0}^{\top} & 0
+\end{bmatrix} \underline{\underline{C}},
+$${#eq-diffexp-w-clr-product-step2}
+
+which is the low-rank part of $\underline{\underline{C}}
+\underline{\underline{\Sigma}}_{\text{full}} \underline{\underline{C}}$.
+
+Computing $\underline{\underline{W}}_{\text{CLR}}$ requires $O(kD)$ operations:
+for each of the $k$ columns, we apply the centering matrix to a $D$-dimensional
+vector.
+
+#### Transformation of the diagonal component: the critical result
+
+The diagonal component of the ALR covariance is $\text{diag}(\underline{d}_{\text{ALR}})$, where $\underline{d}_{\text{ALR}} \in \mathbb{R}^{D-1}$. Embedding into $\mathbb{R}^{D}$:
+
+$$
+\underline{d}_{\text{full}} = \begin{bmatrix}
+\underline{d}_{\text{ALR}} \\
+0
+\end{bmatrix} \in \mathbb{R}^{D}.
+$${#eq-diffexp-d-embed}
+
+The diagonal part of the CLR covariance is
+
+$$
+\text{diag}(\underline{d}_{\text{CLR}}) = 
+\text{diag}\left(\underline{\underline{C}} 
+\text{diag}(\underline{d}_{\text{full}}) \underline{\underline{C}}\right).
+$${#eq-diffexp-d-clr-matrix}
+
+**Naïve approach and its pitfall.** A naïve approach might assume that
+
+$$
+\underline{d}_{\text{CLR}} \stackrel{?}{=} 
+\underline{\underline{C}} \underline{d}_{\text{full}}.
+$${#eq-diffexp-d-naive}
+
+This is **incorrect** because the diagonal of a matrix product
+$\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}})
+\underline{\underline{C}}$ is not generally equal to
+$\underline{\underline{C}} \underline{d}_{\text{full}}$. The centering matrix
+introduces off-diagonal terms that contribute to the diagonal of the
+transformed covariance.
+
+**Exact computation.** To compute the diagonal correctly, we expand the matrix
+product explicitly. The $(g,g)$-th entry of $\underline{\underline{C}}
+\text{diag}(\underline{d}_{\text{full}}) \underline{\underline{C}}$ is
+
+$$
+\left[\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}}) 
+\underline{\underline{C}}\right]_{gg} = 
+\sum_{i=1}^{D} \sum_{j=1}^{D} C_{gi} \delta_{ij} d_{\text{full},j} C_{gj},
+$${#eq-diffexp-d-exact-step1}
+
+where $\delta_{ij}$ is the Kronecker delta. Since $\delta_{ij} = 1$ only when
+$i = j$, this simplifies to
+
+$$
+\left[\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}}) 
+\underline{\underline{C}}\right]_{gg} = 
+\sum_{j=1}^{D} C_{gj}^2 d_{\text{full},j}.
+$${#eq-diffexp-d-exact-step2}
+
+Substituting the entries of $\underline{\underline{C}}$ from
+@eq-diffexp-centering-matrix-entries:
+
+$$
+d_{\text{CLR},g} = \left(1 - \frac{1}{D}\right)^2 d_{\text{full},g} + 
+\sum_{j \neq g} \left(-\frac{1}{D}\right)^2 d_{\text{full},j}.
+$${#eq-diffexp-d-exact-step3}
+
+Expanding:
+
+$$
+d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2}\right) 
+d_{\text{full},g} + \frac{1}{D^2} \sum_{j \neq g} d_{\text{full},j}.
+$${#eq-diffexp-d-exact-step4}
+
+We can rewrite the sum over $j \neq g$ as
+
+$$
+\sum_{j \neq g} d_{\text{full},j} = \sum_{j=1}^{D} d_{\text{full},j} - 
+d_{\text{full},g}.
+$${#eq-diffexp-d-exact-step5}
+
+Substituting this into @eq-diffexp-d-exact-step4:
+
+$$
+d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2}\right) 
+d_{\text{full},g} + \frac{1}{D^2} \left(\sum_{j=1}^{D} d_{\text{full},j} - 
+d_{\text{full},g}\right).
+$${#eq-diffexp-d-exact-step6}
+
+Collecting terms with $d_{\text{full},g}$:
+
+$$
+d_{\text{CLR},g} = \left(1 - \frac{2}{D} + \frac{1}{D^2} - \frac{1}{D^2}\right) 
+d_{\text{full},g} + \frac{1}{D^2} \sum_{j=1}^{D} d_{\text{full},j}.
+$${#eq-diffexp-d-exact-step7}
+
+Simplifying the coefficient of $d_{\text{full},g}$:
+
+$$
+1 - \frac{2}{D} + \frac{1}{D^2} - \frac{1}{D^2} = 1 - \frac{2}{D}.
+$${#eq-diffexp-d-exact-coeff}
+
+Therefore, we obtain the exact formula:
+
+$$
+d_{\text{CLR},g} = d_{\text{full},g}\left(1 - \frac{2}{D}\right) + 
+\frac{1}{D^2} \sum_{j=1}^{D} d_{\text{full},j}.
+$${#eq-diffexp-d-exact-final}
+
+This is a remarkable result: the diagonal entries of the CLR covariance are a
+simple linear combination of the diagonal entries of the embedded ALR
+covariance, with a gene-specific term and a term that is constant across all
+genes.
+
+**Computational complexity.** Computing all $D$ diagonal entries using
+@eq-diffexp-d-exact-final requires:
+
+1. Computing the sum $\sum_{j=1}^{D} d_{\text{full},j}$ once: $O(D)$ time.
+2. For each gene $g$, computing $d_{\text{CLR},g}$ using the formula: $O(1)$
+per gene, hence $O(D)$ total.
+
+The total complexity is $O(D)$, which is optimal. In contrast, materializing
+the full matrix $\underline{\underline{C}} \text{diag}(\underline{d}_{\text{full}})
+\underline{\underline{C}}$ would require $O(D^2)$ operations.
+
+**Why this matters for accurate posteriors.** The exact diagonal formula
+@eq-diffexp-d-exact-final is critical for gene-level differential expression
+analysis. The diagonal entries $d_{\text{CLR},g}$ determine the posterior
+variance of each gene's log-fold-change. Using an incorrect approximation such
+as @eq-diffexp-d-naive would systematically bias the posterior variances,
+leading to incorrect confidence intervals, tail probabilities, and ultimately
+erroneous differential expression calls. For datasets with $D \approx 30{,}000$
+genes, even small relative errors in individual variances can accumulate to
+substantial errors in multiple testing procedures.
+
+### From CLR to ILR Space
+
+Once we have transformed from ALR to CLR space, the further transformation to
+ILR space is straightforward, as it involves a simple linear transformation by
+the orthonormal matrix $\underline{\underline{V}}$.
+
+#### Transformation of the mean vector
+
+The ILR mean is obtained by applying the ILR basis matrix:
+
+$$
+\underline{\mu}_{\text{ILR}} = \underline{\underline{V}} 
+\underline{\mu}_{\text{CLR}}.
+$${#eq-diffexp-mean-ilr}
+
+This is a matrix-vector multiplication requiring $O((D-1) \cdot D) = O(D^2)$
+operations for a dense matrix $\underline{\underline{V}}$. However, for the
+Helmert basis @eq-diffexp-helmert-formula, the sparsity pattern allows
+computation in $O(D)$ time through a recursive algorithm.
+
+#### Transformation of the covariance matrix
+
+The ILR covariance is obtained by a similarity transformation:
+
+$$
+\underline{\underline{\Sigma}}_{\text{ILR}} = \underline{\underline{V}} 
+\underline{\underline{\Sigma}}_{\text{CLR}} \underline{\underline{V}}^{\top}.
+$${#eq-diffexp-cov-ilr}
+
+Since $\underline{\underline{V}}$ is orthonormal
+($\underline{\underline{V}} \underline{\underline{V}}^{\top} =
+\underline{\underline{I}}_{D-1}$), we can verify that the inverse
+transformation is
+
+$$
+\underline{\underline{\Sigma}}_{\text{CLR}} = \underline{\underline{V}}^{\top} 
+\underline{\underline{\Sigma}}_{\text{ILR}} \underline{\underline{V}}.
+$${#eq-diffexp-cov-clr-from-ilr}
+
+#### Transformation of the low-rank component
+
+The ILR low-rank factor is
+
+$$
+\underline{\underline{W}}_{\text{ILR}} = \underline{\underline{V}} 
+\underline{\underline{W}}_{\text{CLR}}.
+$${#eq-diffexp-w-ilr}
+
+This is a matrix-matrix multiplication of a $(D-1) \times D$ matrix with a $D
+\times k$ matrix, requiring $O(kD^2)$ operations in general, or $O(kD)$
+operations if the sparsity of $\underline{\underline{V}}$ is exploited.
+
+To verify that this gives the correct low-rank component:
+
+$$
+\underline{\underline{W}}_{\text{ILR}} 
+\underline{\underline{W}}_{\text{ILR}}^{\top} = 
+\underline{\underline{V}} \underline{\underline{W}}_{\text{CLR}} 
+\underline{\underline{W}}_{\text{CLR}}^{\top} \underline{\underline{V}}^{\top},
+$${#eq-diffexp-w-ilr-product}
+
+which is the low-rank part of $\underline{\underline{V}}
+\underline{\underline{\Sigma}}_{\text{CLR}} \underline{\underline{V}}^{\top}$.
+
+#### Transformation of the diagonal component
+
+The diagonal component of the ILR covariance cannot be computed as simply as
+the CLR diagonal because $\underline{\underline{V}}$ is not a diagonal matrix.
+Instead, we must compute
+
+$$
+d_{\text{ILR},i} = \left[\underline{\underline{V}} 
+\text{diag}(\underline{d}_{\text{CLR}}) \underline{\underline{V}}^{\top}\right]_{ii}.
+$${#eq-diffexp-d-ilr-matrix}
+
+Expanding the matrix product:
+
+$$
+d_{\text{ILR},i} = \sum_{j=1}^{D} \sum_{\ell=1}^{D} V_{ij} \delta_{j\ell} 
+d_{\text{CLR},\ell} V_{i\ell} = \sum_{j=1}^{D} V_{ij}^2 d_{\text{CLR},j}.
+$${#eq-diffexp-d-ilr-exact}
+
+This formula shows that each ILR diagonal entry is a weighted sum of the CLR
+diagonal entries, with weights given by the squared entries of the $i$-th row
+of $\underline{\underline{V}}$. Since each row of $\underline{\underline{V}}$
+is sparse (for the Helmert basis), this computation can be performed efficiently.
+
+For the full diagonal vector, the computational cost is $O(D^2)$ in general, or
+$O(D)$ if the sparsity of $\underline{\underline{V}}$ is exploited.
+
+### Efficient Implementation via Woodbury Identity
+
+Throughout this section, we have emphasized computational efficiency, ensuring
+that all operations scale linearly or near-linearly with the number of genes
+$D$. A key tool for achieving this efficiency when working with low-rank plus
+diagonal covariance matrices is the *Woodbury matrix identity*, also known as
+the matrix inversion lemma.
+
+#### Statement of the Woodbury identity
+
+Let $\underline{\underline{A}} \in \mathbb{R}^{D \times D}$ be an invertible
+matrix, $\underline{\underline{U}} \in \mathbb{R}^{D \times k}$,
+$\underline{\underline{C}} \in \mathbb{R}^{k \times k}$ be an invertible matrix,
+and $\underline{\underline{V}} \in \mathbb{R}^{k \times D}$. The Woodbury
+identity states that
+
+$$
+\left(\underline{\underline{A}} + \underline{\underline{U}} 
+\underline{\underline{C}} \underline{\underline{V}}\right)^{-1} = 
+\underline{\underline{A}}^{-1} - \underline{\underline{A}}^{-1} 
+\underline{\underline{U}} \left(\underline{\underline{C}}^{-1} + 
+\underline{\underline{V}} \underline{\underline{A}}^{-1} 
+\underline{\underline{U}}\right)^{-1} \underline{\underline{V}} 
+\underline{\underline{A}}^{-1}.
+$${#eq-diffexp-woodbury}
+
+This identity is a standard result in matrix analysis and is derived in
+@golub2013.
+
+#### Application to low-rank plus diagonal matrices
+
+For our covariance structure $\underline{\underline{\Sigma}} =
+\underline{\underline{W}} \underline{\underline{W}}^{\top} +
+\text{diag}(\underline{d})$, we set
+
+$$
+\underline{\underline{A}} = \text{diag}(\underline{d}), \quad 
+\underline{\underline{U}} = \underline{\underline{W}}, \quad 
+\underline{\underline{C}} = \underline{\underline{I}}_k, \quad 
+\underline{\underline{V}} = \underline{\underline{W}}^{\top}.
+$${#eq-diffexp-woodbury-params}
+
+Since $\underline{\underline{A}}$ is diagonal, its inverse is
+
+$$
+\underline{\underline{A}}^{-1} = 
+\text{diag}\left(\frac{1}{d_1}, \frac{1}{d_2}, \ldots, \frac{1}{d_D}\right).
+$${#eq-diffexp-diagonal-inverse}
+
+Applying the Woodbury identity:
+
+$$
+\underline{\underline{\Sigma}}^{-1} = \text{diag}(\underline{d})^{-1} - 
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}} 
+\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top} 
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right)^{-1} 
+\underline{\underline{W}}^{\top} \text{diag}(\underline{d})^{-1}.
+$${#eq-diffexp-woodbury-sigma-inverse}
+
+The key computational advantage is that the matrix to be inverted,
+$\underline{\underline{I}}_k + \underline{\underline{W}}^{\top}
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}$, has dimension $k
+\times k$ rather than $D \times D$. Since $k \ll D$ (typically $k \approx 50$
+and $D \approx 30{,}000$), inverting this smaller matrix requires $O(k^3)$
+operations, which is negligible compared to the $O(D^3)$ cost of directly
+inverting $\underline{\underline{\Sigma}}$.
+
+Moreover, for applications requiring only quadratic forms
+$\underline{v}^{\top} \underline{\underline{\Sigma}}^{-1} \underline{v}$ rather
+than the full inverse matrix, we can compute
+
+$$
+\underline{v}^{\top} \underline{\underline{\Sigma}}^{-1} \underline{v} = 
+\underline{v}^{\top} \text{diag}(\underline{d})^{-1} \underline{v} - 
+\underline{w}^{\top} \left(\underline{\underline{I}}_k + 
+\underline{\underline{W}}^{\top} \text{diag}(\underline{d})^{-1} 
+\underline{\underline{W}}\right)^{-1} \underline{w},
+$${#eq-diffexp-woodbury-quadratic}
+
+where $\underline{w} = \underline{\underline{W}}^{\top}
+\text{diag}(\underline{d})^{-1} \underline{v}$. This requires $O(kD)$
+operations and is the computational workhorse for many differential expression
+calculations.
+
+#### Matrix determinant lemma
+
+A companion result to the Woodbury identity is the *matrix determinant lemma*,
+which provides an efficient formula for the determinant of a low-rank update to
+a diagonal matrix:
+
+$$
+\det\left(\underline{\underline{A}} + \underline{\underline{U}} 
+\underline{\underline{C}} \underline{\underline{V}}\right) = 
+\det(\underline{\underline{C}}) \det(\underline{\underline{A}}) 
+\det\left(\underline{\underline{C}}^{-1} + \underline{\underline{V}} 
+\underline{\underline{A}}^{-1} \underline{\underline{U}}\right).
+$${#eq-diffexp-det-lemma}
+
+For our covariance structure with the same parameter settings as before, this
+becomes
+
+$$
+\det(\underline{\underline{\Sigma}}) = 
+\det(\text{diag}(\underline{d})) \cdot 
+\det\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top} 
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right).
+$${#eq-diffexp-det-sigma}
+
+Since $\det(\text{diag}(\underline{d})) = \prod_{i=1}^{D} d_i$, we can compute
+
+$$
+\log \det(\underline{\underline{\Sigma}}) = \sum_{i=1}^{D} \log d_i + 
+\log \det\left(\underline{\underline{I}}_k + \underline{\underline{W}}^{\top} 
+\text{diag}(\underline{d})^{-1} \underline{\underline{W}}\right).
+$${#eq-diffexp-logdet-sigma}
+
+This formula enables $O(k^2 D)$ computation of the log-determinant, which
+appears in the multivariate Gaussian density and in information-theoretic
+divergences such as the Kullback-Leibler divergence.
+
+#### Computational complexity summary
+
+The Woodbury identity and matrix determinant lemma ensure that all operations
+on low-rank plus diagonal covariance matrices have complexity $O(k^2 D)$ rather
+than $O(D^3)$:
+
+| **Operation** | **Naïve Complexity** | **Low-Rank Complexity** |
+|---------------|---------------------|------------------------|
+| Matrix inversion | $O(D^3)$ | $O(k^2 D)$ |
+| Determinant | $O(D^3)$ | $O(k^2 D)$ |
+| Quadratic form $\underline{v}^{\top}\underline{\underline{\Sigma}}^{-1}\underline{v}$ | $O(D^2)$ | $O(kD)$ |
+| Sampling | $O(D^2)$ | $O(kD)$ |
+
+For typical single-cell datasets with $D = 30{,}000$ and $k = 50$, the speedup
+factor is $(D/k)^2 = 360{,}000$, making the difference between intractable and
+nearly instantaneous computation.
+

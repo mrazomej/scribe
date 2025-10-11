@@ -1,0 +1,450 @@
+## Gene-Set and Pathway Analysis
+
+While gene-level differential expression identifies individual genes with
+altered expression, many biological questions concern coordinated changes in
+groups of genes. Gene sets and pathways—collections of genes with related
+functions or participating in common biological processes—often exhibit
+collective behaviors that are more informative than individual gene changes. In
+this section, we develop methods for testing linear contrasts in CLR space and
+balances in ILR space, enabling rigorous statistical inference on gene sets.
+
+### Linear Contrasts in CLR Space
+
+#### Motivation and setup
+
+A *contrast* is a linear combination of gene expression values designed to test
+a specific hypothesis about differential expression. For example, we might ask:
+
+- Is the average expression of genes in a pathway higher in condition A than
+condition B?
+- Does a module of co-regulated genes show coordinated up-regulation?
+- Is there a significant difference between two functional gene groups?
+
+Formally, a contrast is specified by a vector $\underline{c} \in \mathbb{R}^{D}$
+that defines a linear combination of the CLR coordinates. The contrast statistic
+is
+
+$$
+\gamma = \underline{c}^{\top} \underline{\Delta},
+$${#eq-diffexp-contrast-statistic}
+
+where $\underline{\Delta}$ is the vector of differential expression effects in
+CLR space from @eq-diffexp-delta-definition.
+
+#### The CLR constraint on contrasts
+
+For a contrast to be meaningful in CLR space, it must respect the sum-to-zero
+constraint that characterizes the CLR subspace. Specifically, we require
+
+$$
+\sum_{g=1}^{D} c_g = 0.
+$${#eq-diffexp-contrast-constraint}
+
+This constraint has a clear interpretation: the contrast should measure
+*differences* between genes or gene groups, not absolute levels. To see why this
+constraint is necessary, recall that CLR coordinates themselves satisfy
+$\sum_{g=1}^{D} z_{\text{CLR},g} = 0$ by @eq-diffexp-clr-sum-zero. A contrast
+that does not sum to zero would include a component along the direction
+$\underline{1}$, which is not identifiable from compositional data.
+
+**Automatic centering.** If a user specifies a contrast $\underline{c}'$ that
+does not satisfy @eq-diffexp-contrast-constraint, we can project it onto the CLR
+subspace by centering:
+
+$$
+\underline{c} = \underline{c}' - \bar{c}' \underline{1}, \quad 
+\text{where } \bar{c}' = \frac{1}{D} \sum_{g=1}^{D} c'_g.
+$${#eq-diffexp-contrast-centering}
+
+This ensures $\sum_{g=1}^{D} c_g = 0$ while preserving the essential structure
+of $\underline{c}'$. Equivalently, we can write
+
+$$
+\underline{c} = \underline{\underline{C}} \underline{c}',
+$${#eq-diffexp-contrast-centering-matrix}
+
+where $\underline{\underline{C}}$ is the centering matrix from
+@eq-diffexp-centering-matrix.
+
+**Guard against trivial contrasts.** After centering, we should verify that the
+contrast is not trivial (all zeros). This can occur if $\underline{c}' =
+\alpha \underline{1}$ for some scalar $\alpha$. A simple check is
+
+$$
+\|\underline{c}\|^2 = \sum_{g=1}^{D} c_g^2 > \epsilon,
+$${#eq-diffexp-contrast-nonzero}
+
+where $\epsilon$ is a small threshold (e.g., $10^{-10}$). If this condition
+fails, the contrast carries no information and should be rejected.
+
+#### Posterior distribution of the contrast
+
+Since $\underline{\Delta} \sim \mathcal{N}(\underline{\mu}_{\Delta},
+\underline{\underline{\Sigma}}_{\Delta})$ and $\gamma =
+\underline{c}^{\top} \underline{\Delta}$ is a linear transformation, the
+posterior distribution of $\gamma$ is univariate Gaussian:
+
+$$
+\gamma \sim \mathcal{N}(\underline{c}^{\top} \underline{\mu}_{\Delta}, 
+\underline{c}^{\top} \underline{\underline{\Sigma}}_{\Delta} \underline{c}).
+$${#eq-diffexp-contrast-distribution}
+
+The posterior mean is
+
+$$
+\mu_{\gamma} = \underline{c}^{\top} \underline{\mu}_{\Delta} = 
+\sum_{g=1}^{D} c_g \mu_{\Delta,g}.
+$${#eq-diffexp-contrast-mean}
+
+The posterior variance is
+
+$$
+\sigma_{\gamma}^2 = \underline{c}^{\top} 
+\underline{\underline{\Sigma}}_{\Delta} \underline{c}.
+$${#eq-diffexp-contrast-variance}
+
+#### Efficient computation using low-rank structure
+
+Computing $\sigma_{\gamma}^2$ naively as a full matrix-vector-vector product
+would require $O(D^2)$ operations. However, the low-rank plus diagonal structure
+of $\underline{\underline{\Sigma}}_{\Delta}$ enables $O(kD)$ computation.
+
+Substituting the low-rank form @eq-diffexp-sigma-delta-lowrank:
+
+$$
+\sigma_{\gamma}^2 = \underline{c}^{\top} 
+\left(\underline{\underline{W}}_{\Delta} 
+\underline{\underline{W}}_{\Delta}^{\top} + 
+\text{diag}(\underline{d}_{\Delta})\right) \underline{c}.
+$${#eq-diffexp-contrast-variance-lowrank-step1}
+
+Expanding:
+
+$$
+\sigma_{\gamma}^2 = \underline{c}^{\top} \underline{\underline{W}}_{\Delta} 
+\underline{\underline{W}}_{\Delta}^{\top} \underline{c} + 
+\underline{c}^{\top} \text{diag}(\underline{d}_{\Delta}) \underline{c}.
+$${#eq-diffexp-contrast-variance-lowrank-step2}
+
+The second term is simply
+
+$$
+\underline{c}^{\top} \text{diag}(\underline{d}_{\Delta}) \underline{c} = 
+\sum_{g=1}^{D} c_g^2 d_{\Delta,g},
+$${#eq-diffexp-contrast-variance-diagonal}
+
+which requires $O(D)$ operations.
+
+For the first term, define the vector $\underline{w} \in \mathbb{R}^{k_A + k_B}$
+as
+
+$$
+\underline{w} = \underline{\underline{W}}_{\Delta}^{\top} \underline{c}.
+$${#eq-diffexp-w-definition}
+
+This vector represents the projection of the contrast onto the low-rank factors
+and requires $O((k_A + k_B) D) = O(kD)$ operations to compute. Then
+
+$$
+\underline{c}^{\top} \underline{\underline{W}}_{\Delta} 
+\underline{\underline{W}}_{\Delta}^{\top} \underline{c} = 
+\underline{w}^{\top} \underline{w} = \|\underline{w}\|^2 = 
+\sum_{j=1}^{k_A+k_B} w_j^2,
+$${#eq-diffexp-contrast-variance-lowrank}
+
+which requires $O(k)$ operations to compute once $\underline{w}$ is available.
+
+Combining @eq-diffexp-contrast-variance-diagonal and
+@eq-diffexp-contrast-variance-lowrank:
+
+$$
+\sigma_{\gamma}^2 = \sum_{j=1}^{k_A+k_B} w_j^2 + \sum_{g=1}^{D} c_g^2 d_{\Delta,g}.
+$${#eq-diffexp-contrast-variance-final}
+
+The total computational cost is $O(kD)$, which is linear in $D$ for fixed $k$.
+
+#### Tail probabilities and lfsr for contrasts
+
+With the posterior mean $\mu_{\gamma}$ and standard deviation $\sigma_{\gamma} =
+\sqrt{\sigma_{\gamma}^2}$, we can compute tail probabilities exactly as we did
+for individual genes.
+
+**Probability of positive contrast.** The probability that the contrast is
+positive is
+
+$$
+P(\gamma > 0 \mid \text{data}) = 
+\Phi\left(\frac{\mu_{\gamma}}{\sigma_{\gamma}}\right).
+$${#eq-diffexp-contrast-prob-positive}
+
+**Probability of practical significance.** Given a threshold $\tau \geq 0$, the
+probability of practical significance is
+
+$$
+P(|\gamma| > \tau \mid \text{data}) = 
+1 - \Phi\left(\frac{\tau - \mu_{\gamma}}{\sigma_{\gamma}}\right) + 
+\Phi\left(\frac{-\tau - \mu_{\gamma}}{\sigma_{\gamma}}\right).
+$${#eq-diffexp-contrast-prob-effect}
+
+**Local false sign rate.** The lfsr for the contrast is
+
+$$
+\text{lfsr}_{\gamma} = \min\left(P(\gamma > 0 \mid \text{data}), 
+P(\gamma < 0 \mid \text{data})\right).
+$${#eq-diffexp-contrast-lfsr}
+
+These quantities provide a complete Bayesian summary of the evidence for or
+against differential expression of the gene set defined by the contrast.
+
+### Balances and ILR Coordinates
+
+#### Balance definition
+
+A *balance* is a special type of contrast that compares the geometric mean
+expression of one group of genes against another. Balances have a natural
+interpretation in compositional data analysis as log-ratios between subcompositions [@egozcue2003].
+
+Given two disjoint gene sets $S_+, S_- \subset \{1, 2, \ldots, D\}$ with
+$S_+ \cap S_- = \emptyset$, the balance between these sets is the log-ratio
+
+$$
+b(S_+, S_-) = \log\left(\frac{\text{geom-mean}(\rho_g : g \in S_+)}
+{\text{geom-mean}(\rho_g : g \in S_-)}\right).
+$${#eq-diffexp-balance-definition-composition}
+
+In CLR coordinates, this becomes a linear contrast. To see this, recall that the
+geometric mean of a set of positive numbers $\{a_1, \ldots, a_m\}$ is
+
+$$
+\text{geom-mean}(a_1, \ldots, a_m) = \exp\left(\frac{1}{m} \sum_{i=1}^{m} \log a_i\right).
+$${#eq-diffexp-geometric-mean}
+
+Therefore,
+
+$$
+b(S_+, S_-) = \frac{1}{|S_+|} \sum_{g \in S_+} \log(\rho_g) - 
+\frac{1}{|S_-|} \sum_{g \in S_-} \log(\rho_g).
+$${#eq-diffexp-balance-log-space}
+
+#### Constructing balance contrasts
+
+To express a balance as a CLR contrast, we need to account for the centering in
+the CLR transformation. Define the raw contrast vector $\underline{c}'$ as
+
+$$
+c'_g = \begin{cases}
+\frac{1}{|S_+|} & \text{if } g \in S_+, \\
+-\frac{1}{|S_-|} & \text{if } g \in S_-, \\
+0 & \text{otherwise}.
+\end{cases}
+$${#eq-diffexp-balance-contrast-raw}
+
+This contrast compares the average log-expression of genes in $S_+$ against
+genes in $S_-$, ignoring genes in neither set.
+
+The sum of $\underline{c}'$ is
+
+$$
+\sum_{g=1}^{D} c'_g = \frac{|S_+|}{|S_+|} - \frac{|S_-|}{|S_-|} = 1 - 1 = 0.
+$${#eq-diffexp-balance-contrast-sum-zero}
+
+Thus, balance contrasts automatically satisfy the CLR constraint
+@eq-diffexp-contrast-constraint and require no additional centering.
+
+**Example: Pathway vs. complement.** A common use case is testing whether a
+pathway $P \subset \{1, \ldots, D\}$ is differentially expressed relative to all
+other genes. Setting $S_+ = P$ and $S_- = P^c = \{1, \ldots, D\} \setminus P$,
+the balance contrast is
+
+$$
+c_g = \begin{cases}
+\frac{1}{|P|} & \text{if } g \in P, \\
+-\frac{1}{D - |P|} & \text{if } g \notin P.
+\end{cases}
+$${#eq-diffexp-pathway-contrast}
+
+This contrast tests whether the geometric mean expression of pathway genes
+differs from the geometric mean expression of non-pathway genes.
+
+#### Testing in ILR space
+
+The ILR transformation provides an elegant alternative approach to gene-set
+testing. Recall from @eq-diffexp-ilr-definition that the ILR coordinates are
+defined by
+
+$$
+\underline{z}_{\text{ILR}} = \underline{\underline{V}} \underline{z}_{\text{CLR}},
+$${#eq-diffexp-ilr-recall}
+
+where $\underline{\underline{V}}$ is an orthonormal matrix satisfying
+@eq-diffexp-helmert-properties.
+
+Each row of $\underline{\underline{V}}$ defines a pre-specified balance. For
+the Helmert basis @eq-diffexp-helmert-formula, the $i$-th row represents the
+balance between gene $i+1$ and the first $i$ genes. More generally, we can
+construct custom ILR bases where each row corresponds to a biologically
+meaningful balance.
+
+**Direct testing of ILR coordinates.** Given ILR-transformed difference
+distributions
+
+$$
+\underline{\Delta}_{\text{ILR}} = \underline{\underline{V}} \underline{\Delta},
+$${#eq-diffexp-delta-ilr}
+
+we can test whether the $i$-th ILR coordinate is significantly non-zero. The
+marginal distribution is
+
+$$
+\Delta_{\text{ILR},i} \sim \mathcal{N}(\mu_{\Delta,\text{ILR},i}, 
+\sigma_{\Delta,\text{ILR},i}^2),
+$${#eq-diffexp-delta-ilr-marginal}
+
+where
+
+$$
+\mu_{\Delta,\text{ILR},i} = 
+[\underline{\underline{V}} \underline{\mu}_{\Delta}]_i = 
+\underline{v}_i^{\top} \underline{\mu}_{\Delta},
+$${#eq-diffexp-mu-delta-ilr-i}
+
+and
+
+$$
+\sigma_{\Delta,\text{ILR},i}^2 = 
+[\underline{\underline{V}} \underline{\underline{\Sigma}}_{\Delta} 
+\underline{\underline{V}}^{\top}]_{ii} = 
+\underline{v}_i^{\top} \underline{\underline{\Sigma}}_{\Delta} \underline{v}_i,
+$${#eq-diffexp-sigma-delta-ilr-i}
+
+with $\underline{v}_i$ denoting the $i$-th row of $\underline{\underline{V}}$.
+
+**Computational advantage.** Because $\underline{\underline{V}}$ is orthonormal,
+the ILR coordinates are uncorrelated:
+
+$$
+\text{Cov}(\Delta_{\text{ILR},i}, \Delta_{\text{ILR},j}) = 0 \quad 
+\text{for } i \neq j.
+$${#eq-diffexp-ilr-uncorrelated}
+
+This orthogonality simplifies interpretation: testing whether
+$\Delta_{\text{ILR},i}$ is non-zero is independent of the values of other ILR
+coordinates. In contrast, testing individual gene-level effects
+$\Delta_{\text{CLR},g}$ in CLR space involves correlated variables, which can
+complicate multiple testing adjustments.
+
+**Interpretational advantage.** Each ILR coordinate has a direct compositional
+interpretation as a balance. Saying "$\Delta_{\text{ILR},i} > 0$" means "the
+balance $i$ has shifted toward the positive group in condition A relative to
+condition B." This provides a richer and more nuanced view of differential
+expression than simply listing individual genes.
+
+### Pathway Enrichment via Gene-Set Testing
+
+#### Setup
+
+Suppose we have a collection of $M$ pathways $\{P_1, P_2, \ldots, P_M\}$, where
+each pathway $P_m \subset \{1, 2, \ldots, D\}$ is a subset of genes. Common
+sources of pathway annotations include:
+
+- **Gene Ontology (GO)** [@ashburner2000]: hierarchically organized functional
+categories
+- **KEGG** [@kanehisa2000]: metabolic and signaling pathways
+- **Reactome** [@jassal2020]: biological pathways
+- **MSigDB** [@subramanian2005]: curated and computational gene sets
+
+For each pathway $P_m$, we construct a balance contrast as in
+@eq-diffexp-pathway-contrast and test whether this balance shows significant
+differential expression.
+
+#### Pathway-level statistics
+
+For pathway $m$, define the balance contrast $\underline{c}_m$ with
+
+$$
+c_{m,g} = \begin{cases}
+\frac{1}{|P_m|} & \text{if } g \in P_m, \\
+-\frac{1}{D - |P_m|} & \text{if } g \notin P_m.
+\end{cases}
+$${#eq-diffexp-pathway-contrast-vector}
+
+The posterior distribution of the pathway balance is
+
+$$
+\gamma_m = \underline{c}_m^{\top} \underline{\Delta} \sim 
+\mathcal{N}(\mu_{\gamma_m}, \sigma_{\gamma_m}^2),
+$${#eq-diffexp-pathway-distribution}
+
+where $\mu_{\gamma_m}$ and $\sigma_{\gamma_m}^2$ are computed as in
+@eq-diffexp-contrast-mean and @eq-diffexp-contrast-variance-final.
+
+We can then compute:
+
+- **Posterior mean balance**: $\mu_{\gamma_m}$
+- **Posterior standard deviation**: $\sigma_{\gamma_m}$
+- **Probability of positive balance**: $P(\gamma_m > 0 \mid \text{data})$
+- **Probability of practical significance**: $P(|\gamma_m| > \tau \mid
+\text{data})$
+- **Local false sign rate**: $\text{lfsr}_{\gamma_m}$
+
+#### Multiple pathway testing
+
+Testing $M$ pathways raises the question of multiple testing correction. In the
+next section, we develop methods for controlling the posterior expected false
+discovery proportion (PEFP) across multiple tests. The key idea is that we can
+treat the pathway-level lfsr values $\{\text{lfsr}_{\gamma_1}, \ldots,
+\text{lfsr}_{\gamma_M}\}$ exactly as we treat gene-level lfsr values, applying
+the same threshold-finding algorithm to control PEFP at a desired level.
+
+**Hierarchical testing.** For hierarchically organized gene sets such as the
+Gene Ontology, we can perform hierarchical testing: first test parent terms,
+then conditionally test child terms only if their parent shows evidence of
+differential expression. This approach can improve power by reducing the
+effective number of tests.
+
+**Continuous shrinkage.** Another approach is to incorporate the pathway
+structure into the prior distribution, allowing information to be shared across
+related pathways. For example, one might use a hierarchical prior where pathways
+in the same functional category share hyperparameters. While beyond the scope of
+this work, such extensions are natural within the Bayesian framework.
+
+### Comparison to Gene Set Enrichment Analysis (GSEA)
+
+Our approach to gene-set testing differs fundamentally from the widely-used Gene
+Set Enrichment Analysis (GSEA) method [@subramanian2005].
+
+**GSEA.** The GSEA approach ranks all genes by a score (e.g., log-fold-change
+or z-score) and tests whether genes in a pathway are enriched at the top or
+bottom of the ranked list using a Kolmogorov-Smirnov-type statistic. Statistical
+significance is assessed by permutation testing.
+
+**Our approach.** We compute a posterior distribution for a balance statistic
+(geometric mean log-ratio) and quantify evidence via Bayesian tail
+probabilities. No permutation testing is required; the posterior distribution
+provides exact inference conditional on the model.
+
+**Advantages of the balance approach:**
+
+1. **Direct compositional interpretation**: The balance has a clear meaning as a
+log-ratio between gene groups, respecting the compositional nature of the data.
+
+2. **Uncertainty quantification**: We obtain not just a point estimate but a
+full posterior distribution, including standard errors and tail probabilities.
+
+3. **Low-rank efficiency**: The low-rank covariance structure enables exact
+computation in $O(kD)$ time per pathway, with no need for permutation
+resampling.
+
+4. **Bayesian error control**: We can apply posterior expected false discovery
+proportion (PEFP) control across all pathways, as developed in the next section.
+
+5. **Correlation-aware**: The posterior variance $\sigma_{\gamma_m}^2$ accounts
+for correlations between genes through the low-rank covariance structure,
+providing more accurate uncertainty quantification than methods that treat genes
+independently.
+
+**Complementarity.** Despite these advantages, GSEA remains valuable for certain
+purposes, particularly when ranking-based enrichment is of primary interest or
+when the data do not fit a parametric model. The two approaches provide
+complementary perspectives on gene-set differential expression.
+

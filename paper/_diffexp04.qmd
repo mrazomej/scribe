@@ -1,0 +1,452 @@
+## Gene-Level Differential Expression
+
+Having developed the machinery for transforming Gaussian distributions between
+coordinate systems, we now turn to the central question: how do we quantify
+differential expression between two experimental conditions? In this section, we
+derive the posterior distribution of gene-level differences and show how to
+compute key statistics—posterior means, standard deviations, tail probabilities,
+and the local false sign rate.
+
+### Posterior Distribution of Differences
+
+#### Setup and assumptions
+
+Suppose we have performed inference on two experimental conditions, A and B,
+yielding fitted logistic-normal models in ALR space:
+
+$$
+\underline{z}_A \sim \mathcal{N}(\underline{\mu}_A, 
+\underline{\underline{\Sigma}}_A), \quad 
+\underline{z}_B \sim \mathcal{N}(\underline{\mu}_B, 
+\underline{\underline{\Sigma}}_B),
+$${#eq-diffexp-models-alr}
+
+where both covariance matrices have the low-rank plus diagonal structure:
+
+$$
+\underline{\underline{\Sigma}}_A = \underline{\underline{W}}_A 
+\underline{\underline{W}}_A^{\top} + \text{diag}(\underline{d}_A), \quad 
+\underline{\underline{\Sigma}}_B = \underline{\underline{W}}_B 
+\underline{\underline{W}}_B^{\top} + \text{diag}(\underline{d}_B).
+$${#eq-diffexp-covariances-lowrank}
+
+Following the transformations developed in the previous section, we obtain CLR
+representations:
+
+$$
+\underline{z}_{A,\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{A,\text{CLR}}, 
+\underline{\underline{\Sigma}}_{A,\text{CLR}}), \quad 
+\underline{z}_{B,\text{CLR}} \sim \mathcal{N}(\underline{\mu}_{B,\text{CLR}}, 
+\underline{\underline{\Sigma}}_{B,\text{CLR}}).
+$${#eq-diffexp-models-clr}
+
+We make the standard assumption that the two conditions are independent:
+$\underline{z}_A \perp \underline{z}_B$. This is justified when the two
+conditions come from independent biological replicates or non-overlapping cell
+populations.
+
+#### Distribution of the difference
+
+Define the difference in CLR coordinates as
+
+$$
+\underline{\Delta} = \underline{z}_{A,\text{CLR}} - 
+\underline{z}_{B,\text{CLR}}.
+$${#eq-diffexp-delta-definition}
+
+Since $\underline{z}_{A,\text{CLR}}$ and $\underline{z}_{B,\text{CLR}}$ are
+independent Gaussian random vectors, their difference is also Gaussian. The mean
+and covariance of $\underline{\Delta}$ follow from standard properties of
+Gaussian distributions.
+
+**Mean of the difference.** Using linearity of expectation:
+
+$$
+\mathbb{E}[\underline{\Delta}] = \mathbb{E}[\underline{z}_{A,\text{CLR}}] - 
+\mathbb{E}[\underline{z}_{B,\text{CLR}}] = 
+\underline{\mu}_{A,\text{CLR}} - \underline{\mu}_{B,\text{CLR}}.
+$${#eq-diffexp-delta-mean}
+
+**Covariance of the difference.** Using the independence assumption and the
+bilinearity of covariance:
+
+$$
+\text{Cov}(\underline{\Delta}) = 
+\text{Cov}(\underline{z}_{A,\text{CLR}} - \underline{z}_{B,\text{CLR}}) = 
+\text{Cov}(\underline{z}_{A,\text{CLR}}) + \text{Cov}(\underline{z}_{B,\text{CLR}}).
+$${#eq-diffexp-delta-cov-step1}
+
+To see why the covariances add, recall that for independent random vectors
+$\underline{X}$ and $\underline{Y}$,
+
+$$
+\text{Cov}(\underline{X} - \underline{Y}) = 
+\mathbb{E}[(\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top}] - 
+\mathbb{E}[\underline{X} - \underline{Y}]\mathbb{E}[\underline{X} - \underline{Y}]^{\top}.
+$${#eq-diffexp-cov-expansion}
+
+Expanding the first term:
+
+$$
+\mathbb{E}[(\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top}] = 
+\mathbb{E}[\underline{X}\underline{X}^{\top}] - 
+\mathbb{E}[\underline{X}\underline{Y}^{\top}] - 
+\mathbb{E}[\underline{Y}\underline{X}^{\top}] + 
+\mathbb{E}[\underline{Y}\underline{Y}^{\top}].
+$${#eq-diffexp-cov-expansion-step2}
+
+By independence, $\mathbb{E}[\underline{X}\underline{Y}^{\top}] =
+\mathbb{E}[\underline{X}]\mathbb{E}[\underline{Y}]^{\top}$ and
+$\mathbb{E}[\underline{Y}\underline{X}^{\top}] =
+\mathbb{E}[\underline{Y}]\mathbb{E}[\underline{X}]^{\top}$. Therefore,
+
+$$
+\text{Cov}(\underline{X} - \underline{Y}) = 
+\left(\mathbb{E}[\underline{X}\underline{X}^{\top}] - 
+\mathbb{E}[\underline{X}]\mathbb{E}[\underline{X}]^{\top}\right) + 
+\left(\mathbb{E}[\underline{Y}\underline{Y}^{\top}] - 
+\mathbb{E}[\underline{Y}]\mathbb{E}[\underline{Y}]^{\top}\right) = 
+\text{Cov}(\underline{X}) + \text{Cov}(\underline{Y}).
+$${#eq-diffexp-cov-sum}
+
+Thus,
+
+$$
+\underline{\underline{\Sigma}}_{\Delta} = 
+\underline{\underline{\Sigma}}_{A,\text{CLR}} + 
+\underline{\underline{\Sigma}}_{B,\text{CLR}}.
+$${#eq-diffexp-delta-cov}
+
+Combining @eq-diffexp-delta-mean and @eq-diffexp-delta-cov, we conclude that
+
+$$
+\underline{\Delta} \sim \mathcal{N}(\underline{\mu}_{A,\text{CLR}} - 
+\underline{\mu}_{B,\text{CLR}}, 
+\underline{\underline{\Sigma}}_{A,\text{CLR}} + 
+\underline{\underline{\Sigma}}_{B,\text{CLR}}).
+$${#eq-diffexp-delta-distribution}
+
+#### Preservation of low-rank structure
+
+A crucial observation is that the sum of two low-rank plus diagonal covariance
+matrices retains a low-rank plus diagonal structure. We have
+
+$$
+\underline{\underline{\Sigma}}_{A,\text{CLR}} = 
+\underline{\underline{W}}_{A,\text{CLR}} 
+\underline{\underline{W}}_{A,\text{CLR}}^{\top} + 
+\text{diag}(\underline{d}_{A,\text{CLR}}),
+$${#eq-diffexp-sigma-a-structure}
+
+$$
+\underline{\underline{\Sigma}}_{B,\text{CLR}} = 
+\underline{\underline{W}}_{B,\text{CLR}} 
+\underline{\underline{W}}_{B,\text{CLR}}^{\top} + 
+\text{diag}(\underline{d}_{B,\text{CLR}}).
+$${#eq-diffexp-sigma-b-structure}
+
+Therefore,
+
+$$
+\underline{\underline{\Sigma}}_{\Delta} = 
+\underline{\underline{W}}_{A,\text{CLR}} 
+\underline{\underline{W}}_{A,\text{CLR}}^{\top} + 
+\underline{\underline{W}}_{B,\text{CLR}} 
+\underline{\underline{W}}_{B,\text{CLR}}^{\top} + 
+\text{diag}(\underline{d}_{A,\text{CLR}} + \underline{d}_{B,\text{CLR}}).
+$${#eq-diffexp-sigma-delta-expanded}
+
+We can express this in low-rank plus diagonal form by concatenating the
+low-rank factors:
+
+$$
+\underline{\underline{W}}_{\Delta} = 
+[\underline{\underline{W}}_{A,\text{CLR}} \mid 
+\underline{\underline{W}}_{B,\text{CLR}}],
+$${#eq-diffexp-w-delta}
+
+where the notation $[\cdot \mid \cdot]$ denotes horizontal concatenation. If
+$\underline{\underline{W}}_{A,\text{CLR}} \in \mathbb{R}^{D \times k_A}$ and
+$\underline{\underline{W}}_{B,\text{CLR}} \in \mathbb{R}^{D \times k_B}$, then
+$\underline{\underline{W}}_{\Delta} \in \mathbb{R}^{D \times (k_A + k_B)}$.
+
+The diagonal component is simply the sum of the individual diagonals:
+
+$$
+\underline{d}_{\Delta} = \underline{d}_{A,\text{CLR}} + 
+\underline{d}_{B,\text{CLR}}.
+$${#eq-diffexp-d-delta}
+
+Thus,
+
+$$
+\underline{\underline{\Sigma}}_{\Delta} = 
+\underline{\underline{W}}_{\Delta} 
+\underline{\underline{W}}_{\Delta}^{\top} + 
+\text{diag}(\underline{d}_{\Delta}),
+$${#eq-diffexp-sigma-delta-lowrank}
+
+which has rank at most $k_A + k_B$. Typically, $k_A$ and $k_B$ are both small
+(e.g., 50), so the rank of $\underline{\underline{\Sigma}}_{\Delta}$ remains
+much smaller than $D$.
+
+### Per-Gene Marginal Distributions
+
+The multivariate Gaussian distribution @eq-diffexp-delta-distribution for
+$\underline{\Delta}$ immediately gives us the marginal distribution for each
+gene's differential expression.
+
+#### Marginal mean and variance
+
+For gene $g$, the marginal distribution of $\Delta_g$ is univariate Gaussian:
+
+$$
+\Delta_g \sim \mathcal{N}(\mu_{\Delta,g}, \sigma_{\Delta,g}^2),
+$${#eq-diffexp-delta-g-distribution}
+
+where the marginal mean is
+
+$$
+\mu_{\Delta,g} = \mu_{A,\text{CLR},g} - \mu_{B,\text{CLR},g},
+$${#eq-diffexp-mu-delta-g}
+
+and the marginal variance is the $g$-th diagonal entry of
+$\underline{\underline{\Sigma}}_{\Delta}$:
+
+$$
+\sigma_{\Delta,g}^2 = 
+[\underline{\underline{\Sigma}}_{\Delta}]_{gg} = 
+d_{\Delta,g} + \sum_{j=1}^{k_A + k_B} W_{\Delta,gj}^2.
+$${#eq-diffexp-sigma-delta-g}
+
+Using @eq-diffexp-d-delta, we can write
+
+$$
+\sigma_{\Delta,g}^2 = d_{A,\text{CLR},g} + d_{B,\text{CLR},g} + 
+\sum_{j=1}^{k_A} W_{A,\text{CLR},gj}^2 + \sum_{j=1}^{k_B} W_{B,\text{CLR},gj}^2.
+$${#eq-diffexp-sigma-delta-g-expanded}
+
+The posterior standard deviation is
+
+$$
+\sigma_{\Delta,g} = \sqrt{\sigma_{\Delta,g}^2}.
+$${#eq-diffexp-sd-delta-g}
+
+These quantities are computed in $O(1)$ time per gene once the CLR
+transformations have been performed, for a total of $O(D)$ time across all
+genes.
+
+### Gene-Level Statistics
+
+With the marginal distributions in hand, we can compute a variety of statistics
+for each gene to quantify the evidence for differential expression.
+
+#### Standardized effect size (z-score)
+
+The standardized effect size, or z-score, measures how many standard deviations
+the posterior mean is from zero:
+
+$$
+z_g = \frac{\mu_{\Delta,g}}{\sigma_{\Delta,g}}.
+$${#eq-diffexp-zscore}
+
+Large absolute values of $z_g$ indicate strong evidence that gene $g$ is
+differentially expressed. Under the null hypothesis that gene $g$ is not
+differentially expressed (i.e., $\mu_{\Delta,g} = 0$ in the true population),
+$z_g$ would have a distribution approximately $\mathcal{N}(0, 1)$, though this
+frequentist interpretation should be treated with caution in a Bayesian
+framework.
+
+#### Tail probabilities
+
+More directly interpretable are the tail probabilities computed from the
+posterior distribution. These quantities have exact Bayesian interpretations as
+posterior probabilities.
+
+**Probability of up-regulation.** The probability that gene $g$ is
+up-regulated in condition A relative to condition B is
+
+$$
+P(\Delta_g > 0 \mid \text{data}) = 
+P\left(\mathcal{N}(\mu_{\Delta,g}, \sigma_{\Delta,g}^2) > 0\right) = 
+1 - \Phi\left(\frac{-\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) = 
+\Phi\left(\frac{\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right),
+$${#eq-diffexp-prob-positive}
+
+where $\Phi(\cdot)$ denotes the standard Gaussian cumulative distribution
+function (CDF),
+
+$$
+\Phi(x) = \int_{-\infty}^{x} \frac{1}{\sqrt{2\pi}} e^{-t^2/2} dt.
+$${#eq-diffexp-gaussian-cdf}
+
+In terms of the z-score,
+
+$$
+P(\Delta_g > 0 \mid \text{data}) = \Phi(z_g).
+$${#eq-diffexp-prob-positive-zscore}
+
+**Probability of down-regulation.** Similarly, the probability that gene $g$ is
+down-regulated is
+
+$$
+P(\Delta_g < 0 \mid \text{data}) = \Phi\left(\frac{-\mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) = 
+\Phi(-z_g) = 1 - \Phi(z_g).
+$${#eq-diffexp-prob-negative}
+
+Note that these two probabilities sum to 1 (up to numerical precision), as they
+should.
+
+**Probability of practical significance.** For many applications, we are
+interested not just in whether a gene is differentially expressed, but whether
+the magnitude of differential expression exceeds some threshold $\tau > 0$. This
+threshold represents the minimum log-fold-change deemed biologically meaningful.
+For example, $\tau = \log(1.1) \approx 0.095$ corresponds to a 10% fold-change
+in relative abundance.
+
+The probability that gene $g$ exhibits differential expression of magnitude at
+least $\tau$ is
+
+$$
+P(|\Delta_g| > \tau \mid \text{data}) = 
+P(\Delta_g > \tau \mid \text{data}) + P(\Delta_g < -\tau \mid \text{data}).
+$${#eq-diffexp-prob-effect-sum}
+
+Using the Gaussian CDF:
+
+$$
+P(\Delta_g > \tau \mid \text{data}) = 1 - \Phi\left(\frac{\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right),
+$${#eq-diffexp-prob-above-tau}
+
+$$
+P(\Delta_g < -\tau \mid \text{data}) = \Phi\left(\frac{-\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right).
+$${#eq-diffexp-prob-below-tau}
+
+Therefore,
+
+$$
+P(|\Delta_g| > \tau \mid \text{data}) = 
+1 - \Phi\left(\frac{\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right) + 
+\Phi\left(\frac{-\tau - \mu_{\Delta,g}}{\sigma_{\Delta,g}}\right).
+$${#eq-diffexp-prob-effect}
+
+Using the symmetry property $\Phi(-x) = 1 - \Phi(x)$, we can also write
+
+$$
+P(|\Delta_g| > \tau \mid \text{data}) = 
+\Phi\left(\frac{\mu_{\Delta,g} - \tau}{\sigma_{\Delta,g}}\right) + 
+\Phi\left(\frac{-\mu_{\Delta,g} - \tau}{\sigma_{\Delta,g}}\right).
+$${#eq-diffexp-prob-effect-symmetric}
+
+When $\tau = 0$, this reduces to $P(|\Delta_g| > 0 \mid \text{data}) = 1$,
+which is correct since a continuous distribution assigns zero probability to any
+single point.
+
+### Local False Sign Rate
+
+#### Definition and interpretation
+
+The *local false sign rate* (lfsr) is a Bayesian measure of evidence against
+differential expression, introduced by @stephens2016. For gene $g$, the lfsr is
+defined as
+
+$$
+\text{lfsr}_g = \min\left(P(\Delta_g > 0 \mid \text{data}), 
+P(\Delta_g < 0 \mid \text{data})\right).
+$${#eq-diffexp-lfsr-definition}
+
+Using @eq-diffexp-prob-positive and @eq-diffexp-prob-negative:
+
+$$
+\text{lfsr}_g = \min\left(\Phi(z_g), 1 - \Phi(z_g)\right) = 
+\min\left(\Phi(z_g), \Phi(-z_g)\right).
+$${#eq-diffexp-lfsr-formula}
+
+The lfsr quantifies the posterior probability that we would make an error if we
+were to assign gene $g$ the sign corresponding to its posterior mean. More
+specifically:
+
+- If $\mu_{\Delta,g} > 0$, then $\text{lfsr}_g = P(\Delta_g < 0 \mid
+\text{data})$ is the posterior probability that the gene is actually
+down-regulated despite having a positive posterior mean.
+
+- If $\mu_{\Delta,g} < 0$, then $\text{lfsr}_g = P(\Delta_g > 0 \mid
+\text{data})$ is the posterior probability that the gene is actually
+up-regulated despite having a negative posterior mean.
+
+- If $\mu_{\Delta,g} = 0$, then $\text{lfsr}_g = 0.5$, reflecting maximal
+uncertainty about the sign.
+
+**Relationship to z-score.** For large $|z_g|$, the lfsr is approximately
+
+$$
+\text{lfsr}_g \approx \Phi(-|z_g|) = 1 - \Phi(|z_g|),
+$${#eq-diffexp-lfsr-approx}
+
+which decreases exponentially fast as $|z_g|$ increases. Specifically, for
+$|z_g| \gg 1$, we have the asymptotic expansion
+
+$$
+\Phi(-|z_g|) \approx \frac{1}{|z_g|\sqrt{2\pi}} \exp\left(-\frac{z_g^2}{2}\right),
+$${#eq-diffexp-lfsr-asymptotic}
+
+showing that the lfsr is extremely small for genes with large absolute z-scores.
+
+#### Advantages for compositional data
+
+The lfsr has several advantages for differential expression analysis on
+compositional data:
+
+**Reference-free interpretation.** Because the lfsr is computed in CLR space,
+which is reference-free, it does not depend on the arbitrary choice of reference
+component used in the ALR transformation. All genes are treated symmetrically.
+
+**Robustness to compositionality.** The lfsr quantifies the probability of
+making a sign error, which is a meaningful question even when absolute
+expression levels are unmeasurable. In contrast, questions about the "magnitude"
+of differential expression must be carefully interpreted in the compositional
+context.
+
+**Direct Bayesian interpretation.** Unlike frequentist p-values, which quantify
+the probability of observing data at least as extreme as what was observed under
+a null hypothesis, the lfsr directly quantifies the posterior probability of a
+specific event (incorrect sign assignment) given the observed data. This
+interpretation requires no additional assumptions beyond the Bayesian model.
+
+#### Comparison to p-values
+
+It is instructive to contrast the lfsr with traditional two-sided p-values. A
+two-sided p-value for testing $H_0: \Delta_g = 0$ versus $H_1: \Delta_g \neq 0$
+is typically computed as
+
+$$
+p_g = 2\Phi(-|z_g|) = 2(1 - \Phi(|z_g|)).
+$${#eq-diffexp-pvalue}
+
+This quantity represents the probability of observing a test statistic at least
+as extreme as $|z_g|$ under the null hypothesis, assuming certain regularity
+conditions.
+
+Comparing @eq-diffexp-pvalue with @eq-diffexp-lfsr-approx, we see that for
+large $|z_g|$,
+
+$$
+p_g \approx 2 \cdot \text{lfsr}_g.
+$${#eq-diffexp-pvalue-lfsr-relation}
+
+Thus, the lfsr and p-value convey similar information about the strength of
+evidence against the null hypothesis, but the lfsr has the advantage of a
+direct posterior probability interpretation.
+
+However, there is a fundamental conceptual difference. The p-value is computed
+under the assumption that the null hypothesis $\Delta_g = 0$ is exactly true,
+which assigns zero prior probability to the event $\Delta_g = 0$ in a continuous
+Bayesian model. The lfsr, in contrast, makes no reference to a point null
+hypothesis and instead quantifies uncertainty about the sign of $\Delta_g$ given
+the observed data and the continuous prior.
+
+For compositional data, where the interpretation of "zero differential
+expression" is subtle due to the relative nature of proportions, the lfsr's
+focus on the sign of differential expression (up vs. down) rather than exact
+equality to zero provides a more natural and interpretable measure of evidence.
+
