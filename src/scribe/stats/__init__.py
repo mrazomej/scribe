@@ -28,6 +28,8 @@ from .distributions import (
 
 # Divergence functions
 from .divergences import (
+    _kl_betaprime,
+    _kl_lognormal,
     jensen_shannon,
     sq_hellinger,
     hellinger,
@@ -51,7 +53,10 @@ __all__ = [
     "BetaPrime",
     "LowRankLogisticNormal",
     "SoftmaxNormal",
-    # Divergences
+    # Divergences (KL registrations)
+    "_kl_betaprime",
+    "_kl_lognormal",
+    # Divergences (user-facing)
     "jensen_shannon",
     "sq_hellinger",
     "hellinger",
