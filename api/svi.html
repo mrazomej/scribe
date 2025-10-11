@@ -1,0 +1,1172 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>svi &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="results" href="results.html" />
+    <link rel="prev" title="models_mix" href="models_mix.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Available Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="models.html">models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html">models_mix</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">svi</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.svi.SVIInferenceEngine"><code class="docutils literal notranslate"><span class="pre">SVIInferenceEngine</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.SVIInferenceEngine.run_inference"><code class="docutils literal notranslate"><span class="pre">SVIInferenceEngine.run_inference()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.svi.SVIResultsFactory"><code class="docutils literal notranslate"><span class="pre">SVIResultsFactory</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.SVIResultsFactory.create_results"><code class="docutils literal notranslate"><span class="pre">SVIResultsFactory.create_results()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.svi.ScribeSVIResults"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.params"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.params</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.loss_history"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.loss_history</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.n_cells"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_cells</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.n_genes"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_genes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.model_type"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.model_type</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.model_config"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.model_config</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.prior_params"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.prior_params</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.obs"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.obs</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.var"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.var</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.uns"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.uns</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.n_obs"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_obs</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.n_vars"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_vars</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.posterior_samples"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.posterior_samples</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.predictive_samples"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.predictive_samples</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.n_components"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_components</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.__getitem__"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.__getitem__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.__post_init__"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.__post_init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.assignment_entropy_map"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.assignment_entropy_map()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.cell_type_probabilities"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.cell_type_probabilities()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.cell_type_probabilities_map"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.cell_type_probabilities_map()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.from_anndata"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.from_anndata()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.get_component"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.get_component()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.get_distributions"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.get_distributions()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.get_map"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.get_map()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.get_posterior_samples"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.get_posterior_samples()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.get_ppc_samples"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.get_ppc_samples()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.get_predictive_samples"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.get_predictive_samples()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.log_likelihood"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.log_likelihood()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.log_likelihood_map"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.log_likelihood_map()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.mixture_component_entropy"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.mixture_component_entropy()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id0"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_components</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id1"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_obs</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id2"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_vars</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.svi.ScribeSVIResults.normalize_counts"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.normalize_counts()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id3"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.obs</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id4"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.posterior_samples</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id5"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.predictive_samples</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id6"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.uns</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id7"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.var</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id8"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.params</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id9"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.loss_history</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id10"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_cells</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id11"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.n_genes</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id12"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.model_type</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id13"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.model_config</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id14"><code class="docutils literal notranslate"><span class="pre">ScribeSVIResults.prior_params</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="results.html">results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sampling.html">sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="stats.html">stats</a></li>
+<li class="toctree-l2"><a class="reference internal" href="utils.html">utils</a></li>
+<li class="toctree-l2"><a class="reference internal" href="viz.html">viz</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">svi</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/svi.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-scribe.svi">
+<span id="svi"></span><h1>svi<a class="headerlink" href="#module-scribe.svi" title="Link to this heading"></a></h1>
+<p>Stochastic Variational Inference (SVI) module for single-cell RNA sequencing
+data analysis.</p>
+<p>This module implements SVI inference for SCRIBE models using Numpyro’s SVI.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="scribe.svi.SVIInferenceEngine">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">scribe.svi.</span></span><span class="sig-name descname"><span class="pre">SVIInferenceEngine</span></span><a class="reference internal" href="../_modules/scribe/svi/inference_engine.html#SVIInferenceEngine"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.SVIInferenceEngine" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>Handles SVI inference execution.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.SVIInferenceEngine.run_inference">
+<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">run_inference</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">count_data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">optimizer=&lt;numpyro.optim.Adam</span> <span class="pre">object&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">loss=&lt;numpyro.infer.elbo.TraceMeanField_ELBO</span> <span class="pre">object&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_steps=100000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seed=42</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stable_update=True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/inference_engine.html#SVIInferenceEngine.run_inference"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.SVIInferenceEngine.run_inference" title="Link to this definition"></a></dt>
+<dd><p>Execute SVI inference.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – Model configuration object</p></li>
+<li><p><strong>count_data</strong> (<em>jnp.ndarray</em>) – Processed count data (cells as rows)</p></li>
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Number of cells</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Number of genes</p></li>
+<li><p><strong>optimizer</strong> (<em>numpyro.optim.optimizers</em><em>, </em><em>default=Adam</em><em>(</em><em>step_size=0.001</em><em>)</em>) – Optimizer for variational inference</p></li>
+<li><p><strong>loss</strong> (<em>numpyro.infer.elbo</em><em>, </em><em>default=TraceMeanField_ELBO</em><em>(</em><em>)</em>) – Loss function for variational inference</p></li>
+<li><p><strong>n_steps</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=100_000</em>) – Number of optimization steps</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Mini-batch size. If None, uses full dataset.</p></li>
+<li><p><strong>seed</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=42</em>) – Random seed for reproducibility</p></li>
+<li><p><strong>stable_update</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – Whether to use numerically stable parameter updates</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Results from SVI run containing optimized parameters and loss history</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>numpyro.infer.svi.SVIRunResult</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="scribe.svi.SVIResultsFactory">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">scribe.svi.</span></span><span class="sig-name descname"><span class="pre">SVIResultsFactory</span></span><a class="reference internal" href="../_modules/scribe/svi/results_factory.html#SVIResultsFactory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.SVIResultsFactory" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>Factory for creating SVI results objects.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.SVIResultsFactory.create_results">
+<em class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">create_results</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">svi_results</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adata</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">count_data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_type</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_components</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prior_params</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results_factory.html#SVIResultsFactory.create_results"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.SVIResultsFactory.create_results" title="Link to this definition"></a></dt>
+<dd><p>Package SVI results into ScribeSVIResults object.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>svi_results</strong> (<em>Any</em>) – Raw SVI results from numpyro</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>) – Model configuration object</p></li>
+<li><p><strong>adata</strong> (<em>Optional</em><em>[</em><em>AnnData</em><em>]</em>) – Original AnnData object (if provided)</p></li>
+<li><p><strong>count_data</strong> (<em>jnp.ndarray</em>) – Processed count data</p></li>
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Number of cells</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Number of genes</p></li>
+<li><p><strong>model_type</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Type of model</p></li>
+<li><p><strong>n_components</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em>) – Number of mixture components</p></li>
+<li><p><strong>prior_params</strong> (<em>Dict</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>Any</em><em>]</em>) – Dictionary of prior parameters</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Packaged results object</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#scribe.svi.ScribeSVIResults" title="scribe.svi.ScribeSVIResults">ScribeSVIResults</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">scribe.svi.</span></span><span class="sig-name descname"><span class="pre">ScribeSVIResults</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">loss_history</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_cells</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_genes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_type</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prior_params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">obs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">var</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">uns</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_obs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_vars</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">posterior_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">predictive_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_components</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>Base class for SCRIBE variational inference results.</p>
+<p>This class stores the results from SCRIBE’s variational inference procedure,
+including model parameters, loss history, dataset dimensions, and model
+configuration. It can optionally store metadata from an AnnData object and
+posterior/predictive samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>params</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a>)</p></li>
+<li><p><strong>loss_history</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>n_cells</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
+<li><p><strong>n_genes</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
+<li><p><strong>model_type</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>)</p></li>
+<li><p><strong>prior_params</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a><em>]</em>)</p></li>
+<li><p><strong>obs</strong> (<em>DataFrame</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>var</strong> (<em>DataFrame</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>uns</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>n_obs</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>n_vars</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>posterior_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>predictive_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>n_components</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.params">
+<span class="sig-name descname"><span class="pre">params</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.params" title="Link to this definition"></a></dt>
+<dd><p>Dictionary of inferred model parameters from SCRIBE</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.loss_history">
+<span class="sig-name descname"><span class="pre">loss_history</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.loss_history" title="Link to this definition"></a></dt>
+<dd><p>Array containing the ELBO loss values during training</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.n_cells">
+<span class="sig-name descname"><span class="pre">n_cells</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.n_cells" title="Link to this definition"></a></dt>
+<dd><p>Number of cells in the dataset</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.n_genes">
+<span class="sig-name descname"><span class="pre">n_genes</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.n_genes" title="Link to this definition"></a></dt>
+<dd><p>Number of genes in the dataset</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.model_type">
+<span class="sig-name descname"><span class="pre">model_type</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.model_type" title="Link to this definition"></a></dt>
+<dd><p>Type of model used for inference</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.model_config">
+<span class="sig-name descname"><span class="pre">model_config</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.model_config" title="Link to this definition"></a></dt>
+<dd><p>Configuration object specifying model architecture and priors</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ModelConfig</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.prior_params">
+<span class="sig-name descname"><span class="pre">prior_params</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.prior_params" title="Link to this definition"></a></dt>
+<dd><p>Dictionary of prior parameter values used during inference</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, Any]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.obs">
+<span class="sig-name descname"><span class="pre">obs</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.obs" title="Link to this definition"></a></dt>
+<dd><p>Cell-level metadata from adata.obs, if provided</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[pd.DataFrame]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.var">
+<span class="sig-name descname"><span class="pre">var</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.var" title="Link to this definition"></a></dt>
+<dd><p>Gene-level metadata from adata.var, if provided</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[pd.DataFrame]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.uns">
+<span class="sig-name descname"><span class="pre">uns</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.uns" title="Link to this definition"></a></dt>
+<dd><p>Unstructured metadata from adata.uns, if provided</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Dict]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.n_obs">
+<span class="sig-name descname"><span class="pre">n_obs</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.n_obs" title="Link to this definition"></a></dt>
+<dd><p>Number of observations (cells), if provided</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.n_vars">
+<span class="sig-name descname"><span class="pre">n_vars</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.n_vars" title="Link to this definition"></a></dt>
+<dd><p>Number of variables (genes), if provided</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.posterior_samples">
+<span class="sig-name descname"><span class="pre">posterior_samples</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.posterior_samples" title="Link to this definition"></a></dt>
+<dd><p>Samples of parameters from the posterior distribution, if generated</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Dict]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.predictive_samples">
+<span class="sig-name descname"><span class="pre">predictive_samples</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.predictive_samples" title="Link to this definition"></a></dt>
+<dd><p>Predictive samples generated from the model, if generated</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[Dict]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.n_components">
+<span class="sig-name descname"><span class="pre">n_components</span></span><a class="headerlink" href="#scribe.svi.ScribeSVIResults.n_components" title="Link to this definition"></a></dt>
+<dd><p>Number of mixture components, if using a mixture model</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Optional[<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.__getitem__">
+<span class="sig-name descname"><span class="pre">__getitem__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">index</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.__getitem__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.__getitem__" title="Link to this definition"></a></dt>
+<dd><p>Enable indexing of ScribeSVIResults object.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.__post_init__">
+<span class="sig-name descname"><span class="pre">__post_init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.__post_init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.__post_init__" title="Link to this definition"></a></dt>
+<dd><p>Validate model configuration and parameters.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.assignment_entropy_map">
+<span class="sig-name descname"><span class="pre">assignment_entropy_map</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='gene'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temperature=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_mean=True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose=True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.assignment_entropy_map"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.assignment_entropy_map" title="Link to this definition"></a></dt>
+<dd><p>Compute the entropy of component assignments for each cell evaluated at
+the MAP.</p>
+<p>This method calculates the entropy of the posterior component assignment
+probabilities for each cell or gene, providing a measure of assignment
+uncertainty. Higher entropy values indicate more uncertainty in the
+component assignments, while lower values indicate more confident
+assignments.</p>
+<dl class="simple">
+<dt>The entropy is calculated as:</dt><dd><p>H = -∑(p_i * log(p_i))</p>
+</dd>
+</dl>
+<p>where p_i are the normalized probabilities for each component.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – The count matrix with shape (n_cells, n_genes).</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default='gene'</em>) – Whether to return the entropy by cell or gene.</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Size of mini-batches for likelihood computation</p></li>
+<li><p><strong>cells_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=0</em>) – Axis along which cells are arranged. 0 means cells are rows.</p></li>
+<li><p><strong>temperature</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>]</em><em>, </em><em>default=None</em>) – If provided, applies temperature scaling to the log-likelihoods
+before computing entropy.</p></li>
+<li><p><strong>use_mean</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, uses the mean of the posterior component probabilities
+instead of the MAP.</p></li>
+<li><p><strong>verbose</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, prints a warning if NaNs were replaced with means</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The component entropy for each cell evaluated at the MAP. Shape:
+(n_cells,).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – <ul class="simple">
+<li><p>If the model is not a mixture model
+    - If posterior samples have not been generated yet</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.cell_type_probabilities">
+<span class="sig-name descname"><span class="pre">cell_type_probabilities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ignore_nans=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fit_distribution=True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temperature=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose=True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.cell_type_probabilities"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.cell_type_probabilities" title="Link to this definition"></a></dt>
+<dd><p>Compute probabilistic cell type assignments and fit Dirichlet
+distributions to characterize assignment uncertainty.</p>
+<dl class="simple">
+<dt>For each cell, this method:</dt><dd><ol class="arabic simple">
+<li><p>Computes component-specific log-likelihoods using posterior
+samples</p></li>
+<li><p>Converts these to probability distributions over cell types</p></li>
+<li><p>Fits a Dirichlet distribution to characterize the uncertainty in
+these assignments</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Count data to evaluate assignments for</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Size of mini-batches for likelihood computation</p></li>
+<li><p><strong>cells_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=0</em>) – Axis along which cells are arranged. 0 means cells are rows.</p></li>
+<li><p><strong>ignore_nans</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, removes any samples that contain NaNs.</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+<li><p><strong>fit_distribution</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, fits a Dirichlet distribution to the assignment
+probabilities</p></li>
+<li><p><strong>temperature</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>]</em><em>, </em><em>default=None</em>) – If provided, apply temperature scaling to log probabilities</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em><em>, </em><em>default=None</em>) – Array used to weight genes when computing log likelihoods</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – <dl class="simple">
+<dt>How to apply weights. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: multiply log probabilities by weights</p></li>
+<li><p>’additive’: add weights to log probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>verbose</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, prints progress messages</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Dictionary containing:</dt><dd><ul class="simple">
+<li><p>’concentration’: Dirichlet concentration parameters for each
+cell. Shape: (n_cells, n_components). Only returned if
+fit_distribution is True.</p></li>
+<li><p>’mean_probabilities’: Mean assignment probabilities for each
+cell. Shape: (n_cells, n_components). Only returned if
+fit_distribution is True.</p></li>
+<li><p>’sample_probabilities’: Assignment probabilities for each
+posterior sample. Shape: (n_samples, n_cells, n_components)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, jnp.ndarray]</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – <ul class="simple">
+<li><p>If the model is not a mixture model
+    - If posterior samples have not been generated yet</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Most of the log-likelihood value differences between cell types are
+extremely large. Thus, the computation usually returns either 0 or 1.
+This computation is therefore not very useful, but it is included for
+completeness.</p>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.cell_type_probabilities_map">
+<span class="sig-name descname"><span class="pre">cell_type_probabilities_map</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temperature=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_mean=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose=True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.cell_type_probabilities_map"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.cell_type_probabilities_map" title="Link to this definition"></a></dt>
+<dd><p>Compute probabilistic cell type assignments using MAP estimates of
+parameters.</p>
+<dl class="simple">
+<dt>For each cell, this method:</dt><dd><p>1. Computes component-specific log-likelihoods using MAP parameter
+estimates
+2. Converts these to probability distributions over cell types</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Count data to evaluate assignments for</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Size of mini-batches for likelihood computation</p></li>
+<li><p><strong>cells_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=0</em>) – Axis along which cells are arranged. 0 means cells are rows.</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+<li><p><strong>temperature</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>]</em><em>, </em><em>default=None</em>) – If provided, apply temperature scaling to log probabilities</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em><em>, </em><em>default=None</em>) – Array used to weight genes when computing log likelihoods</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – <dl class="simple">
+<dt>How to apply weights. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: multiply log probabilities by weights</p></li>
+<li><p>’additive’: add weights to log probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>use_mean</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, replaces undefined MAP values (NaN) with posterior means</p></li>
+<li><p><strong>verbose</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, prints progress messages</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl>
+<dt>Dictionary containing:</dt><dd><ul class="simple">
+<li><p>’probabilities’: Assignment probabilities for each cell.</p></li>
+</ul>
+<p>Shape: (n_cells, n_components)</p>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, jnp.ndarray]</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If the model is not a mixture model</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.from_anndata">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_anndata</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">adata</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">loss_history</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_config</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.from_anndata"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.from_anndata" title="Link to this definition"></a></dt>
+<dd><p>Create ScribeSVIResults from AnnData object.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>adata</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><em>Any</em></a>)</p></li>
+<li><p><strong>params</strong> (<a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a>)</p></li>
+<li><p><strong>loss_history</strong> (<a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>model_config</strong> (<em>ModelConfig</em>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.get_component">
+<span class="sig-name descname"><span class="pre">get_component</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">component_index</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.get_component"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.get_component" title="Link to this definition"></a></dt>
+<dd><p>Create a view of the results selecting a specific mixture component.</p>
+<p>This method returns a new ScribeSVIResults object that contains
+parameter values for the specified component, allowing for further
+gene-based indexing. Only applicable to mixture models.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>component_index</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Index of the component to select</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A new ScribeSVIResults object with parameters for the selected
+component</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#scribe.svi.ScribeSVIResults" title="scribe.svi.ScribeSVIResults">ScribeSVIResults</a></p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If the model is not a mixture model</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.get_distributions">
+<span class="sig-name descname"><span class="pre">get_distributions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">backend</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'numpyro'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.get_distributions"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.get_distributions" title="Link to this definition"></a></dt>
+<dd><p>Get the variational distributions for all parameters.</p>
+<p>This method now delegates to the model-specific
+<cite>get_posterior_distributions</cite> function associated with the
+parameterization.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>backend</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default=&quot;numpyro&quot;</em>) – Statistical package to use for distributions. Must be one of: -
+“scipy”: Returns scipy.stats distributions - “numpyro”: Returns
+numpyro.distributions</p></li>
+<li><p><strong>split</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, returns lists of individual distributions for
+multidimensional parameters instead of batch distributions.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dictionary mapping parameter names to their distributions.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, Any]</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If backend is not supported.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.get_map">
+<span class="sig-name descname"><span class="pre">get_map</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">use_mean</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">canonical</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.get_map"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.get_map" title="Link to this definition"></a></dt>
+<dd><p>Get the maximum a posteriori (MAP) estimates from the variational
+posterior.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>use_mean</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, replaces undefined MAP values (NaN) with posterior means</p></li>
+<li><p><strong>canonical</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, includes canonical parameters (p, r) computed from other parameters
+for linked, odds_ratio, and unconstrained parameterizations</p></li>
+<li><p><strong>verbose</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, prints a warning if NaNs were replaced with means</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dictionary of MAP estimates for each parameter</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, jnp.ndarray]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.get_posterior_samples">
+<span class="sig-name descname"><span class="pre">get_posterior_samples</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rng_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Array([0,</span> <span class="pre">42],</span> <span class="pre">dtype=uint32)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">100</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">store_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.get_posterior_samples"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.get_posterior_samples" title="Link to this definition"></a></dt>
+<dd><p>Sample parameters from the variational posterior distribution.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rng_key</strong> (<em>PRNGKey</em>)</p></li>
+<li><p><strong>n_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
+<li><p><strong>store_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.get_ppc_samples">
+<span class="sig-name descname"><span class="pre">get_ppc_samples</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rng_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Array([0,</span> <span class="pre">42],</span> <span class="pre">dtype=uint32)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">100</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">store_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.get_ppc_samples"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.get_ppc_samples" title="Link to this definition"></a></dt>
+<dd><p>Generate posterior predictive check samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rng_key</strong> (<em>PRNGKey</em>)</p></li>
+<li><p><strong>n_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>store_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><em>Dict</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.get_predictive_samples">
+<span class="sig-name descname"><span class="pre">get_predictive_samples</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rng_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Array([0,</span> <span class="pre">42],</span> <span class="pre">dtype=uint32)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">store_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.get_predictive_samples"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.get_predictive_samples" title="Link to this definition"></a></dt>
+<dd><p>Generate predictive samples using posterior parameter samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rng_key</strong> (<em>PRNGKey</em>)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>store_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.log_likelihood">
+<span class="sig-name descname"><span class="pre">log_likelihood</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ignore_nans=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split_components=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.log_likelihood"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.log_likelihood" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood of data under posterior samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Count data to evaluate likelihood on</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Size of mini-batches used for likelihood computation</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default='cell'</em>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>cells_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=0</em>) – Axis along which cells are arranged. 0 means cells are rows.</p></li>
+<li><p><strong>ignore_nans</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, removes any samples that contain NaNs.</p></li>
+<li><p><strong>split_components</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, returns log likelihoods for each mixture component
+separately. Only applicable for mixture models.</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em><em>, </em><em>default=None</em>) – Array used to weight the log likelihoods (for mixture models).</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – <dl class="simple">
+<dt>How to apply weights. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: multiply log probabilities by weights</p></li>
+<li><p>’additive’: add weights to log probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><p>Array of log likelihoods. Shape depends on model type, return_by and
+split_components parameters. For standard models:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>’cell’: shape (n_samples, n_cells)</p></li>
+<li><p>’gene’: shape (n_samples, n_genes)</p></li>
+</ul>
+</div></blockquote>
+<dl class="simple">
+<dt>For mixture models with split_components=False:</dt><dd><ul class="simple">
+<li><p>’cell’: shape (n_samples, n_cells)</p></li>
+<li><p>’gene’: shape (n_samples, n_genes)</p></li>
+</ul>
+</dd>
+<dt>For mixture models with split_components=True:</dt><dd><ul class="simple">
+<li><p>’cell’: shape (n_samples, n_cells, n_components)</p></li>
+<li><p>’gene’: shape (n_samples, n_genes, n_components)</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If posterior samples have not been generated yet</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.log_likelihood_map">
+<span class="sig-name descname"><span class="pre">log_likelihood_map</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gene_batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='cell'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split_components=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weights=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight_type=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_mean=True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose=True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.log_likelihood_map"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.log_likelihood_map" title="Link to this definition"></a></dt>
+<dd><p>Compute log likelihood of data using MAP parameter estimates.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Count data to evaluate likelihood on</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Size of mini-batches used for likelihood computation</p></li>
+<li><p><strong>gene_batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Size of mini-batches used for likelihood computation by gene</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default='cell'</em>) – <dl class="simple">
+<dt>Specifies how to return the log probabilities. Must be one of:</dt><dd><ul>
+<li><p>’cell’: returns log probabilities summed over genes</p></li>
+<li><p>’gene’: returns log probabilities summed over cells</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>cells_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=0</em>) – Axis along which cells are arranged. 0 means cells are rows.</p></li>
+<li><p><strong>split_components</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, returns log likelihoods for each mixture component separately.
+Only applicable for mixture models.</p></li>
+<li><p><strong>weights</strong> (<em>Optional</em><em>[</em><em>jnp.ndarray</em><em>]</em><em>, </em><em>default=None</em>) – Array used to weight the log likelihoods (for mixture models).</p></li>
+<li><p><strong>weight_type</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – <dl class="simple">
+<dt>How to apply weights. Must be one of:</dt><dd><ul>
+<li><p>’multiplicative’: multiply log probabilities by weights</p></li>
+<li><p>’additive’: add weights to log probabilities</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>use_mean</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, replaces undefined MAP values (NaN) with posterior means</p></li>
+<li><p><strong>verbose</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, prints a warning if NaNs were replaced with means</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Array of log likelihoods. Shape depends on model type, return_by and
+split_components parameters.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.mixture_component_entropy">
+<span class="sig-name descname"><span class="pre">mixture_component_entropy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">counts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_by='gene'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_axis=0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ignore_nans=False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temperature=None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype=&lt;class</span> <span class="pre">'jax.numpy.float32'&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.mixture_component_entropy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.mixture_component_entropy" title="Link to this definition"></a></dt>
+<dd><p>Compute the entropy of mixture component assignment probabilities.</p>
+<p>This method calculates the Shannon entropy of the posterior component
+assignment probabilities for each observation (cell or gene), providing
+a quantitative measure of assignment uncertainty in mixture models.</p>
+<p>The entropy quantifies how uncertain the model is about which component
+each observation belongs to:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Low entropy (≈0): High confidence in component assignment</p></li>
+<li><p>High entropy (≈log(n_components)): High uncertainty in assignment</p></li>
+<li><p>Maximum entropy: Uniform assignment probabilities across all
+components</p></li>
+</ul>
+</div></blockquote>
+<dl class="simple">
+<dt>The entropy is calculated as:</dt><dd><p>H = -∑(p_i * log(p_i))</p>
+</dd>
+</dl>
+<p>where p_i are the posterior probabilities of assignment to component i.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>counts</strong> (<em>jnp.ndarray</em>) – Input count data to evaluate component assignments for. Shape should
+be (n_cells, n_genes) if cells_axis=0, or (n_genes, n_cells) if
+cells_axis=1.</p></li>
+<li><p><strong>return_by</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default='gene'</em>) – <dl class="simple">
+<dt>Specifies how to compute and return the entropy. Must be one of:</dt><dd><ul>
+<li><p>’cell’: Compute entropy of component assignments for each cell</p></li>
+<li><p>’gene’: Compute entropy of component assignments for each gene</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>batch_size</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – If provided, processes the data in batches of this size to reduce
+memory usage. Useful for large datasets.</p></li>
+<li><p><strong>cells_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=0</em>) – <dl class="simple">
+<dt>Specifies which axis in the input counts contains the cells:</dt><dd><ul>
+<li><p>0: cells are rows (shape: n_cells × n_genes)</p></li>
+<li><p>1: cells are columns (shape: n_genes × n_cells)</p></li>
+</ul>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>ignore_nans</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, excludes any samples containing NaN values from the entropy
+calculation.</p></li>
+<li><p><strong>temperature</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>]</em><em>, </em><em>default=None</em>) – If provided, applies temperature scaling to the log-likelihoods
+before computing entropy. Temperature scaling modifies the sharpness
+of probability distributions by dividing log probabilities by a
+temperature parameter T.</p></li>
+<li><p><strong>dtype</strong> (<em>jnp.dtype</em><em>, </em><em>default=jnp.float32</em>) – Data type for numerical precision in computations.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>Array of entropy values. Shape depends on return_by:</dt><dd><ul class="simple">
+<li><p>If return_by=’cell’: shape is (n_samples, n_cells)</p></li>
+<li><p>If return_by=’gene’: shape is (n_samples, n_genes)</p></li>
+</ul>
+</dd>
+</dl>
+<p>Higher values indicate more uncertainty in component assignments.</p>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If the model is not a mixture model or if posterior samples haven’t
+    been generated.</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This method requires posterior samples to be available. Call
+get_posterior_samples() first if they haven’t been generated.</p></li>
+<li><p>The entropy is computed using the full posterior predictive
+distribution, accounting for uncertainty in the model parameters.</p></li>
+<li><p>For a mixture with K components, the maximum possible entropy is
+log(K).</p></li>
+<li><p>Entropy values can be used to identify observations that are difficult
+to classify or that may belong to multiple components.</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id0">
+<span class="sig-name descname"><span class="pre">n_components</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id0" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id1">
+<span class="sig-name descname"><span class="pre">n_obs</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id1" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id2">
+<span class="sig-name descname"><span class="pre">n_vars</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id2" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.svi.ScribeSVIResults.normalize_counts">
+<span class="sig-name descname"><span class="pre">normalize_counts</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rng_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Array([0,</span> <span class="pre">42],</span> <span class="pre">dtype=uint32)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_samples_dirichlet</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fit_distribution</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">store_samples</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_concentrations</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">backend</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'numpyro'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/svi/results.html#ScribeSVIResults.normalize_counts"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.svi.ScribeSVIResults.normalize_counts" title="Link to this definition"></a></dt>
+<dd><p>Normalize counts using posterior samples of the r parameter.</p>
+<p>This method takes posterior samples of the dispersion parameter (r) and
+uses them as concentration parameters for Dirichlet distributions to
+generate normalized expression profiles. For mixture models,
+normalization is performed per component, resulting in an extra
+dimension in the output.</p>
+<p>Based on the insights from the Dirichlet-multinomial model derivation,
+the r parameters represent the concentration parameters of a Dirichlet
+distribution that can be used to generate normalized expression
+profiles.</p>
+<p>The method generates Dirichlet samples using all posterior samples of r,
+then fits a single Dirichlet distribution to all these samples (or one
+per component for mixture models).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rng_key</strong> (<em>random.PRNGKey</em><em>, </em><em>default=random.PRNGKey</em><em>(</em><em>42</em><em>)</em>) – JAX random number generator key</p></li>
+<li><p><strong>n_samples_dirichlet</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=1000</em>) – Number of samples to draw from each Dirichlet distribution</p></li>
+<li><p><strong>fit_distribution</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, fits a Dirichlet distribution to the generated samples
+using fit_dirichlet_minka from stats.py</p></li>
+<li><p><strong>store_samples</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, includes the raw Dirichlet samples in the output</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=0</em>) – Axis containing samples in the Dirichlet fitting (passed to
+fit_dirichlet_minka)</p></li>
+<li><p><strong>return_concentrations</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, returns the original r parameter samples used as
+concentrations</p></li>
+<li><p><strong>backend</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default=&quot;numpyro&quot;</em>) – Statistical package to use for distributions when
+fit_distribution=True. Must be one of: - “numpyro”: Returns
+numpyro.distributions.Dirichlet objects - “scipy”: Returns
+scipy.stats distributions via numpyro_to_scipy conversion</p></li>
+<li><p><strong>verbose</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, prints progress messages</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><p>Dictionary containing normalized expression profiles. Keys depend on
+input arguments:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>’samples’: Raw Dirichlet samples (if store_samples=True)</p></li>
+<li><p>’concentrations’: Fitted concentration parameters (if
+fit_distribution=True)</p></li>
+<li><p>’mean_probabilities’: Mean probabilities from fitted
+distribution (if fit_distribution=True)</p></li>
+<li><p>’distributions’: Dirichlet distribution objects (if
+fit_distribution=True)</p></li>
+<li><p>’original_concentrations’: Original r parameter samples (if
+return_concentrations=True)</p></li>
+</ul>
+</div></blockquote>
+<dl>
+<dt>For non-mixture models:</dt><dd><ul class="simple">
+<li><p>samples: shape (n_posterior_samples, n_genes,
+n_samples_dirichlet) or (n_posterior_samples, n_genes) if
+n_samples_dirichlet=1</p></li>
+<li><p>concentrations: shape (n_genes,) - single fitted distribution</p></li>
+<li><p>mean_probabilities: shape (n_genes,) - single fitted
+distribution</p></li>
+<li><p>distributions: single Dirichlet distribution object</p></li>
+</ul>
+</dd>
+<dt>For mixture models:</dt><dd><ul class="simple">
+<li><p>samples: shape (n_posterior_samples, n_components, n_genes,
+n_samples_dirichlet) or (n_posterior_samples, n_components,
+n_genes) if n_samples_dirichlet=1</p></li>
+<li><p>concentrations: shape (n_components, n_genes) - one fitted</p></li>
+</ul>
+<p>distribution per component - mean_probabilities: shape
+(n_components, n_genes) - one fitted distribution per component
+- distributions: list of n_components Dirichlet distribution
+objects</p>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, Union[jnp.ndarray, <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)">object</a>]]</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If posterior samples have not been generated yet, or if ‘r’
+    parameter is not found in posterior samples</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># For a non-mixture model</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">normalized</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">normalize_counts</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">n_samples_dirichlet</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">fit_distribution</span><span class="o">=</span><span class="kc">True</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">normalized</span><span class="p">[</span><span class="s1">&#39;mean_probabilities&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>  <span class="c1"># (n_genes,)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">normalized</span><span class="p">[</span><span class="s1">&#39;distributions&#39;</span><span class="p">]))</span>  <span class="c1"># Single Dirichlet distribution</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># For a mixture model</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">normalized</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">normalize_counts</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">n_samples_dirichlet</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">fit_distribution</span><span class="o">=</span><span class="kc">True</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">normalized</span><span class="p">[</span><span class="s1">&#39;mean_probabilities&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>  <span class="c1"># (n_components, n_genes)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">normalized</span><span class="p">[</span><span class="s1">&#39;distributions&#39;</span><span class="p">]))</span>  <span class="c1"># n_components</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id3">
+<span class="sig-name descname"><span class="pre">obs</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">DataFrame</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id3" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id4">
+<span class="sig-name descname"><span class="pre">posterior_samples</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><span class="pre">Dict</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id4" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id5">
+<span class="sig-name descname"><span class="pre">predictive_samples</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><span class="pre">Dict</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id5" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id6">
+<span class="sig-name descname"><span class="pre">uns</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><span class="pre">Dict</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id6" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id7">
+<span class="sig-name descname"><span class="pre">var</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">DataFrame</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#id7" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id8">
+<span class="sig-name descname"><span class="pre">params</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><span class="pre">Dict</span></a></em><a class="headerlink" href="#id8" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id9">
+<span class="sig-name descname"><span class="pre">loss_history</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><span class="pre">Array</span></a></em><a class="headerlink" href="#id9" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id10">
+<span class="sig-name descname"><span class="pre">n_cells</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></em><a class="headerlink" href="#id10" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id11">
+<span class="sig-name descname"><span class="pre">n_genes</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><span class="pre">int</span></a></em><a class="headerlink" href="#id11" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id12">
+<span class="sig-name descname"><span class="pre">model_type</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></em><a class="headerlink" href="#id12" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id13">
+<span class="sig-name descname"><span class="pre">model_config</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">ModelConfig</span></em><a class="headerlink" href="#id13" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="id14">
+<span class="sig-name descname"><span class="pre">prior_params</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Dict" title="(in Python v3.14)"><span class="pre">Dict</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><span class="pre">Any</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#id14" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="models_mix.html" class="btn btn-neutral float-left" title="models_mix" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="results.html" class="btn btn-neutral float-right" title="results" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
