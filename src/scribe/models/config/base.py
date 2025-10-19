@@ -1,10 +1,11 @@
 """Base model configuration classes using Pydantic."""
 
-from typing import Optional, Set, Union
+from typing import Optional, Set, Union, Dict, Any
 from pydantic import (
     BaseModel,
     Field,
     field_validator,
+    model_validator,
     computed_field,
     ConfigDict,
 )
@@ -16,7 +17,7 @@ from .groups import (
     UnconstrainedGuideConfig,
     VAEConfig,
 )
-from .parameter_mapping import get_active_parameters
+from .parameter_mapping import get_active_parameters, get_required_parameters
 
 # ==============================================================================
 # Constrained Model Configuration Class
@@ -169,6 +170,78 @@ class ConstrainedModelConfig(BaseModel):
             is_zero_inflated=self.is_zero_inflated,
             uses_variable_capture=self.uses_variable_capture,
         )
+
+    # --------------------------------------------------------------------------
+
+    def get_active_priors(self) -> Dict[str, Any]:
+        """Get active prior parameters as a dictionary."""
+        active_params = self.active_parameters
+        priors_dict = {}
+
+        for param in active_params:
+            if hasattr(self.priors, param):
+                value = getattr(self.priors, param)
+                if value is not None:
+                    priors_dict[f"{param}_prior"] = value
+
+        return priors_dict
+
+    # --------------------------------------------------------------------------
+    # Validation Methods
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_priors_consistency(self) -> "ConstrainedModelConfig":
+        """Validate that provided priors match the model's requirements."""
+        # Determine model characteristics
+        is_mixture = self.n_components is not None
+        is_zero_inflated = self.is_zero_inflated
+        uses_variable_capture = self.uses_variable_capture
+
+        # Get required parameters for this configuration
+        required_params = get_required_parameters(
+            self.parameterization,
+            self.base_model,
+            is_mixture,
+            is_zero_inflated,
+            uses_variable_capture,
+        )
+
+        # Get all provided priors (non-None fields)
+        provided_priors = {
+            field_name
+            for field_name in self.priors.__class__.model_fields.keys()
+            if getattr(self.priors, field_name) is not None
+        }
+
+        # Check for missing required priors
+        missing_priors = required_params - provided_priors
+        if missing_priors:
+            raise ValueError(
+                f"Missing required priors for {self.base_model} with "
+                f"{self.parameterization.value} parameterization: "
+                f"{', '.join(sorted(missing_priors))}"
+            )
+
+        # Get active parameters (what's allowed)
+        active_params = get_active_parameters(
+            self.parameterization,
+            self.base_model,
+            is_mixture,
+            is_zero_inflated,
+            uses_variable_capture,
+        )
+
+        # Check for unexpected priors
+        unexpected_priors = provided_priors - active_params
+        if unexpected_priors:
+            raise ValueError(
+                f"Unexpected priors for {self.base_model} with "
+                f"{self.parameterization.value} parameterization: "
+                f"{', '.join(sorted(unexpected_priors))}"
+            )
+
+        return self
 
     # --------------------------------------------------------------------------
 
@@ -328,6 +401,80 @@ class UnconstrainedModelConfig(BaseModel):
             is_zero_inflated=self.is_zero_inflated,
             uses_variable_capture=self.uses_variable_capture,
         )
+
+    # --------------------------------------------------------------------------
+
+    def get_active_priors(self) -> Dict[str, Any]:
+        """Get active prior parameters as a dictionary."""
+        active_params = self.active_parameters
+        priors_dict = {}
+
+        for param in active_params:
+            if hasattr(self.priors, param):
+                value = getattr(self.priors, param)
+                if value is not None:
+                    priors_dict[f"{param}_prior"] = value
+
+        return priors_dict
+
+    # --------------------------------------------------------------------------
+    # Validation Methods
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_priors_consistency(self) -> "UnconstrainedModelConfig":
+        """Validate that provided priors match the model's requirements."""
+        # Determine model characteristics
+        is_mixture = self.n_components is not None
+        is_zero_inflated = self.is_zero_inflated
+        uses_variable_capture = self.uses_variable_capture
+
+        # Get required parameters for this configuration
+        required_params = get_required_parameters(
+            self.parameterization,
+            self.base_model,
+            is_mixture,
+            is_zero_inflated,
+            uses_variable_capture,
+        )
+
+        # Get all provided priors (non-None fields)
+        provided_priors = {
+            field_name
+            for field_name in self.priors.__class__.model_fields.keys()
+            if getattr(self.priors, field_name) is not None
+        }
+
+        # Check for missing required priors
+        missing_priors = required_params - provided_priors
+        if missing_priors:
+            raise ValueError(
+                f"Missing required priors for {self.base_model} with "
+                f"{self.parameterization.value} parameterization: "
+                f"{', '.join(sorted(missing_priors))}"
+            )
+
+        # Get active parameters (what's allowed)
+        active_params = get_active_parameters(
+            self.parameterization,
+            self.base_model,
+            is_mixture,
+            is_zero_inflated,
+            uses_variable_capture,
+        )
+
+        # Check for unexpected priors
+        unexpected_priors = provided_priors - active_params
+        if unexpected_priors:
+            raise ValueError(
+                f"Unexpected priors for {self.base_model} with "
+                f"{self.parameterization.value} parameterization: "
+                f"{', '.join(sorted(unexpected_priors))}"
+            )
+
+        return self
+
+    # --------------------------------------------------------------------------
 
     def with_updated_priors(self, **priors) -> "UnconstrainedModelConfig":
         """Create a new config with updated priors."""

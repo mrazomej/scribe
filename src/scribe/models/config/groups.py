@@ -160,8 +160,8 @@ class UnconstrainedPriorConfig(BaseModel):
     phi_capture: Optional[Tuple[float, float]] = Field(
         None, description="phi_capture_unconstrained prior (Normal)"
     )
-    mixing_logits: Optional[Tuple[float, float]] = Field(
-        None, description="mixing_logits_unconstrained prior (Normal)"
+    mixing: Optional[Tuple[float, float]] = Field(
+        None, description="mixing_unconstrained prior (Normal)"
     )
 
 
@@ -182,7 +182,7 @@ class UnconstrainedGuideConfig(BaseModel):
     gate: Optional[Tuple[float, float]] = None
     p_capture: Optional[Tuple[float, float]] = None
     phi_capture: Optional[Tuple[float, float]] = None
-    mixing_logits: Optional[Tuple[float, float]] = None
+    mixing: Optional[Tuple[float, float]] = None
 
 
 # ==============================================================================
