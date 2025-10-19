@@ -21,7 +21,7 @@ from ..sampling import (
     generate_predictive_samples,
 )
 from ..stats import fit_dirichlet_minka
-from ..models.config import ModelConfig
+from ..models.config import ModelConfig, UnconstrainedModelConfig
 
 # Import multipledispatch functions from stats
 from ..stats import hellinger, jensen_shannon
@@ -117,106 +117,6 @@ class ScribeSVIResults:
         ):
             self.n_components = self.model_config.n_components
 
-        self._validate_model_config()
-
-    # --------------------------------------------------------------------------
-
-    def _validate_model_config(self):
-        """Validate model configuration matches model type."""
-        # Validate base model
-        if self.model_config.base_model != self.model_type:
-            raise ValueError(
-                f"Model type '{self.model_type}' does not match config "
-                f"base model '{self.model_config.base_model}'"
-            )
-
-        # Validate n_components consistency
-        if self.n_components is not None:
-            if not self.model_type.endswith("_mix"):
-                raise ValueError(
-                    f"Model type '{self.model_type}' is not a mixture model "
-                    f"but n_components={self.n_components} was specified"
-                )
-            if self.model_config.n_components != self.n_components:
-                raise ValueError(
-                    f"n_components mismatch: {self.n_components} vs "
-                    f"{self.model_config.n_components} in model_config"
-                )
-
-        # Validate required distributions based on model type and unconstrained
-        # flag
-        unconstrained = getattr(self.model_config, "unconstrained", False)
-
-        # ZINB models require gate priors
-        if "zinb" in self.model_type:
-            if unconstrained:
-                # Unconstrained uses gate_unconstrained_prior
-                if self.model_config.priors.gate is None:
-                    raise ValueError(
-                        "ZINB models with unconstrained=True require "
-                        "gate_unconstrained_prior"
-                    )
-            else:
-                # Constrained uses gate_param_prior
-                if self.model_config.priors.gate is None:
-                    raise ValueError("ZINB models require gate_param_prior")
-        else:
-            # Non-ZINB models should not have gate priors
-            if unconstrained:
-                if self.model_config.priors.gate is not None:
-                    raise ValueError(
-                        "Non-ZINB models should not have "
-                        "gate_unconstrained_prior"
-                    )
-            else:
-                if self.model_config.priors.gate is not None:
-                    raise ValueError(
-                        "Non-ZINB models should not have gate_param_prior"
-                    )
-
-        # VCP models require capture probability priors
-        if "vcp" in self.model_type:
-            if unconstrained:
-                # Unconstrained uses p_capture_unconstrained_prior
-                if self.model_config.priors.p_capture is None:
-                    raise ValueError(
-                        "VCP models with unconstrained=True require "
-                        "p_capture_unconstrained_prior"
-                    )
-            else:
-                # Constrained uses appropriate prior based on parameterization
-                if self.model_config.parameterization in ["standard", "linked"]:
-                    if self.model_config.priors.p_capture is None:
-                        raise ValueError(
-                            "VCP models require p_capture_param_prior"
-                        )
-                elif self.model_config.parameterization == "odds_ratio":
-                    if self.model_config.priors.phi_capture is None:
-                        raise ValueError(
-                            "VCP models with odds_ratio parameterization "
-                            "require phi_capture_param_prior"
-                        )
-        else:
-            # Non-VCP models should not have capture probability priors
-            if unconstrained:
-                if self.model_config.priors.p_capture is not None:
-                    raise ValueError(
-                        "Non-VCP models should not have "
-                        "p_capture_unconstrained_prior"
-                    )
-            else:
-                if self.model_config.parameterization in ["standard", "linked"]:
-                    if self.model_config.priors.p_capture is not None:
-                        raise ValueError(
-                            "Non-VCP models should not have p_capture_param_prior"
-                        )
-                elif self.model_config.parameterization == "odds_ratio":
-                    if self.model_config.priors.phi_capture is not None:
-                        raise ValueError(
-                            "Non-VCP models should not have "
-                            "phi_capture_param_prior"
-                        )
-
     # --------------------------------------------------------------------------
     # Create ScribeSVIResults from AnnData object
     # --------------------------------------------------------------------------
@@ -285,7 +185,9 @@ class ScribeSVIResults:
             raise ValueError(f"Invalid backend: {backend}")
 
         # Define whether the model is unconstrained
-        unconstrained = getattr(self.model_config, "unconstrained", False)
+        from ..models.config import UnconstrainedModelConfig
+
+        unconstrained = isinstance(self.model_config, UnconstrainedModelConfig)
         # Define whether the model is low-rank
         low_rank = self.model_config.guide_rank is not None
 
@@ -504,7 +406,9 @@ class ScribeSVIResults:
         """
         estimates = map_estimates.copy()
         parameterization = self.model_config.parameterization
-        unconstrained = getattr(self.model_config, "unconstrained", False)
+        from ..models.config import UnconstrainedModelConfig
+
+        unconstrained = isinstance(self.model_config, UnconstrainedModelConfig)
 
         # Handle linked parameterization
         if parameterization == "linked":
@@ -1236,10 +1140,11 @@ class ScribeSVIResults:
 
         # Create a modified model config with n_components=None to indicate
         # this is now a non-mixture result after component selection
-        new_model_config = replace(
-            self.model_config,
-            base_model=base_model,
-            n_components=None,
+        new_model_config = self.model_config.model_copy(
+            update={
+                "base_model": base_model,
+                "n_components": None,
+            }
         )
 
         return type(self)(
@@ -1270,8 +1175,14 @@ class ScribeSVIResults:
 
         parameterization = self.model_config.parameterization or ""
         inference_method = self.model_config.inference_method or ""
-        prior_type = self.model_config.vae_prior_type or ""
-        unconstrained = getattr(self.model_config, "unconstrained", False)
+        prior_type = (
+            self.model_config.vae.prior_type.value
+            if self.model_config.vae
+            else ""
+        )
+        from ..models.config import UnconstrainedModelConfig
+
+        unconstrained = isinstance(self.model_config, UnconstrainedModelConfig)
         guide_rank = self.model_config.guide_rank
         return get_model_and_guide(
             self.model_type,
@@ -1296,7 +1207,7 @@ class ScribeSVIResults:
 
     def _unconstrained(self) -> bool:
         """Get if the parameterization is unconstrained."""
-        return self.model_config.unconstrained
+        return isinstance(self.model_config, UnconstrainedModelConfig)
 
     # --------------------------------------------------------------------------
     # Get log likelihood function
@@ -1368,7 +1279,11 @@ class ScribeSVIResults:
             self.model_type,
             self.model_config.parameterization,
             self.model_config.inference_method,
-            self.model_config.vae_prior_type,
+            (
+                self.model_config.vae.prior_type.value
+                if self.model_config.vae
+                else ""
+            ),
             unconstrained=False,  # Explicitly get the constrained model
             guide_rank=None,  # Not relevant for the model
         )
