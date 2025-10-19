@@ -288,19 +288,8 @@ def run_scribe(
         phi_capture_prior=phi_capture_prior,
     )
 
-    # Step 3: Create ModelConfig
-    model_config_kwargs = {
-        "base_model": model_type,
-        "parameterization": parameterization,
-        "unconstrained": unconstrained,
-        "inference_method": inference_method,
-        "n_components": n_components,
-        "component_specific_params": component_specific_params,
-        "guide_rank": guide_rank,
-        **prior_config,  # Merge in mapped priors
-    }
-
-    # Add VAE-specific parameters if using VAE inference
+    # Step 3: Collect VAE parameters if needed
+    vae_config = None
     if inference_method == "vae":
         vae_config = ParameterCollector.collect_vae_params(
             vae_latent_dim=vae_latent_dim,
@@ -316,12 +305,21 @@ def run_scribe(
             vae_prior_mask_type=vae_prior_mask_type,
             vae_standardize=vae_standardize,
         )
-        model_config_kwargs.update(vae_config)
 
-    model_config = ModelConfig(**model_config_kwargs)
-    model_config.validate()
+    # Step 4: Create ModelConfig using factory method
+    model_config = ModelConfig.from_inference_params(
+        model_type=model_type,
+        inference_method=inference_method,
+        parameterization=parameterization,
+        unconstrained=unconstrained,
+        prior_config=prior_config,
+        vae_config=vae_config,
+        n_components=n_components,
+        component_specific_params=component_specific_params,
+        guide_rank=guide_rank,
+    )
 
-    # Step 4: Run Inference
+    # Step 5: Run Inference
     if inference_method == "svi":
         results = _run_svi_inference(
             model_config=model_config,
