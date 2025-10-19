@@ -1392,10 +1392,11 @@ class ScribeMCMCResults(MCMC):
         )
 
         # Create modified model config (remove mixture aspects)
-        modified_model_config = replace(
-            self.model_config,
-            base_model=self.model_type.replace("_mix", ""),
-            n_components=None,
+        modified_model_config = self.model_config.model_copy(
+            update={
+                "base_model": self.model_type.replace("_mix", ""),
+                "n_components": None,
+            }
         )
 
         # Return ScribeMCMCSubset with component-specific data
