@@ -95,8 +95,8 @@ def nbdm_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    r_prior_params = model_config.r_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
+    r_prior_params = model_config.priors.r or (0.0, 1.0)
 
     # Sample unconstrained parameters
     p_unconstrained = numpyro.sample(
@@ -190,8 +190,8 @@ def nbdm_guide(
         inference machinery.
     """
     # Define guide parameters with proper defaults
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -288,9 +288,9 @@ def zinb_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    r_prior_params = model_config.r_unconstrained_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
+    r_prior_params = model_config.priors.r or (0.0, 1.0)
+    gate_prior_params = model_config.priors.gate or (0.0, 1.0)
 
     # Sample unconstrained parameters
     p_unconstrained = numpyro.sample(
@@ -393,9 +393,9 @@ def zinb_guide(
         inference machinery.
     """
     # Define guide parameters
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
+    gate_guide_params = model_config.guides.gate or (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -509,9 +509,9 @@ def nbvcp_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    r_prior_params = model_config.r_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
+    r_prior_params = model_config.priors.r or (0.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (
         0.0,
         1.0,
     )
@@ -666,9 +666,9 @@ def nbvcp_guide(
         inference machinery.
     """
     # Define guide parameters
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
+    p_capture_guide_params = model_config.guides.p_capture or (
         0.0,
         1.0,
     )
@@ -802,10 +802,10 @@ def zinbvcp_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    r_prior_params = model_config.r_unconstrained_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
+    r_prior_params = model_config.priors.r or (0.0, 1.0)
+    gate_prior_params = model_config.priors.gate or (0.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (
         0.0,
         1.0,
     )
@@ -976,10 +976,10 @@ def zinbvcp_guide(
         inference machinery.
     """
     # Define guide parameters
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
+    gate_guide_params = model_config.guides.gate or (0.0, 1.0)
+    p_capture_guide_params = model_config.guides.p_capture or (
         0.0,
         1.0,
     )
@@ -1044,7 +1044,9 @@ def zinbvcp_guide(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="nbdm_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="nbdm_mix", parameterization="standard", unconstrained=True
+)
 def nbdm_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -1113,20 +1115,20 @@ def nbdm_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters - handle None values properly
-    if model_config.mixing_logits_unconstrained_prior is None:
+    if model_config.priors.mixing is None:
         mixing_prior_params = (0.0, 1.0)
     else:
-        mixing_prior_params = model_config.mixing_logits_unconstrained_prior
+        mixing_prior_params = model_config.priors.mixing
 
-    if model_config.p_unconstrained_prior is None:
+    if model_config.priors.p is None:
         p_prior_params = (0.0, 1.0)
     else:
-        p_prior_params = model_config.p_unconstrained_prior
+        p_prior_params = model_config.priors.p
 
-    if model_config.r_unconstrained_prior is None:
+    if model_config.priors.r is None:
         r_prior_params = (0.0, 1.0)
     else:
-        r_prior_params = model_config.r_unconstrained_prior
+        r_prior_params = model_config.priors.r
 
     # Sample unconstrained mixing logits
     mixing_logits_unconstrained = numpyro.sample(
@@ -1200,7 +1202,9 @@ def nbdm_mixture_model(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="nbdm_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="nbdm_mix", parameterization="standard", unconstrained=True
+)
 def nbdm_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -1268,12 +1272,12 @@ def nbdm_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+    mixing_guide_params = model_config.guides.mixing or (
         0.0,
         1.0,
     )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
 
     # Register mixing weights parameters
     mixing_loc = numpyro.param(
@@ -1327,7 +1331,9 @@ def nbdm_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="zinb_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="zinb_mix", parameterization="standard", unconstrained=True
+)
 def zinb_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -1400,25 +1406,25 @@ def zinb_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters - handle None values properly
-    if model_config.mixing_logits_unconstrained_prior is None:
+    if model_config.priors.mixing is None:
         mixing_prior_params = (0.0, 1.0)
     else:
-        mixing_prior_params = model_config.mixing_logits_unconstrained_prior
+        mixing_prior_params = model_config.priors.mixing
 
-    if model_config.p_unconstrained_prior is None:
+    if model_config.priors.p is None:
         p_prior_params = (0.0, 1.0)
     else:
-        p_prior_params = model_config.p_unconstrained_prior
+        p_prior_params = model_config.priors.p
 
-    if model_config.r_unconstrained_prior is None:
+    if model_config.priors.r is None:
         r_prior_params = (0.0, 1.0)
     else:
-        r_prior_params = model_config.r_unconstrained_prior
+        r_prior_params = model_config.priors.r
 
-    if model_config.gate_unconstrained_prior is None:
+    if model_config.priors.gate is None:
         gate_prior_params = (0.0, 1.0)
     else:
-        gate_prior_params = model_config.gate_unconstrained_prior
+        gate_prior_params = model_config.priors.gate
 
     # Sample unconstrained mixing logits
     mixing_logits_unconstrained = numpyro.sample(
@@ -1505,7 +1511,9 @@ def zinb_mixture_model(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="zinb_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="zinb_mix", parameterization="standard", unconstrained=True
+)
 def zinb_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -1578,13 +1586,13 @@ def zinb_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+    mixing_guide_params = model_config.guides.mixing or (
         0.0,
         1.0,
     )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
+    gate_guide_params = model_config.guides.gate or (0.0, 1.0)
 
     # Register mixing weights parameters
     mixing_loc = numpyro.param(
@@ -1652,7 +1660,9 @@ def zinb_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="nbvcp_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="nbvcp_mix", parameterization="standard", unconstrained=True
+)
 def nbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -1732,25 +1742,25 @@ def nbvcp_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters - handle None values properly
-    if model_config.mixing_logits_unconstrained_prior is None:
+    if model_config.priors.mixing is None:
         mixing_prior_params = (0.0, 1.0)
     else:
-        mixing_prior_params = model_config.mixing_logits_unconstrained_prior
+        mixing_prior_params = model_config.priors.mixing
 
-    if model_config.p_unconstrained_prior is None:
+    if model_config.priors.p is None:
         p_prior_params = (0.0, 1.0)
     else:
-        p_prior_params = model_config.p_unconstrained_prior
+        p_prior_params = model_config.priors.p
 
-    if model_config.r_unconstrained_prior is None:
+    if model_config.priors.r is None:
         r_prior_params = (0.0, 1.0)
     else:
-        r_prior_params = model_config.r_unconstrained_prior
+        r_prior_params = model_config.priors.r
 
-    if model_config.p_capture_unconstrained_prior is None:
+    if model_config.priors.p_capture is None:
         p_capture_prior_params = (0.0, 1.0)
     else:
-        p_capture_prior_params = model_config.p_capture_unconstrained_prior
+        p_capture_prior_params = model_config.priors.p_capture
 
     # Sample global unconstrained parameters
     mixing_logits_unconstrained = numpyro.sample(
@@ -1838,7 +1848,9 @@ def nbvcp_mixture_model(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="nbvcp_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="nbvcp_mix", parameterization="standard", unconstrained=True
+)
 def nbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -1911,13 +1923,13 @@ def nbvcp_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+    mixing_guide_params = model_config.guides.mixing or (
         0.0,
         1.0,
     )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
+    p_capture_guide_params = model_config.guides.p_capture or (
         0.0,
         1.0,
     )
@@ -1999,7 +2011,9 @@ def nbvcp_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="zinbvcp_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="zinbvcp_mix", parameterization="standard", unconstrained=True
+)
 def zinbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -2083,30 +2097,30 @@ def zinbvcp_mixture_model(
     n_components = model_config.n_components
 
     # Define prior parameters - handle None values properly
-    if model_config.mixing_logits_unconstrained_prior is None:
+    if model_config.priors.mixing is None:
         mixing_prior_params = (0.0, 1.0)
     else:
-        mixing_prior_params = model_config.mixing_logits_unconstrained_prior
+        mixing_prior_params = model_config.priors.mixing
 
-    if model_config.p_unconstrained_prior is None:
+    if model_config.priors.p is None:
         p_prior_params = (0.0, 1.0)
     else:
-        p_prior_params = model_config.p_unconstrained_prior
+        p_prior_params = model_config.priors.p
 
-    if model_config.r_unconstrained_prior is None:
+    if model_config.priors.r is None:
         r_prior_params = (0.0, 1.0)
     else:
-        r_prior_params = model_config.r_unconstrained_prior
+        r_prior_params = model_config.priors.r
 
-    if model_config.gate_unconstrained_prior is None:
+    if model_config.priors.gate is None:
         gate_prior_params = (0.0, 1.0)
     else:
-        gate_prior_params = model_config.gate_unconstrained_prior
+        gate_prior_params = model_config.priors.gate
 
-    if model_config.p_capture_unconstrained_prior is None:
+    if model_config.priors.p_capture is None:
         p_capture_prior_params = (0.0, 1.0)
     else:
-        p_capture_prior_params = model_config.p_capture_unconstrained_prior
+        p_capture_prior_params = model_config.priors.p_capture
 
     # Sample global unconstrained parameters
     mixing_logits_unconstrained = numpyro.sample(
@@ -2207,7 +2221,9 @@ def zinbvcp_mixture_model(
 # ------------------------------------------------------------------------------
 
 
-@register(model_type="zinbvcp_mix", parameterization="standard", unconstrained=True)
+@register(
+    model_type="zinbvcp_mix", parameterization="standard", unconstrained=True
+)
 def zinbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -2285,14 +2301,14 @@ def zinbvcp_mixture_guide(
     n_components = model_config.n_components
 
     # Define guide parameters
-    mixing_guide_params = model_config.mixing_logits_unconstrained_guide or (
+    mixing_guide_params = model_config.guides.mixing or (
         0.0,
         1.0,
     )
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
-    r_guide_params = model_config.r_unconstrained_guide or (0.0, 1.0)
-    gate_guide_params = model_config.gate_unconstrained_guide or (0.0, 1.0)
-    p_capture_guide_params = model_config.p_capture_unconstrained_guide or (
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
+    r_guide_params = model_config.guides.r or (0.0, 1.0)
+    gate_guide_params = model_config.guides.gate or (0.0, 1.0)
+    p_capture_guide_params = model_config.guides.p_capture or (
         0.0,
         1.0,
     )
