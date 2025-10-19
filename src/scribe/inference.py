@@ -23,6 +23,7 @@ import jax.numpy as jnp
 # Import shared components
 from .core import InputProcessor
 from .models.model_config import ModelConfig
+from .utils import ParameterCollector
 
 # Import inference-specific components
 from .svi import SVIInferenceEngine, SVIResultsFactory
@@ -273,27 +274,21 @@ def run_scribe(
         zero_inflated, variable_capture, mixture_model
     )
 
-    # Step 2: Prior Configuration
-    # Collect user-provided priors
-    user_priors = {}
-    if r_prior is not None:
-        user_priors["r_prior"] = r_prior
-    if p_prior is not None:
-        user_priors["p_prior"] = p_prior
-    if gate_prior is not None:
-        user_priors["gate_prior"] = gate_prior
-    if p_capture_prior is not None:
-        user_priors["p_capture_prior"] = p_capture_prior
-    if mixing_prior is not None:
-        user_priors["mixing_prior"] = mixing_prior
-    if mu_prior is not None:
-        user_priors["mu_prior"] = mu_prior
-    if phi_prior is not None:
-        user_priors["phi_prior"] = phi_prior
-    if phi_capture_prior is not None:
-        user_priors["phi_capture_prior"] = phi_capture_prior
+    # Step 2: Collect and map prior parameters
+    prior_config = ParameterCollector.collect_and_map_priors(
+        unconstrained=unconstrained,
+        parameterization=parameterization,
+        r_prior=r_prior,
+        p_prior=p_prior,
+        gate_prior=gate_prior,
+        p_capture_prior=p_capture_prior,
+        mixing_prior=mixing_prior,
+        mu_prior=mu_prior,
+        phi_prior=phi_prior,
+        phi_capture_prior=phi_capture_prior,
+    )
 
-    # Step 3: Create ModelConfig directly
+    # Step 3: Create ModelConfig
     model_config_kwargs = {
         "base_model": model_type,
         "parameterization": parameterization,
@@ -302,74 +297,26 @@ def run_scribe(
         "n_components": n_components,
         "component_specific_params": component_specific_params,
         "guide_rank": guide_rank,
+        **prior_config,  # Merge in mapped priors
     }
 
     # Add VAE-specific parameters if using VAE inference
     if inference_method == "vae":
-        model_config_kwargs.update(
-            {
-                "vae_latent_dim": vae_latent_dim,
-                "vae_hidden_dims": vae_hidden_dims,
-                "vae_activation": vae_activation,
-                "vae_vcp_hidden_dims": vae_vcp_hidden_dims,
-                "vae_vcp_activation": vae_vcp_activation,
-                "vae_prior_type": vae_prior_type,
-                "vae_prior_hidden_dims": vae_prior_hidden_dims,
-                "vae_prior_num_layers": vae_prior_num_layers,
-                "vae_prior_activation": vae_prior_activation,
-                "vae_prior_mask_type": vae_prior_mask_type,
-                "vae_standardize": vae_standardize,
-            }
+        vae_config = ParameterCollector.collect_vae_params(
+            vae_latent_dim=vae_latent_dim,
+            vae_hidden_dims=vae_hidden_dims,
+            vae_activation=vae_activation,
+            vae_input_transformation=None,  # Not exposed in run_scribe API
+            vae_vcp_hidden_dims=vae_vcp_hidden_dims,
+            vae_vcp_activation=vae_vcp_activation,
+            vae_prior_type=vae_prior_type,
+            vae_prior_num_layers=vae_prior_num_layers,
+            vae_prior_hidden_dims=vae_prior_hidden_dims,
+            vae_prior_activation=vae_prior_activation,
+            vae_prior_mask_type=vae_prior_mask_type,
+            vae_standardize=vae_standardize,
         )
-
-    # Configure priors based on unconstrained flag
-    if unconstrained:
-        # For unconstrained parameterization, use unconstrained prior names
-        model_config_kwargs.update(
-            {
-                "p_unconstrained_prior": user_priors.get("p_prior"),
-                "r_unconstrained_prior": user_priors.get("r_prior"),
-                "gate_unconstrained_prior": user_priors.get("gate_prior"),
-                "p_capture_unconstrained_prior": user_priors.get(
-                    "p_capture_prior"
-                ),
-                "mixing_logits_unconstrained_prior": user_priors.get(
-                    "mixing_prior"
-                ),
-            }
-        )
-
-        # Add parameterization-specific unconstrained priors
-        if parameterization == "linked":
-            model_config_kwargs.update(
-                {
-                    "mu_unconstrained_prior": user_priors.get("mu_prior"),
-                }
-            )
-        elif parameterization == "odds_ratio":
-            model_config_kwargs.update(
-                {
-                    "phi_unconstrained_prior": user_priors.get("phi_prior"),
-                    "mu_unconstrained_prior": user_priors.get("mu_prior"),
-                    "phi_capture_unconstrained_prior": user_priors.get(
-                        "phi_capture_prior"
-                    ),
-                }
-            )
-    else:
-        # For constrained parameterization, use standard prior names
-        model_config_kwargs.update(
-            {
-                "p_param_prior": user_priors.get("p_prior"),
-                "r_param_prior": user_priors.get("r_prior"),
-                "mu_param_prior": user_priors.get("mu_prior"),
-                "phi_param_prior": user_priors.get("phi_prior"),
-                "gate_param_prior": user_priors.get("gate_prior"),
-                "p_capture_param_prior": user_priors.get("p_capture_prior"),
-                "phi_capture_param_prior": user_priors.get("phi_capture_prior"),
-                "mixing_param_prior": user_priors.get("mixing_prior"),
-            }
-        )
+        model_config_kwargs.update(vae_config)
 
     model_config = ModelConfig(**model_config_kwargs)
     model_config.validate()

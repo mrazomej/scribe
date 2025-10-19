@@ -62,9 +62,9 @@ def register(
     """
     Decorator to register model and guide functions in the global registry.
 
-    This decorator allows models and guides to self-register, eliminating the need
-    for complex if-else logic in get_model_and_guide(). Each function declares its
-    own registration metadata through decorator parameters.
+    This decorator allows models and guides to self-register, eliminating the
+    need for complex if-else logic in get_model_and_guide(). Each function
+    declares its own registration metadata through decorator parameters.
 
     Parameters
     ----------
@@ -73,7 +73,8 @@ def register(
             - Single models: "nbdm", "zinb", "nbvcp", "zinbvcp"
             - Mixture models: "nbdm_mix", "zinb_mix", "nbvcp_mix", "zinbvcp_mix"
 
-        Note: Mixture models use "_mix" suffix to distinguish from single models.
+        Note: Mixture models use "_mix" suffix to distinguish from single
+        models.
 
     parameterization : str, default="standard"
         Parameterization scheme for the model. Options:
