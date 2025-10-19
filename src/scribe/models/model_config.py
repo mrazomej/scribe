@@ -25,6 +25,17 @@ class ModelConfig:
     The parameterization determines which parameters are used and how they're
     interpreted by the model and guide functions.
 
+    Creating ModelConfig
+    -------------------
+    The recommended way to create ModelConfig instances is using the factory method:
+
+    >>> config = ModelConfig.from_inference_params(
+    ...     model_type="nbdm",
+    ...     inference_method="svi",
+    ...     prior_config=prior_config,
+    ...     n_components=3
+    ... )
+
     Parameters
     ----------
     base_model : str
@@ -140,6 +151,10 @@ class ModelConfig:
     standardize_mean: Optional[jnp.ndarray] = None
     standardize_std: Optional[jnp.ndarray] = None
 
+    # --------------------------------------------------------------------------
+    # Validate Configuration
+    # --------------------------------------------------------------------------
+
     def validate(self):
         """Validate configuration parameters."""
         self._validate_base_model()
@@ -147,6 +162,10 @@ class ModelConfig:
         self._validate_inference_method()
         self._validate_mixture_components()
         self._set_default_priors()
+
+    # --------------------------------------------------------------------------
+    # Set Default Priors
+    # --------------------------------------------------------------------------
 
     def _set_default_priors(self):
         """Set default priors for parameters that are None."""
@@ -253,6 +272,10 @@ class ModelConfig:
                     self.n_components
                 )  # Symmetric Dirichlet
 
+    # --------------------------------------------------------------------------
+    # Validate Base Model
+    # --------------------------------------------------------------------------
+
     def _validate_base_model(self):
         """Validate base model specification."""
         valid_base_models = {
@@ -272,6 +295,10 @@ class ModelConfig:
                 f"Must be one of {valid_base_models}"
             )
 
+    # --------------------------------------------------------------------------
+    # Validate Parameterization
+    # --------------------------------------------------------------------------
+
     def _validate_parameterization(self):
         """Validate parameterization specification."""
         valid_parameterizations = {
@@ -285,6 +312,10 @@ class ModelConfig:
                 f"Invalid parameterization: {self.parameterization}. "
                 f"Must be one of {valid_parameterizations}"
             )
+
+    # --------------------------------------------------------------------------
+    # Validate Inference Method
+    # --------------------------------------------------------------------------
 
     def _validate_inference_method(self):
         """Validate inference method specification."""
@@ -336,6 +367,10 @@ class ModelConfig:
                 if self.vae_prior_activation is None:
                     self.vae_prior_activation = "relu"
 
+    # --------------------------------------------------------------------------
+    # Validate Mixture Components
+    # --------------------------------------------------------------------------
+
     def _validate_mixture_components(self):
         """Validate mixture model configuration."""
         if self.is_mixture_model():
@@ -351,7 +386,10 @@ class ModelConfig:
                     "Non-mixture models should not specify n_components"
                 )
 
-    # Utility methods
+    # --------------------------------------------------------------------------
+    # Utility Methods
+    # --------------------------------------------------------------------------
+
     def is_mixture_model(self) -> bool:
         """Check if this is a mixture model configuration."""
         return self.n_components is not None and self.n_components > 1
@@ -371,6 +409,10 @@ class ModelConfig:
             "linked",
             "odds_ratio",
         ]
+
+    # --------------------------------------------------------------------------
+    # Get Active Parameters
+    # --------------------------------------------------------------------------
 
     def get_active_parameters(self) -> List[str]:
         """
@@ -418,6 +460,10 @@ class ModelConfig:
 
         return params
 
+    # --------------------------------------------------------------------------
+    # Get Active Priors
+    # --------------------------------------------------------------------------
+
     def get_active_priors(self) -> Dict[str, Any]:
         """Get dictionary of active prior parameters."""
         active_priors = {}
@@ -440,6 +486,10 @@ class ModelConfig:
                 active_priors[param] = getattr(self, prior_name)
 
         return active_priors
+
+    # --------------------------------------------------------------------------
+    # Get Parameter Info
+    # --------------------------------------------------------------------------
 
     def get_parameter_info(self, param_name: str) -> Dict[str, Any]:
         """Get information about a specific parameter."""
@@ -465,6 +515,10 @@ class ModelConfig:
                 )
 
         return info
+
+    # --------------------------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------------------------
 
     def summary(self) -> str:
         """Generate a summary string of the configuration."""
@@ -506,6 +560,10 @@ class ModelConfig:
 
         return "\n".join(lines)
 
+    # --------------------------------------------------------------------------
+    # Get VAE Prior Configuration
+    # --------------------------------------------------------------------------
+
     def get_vae_prior_config(self) -> Dict[str, Any]:
         """
         Get VAE prior configuration information.
@@ -531,6 +589,10 @@ class ModelConfig:
 
         return config
 
+    # --------------------------------------------------------------------------
+    # Check if Decoupled Prior
+    # --------------------------------------------------------------------------
+
     def is_decoupled_prior(self) -> bool:
         """
         Check if this configuration uses a decoupled prior.
@@ -541,3 +603,94 @@ class ModelConfig:
             True if using decoupled prior, False otherwise
         """
         return self.vae_prior_type == "decoupled"
+
+    @classmethod
+    def from_inference_params(
+        cls,
+        model_type: str,
+        inference_method: str,
+        parameterization: str = "standard",
+        unconstrained: bool = False,
+        prior_config: Optional[Dict[str, Any]] = None,
+        vae_config: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> "ModelConfig":
+        """
+        Factory method to create ModelConfig from inference parameters.
+
+        This method handles the conditional logic for VAE parameters and
+        merges prior configurations appropriately. It automatically validates
+        the created configuration.
+
+        Parameters
+        ----------
+        model_type : str
+            Base model type (e.g., "nbdm", "zinb", "nbvcp", "zinbvcp")
+        inference_method : str
+            Inference method ("svi", "mcmc", "vae")
+        parameterization : str, default="standard"
+            Parameterization type ("standard", "linked", "odds_ratio")
+        unconstrained : bool, default=False
+            Whether to use unconstrained parameterization
+        prior_config : Optional[Dict[str, Any]], default=None
+            Pre-mapped prior parameters from ParameterCollector.collect_and_map_priors()
+        vae_config : Optional[Dict[str, Any]], default=None
+            VAE-specific parameters from ParameterCollector.collect_vae_params()
+            Only applied when inference_method="vae"
+        **kwargs
+            Additional ModelConfig parameters (n_components, guide_rank,
+            component_specific_params, etc.)
+
+        Returns
+        -------
+        ModelConfig
+            Configured and validated ModelConfig instance
+
+        Examples
+        --------
+        >>> # SVI inference with priors
+        >>> config = ModelConfig.from_inference_params(
+        ...     model_type="nbdm",
+        ...     inference_method="svi",
+        ...     prior_config=prior_config,
+        ...     n_components=3,
+        ...     guide_rank=10
+        ... )
+
+        >>> # VAE inference with VAE config
+        >>> config = ModelConfig.from_inference_params(
+        ...     model_type="zinb",
+        ...     inference_method="vae",
+        ...     vae_config=vae_config,
+        ...     prior_config=prior_config
+        ... )
+
+        >>> # MCMC inference, unconstrained
+        >>> config = ModelConfig.from_inference_params(
+        ...     model_type="nbdm",
+        ...     inference_method="mcmc",
+        ...     unconstrained=True,
+        ...     prior_config=prior_config
+        ... )
+        """
+        # Build base configuration dictionary
+        config_dict = {
+            "base_model": model_type,
+            "parameterization": parameterization,
+            "unconstrained": unconstrained,
+            "inference_method": inference_method,
+            **kwargs,  # Additional params like n_components, guide_rank, etc.
+        }
+
+        # Merge prior configuration if provided
+        if prior_config:
+            config_dict.update(prior_config)
+
+        # Merge VAE configuration only if inference_method is "vae"
+        if vae_config and inference_method == "vae":
+            config_dict.update(vae_config)
+
+        # Create instance and validate
+        instance = cls(**config_dict)
+        instance.validate()
+        return instance

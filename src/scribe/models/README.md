@@ -168,6 +168,59 @@ vae_factory, _ = get_model_and_guide(
 
 ### Model Configuration
 
+#### Using the Factory Method (Recommended)
+
+The `from_inference_params()` factory method is the recommended way to create
+ModelConfig instances:
+
+```python
+from scribe.models import ModelConfig
+from scribe.utils import ParameterCollector
+
+# Collect parameters
+prior_config = ParameterCollector.collect_and_map_priors(
+    unconstrained=False,
+    parameterization="standard",
+    r_prior=(1.0, 1.0),
+    p_prior=(2.0, 0.5)
+)
+
+vae_config = ParameterCollector.collect_vae_params(
+    vae_latent_dim=5,
+    vae_hidden_dims=[256, 128],
+    vae_activation="gelu"
+)
+
+# Create config using factory method
+config = ModelConfig.from_inference_params(
+    model_type="nbdm",
+    inference_method="svi",
+    prior_config=prior_config,
+    n_components=3,
+    guide_rank=10
+)
+
+# VAE inference with VAE config
+vae_config_obj = ModelConfig.from_inference_params(
+    model_type="zinb",
+    inference_method="vae",
+    vae_config=vae_config,
+    prior_config=prior_config
+)
+
+# MCMC inference, unconstrained
+mcmc_config = ModelConfig.from_inference_params(
+    model_type="nbdm",
+    inference_method="mcmc",
+    unconstrained=True,
+    prior_config=prior_config
+)
+```
+
+#### Direct Instantiation
+
+You can also create ModelConfig directly (for advanced use cases):
+
 ```python
 from scribe.models import ModelConfig
 
@@ -179,6 +232,7 @@ config = ModelConfig(
     n_components=3,
     inference_method="svi"
 )
+config.validate()  # Don't forget to validate!
 ```
 
 ### Log-Likelihood Functions
