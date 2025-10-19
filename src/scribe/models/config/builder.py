@@ -271,9 +271,9 @@ class ModelConfigBuilder:
                 "base_model is required. Use .for_model() to set it."
             )
 
-        # Append _mix if mixture model
+        # Append _mix if mixture model (but not if already ends with _mix)
         base_model = self._base_model
-        if self._n_components is not None:
+        if self._n_components is not None and not self._base_model.endswith("_mix"):
             base_model = f"{self._base_model}_mix"
 
         # Create VAE config if VAE inference
