@@ -11,7 +11,7 @@ from jax import random
 import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
 from ..models.model_registry import get_model_and_guide
-from ..models.config import ModelConfig
+from ..models.config import ModelConfig, UnconstrainedModelConfig
 
 
 class SVIInferenceEngine:
@@ -71,7 +71,7 @@ class SVIInferenceEngine:
                 parameterization=model_config.parameterization,
                 inference_method="vae",
                 prior_type=model_config.vae_prior_type,
-                unconstrained=model_config.unconstrained,
+                unconstrained=isinstance(model_config, UnconstrainedModelConfig),
             )
 
             # For VAE models, the registry returns factory functions that need
@@ -84,7 +84,7 @@ class SVIInferenceEngine:
             model, guide = get_model_and_guide(
                 model_config.base_model,
                 parameterization=model_config.parameterization,
-                unconstrained=model_config.unconstrained,
+                unconstrained=isinstance(model_config, UnconstrainedModelConfig),
                 guide_rank=model_config.guide_rank,
             )
 
