@@ -1,4 +1,5 @@
 # tests/test_nbdm_mix.py
+from scribe.models.config import UnconstrainedModelConfig
 """
 Tests for the Negative Binomial-Dirichlet Multinomial Mixture Model.
 """
@@ -123,9 +124,9 @@ def nbdm_mix_results(
     if parameterization == "standard":
         priors = {"r_prior": (2, 0.1), "p_prior": (1, 1)}
     elif parameterization == "linked":
-        priors = {"p_prior": (1, 1), "mu_prior": (0, 1)}
+        priors = {"p_prior": (1, 1), "mu_prior": (1, 1)}
     elif parameterization == "odds_ratio":
-        priors = {"phi_prior": (3, 2), "mu_prior": (0, 1)}
+        priors = {"phi_prior": (3, 2), "mu_prior": (1, 1)}
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
@@ -199,8 +200,8 @@ def test_parameterization_config(
     assert nbdm_mix_results.model_config.parameterization == parameterization
     # Check that the unconstrained flag is properly set in the model config
     # Note: This may need to be adjusted based on how the model config stores this information
-    if hasattr(nbdm_mix_results.model_config, "unconstrained"):
-        assert nbdm_mix_results.model_config.unconstrained == unconstrained
+    if True:  # Always check unconstrained by type
+        assert isinstance(nbdm_mix_results.model_config, UnconstrainedModelConfig) == unconstrained
     # Check that the guide_rank is properly set in the model config
     if hasattr(nbdm_mix_results.model_config, "guide_rank"):
         assert nbdm_mix_results.model_config.guide_rank == guide_rank

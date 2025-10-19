@@ -1,4 +1,6 @@
 # tests/test_nbvcp.py
+from scribe.models.config import UnconstrainedModelConfig
+
 """
 Tests for the Negative Binomial with Variable Capture Probability model.
 """
@@ -104,10 +106,10 @@ def nbvcp_results(
 ):
     # Get device type from command-line option for cache key
     device_type = request.config.getoption("--device")
-    
+
     key = (
         inference_method,
-            parameterization,
+        parameterization,
         unconstrained,
         guide_rank,
     )
@@ -133,13 +135,13 @@ def nbvcp_results(
     elif parameterization == "linked":
         priors = {
             "p_prior": (1, 1),
-            "mu_prior": (0, 1),
+            "mu_prior": (1, 1),
             "p_capture_prior": (1, 1),
         }
     elif parameterization == "odds_ratio":
         priors = {
             "phi_prior": (3, 2),
-            "mu_prior": (0, 1),
+            "mu_prior": (1, 1),
             "phi_capture_prior": (3, 2),
         }
     else:
@@ -213,8 +215,11 @@ def test_parameterization_config(
     # Check that the unconstrained flag is properly set in the model config
     # Note: This may need to be adjusted based on how the model config stores
     # this information
-    if hasattr(nbvcp_results.model_config, "unconstrained"):
-        assert nbvcp_results.model_config.unconstrained == unconstrained
+    if True:  # Always check unconstrained by type
+        assert (
+            isinstance(nbvcp_results.model_config, UnconstrainedModelConfig)
+            == unconstrained
+        )
     # Check that the guide_rank is properly set in the model config
     if hasattr(nbvcp_results.model_config, "guide_rank"):
         assert nbvcp_results.model_config.guide_rank == guide_rank

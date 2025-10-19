@@ -1,4 +1,6 @@
 # tests/test_zinbvcp.py
+from scribe.models.config import UnconstrainedModelConfig
+
 """
 Tests for the Zero-Inflated Negative Binomial with Variable Capture Probability model.
 """
@@ -103,10 +105,10 @@ def zinbvcp_results(
 ):
     # Get device type from command-line option for cache key
     device_type = request.config.getoption("--device")
-    
+
     key = (
         inference_method,
-            parameterization,
+        parameterization,
         unconstrained,
         guide_rank,
     )
@@ -133,14 +135,14 @@ def zinbvcp_results(
     elif parameterization == "linked":
         priors = {
             "p_prior": (1, 1),
-            "mu_prior": (0, 1),
+            "mu_prior": (1, 1),
             "gate_prior": (1, 1),
             "p_capture_prior": (1, 1),
         }
     elif parameterization == "odds_ratio":
         priors = {
             "phi_prior": (3, 2),
-            "mu_prior": (0, 1),
+            "mu_prior": (1, 1),
             "gate_prior": (1, 1),
             "phi_capture_prior": (3, 2),
         }
@@ -216,8 +218,11 @@ def test_parameterization_config(
     assert zinbvcp_results.model_config.parameterization == parameterization
     # Check that the unconstrained flag is properly set in the model config
     # Note: This may need to be adjusted based on how the model config stores this information
-    if hasattr(zinbvcp_results.model_config, "unconstrained"):
-        assert zinbvcp_results.model_config.unconstrained == unconstrained
+    if True:  # Always check unconstrained by type
+        assert (
+            isinstance(zinbvcp_results.model_config, UnconstrainedModelConfig)
+            == unconstrained
+        )
     # Check that the guide_rank is properly set in the model config
     if hasattr(zinbvcp_results.model_config, "guide_rank"):
         assert zinbvcp_results.model_config.guide_rank == guide_rank

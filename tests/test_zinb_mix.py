@@ -1,4 +1,5 @@
 # tests/test_zinb_mix.py
+from scribe.models.config import UnconstrainedModelConfig
 """
 Tests for the Zero-Inflated Negative Binomial Mixture Model.
 """
@@ -110,9 +111,9 @@ def zinb_mix_results(
     if parameterization == "standard":
         priors = {"r_prior": (2, 0.1), "p_prior": (1, 1), "gate_prior": (1, 1)}
     elif parameterization == "linked":
-        priors = {"p_prior": (1, 1), "mu_prior": (0, 1), "gate_prior": (1, 1)}
+        priors = {"p_prior": (1, 1), "mu_prior": (1, 1), "gate_prior": (1, 1)}
     elif parameterization == "odds_ratio":
-        priors = {"phi_prior": (3, 2), "mu_prior": (0, 1), "gate_prior": (1, 1)}
+        priors = {"phi_prior": (3, 2), "mu_prior": (1, 1), "gate_prior": (1, 1)}
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
@@ -192,8 +193,8 @@ def test_parameterization_config(
     assert zinb_mix_results.model_config.parameterization == parameterization
     # Check that the unconstrained flag is properly set in the model config
     # Note: This may need to be adjusted based on how the model config stores this information
-    if hasattr(zinb_mix_results.model_config, "unconstrained"):
-        assert zinb_mix_results.model_config.unconstrained == unconstrained
+    if True:  # Always check unconstrained by type
+        assert zinb_mix_results.isinstance(zinb_results.model_config, UnconstrainedModelConfig) == unconstrained
 
 
 # ------------------------------------------------------------------------------
@@ -1509,7 +1510,7 @@ def test_low_rank_guide_params(
         # or r (standard)
         if parameterization == "standard":
             # Standard parameterization uses r
-            if zinb_mix_results.model_config.unconstrained:
+            if zinb_mix_results.isinstance(zinb_results.model_config, UnconstrainedModelConfig):
                 # Unconstrained: look for r_unconstrained low-rank parameters
                 assert (
                     "r_unconstrained_loc" in params
@@ -1533,7 +1534,7 @@ def test_low_rank_guide_params(
                 ), "Low-rank guide should have log_r_raw_diag (cov_diag)"
         elif parameterization in ["linked", "odds_ratio"]:
             # Linked and odds_ratio use mu
-            if zinb_mix_results.model_config.unconstrained:
+            if zinb_mix_results.isinstance(zinb_results.model_config, UnconstrainedModelConfig):
                 # Unconstrained: look for mu_unconstrained low-rank parameters
                 assert (
                     "mu_unconstrained_loc" in params
@@ -1570,12 +1571,12 @@ def test_low_rank_covariance_structure(
 
         # Check the shape of W (cov_factor) to verify rank
         if parameterization == "standard":
-            if zinb_mix_results.model_config.unconstrained:
+            if zinb_mix_results.isinstance(zinb_results.model_config, UnconstrainedModelConfig):
                 W = params.get("r_unconstrained_W")
             else:
                 W = params.get("log_r_W")
         elif parameterization in ["linked", "odds_ratio"]:
-            if zinb_mix_results.model_config.unconstrained:
+            if zinb_mix_results.isinstance(zinb_results.model_config, UnconstrainedModelConfig):
                 W = params.get("mu_unconstrained_W")
             else:
                 W = params.get("log_mu_W")
