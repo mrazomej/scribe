@@ -116,7 +116,7 @@ def nbdm_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
 
     # Sample unconstrained parameters
     p_unconstrained = numpyro.sample(
@@ -275,7 +275,7 @@ def nbdm_vae_guide(
         inference machinery.
     """
     # Define guide parameters for unconstrained variables
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -408,8 +408,8 @@ def nbvcp_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (
         0.0,
         1.0,
     )
@@ -628,7 +628,7 @@ def nbvcp_vae_guide(
         inference machinery.
     """
     # Define guide parameters for unconstrained variables
-    p_guide_params = model_config.p_unconstrained_guide or (0.0, 1.0)
+    p_guide_params = model_config.guides.p or (0.0, 1.0)
 
     # Register unconstrained p parameters
     p_loc = numpyro.param("p_unconstrained_loc", p_guide_params[0])
@@ -697,7 +697,7 @@ def nbvcp_vae_guide(
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
             p_capture_prior_params = (
-                model_config.p_capture_unconstrained_prior
+                model_config.priors.p_capture
                 or (
                     0.0,
                     1.0,
@@ -807,7 +807,7 @@ def nbdm_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
 
     # Sample unconstrained parameters
     p_unconstrained = numpyro.sample(
@@ -993,8 +993,8 @@ def nbvcp_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    p_prior_params = model_config.p_unconstrained_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_unconstrained_prior or (
+    p_prior_params = model_config.priors.p or (0.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (
         0.0,
         1.0,
     )

@@ -42,8 +42,8 @@ def nbdm_model(
     Numpyro model for Negative Binomial-Dirichlet Multinomial data.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
 
     # Sample parameters
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
@@ -89,8 +89,8 @@ def nbdm_guide(
     Mean-field variational guide for the NBDM model.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
 
     # Register p_alpha as a variational parameter with positivity constraint
     p_alpha = numpyro.param(
@@ -134,9 +134,9 @@ def zinb_model(
     """
     # Get prior parameters for p (success probability), r (dispersion), and gate
     # (zero-inflation) from model_config, or use defaults if not provided
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
+    gate_prior_params = model_config.priors.gate or (1.0, 1.0)
 
     # Sample p from a Beta distribution with the specified prior parameters
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
@@ -196,11 +196,11 @@ def zinb_guide(
     """
     # Define guide parameters for p, r, and gate
     # Get initial values for p's Beta distribution parameters (alpha, beta)
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
     # Get initial values for mu's LogNormal distribution parameters (loc, scale)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
     # Get initial values for gate's Beta distribution parameters (alpha, beta)
-    gate_prior_params = model_config.gate_param_guide or (1.0, 1.0)
+    gate_prior_params = model_config.guides.gate or (1.0, 1.0)
 
     # Register variational parameters for p (success probability)
     p_alpha = numpyro.param(
@@ -255,9 +255,9 @@ def nbvcp_model(
     Numpyro model for Negative Binomial with variable mRNA capture probability.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (1.0, 1.0)
 
     # Sample global success probability p from Beta prior
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
@@ -348,12 +348,12 @@ def nbvcp_guide(
     """
     # Define guide parameters for p, r, and p_capture
     # Get initial values for p's Beta distribution parameters (alpha, beta)
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
     # Get initial values for mu's LogNormal distribution parameters (loc, scale)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
     # Get initial values for p_capture's Beta distribution parameters (alpha,
     # beta)
-    p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
+    p_capture_prior_params = model_config.guides.p_capture or (1.0, 1.0)
 
     # Register variational parameters for p (success probability)
     p_alpha = numpyro.param(
@@ -416,10 +416,10 @@ def zinbvcp_model(
     Numpyro model for ZINB with variable mRNA capture probability.
     """
     # Get prior parameters from model_config, or use defaults if not provided
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_param_prior or (1.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
+    gate_prior_params = model_config.priors.gate or (1.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (1.0, 1.0)
 
     # Sample global success probability p (Beta prior)
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
@@ -518,14 +518,14 @@ def zinbvcp_guide(
     """
     # Define guide parameters for p, r, and gate
     # Get initial values for p's Beta distribution parameters (alpha, beta)
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
     # Get initial values for mu's LogNormal distribution parameters (loc, scale)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
     # Get initial values for gate's Beta distribution parameters (alpha, beta)
-    gate_prior_params = model_config.gate_param_guide or (1.0, 1.0)
+    gate_prior_params = model_config.guides.gate or (1.0, 1.0)
     # Get initial values for p_capture's Beta distribution parameters (alpha,
     # beta)
-    p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
+    p_capture_prior_params = model_config.guides.p_capture or (1.0, 1.0)
 
     # Register variational parameters for p (success probability)
     p_alpha = numpyro.param(
@@ -604,13 +604,21 @@ def nbdm_mixture_model(
     n_components = model_config.n_components
 
     # Get prior parameters for the mixture weights
-    if model_config.mixing_param_prior is None:
-        mixing_prior_params = jnp.ones(n_components)
+    if (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
+    elif (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_prior)
+        mixing_prior_params = jnp.ones(n_components)
 
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
 
     # Sample the mixture weights from a Dirichlet prior
     mixing_probs = numpyro.sample(
@@ -684,10 +692,10 @@ def nbdm_mixture_guide(
     n_components = model_config.n_components
 
     # Get prior parameters for the mixture weights, p, and r
-    if model_config.mixing_param_guide is None:
+    if model_config.guides.mixing is None:
         mixing_prior_params = jnp.ones(n_components)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_guide)
+        mixing_prior_params = jnp.array(model_config.guides.mixing)
 
     # Register variational parameters for the mixture weights
     mixing_conc = numpyro.param(
@@ -698,8 +706,8 @@ def nbdm_mixture_guide(
     numpyro.sample("mixing_weights", dist.Dirichlet(mixing_conc))
 
     # Get prior parameters for p and r
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
 
     # Define parameters for r
     mu_loc = numpyro.param(
@@ -765,14 +773,22 @@ def zinb_mixture_model(
     # Get the number of mixture components from the model configuration
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
-    if model_config.mixing_param_prior is None:
-        mixing_prior_params = jnp.ones(n_components)
+    if (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
+    elif (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_prior)
+        mixing_prior_params = jnp.ones(n_components)
     # Get prior parameters for p, r, and gate
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
+    gate_prior_params = model_config.priors.gate or (1.0, 1.0)
 
     # Sample the mixture weights from a Dirichlet prior
     mixing_probs = numpyro.sample(
@@ -843,10 +859,10 @@ def zinb_mixture_guide(
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
-    if model_config.mixing_param_guide is None:
+    if model_config.guides.mixing is None:
         mixing_prior_params = jnp.ones(n_components)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_guide)
+        mixing_prior_params = jnp.array(model_config.guides.mixing)
     mixing_conc = numpyro.param(
         "mixing_concentrations",
         mixing_prior_params,
@@ -855,9 +871,9 @@ def zinb_mixture_guide(
     numpyro.sample("mixing_weights", dist.Dirichlet(mixing_conc))
 
     # Get prior parameters for p, r, and gate
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
-    gate_prior_params = model_config.gate_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
+    gate_prior_params = model_config.guides.gate or (1.0, 1.0)
 
     # Define parameters for mu
     mu_loc = numpyro.param(
@@ -938,14 +954,22 @@ def nbvcp_mixture_model(
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
-    if model_config.mixing_param_prior is None:
-        mixing_prior_params = jnp.ones(n_components)
+    if (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
+    elif (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_prior)
+        mixing_prior_params = jnp.ones(n_components)
     # Get prior parameters for p, r, and p_capture
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (1.0, 1.0)
 
     # Sample the mixture weights from a Dirichlet prior
     mixing_probs = numpyro.sample(
@@ -1019,10 +1043,10 @@ def nbvcp_mixture_guide(
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
-    if model_config.mixing_param_guide is None:
+    if model_config.guides.mixing is None:
         mixing_prior_params = jnp.ones(n_components)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_guide)
+        mixing_prior_params = jnp.array(model_config.guides.mixing)
     # Register variational parameters for the mixture weights
     mixing_conc = numpyro.param(
         "mixing_concentrations",
@@ -1033,9 +1057,9 @@ def nbvcp_mixture_guide(
     numpyro.sample("mixing_weights", dist.Dirichlet(mixing_conc))
 
     # Get prior parameters for p, r, and p_capture
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
+    p_capture_prior_params = model_config.guides.p_capture or (1.0, 1.0)
 
     # Define parameters for mu
     mu_loc = numpyro.param(
@@ -1122,15 +1146,23 @@ def zinbvcp_mixture_model(
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
-    if model_config.mixing_param_prior is None:
-        mixing_prior_params = jnp.ones(n_components)
+    if (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
+    elif (
+        hasattr(model_config.priors, "mixing")
+        and model_config.priors.mixing is not None
+    ):
+        mixing_prior_params = jnp.array(model_config.priors.mixing)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_prior)
+        mixing_prior_params = jnp.ones(n_components)
     # Get prior parameters for p, r, gate, and p_capture
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_prior or (0.0, 1.0)
-    gate_prior_params = model_config.gate_param_prior or (1.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    mu_prior_params = model_config.priors.mu or (0.0, 1.0)
+    gate_prior_params = model_config.priors.gate or (1.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (1.0, 1.0)
 
     # Sample the mixture weights from a Dirichlet prior
     mixing_probs = numpyro.sample(
@@ -1206,10 +1238,10 @@ def zinbvcp_mixture_guide(
     """
     n_components = model_config.n_components
     # Get prior parameters for the mixture weights
-    if model_config.mixing_param_guide is None:
+    if model_config.guides.mixing is None:
         mixing_prior_params = jnp.ones(n_components)
     else:
-        mixing_prior_params = jnp.array(model_config.mixing_param_guide)
+        mixing_prior_params = jnp.array(model_config.guides.mixing)
     # Get prior parameters for p, r, gate, and p_capture
     mixing_conc = numpyro.param(
         "mixing_concentrations",
@@ -1218,10 +1250,10 @@ def zinbvcp_mixture_guide(
     )
     numpyro.sample("mixing_weights", dist.Dirichlet(mixing_conc))
 
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
-    mu_prior_params = model_config.mu_param_guide or (0.0, 1.0)
-    gate_prior_params = model_config.gate_param_guide or (1.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
+    mu_prior_params = model_config.guides.mu or (0.0, 1.0)
+    gate_prior_params = model_config.guides.gate or (1.0, 1.0)
+    p_capture_prior_params = model_config.guides.p_capture or (1.0, 1.0)
 
     # Define parameters for mu
     mu_loc = numpyro.param(

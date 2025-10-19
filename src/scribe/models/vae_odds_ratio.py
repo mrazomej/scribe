@@ -139,7 +139,7 @@ def nbdm_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    phi_prior_params = model_config.phi_param_prior or (1.0, 1.0)
+    phi_prior_params = model_config.priors.phi or (1.0, 1.0)
 
     # Sample global odds ratio phi from BetaPrime prior
     phi = numpyro.sample("phi", BetaPrime(*phi_prior_params))
@@ -300,7 +300,7 @@ def nbdm_vae_guide(
         inference machinery.
     """
     # Define guide parameters for phi and mu
-    phi_prior_params = model_config.phi_param_guide or (1.0, 1.0)
+    phi_prior_params = model_config.guides.phi or (1.0, 1.0)
 
     # Register phi_alpha as a variational parameter with positivity constraint
     phi_alpha = numpyro.param(
@@ -444,8 +444,8 @@ def nbvcp_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    phi_prior_params = model_config.phi_param_prior or (1.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_param_prior or (
+    phi_prior_params = model_config.priors.phi or (1.0, 1.0)
+    phi_capture_prior_params = model_config.priors.phi_capture or (
         1.0,
         1.0,
     )
@@ -641,8 +641,8 @@ def nbvcp_vae_guide(
         inference machinery.
     """
     # Define guide parameters for phi
-    phi_prior_params = model_config.phi_param_guide or (1.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_param_guide or (
+    phi_prior_params = model_config.guides.phi or (1.0, 1.0)
+    phi_capture_prior_params = model_config.guides.phi_capture or (
         1.0,
         1.0,
     )
@@ -824,7 +824,7 @@ def nbdm_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    phi_prior_params = model_config.phi_param_prior or (1.0, 1.0)
+    phi_prior_params = model_config.priors.phi or (1.0, 1.0)
 
     # Sample global odds ratio phi from BetaPrime prior
     phi = numpyro.sample("phi", BetaPrime(*phi_prior_params))
@@ -1006,8 +1006,8 @@ def nbvcp_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    phi_prior_params = model_config.phi_param_prior or (1.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_param_prior or (
+    phi_prior_params = model_config.priors.phi or (1.0, 1.0)
+    phi_capture_prior_params = model_config.priors.phi_capture or (
         1.0,
         1.0,
     )

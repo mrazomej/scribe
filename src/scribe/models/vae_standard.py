@@ -122,7 +122,7 @@ def nbdm_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
 
     # Sample global success probability p from Beta prior
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
@@ -266,7 +266,7 @@ def nbdm_vae_guide(
         inference machinery.
     """
     # Define guide parameters for p
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
 
     # Register p_alpha as a variational parameter with positivity constraint
     p_alpha = numpyro.param(
@@ -398,8 +398,8 @@ def nbvcp_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (1.0, 1.0)
 
     # Sample global success probability p from Beta prior
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
@@ -581,8 +581,8 @@ def nbvcp_vae_guide(
         inference machinery.
     """
     # Define guide parameters for p
-    p_prior_params = model_config.p_param_guide or (1.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_guide or (1.0, 1.0)
+    p_prior_params = model_config.guides.p or (1.0, 1.0)
+    p_capture_prior_params = model_config.guides.p_capture or (1.0, 1.0)
 
     # Register p_alpha as a variational parameter with positivity constraint
     p_alpha = numpyro.param(
@@ -740,7 +740,7 @@ def nbdm_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
 
     # Sample global parameters
     p = numpyro.sample("p", dist.Beta(*p_prior_params))
@@ -897,8 +897,8 @@ def nbvcp_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters
-    p_prior_params = model_config.p_param_prior or (1.0, 1.0)
-    p_capture_prior_params = model_config.p_capture_param_prior or (1.0, 1.0)
+    p_prior_params = model_config.priors.p or (1.0, 1.0)
+    p_capture_prior_params = model_config.priors.p_capture or (1.0, 1.0)
 
     # Sample global success probability p from Beta prior
     p = numpyro.sample("p", dist.Beta(*p_prior_params))

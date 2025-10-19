@@ -133,7 +133,7 @@ def nbdm_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    phi_prior_params = model_config.priors.phi or (0.0, 1.0)
 
     # Sample unconstrained parameters
     phi_unconstrained = numpyro.sample(
@@ -306,7 +306,7 @@ def nbdm_vae_guide(
         inference machinery.
     """
     # Define guide parameters for unconstrained variables
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    phi_guide_params = model_config.guides.phi or (0.0, 1.0)
 
     # Register unconstrained phi parameters
     phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
@@ -445,8 +445,8 @@ def nbvcp_vae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+    phi_prior_params = model_config.priors.phi or (0.0, 1.0)
+    phi_capture_prior_params = model_config.priors.phi_capture or (
         0.0,
         1.0,
     )
@@ -671,7 +671,7 @@ def nbvcp_vae_guide(
         inference machinery.
     """
     # Define guide parameters for unconstrained variables
-    phi_guide_params = model_config.phi_unconstrained_guide or (0.0, 1.0)
+    phi_guide_params = model_config.guides.phi or (0.0, 1.0)
 
     # Register unconstrained phi parameters
     phi_loc = numpyro.param("phi_unconstrained_loc", phi_guide_params[0])
@@ -742,7 +742,7 @@ def nbvcp_vae_guide(
         # Without counts: for prior predictive sampling
         with numpyro.plate("cells", n_cells):
             phi_capture_prior_params = (
-                model_config.phi_capture_unconstrained_prior
+                model_config.priors.phi_capture
                 or (
                     0.0,
                     1.0,
@@ -861,7 +861,7 @@ def nbdm_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
+    phi_prior_params = model_config.priors.phi or (0.0, 1.0)
 
     # Sample unconstrained parameters
     phi_unconstrained = numpyro.sample(
@@ -1059,8 +1059,8 @@ def nbvcp_dpvae_model(
         This function defines the probabilistic model for use with NumPyro.
     """
     # Define prior parameters for unconstrained variables
-    phi_prior_params = model_config.phi_unconstrained_prior or (0.0, 1.0)
-    phi_capture_prior_params = model_config.phi_capture_unconstrained_prior or (
+    phi_prior_params = model_config.priors.phi or (0.0, 1.0)
+    phi_capture_prior_params = model_config.priors.phi_capture or (
         0.0,
         1.0,
     )
