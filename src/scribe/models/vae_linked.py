@@ -33,6 +33,9 @@ from numpyro.contrib.module import nnx_module
 from typing import Dict
 
 from .model_config import ModelConfig
+
+# Import decorator for model registration
+from .model_registry import register
 from ..vae.architectures import (
     Encoder,
     EncoderVCP,
@@ -48,6 +51,7 @@ from ..vae.architectures import (
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="linked", inference_methods=["vae"], prior_type="standard")
 def nbdm_vae_model(
     n_cells: int,
     n_genes: int,
@@ -206,6 +210,7 @@ def nbdm_vae_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="linked", inference_methods=["vae"], prior_type="standard")
 def nbdm_vae_guide(
     n_cells: int,
     n_genes: int,
@@ -334,6 +339,7 @@ def nbdm_vae_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="linked", inference_methods=["vae"], prior_type="standard")
 def nbvcp_vae_model(
     n_cells: int,
     n_genes: int,
@@ -534,6 +540,7 @@ def nbvcp_vae_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="linked", inference_methods=["vae"], prior_type="standard")
 def nbvcp_vae_guide(
     n_cells: int,
     n_genes: int,
@@ -701,6 +708,7 @@ def nbvcp_vae_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="linked", inference_methods=["vae"], prior_type="decoupled")
 def nbdm_dpvae_model(
     n_cells: int,
     n_genes: int,
@@ -874,6 +882,7 @@ def nbdm_dpvae_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="linked", inference_methods=["vae"], prior_type="decoupled")
 def nbvcp_dpvae_model(
     n_cells: int,
     n_genes: int,

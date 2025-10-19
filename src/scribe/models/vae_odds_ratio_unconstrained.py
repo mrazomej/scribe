@@ -39,6 +39,9 @@ from numpyro.contrib.module import nnx_module
 from typing import Dict, Optional
 
 from .model_config import ModelConfig
+
+# Import decorator for model registration
+from .model_registry import register
 from ..vae.architectures import (
     Encoder,
     EncoderVCP,
@@ -54,6 +57,7 @@ from ..stats import BetaPrime
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="odds_ratio", inference_methods=["vae"], prior_type="standard", unconstrained=True)
 def nbdm_vae_model(
     n_cells: int,
     n_genes: int,
@@ -228,6 +232,7 @@ def nbdm_vae_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="odds_ratio", inference_methods=["vae"], prior_type="standard", unconstrained=True)
 def nbdm_vae_guide(
     n_cells: int,
     n_genes: int,
@@ -355,6 +360,7 @@ def nbdm_vae_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="odds_ratio", inference_methods=["vae"], prior_type="standard", unconstrained=True)
 def nbvcp_vae_model(
     n_cells: int,
     n_genes: int,
@@ -580,6 +586,7 @@ def nbvcp_vae_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="odds_ratio", inference_methods=["vae"], prior_type="standard", unconstrained=True)
 def nbvcp_vae_guide(
     n_cells: int,
     n_genes: int,
@@ -765,6 +772,7 @@ def nbvcp_vae_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="odds_ratio", inference_methods=["vae"], prior_type="decoupled", unconstrained=True)
 def nbdm_dpvae_model(
     n_cells: int,
     n_genes: int,
@@ -953,6 +961,7 @@ def nbdm_dpvae_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="odds_ratio", inference_methods=["vae"], prior_type="decoupled", unconstrained=True)
 def nbvcp_dpvae_model(
     n_cells: int,
     n_genes: int,

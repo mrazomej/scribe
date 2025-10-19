@@ -89,291 +89,79 @@ class ScribeVAEResults(ScribeSVIResults):
         For VAE models, this returns the actual model and guide functions
         (not the factory functions) that can be used for sampling.
 
+        This method uses the decorator-based model registry to look up the
+        appropriate model and guide functions based on the model type,
+        parameterization, prior type, and unconstrained settings.
+
         Returns
         -------
         Tuple[Callable, Optional[Callable]]
             A tuple containing (model_function, guide_function)
+
+        Raises
+        ------
+        ValueError
+            If the model/guide functions cannot be found in the registry.
+
+        Notes
+        -----
+        The registry lookup automatically handles:
+        - Model type (nbdm, zinb, nbvcp, zinbvcp, and mixture variants)
+        - Parameterization (standard, linked, odds_ratio)
+        - Prior type (standard, decoupled)
+        - Unconstrained variants
+
+        For decoupled prior models (dpVAE), the model function will be the
+        dpVAE variant, but the guide function is shared with the standard VAE
+        (as dpVAE models use the same encoder-based guide).
         """
-        # For VAE models, we need to get the actual model and guide functions
-        # from the appropriate module, not the factory functions
+        from ..models.model_registry import _MODEL_REGISTRY, _GUIDE_REGISTRY
+
+        # Get unconstrained flag from model config
         unconstrained = getattr(self.model_config, "unconstrained", False)
 
-        if unconstrained:
-            # For unconstrained variants, import the _unconstrained modules
-            if self.model_config.parameterization == "standard":
-                if self.prior_type == "standard":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_standard_unconstrained import (
-                            nbdm_vae_model,
-                            nbdm_vae_guide,
-                        )
+        # Build registry key for model lookup
+        # For dpVAE, look up model with prior_type="decoupled"
+        model_key = (
+            self.model_type,
+            self.model_config.parameterization,
+            "vae",
+            self.prior_type,  # "standard" or "decoupled"
+            unconstrained,
+            "mean_field",  # VAE doesn't use low_rank guides
+        )
 
-                        return nbdm_vae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_standard_unconstrained import (
-                            zinb_vae_model,
-                            zinb_vae_guide,
-                        )
+        # Build registry key for guide lookup
+        # Guides are always registered with prior_type="standard" since
+        # dpVAE models share the same guide as standard VAE
+        guide_key = (
+            self.model_type,
+            self.model_config.parameterization,
+            "vae",
+            "standard",  # Always use standard for guides
+            unconstrained,
+            "mean_field",
+        )
 
-                        return zinb_vae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_standard_unconstrained import (
-                            nbvcp_vae_model,
-                            nbvcp_vae_guide,
-                        )
+        # Look up model and guide in registry
+        model_fn = _MODEL_REGISTRY.get(model_key)
+        guide_fn = _GUIDE_REGISTRY.get(guide_key)
 
-                        return nbvcp_vae_model, nbvcp_vae_guide
-                elif self.prior_type == "decoupled":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_standard_unconstrained import (
-                            nbdm_dpvae_model,
-                            nbdm_vae_guide,
-                        )
+        if model_fn is None:
+            raise ValueError(
+                f"VAE model function not found in registry for key: {model_key}. "
+                f"Available VAE model keys: "
+                f"{[k for k in _MODEL_REGISTRY.keys() if k[2] == 'vae' and k[0] == self.model_type]}"
+            )
 
-                        return nbdm_dpvae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_standard_unconstrained import (
-                            zinb_dpvae_model,
-                            zinb_vae_guide,
-                        )
+        if guide_fn is None:
+            raise ValueError(
+                f"VAE guide function not found in registry for key: {guide_key}. "
+                f"Available VAE guide keys: "
+                f"{[k for k in _GUIDE_REGISTRY.keys() if k[2] == 'vae' and k[0] == self.model_type]}"
+            )
 
-                        return zinb_dpvae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_standard_unconstrained import (
-                            nbvcp_dpvae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_dpvae_model, nbvcp_vae_guide
-            elif self.model_config.parameterization == "linked":
-                if self.prior_type == "standard":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_linked_unconstrained import (
-                            nbdm_vae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_vae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_linked_unconstrained import (
-                            zinb_vae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_vae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_linked_unconstrained import (
-                            nbvcp_vae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_vae_model, nbvcp_vae_guide
-                elif self.prior_type == "decoupled":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_linked_unconstrained import (
-                            nbdm_dpvae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_dpvae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_linked_unconstrained import (
-                            zinb_dpvae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_dpvae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_linked_unconstrained import (
-                            nbvcp_dpvae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_dpvae_model, nbvcp_vae_guide
-            elif self.model_config.parameterization == "odds_ratio":
-                if self.prior_type == "standard":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_odds_ratio_unconstrained import (
-                            nbdm_vae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_vae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_odds_ratio_unconstrained import (
-                            zinb_vae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_vae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_odds_ratio_unconstrained import (
-                            nbvcp_vae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_vae_model, nbvcp_vae_guide
-                elif self.prior_type == "decoupled":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_odds_ratio_unconstrained import (
-                            nbdm_dpvae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_dpvae_model, nbvcp_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_odds_ratio_unconstrained import (
-                            zinb_dpvae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_dpvae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_odds_ratio_unconstrained import (
-                            nbvcp_dpvae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_dpvae_model, nbvcp_vae_guide
-        else:
-            # For constrained variants, import the regular modules
-            if self.model_config.parameterization == "standard":
-                if self.prior_type == "standard":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_standard import (
-                            nbdm_vae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_vae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_standard import (
-                            zinb_vae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_vae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_standard import (
-                            nbvcp_vae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_vae_model, nbvcp_vae_guide
-                elif self.prior_type == "decoupled":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_standard import (
-                            nbdm_dpvae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_dpvae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_standard import (
-                            zinb_dpvae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_dpvae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_standard import (
-                            nbvcp_dpvae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_dpvae_model, nbvcp_vae_guide
-            elif self.model_config.parameterization == "linked":
-                if self.prior_type == "standard":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_linked import (
-                            nbdm_vae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_vae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_linked import (
-                            zinb_vae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_vae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_linked import (
-                            nbvcp_vae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_vae_model, nbvcp_vae_guide
-                elif self.prior_type == "decoupled":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_linked import (
-                            nbdm_dpvae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_dpvae_model, nbvcp_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_linked import (
-                            zinb_dpvae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_dpvae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_linked import (
-                            nbvcp_dpvae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_dpvae_model, nbvcp_vae_guide
-            elif self.model_config.parameterization == "odds_ratio":
-                if self.prior_type == "standard":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_odds_ratio import (
-                            nbdm_vae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_vae_model, nbdm_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_odds_ratio import (
-                            zinb_vae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_vae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_odds_ratio import (
-                            nbvcp_vae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_vae_model, nbvcp_vae_guide
-                elif self.prior_type == "decoupled":
-                    if self.model_type == "nbdm":
-                        from ..models.vae_odds_ratio import (
-                            nbdm_dpvae_model,
-                            nbdm_vae_guide,
-                        )
-
-                        return nbdm_dpvae_model, nbvcp_vae_guide
-                    elif self.model_type == "zinb":
-                        from ..models.vae_odds_ratio import (
-                            zinb_dpvae_model,
-                            zinb_vae_guide,
-                        )
-
-                        return zinb_dpvae_model, zinb_vae_guide
-                    elif self.model_type == "nbvcp":
-                        from ..models.vae_odds_ratio import (
-                            nbvcp_dpvae_model,
-                            nbvcp_vae_guide,
-                        )
-
-                        return nbvcp_dpvae_model, nbvcp_vae_guide
-
-        raise ValueError(f"Unknown model type: {self.model_type}")
+        return model_fn, guide_fn
 
     # --------------------------------------------------------------------------
     # Reconstruct VAE model from trained parameters

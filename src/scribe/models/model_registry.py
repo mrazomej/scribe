@@ -2,14 +2,23 @@
 This module provides a registry of model functions and their corresponding
 guide functions. It allows for easy retrieval of model and guide functions
 based on the model type.
+
+The registry uses a decorator-based system where models and guides self-register
+upon module import, eliminating the need for complex if-else logic.
 """
 
 import importlib
-from typing import Callable, Tuple, Optional
+from typing import Callable, Tuple, Optional, List
 
 # ------------------------------------------------------------------------------
-# Model registry
+# Model registry - Decorator-based registration system
 # ------------------------------------------------------------------------------
+
+# Global registry dictionaries for models and guides
+# Keys: (model_type, parameterization, inference_method, prior_type, unconstrained, guide_variant)
+# Values: Callable (model or guide function)
+_MODEL_REGISTRY = {}
+_GUIDE_REGISTRY = {}
 
 # List of supported parameterizations (and their corresponding modules)
 SUPPORTED_PARAMETERIZATIONS = [
@@ -21,6 +30,7 @@ SUPPORTED_PARAMETERIZATIONS = [
 # List of supported inference methods
 SUPPORTED_INFERENCE_METHODS = [
     "svi",
+    "mcmc",
     "vae",
 ]
 
@@ -30,9 +40,155 @@ SUPPORTED_PRIOR_TYPES = [
     "decoupled",
 ]
 
-# Dictionary to cache imported model modules
-_model_module_cache = {}
+# List of supported guide variants
+SUPPORTED_GUIDE_VARIANTS = [
+    "mean_field",
+    "low_rank",
+]
 
+# ------------------------------------------------------------------------------
+# Registration decorator
+# ------------------------------------------------------------------------------
+
+
+def register(
+    model_type: str,
+    parameterization: str = "standard",
+    inference_methods: Optional[List[str]] = None,
+    prior_type: Optional[str] = None,
+    unconstrained: bool = False,
+    guide_variant: str = "mean_field",
+):
+    """
+    Decorator to register model and guide functions in the global registry.
+
+    This decorator allows models and guides to self-register, eliminating the need
+    for complex if-else logic in get_model_and_guide(). Each function declares its
+    own registration metadata through decorator parameters.
+
+    Parameters
+    ----------
+    model_type : str
+        Base model type identifier. Can be:
+            - Single models: "nbdm", "zinb", "nbvcp", "zinbvcp"
+            - Mixture models: "nbdm_mix", "zinb_mix", "nbvcp_mix", "zinbvcp_mix"
+
+        Note: Mixture models use "_mix" suffix to distinguish from single models.
+
+    parameterization : str, default="standard"
+        Parameterization scheme for the model. Options:
+            - "standard": Beta/LogNormal for p/r parameters
+            - "linked": Beta/LogNormal for p/mu parameters
+            - "odds_ratio": BetaPrime/LogNormal for phi/mu parameters
+
+    inference_methods : Optional[List[str]], default=None
+        List of inference methods this model/guide supports. Options:
+            - ["svi", "mcmc"]: For standard probabilistic models (default)
+            - ["vae"]: For VAE-based models with neural network components
+
+        If None, defaults to ["svi", "mcmc"] for maximum compatibility.
+
+    prior_type : Optional[str], default=None
+        VAE prior architecture type (VAE inference only). Options:
+            - "standard": Standard Normal prior (default for VAE)
+            - "decoupled": Learned decoupled prior (dpVAE)
+            - None: Not applicable (for non-VAE models)
+
+    unconstrained : bool, default=False
+        Whether this uses unconstrained parameterization. When True:
+            - Parameters are sampled in unconstrained space (Real^n)
+            - Transformations applied: sigmoid for probabilities, exp for
+              positive values
+            - Enables more stable MCMC sampling
+
+    guide_variant : str, default="mean_field"
+        Guide approximation family. Options:
+            - "mean_field": Fully factorized variational family
+            - "low_rank": Low-rank multivariate normal approximation
+
+        Note: guide_rank parameter (the actual rank k) is specified at runtime.
+
+    Returns
+    -------
+    Callable
+        The decorated function, unchanged in behavior but registered in global
+        dictionaries (_MODEL_REGISTRY or _GUIDE_REGISTRY).
+
+    Raises
+    ------
+    ValueError
+        If function name doesn't end with '_model' or '_guide'.
+
+    Examples
+    --------
+    Register a standard single model for SVI/MCMC:
+
+    >>> @register(model_type="nbdm", parameterization="standard")
+    ... def nbdm_model(n_cells, n_genes, model_config, counts=None, batch_size=None):
+    ...     # model implementation
+
+    Register a mixture model:
+
+    >>> @register(model_type="zinb_mix", parameterization="linked")
+    ... def zinb_mixture_model(n_cells, n_genes, model_config, counts=None, batch_size=None):
+    ...     # mixture model implementation
+
+    Register a VAE model with decoupled prior:
+
+    >>> @register(model_type="nbdm", parameterization="standard",
+    ...           inference_methods=["vae"], prior_type="decoupled")
+    ... def nbdm_dpvae_model(n_cells, n_genes, model_config, decoder, decoupled_prior, ...):
+    ...     # VAE model implementation
+
+    Register an unconstrained low-rank guide:
+
+    >>> @register(model_type="nbdm", parameterization="standard",
+    ...           unconstrained=True, guide_variant="low_rank")
+    ... def nbdm_guide(n_cells, n_genes, model_config, counts=None, batch_size=None):
+    ...     # low-rank guide implementation
+
+    Notes
+    -----
+    - Registration happens at module import time
+    - Functions are registered for all specified inference_methods
+    - The decorator does not modify function behavior, only registers it
+    - Mixture models are distinguished by "_mix" suffix in model_type
+    """
+    if inference_methods is None:
+        inference_methods = ["svi", "mcmc"]
+
+    def decorator(func):
+        # Register for each supported inference method
+        for inf_method in inference_methods:
+            # Create registry key from all parameters
+            key = (
+                model_type,
+                parameterization,
+                inf_method,
+                prior_type,
+                unconstrained,
+                guide_variant,
+            )
+
+            # Determine which registry to use based on function name
+            if func.__name__.endswith("_model"):
+                _MODEL_REGISTRY[key] = func
+            elif func.__name__.endswith("_guide"):
+                _GUIDE_REGISTRY[key] = func
+            else:
+                raise ValueError(
+                    f"Function {func.__name__} must end with '_model' or '_guide' "
+                    f"to be registered. Got: {func.__name__}"
+                )
+
+        # Return function unchanged
+        return func
+
+    return decorator
+
+
+# ------------------------------------------------------------------------------
+# Model and guide retrieval
 # ------------------------------------------------------------------------------
 
 
@@ -48,10 +204,9 @@ def get_model_and_guide(
     Retrieve the model and guide functions for a specified model type,
     parameterization, inference method, and (optionally) prior type.
 
-    This function dynamically imports the appropriate parameterization module
-    from `scribe.models` and locates the model and guide functions according to
-    a naming convention. For VAE inference, the returned function is a factory
-    that produces both model and guide; for SVI, both model and guide functions
+    This function looks up the model and guide from the global registry populated
+    by @register decorators. For VAE inference, the returned function is a factory
+    that produces both model and guide; for SVI/MCMC, both model and guide functions
     are returned separately.
 
     Parameters
@@ -62,7 +217,7 @@ def get_model_and_guide(
         The parameterization module to use (e.g., "standard", "linked",
         "odds_ratio").
     inference_method : str, default="svi"
-        The inference method to use ("svi" or "vae").
+        The inference method to use ("svi", "mcmc", or "vae").
     prior_type : str, optional
         The prior type to use for VAE inference ("standard" or "decoupled").
     unconstrained : bool, default=False
@@ -81,107 +236,85 @@ def get_model_and_guide(
     ------
     ValueError
         If the parameterization, inference method, prior type, or required
-        functions are not found.
+        functions are not found in the registry.
     """
-    # Check if parameterization is supported
+    # Validate inputs
     if parameterization not in SUPPORTED_PARAMETERIZATIONS:
         raise ValueError(
             f"Unsupported parameterization: {parameterization}. "
             f"Supported parameterizations are: {SUPPORTED_PARAMETERIZATIONS}"
         )
 
-    # Check if inference method is supported
     if inference_method not in SUPPORTED_INFERENCE_METHODS:
         raise ValueError(
             f"Unsupported inference method: {inference_method}. "
             f"Supported inference methods are: {SUPPORTED_INFERENCE_METHODS}"
         )
 
-    # For VAE inference, use the centralized factory
+    # Determine guide variant based on guide_rank parameter
+    guide_variant = "low_rank" if guide_rank is not None else "mean_field"
+
+    # For VAE inference, wrap in factory
     if inference_method == "vae":
+        # Set default prior type for VAE
+        vae_prior_type = prior_type or "standard"
+
+        # Create a factory function that returns the actual model and guide
+        # The factory uses make_vae_model_and_guide which will dynamically
+        # import the appropriate VAE module based on the parameters
         from .vae_core import make_vae_model_and_guide
 
-        # Create a factory function that calls the centralized factory
         def vae_factory(n_genes, model_config):
             return make_vae_model_and_guide(
                 model_type=model_type,
                 n_genes=n_genes,
                 model_config=model_config,
                 parameterization=parameterization,
-                prior_type=prior_type or "standard",
+                prior_type=vae_prior_type,
                 unconstrained=unconstrained,
             )
 
         return vae_factory, None
+
     else:
-        # Determine the module name based on parameterization and unconstrained
-        # flag
-        if unconstrained:
-            if guide_rank is not None:
-                # For low-rank guides with unconstrained:
-                # {parameterization}_low_rank_unconstrained
-                model_module_name = f"{parameterization}_unconstrained"
-                guide_module_name = f"{parameterization}_low_rank_unconstrained"
-            else:
-                # For mean-field guides with unconstrained:
-                # {parameterization}_unconstrained
-                model_module_name = f"{parameterization}_unconstrained"
-                guide_module_name = f"{parameterization}_unconstrained"
-        else:
-            if guide_rank is not None:
-                # For low-rank guides without unconstrained:
-                # {parameterization}_low_rank
-                model_module_name = f"{parameterization}"
-                guide_module_name = f"{parameterization}_low_rank"
-            else:
-                # For mean-field guides without unconstrained:
-                # {parameterization}
-                model_module_name = f"{parameterization}"
-                guide_module_name = f"{parameterization}"
+        # For SVI/MCMC, do simple dictionary lookup
+        # prior_type is None for non-VAE methods
 
-        try:
-            model_module = importlib.import_module(
-                f".{model_module_name}", "scribe.models"
-            )
-        except ImportError as e:
-            raise ValueError(
-                f"Could not import parameterization module '{model_module_name}': {e}"
-            )
+        # Models are always looked up with mean_field (they're shared between variants)
+        model_key = (
+            model_type,
+            parameterization,
+            inference_method,
+            None,
+            unconstrained,
+            "mean_field",  # Models are always mean_field
+        )
 
-        try:
-            guide_module = importlib.import_module(
-                f".{guide_module_name}", "scribe.models"
-            )
-        except ImportError as e:
-            raise ValueError(
-                f"Could not import parameterization module '{guide_module_name}': {e}"
-            )
+        # Guides use the specified guide_variant
+        guide_key = (
+            model_type,
+            parameterization,
+            inference_method,
+            None,
+            unconstrained,
+            guide_variant,
+        )
 
-        # Determine the function names based on convention
-        if model_type.endswith("_mix"):
-            base_type = model_type.replace("_mix", "")
-            model_name = f"{base_type}_mixture_model"
-            guide_name = f"{base_type}_mixture_guide"
-        else:
-            model_name = f"{model_type}_model"
-            guide_name = f"{model_type}_guide"
+        model_fn = _MODEL_REGISTRY.get(model_key)
+        guide_fn = _GUIDE_REGISTRY.get(guide_key)
 
-        # Retrieve the functions from the module
-        model_fn = getattr(model_module, model_name, None)
         if model_fn is None:
             raise ValueError(
-                f"Model function '{model_name}' "
-                f"not found in module '{model_module_name}'"
+                f"Model function not found in registry for key: {model_key}. "
+                f"Available model keys: {[k for k in _MODEL_REGISTRY.keys() if k[0] == model_type]}"
             )
 
-        # Guide functions exist for all parameterizations including
-        # unconstrained
-        guide_fn = getattr(guide_module, guide_name, None)
         if guide_fn is None:
             raise ValueError(
-                f"Guide function '{guide_name}' "
-                f"not found in module '{guide_module_name}'"
+                f"Guide function not found in registry for key: {guide_key}. "
+                f"Available guide keys: {[k for k in _GUIDE_REGISTRY.keys() if k[0] == model_type]}"
             )
+
         return model_fn, guide_fn
 
 
