@@ -18,7 +18,7 @@ from typing import Dict, Optional, Union, List
 from ..stats import BetaPrime
 
 # Import model config
-from .model_config import ModelConfig
+from .config import ModelConfig
 
 # Import decorator for model registration
 from .model_registry import register

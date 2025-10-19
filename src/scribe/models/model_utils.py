@@ -16,7 +16,7 @@ import numpyro.distributions as dist
 from typing import Dict, Tuple, Optional, List
 
 # Import model config
-from .model_config import ModelConfig
+from .config import ModelConfig
 
 # ------------------------------------------------------------------------------
 

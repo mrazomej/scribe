@@ -22,7 +22,7 @@ import jax.numpy as jnp
 
 # Import shared components
 from .core import InputProcessor
-from .models.model_config import ModelConfig
+from .models.config import ModelConfigBuilder, ModelConfig
 from .utils import ParameterCollector
 
 # Import inference-specific components
@@ -274,52 +274,68 @@ def run_scribe(
         zero_inflated, variable_capture, mixture_model
     )
 
-    # Step 2: Collect and map prior parameters
-    prior_config = ParameterCollector.collect_and_map_priors(
-        unconstrained=unconstrained,
-        parameterization=parameterization,
-        r_prior=r_prior,
-        p_prior=p_prior,
-        gate_prior=gate_prior,
-        p_capture_prior=p_capture_prior,
-        mixing_prior=mixing_prior,
-        mu_prior=mu_prior,
-        phi_prior=phi_prior,
-        phi_capture_prior=phi_capture_prior,
+    # Step 2: Build model configuration using builder pattern
+    builder = (
+        ModelConfigBuilder()
+        .for_model(model_type)
+        .with_parameterization(parameterization)
+        .with_inference(inference_method)
     )
 
-    # Step 3: Collect VAE parameters if needed
-    vae_config = None
+    # Add unconstrained if needed
+    if unconstrained:
+        builder.unconstrained()
+
+    # Add mixture configuration
+    if n_components is not None:
+        builder.as_mixture(n_components, component_specific_params)
+
+    # Add low-rank guide
+    if guide_rank is not None:
+        builder.with_low_rank_guide(guide_rank)
+
+    # Add priors (simplified naming)
+    priors = {}
+    if r_prior is not None:
+        priors["r"] = r_prior
+    if p_prior is not None:
+        priors["p"] = p_prior
+    if gate_prior is not None:
+        priors["gate"] = gate_prior
+    if p_capture_prior is not None:
+        priors["p_capture"] = p_capture_prior
+    if mixing_prior is not None:
+        priors["mixing"] = mixing_prior
+    if mu_prior is not None:
+        priors["mu"] = mu_prior
+    if phi_prior is not None:
+        priors["phi"] = phi_prior
+    if phi_capture_prior is not None:
+        priors["phi_capture"] = phi_capture_prior
+
+    if priors:
+        builder.with_priors(**priors)
+
+    # Add VAE configuration
     if inference_method == "vae":
-        vae_config = ParameterCollector.collect_vae_params(
-            vae_latent_dim=vae_latent_dim,
-            vae_hidden_dims=vae_hidden_dims,
-            vae_activation=vae_activation,
-            vae_input_transformation=None,  # Not exposed in run_scribe API
-            vae_vcp_hidden_dims=vae_vcp_hidden_dims,
-            vae_vcp_activation=vae_vcp_activation,
-            vae_prior_type=vae_prior_type,
-            vae_prior_num_layers=vae_prior_num_layers,
-            vae_prior_hidden_dims=vae_prior_hidden_dims,
-            vae_prior_activation=vae_prior_activation,
-            vae_prior_mask_type=vae_prior_mask_type,
-            vae_standardize=vae_standardize,
+        builder.with_vae(
+            latent_dim=vae_latent_dim,
+            hidden_dims=vae_hidden_dims,
+            activation=vae_activation,
+            prior_type=vae_prior_type,
+            prior_num_layers=vae_prior_num_layers,
+            prior_hidden_dims=vae_prior_hidden_dims,
+            prior_activation=vae_prior_activation,
+            prior_mask_type=vae_prior_mask_type,
+            standardize=vae_standardize,
+            vcp_hidden_dims=vae_vcp_hidden_dims,
+            vcp_activation=vae_vcp_activation,
         )
 
-    # Step 4: Create ModelConfig using factory method
-    model_config = ModelConfig.from_inference_params(
-        model_type=model_type,
-        inference_method=inference_method,
-        parameterization=parameterization,
-        unconstrained=unconstrained,
-        prior_config=prior_config,
-        vae_config=vae_config,
-        n_components=n_components,
-        component_specific_params=component_specific_params,
-        guide_rank=guide_rank,
-    )
+    # Build configuration
+    model_config = builder.build()
 
-    # Step 5: Run Inference
+    # Step 3: Run Inference
     if inference_method == "svi":
         results = _run_svi_inference(
             model_config=model_config,

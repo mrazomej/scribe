@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import random
 from numpyro.infer import MCMC, NUTS
 from ..models.model_registry import get_model_and_guide
-from ..models.model_config import ModelConfig
+from ..models.config import ModelConfig
 
 
 class MCMCInferenceEngine:
