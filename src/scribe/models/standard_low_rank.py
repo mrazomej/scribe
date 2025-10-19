@@ -14,7 +14,7 @@ import numpyro.distributions as dist
 from numpyro.distributions import constraints
 
 # Import model config
-from .model_config import ModelConfig
+from .config import ModelConfig
 
 # Import decorator for model registration
 from .model_registry import register

@@ -8,7 +8,7 @@ objects.
 from typing import Union, Optional, Dict, Any
 import jax.numpy as jnp
 from ..mcmc.results import ScribeMCMCResults
-from ..models.model_config import ModelConfig
+from ..models.config import ModelConfig
 
 
 class MCMCResultsFactory:

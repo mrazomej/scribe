@@ -7,7 +7,7 @@ from single-cell RNA-sequencing data.
 
 # Import core components for advanced usage
 from .core import InputProcessor
-from .models.model_config import ModelConfig
+from .models.config import ModelConfig
 
 from . import viz
 from . import utils

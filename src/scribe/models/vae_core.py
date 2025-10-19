@@ -15,7 +15,7 @@ from ..vae.architectures import (
     create_decoder,
     DecoupledPrior,
 )
-from .model_config import ModelConfig
+from .config import ModelConfig
 
 # ------------------------------------------------------------------------------
 # VAE Core Factory

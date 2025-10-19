@@ -38,7 +38,7 @@ from numpyro.distributions import constraints
 from numpyro.contrib.module import nnx_module
 from typing import Dict, Optional
 
-from .model_config import ModelConfig
+from .config import ModelConfig
 
 # Import decorator for model registration
 from .model_registry import register

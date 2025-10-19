@@ -14,7 +14,7 @@ from numpyro.infer import MCMC
 import numpy as np
 
 from ..sampling import generate_predictive_samples
-from ..models.model_config import ModelConfig
+from ..models.config import ModelConfig
 from ..core.normalization import normalize_counts_from_posterior
 
 # ------------------------------------------------------------------------------
