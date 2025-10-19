@@ -17,6 +17,9 @@ from typing import Dict, Optional
 # Import model config
 from .model_config import ModelConfig
 
+# Import decorator for model registration
+from .model_registry import register
+
 # Import custom distributions
 from ..stats import BetaPrime
 
@@ -25,6 +28,7 @@ from ..stats import BetaPrime
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="odds_ratio")
 def nbdm_model(
     n_cells: int,
     n_genes: int,
@@ -74,6 +78,7 @@ def nbdm_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="odds_ratio")
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
@@ -118,6 +123,7 @@ def nbdm_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinb", parameterization="odds_ratio")
 def zinb_model(
     n_cells: int,
     n_genes: int,
@@ -181,6 +187,7 @@ def zinb_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinb", parameterization="odds_ratio")
 def zinb_guide(
     n_cells: int,
     n_genes: int,
@@ -240,6 +247,7 @@ def zinb_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="odds_ratio")
 def nbvcp_model(
     n_cells: int,
     n_genes: int,
@@ -347,6 +355,7 @@ def nbvcp_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="odds_ratio")
 def nbvcp_guide(
     n_cells: int,
     n_genes: int,
@@ -418,6 +427,7 @@ def nbvcp_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinbvcp", parameterization="odds_ratio")
 def zinbvcp_model(
     n_cells: int,
     n_genes: int,
@@ -535,6 +545,7 @@ def zinbvcp_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinbvcp", parameterization="odds_ratio")
 def zinbvcp_guide(
     n_cells: int,
     n_genes: int,
@@ -621,6 +632,7 @@ def zinbvcp_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm_mix", parameterization="odds_ratio")
 def nbdm_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -703,6 +715,7 @@ def nbdm_mixture_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm_mix", parameterization="odds_ratio")
 def nbdm_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -784,6 +797,7 @@ def nbdm_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinb_mix", parameterization="odds_ratio")
 def zinb_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -865,6 +879,7 @@ def zinb_mixture_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinb_mix", parameterization="odds_ratio")
 def zinb_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -959,6 +974,7 @@ def zinb_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp_mix", parameterization="odds_ratio")
 def nbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -1047,6 +1063,7 @@ def nbvcp_mixture_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp_mix", parameterization="odds_ratio")
 def nbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -1152,6 +1169,7 @@ def nbvcp_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinbvcp_mix", parameterization="odds_ratio")
 def zinbvcp_mixture_model(
     n_cells: int,
     n_genes: int,
@@ -1245,6 +1263,7 @@ def zinbvcp_mixture_model(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinbvcp_mix", parameterization="odds_ratio")
 def zinbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,

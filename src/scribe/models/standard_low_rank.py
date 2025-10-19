@@ -16,11 +16,15 @@ from numpyro.distributions import constraints
 # Import model config
 from .model_config import ModelConfig
 
+# Import decorator for model registration
+from .model_registry import register
+
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial Model
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm", parameterization="standard", guide_variant="low_rank")
 def nbdm_guide(
     n_cells: int,
     n_genes: int,
@@ -76,6 +80,7 @@ def nbdm_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinb", parameterization="standard", guide_variant="low_rank")
 def zinb_guide(
     n_cells: int,
     n_genes: int,
@@ -133,6 +138,7 @@ def zinb_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp", parameterization="standard", guide_variant="low_rank")
 def nbvcp_guide(
     n_cells: int,
     n_genes: int,
@@ -203,6 +209,7 @@ def nbvcp_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinbvcp", parameterization="standard", guide_variant="low_rank")
 def zinbvcp_guide(
     n_cells: int,
     n_genes: int,
@@ -287,6 +294,7 @@ def zinbvcp_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbdm_mix", parameterization="standard", guide_variant="low_rank")
 def nbdm_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -371,6 +379,7 @@ def nbdm_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinb_mix", parameterization="standard", guide_variant="low_rank")
 def zinb_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -462,6 +471,7 @@ def zinb_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="nbvcp_mix", parameterization="standard", guide_variant="low_rank")
 def nbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
@@ -567,6 +577,7 @@ def nbvcp_mixture_guide(
 # ------------------------------------------------------------------------------
 
 
+@register(model_type="zinbvcp_mix", parameterization="standard", guide_variant="low_rank")
 def zinbvcp_mixture_guide(
     n_cells: int,
     n_genes: int,
