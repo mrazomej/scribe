@@ -11,7 +11,7 @@ import numpyro.distributions as dist
 import scipy.stats as stats
 
 # Import custom distributions
-from .stats import BetaPrime
+from ..stats import BetaPrime
 
 # ------------------------------------------------------------------------------
 
