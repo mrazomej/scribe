@@ -2,6 +2,7 @@ import pytest
 import jax.numpy as jnp
 from jax import random
 import os
+from scribe.models.config import UnconstrainedModelConfig
 
 ALL_METHODS = ["svi", "mcmc"]
 ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio"]
@@ -99,10 +100,10 @@ def nbdm_results(
 ):
     # Get device type from command-line option for cache key
     device_type = request.config.getoption("--device")
-    
+
     key = (
         inference_method,
-            parameterization,
+        parameterization,
         unconstrained,
         guide_rank,
     )
@@ -122,9 +123,9 @@ def nbdm_results(
     if parameterization == "standard":
         priors = {"r_prior": (2, 0.1), "p_prior": (1, 1)}
     elif parameterization == "linked":
-        priors = {"p_prior": (1, 1), "mu_prior": (0, 1)}
+        priors = {"p_prior": (1, 1), "mu_prior": (1, 1)}
     elif parameterization == "odds_ratio":
-        priors = {"phi_prior": (3, 2), "mu_prior": (0, 1)}
+        priors = {"phi_prior": (3, 2), "mu_prior": (1, 1)}
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
     from scribe import run_scribe
@@ -189,13 +190,13 @@ def test_parameterization_config(
 ):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert nbdm_results.model_config.parameterization == parameterization
-    # Check that the unconstrained flag is properly set in the model config
-    # Note: This may need to be adjusted based on how the model config stores this information
-    if hasattr(nbdm_results.model_config, "unconstrained"):
-        assert nbdm_results.model_config.unconstrained == unconstrained
+    # Check unconstrained by type
+    is_unconstrained = isinstance(
+        nbdm_results.model_config, UnconstrainedModelConfig
+    )
+    assert is_unconstrained == unconstrained
     # Check that the guide_rank is properly set in the model config
-    if hasattr(nbdm_results.model_config, "guide_rank"):
-        assert nbdm_results.model_config.guide_rank == guide_rank
+    assert nbdm_results.model_config.guide_rank == guide_rank
 
 
 # ------------------------------------------------------------------------------

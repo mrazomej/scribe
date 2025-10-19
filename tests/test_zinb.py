@@ -1,4 +1,6 @@
 # tests/test_zinb.py
+from scribe.models.config import UnconstrainedModelConfig
+
 """
 Tests for the Zero-Inflated Negative Binomial model.
 """
@@ -104,10 +106,10 @@ def zinb_results(
 ):
     # Get device type from command-line option for cache key
     device_type = request.config.getoption("--device")
-    
+
     key = (
         inference_method,
-            parameterization,
+        parameterization,
         unconstrained,
         guide_rank,
     )
@@ -127,9 +129,9 @@ def zinb_results(
     if parameterization == "standard":
         priors = {"r_prior": (2, 0.1), "p_prior": (1, 1), "gate_prior": (1, 1)}
     elif parameterization == "linked":
-        priors = {"p_prior": (1, 1), "mu_prior": (0, 1), "gate_prior": (1, 1)}
+        priors = {"p_prior": (1, 1), "mu_prior": (1, 1), "gate_prior": (1, 1)}
     elif parameterization == "odds_ratio":
-        priors = {"phi_prior": (3, 2), "mu_prior": (0, 1), "gate_prior": (1, 1)}
+        priors = {"phi_prior": (3, 2), "mu_prior": (1, 1), "gate_prior": (1, 1)}
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
     from scribe import run_scribe
@@ -199,8 +201,11 @@ def test_parameterization_config(
     # Check that the unconstrained flag is properly set in the model config
     # Note: This may need to be adjusted based on how the model config stores
     # this information
-    if hasattr(zinb_results.model_config, "unconstrained"):
-        assert zinb_results.model_config.unconstrained == unconstrained
+    if True:  # Always check unconstrained by type
+        assert (
+            isinstance(zinb_results.model_config, UnconstrainedModelConfig)
+            == unconstrained
+        )
     # Check that the guide_rank is properly set in the model config
     if hasattr(zinb_results.model_config, "guide_rank"):
         assert zinb_results.model_config.guide_rank == guide_rank
