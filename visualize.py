@@ -67,7 +67,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import scanpy as sc
 import numpy as np
+import warnings
 from viz_utils import _get_config_values, plot_loss, plot_ecdf, plot_ppc
+
+# Suppress scanpy/anndata deprecation warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
+warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 
 # ------------------------------------------------------------------------------
 

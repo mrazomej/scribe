@@ -72,7 +72,12 @@ import pandas as pd
 import jax.numpy as jnp
 import pickle
 import os
+import warnings
 from scribe.data_loader import load_and_preprocess_anndata
+
+# Suppress scanpy/anndata deprecation warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
+warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
