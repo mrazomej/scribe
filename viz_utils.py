@@ -1,16 +1,33 @@
-import hydra
-from omegaconf import DictConfig, OmegaConf
-import scribe
-import pandas as pd
-import jax.numpy as jnp
-import pickle
+"""
+viz_utils.py
+
+This module provides utility and helper functions related to visualization and
+configuration extraction for the SCRIBE probabilistic modeling library. It
+includes routines for:
+
+- Extracting key configuration parameters from various Hydra/OmegaConf config
+  structures, supporting both legacy and modern config layouts.
+- (Presumed from context) Functions and helpers that facilitate
+  visualization—such as plotting model outputs, latent variables, or diagnostic
+  summaries—using popular libraries like matplotlib and seaborn.
+- Standardized routines to help downstream scripts and notebooks consistently
+  access and visualize parameters, results, and diagnostics, regardless of model
+  specification or inference method.
+
+The module is intended to be imported by users or higher-level modules that need
+unified access to configuration parsing and robust, publication-quality figures
+for model diagnostics and result interpretation.
+"""
+
 import os
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import scanpy as sc
-import numpy as np
+import scribe
 
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# Helper functions
+# ==============================================================================
 
 
 def _get_config_values(cfg):
@@ -84,6 +101,16 @@ def _get_config_values(cfg):
 # ------------------------------------------------------------------------------
 
 
+def _select_genes(counts, n_genes):
+    """Select a subset of genes for plotting based on expression."""
+    mean_counts = np.median(counts, axis=0)
+    nonzero_idx = np.where(mean_counts > 0)[0]
+    sorted_idx = nonzero_idx[np.argsort(mean_counts[nonzero_idx])]
+    spaced_indices = np.linspace(0, len(sorted_idx) - 1, num=n_genes, dtype=int)
+    selected_idx = sorted_idx[spaced_indices]
+    return selected_idx, mean_counts
+
+
 def plot_loss(results, figs_dir, cfg, viz_cfg):
     """Plot and save the ELBO loss history."""
     print("Plotting loss history...")
@@ -118,20 +145,9 @@ def plot_loss(results, figs_dir, cfg, viz_cfg):
     plt.close(fig)
 
 
-# ------------------------------------------------------------------------------
-
-
-def _select_genes(counts, n_genes):
-    """Select a subset of genes for plotting based on expression."""
-    mean_counts = np.median(counts, axis=0)
-    nonzero_idx = np.where(mean_counts > 0)[0]
-    sorted_idx = nonzero_idx[np.argsort(mean_counts[nonzero_idx])]
-    spaced_indices = np.linspace(0, len(sorted_idx) - 1, num=n_genes, dtype=int)
-    selected_idx = sorted_idx[spaced_indices]
-    return selected_idx, mean_counts
-
-
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# Visualization functions
+# ==============================================================================
 
 
 def plot_ecdf(counts, figs_dir, cfg, viz_cfg):
@@ -268,103 +284,3 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     fig.savefig(output_path, bbox_inches="tight")
     print(f"Saved PPC plot to {output_path}")
     plt.close(fig)
-
-
-# ------------------------------------------------------------------------------
-
-
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg: DictConfig) -> None:
-    print("Running visualization with config:\n", OmegaConf.to_yaml(cfg))
-
-    # Auto-detect the run directory based on the same Hydra path structure
-    # that would have been used for the original inference run
-    from hydra.core.hydra_config import HydraConfig
-
-    hydra_cfg = HydraConfig.get()
-
-    # Construct the expected output directory path using the same logic as the original config
-    # This mirrors the hydra.run.dir pattern: outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
-    base_output_dir = "outputs"
-    data_name = cfg.data.name
-    inference_method = cfg.inference.method
-
-    # Get the override dirname from current hydra config
-    override_dirname = hydra_cfg.job.override_dirname
-
-    # Construct the expected run directory
-    run_dir = os.path.join(
-        base_output_dir, data_name, inference_method, override_dirname
-    )
-    run_dir = hydra.utils.to_absolute_path(run_dir)
-
-    print(f"Auto-detected run directory: {run_dir}")
-
-    # Check if the directory exists
-    if not os.path.exists(run_dir):
-        print(f"Error: Run directory does not exist: {run_dir}")
-        print(
-            "Make sure you've run the inference first with the same configuration."
-        )
-        return
-
-    # Create figs directory
-    figs_dir = os.path.join(run_dir, "figs")
-    os.makedirs(figs_dir, exist_ok=True)
-    print(f"Saving figures to: {figs_dir}")
-
-    # Load scribe results
-    results_file = os.path.join(run_dir, "scribe_results.pkl")
-    print(f"Loading scribe results from {results_file}")
-    with open(results_file, "rb") as f:
-        results = pickle.load(f)
-
-    # Load original config from the run directory
-    orig_cfg_file = os.path.join(run_dir, ".hydra", "config.yaml")
-    if not os.path.exists(orig_cfg_file):
-        print(f"Error: Original config file not found: {orig_cfg_file}")
-        return
-
-    orig_cfg = OmegaConf.load(orig_cfg_file)
-    print("Loaded original config from inference run")
-
-    # Load data using the original config's data settings
-    data_path = hydra.utils.to_absolute_path(orig_cfg.data.path)
-    counts = scribe.data_loader.load_and_preprocess_anndata(
-        data_path, orig_cfg.data.get("preprocessing")
-    )
-
-    # Set plotting style
-    scribe.viz.matplotlib_style()
-
-    # Get visualization settings from current config or use defaults
-    viz_cfg = getattr(cfg, "viz", None)
-    if viz_cfg is None:
-        # Use default visualization settings
-        viz_cfg = OmegaConf.create(
-            {
-                "loss": True,
-                "ecdf": True,
-                "ppc": True,
-                "format": "png",
-                "ecdf_opts": {"n_genes": 25},
-                "ppc_opts": {"n_genes": 25, "n_samples": 1500},
-            }
-        )
-        print("Using default visualization settings")
-
-    # --- Plotting functions will be called here based on viz config ---
-    if viz_cfg.get("loss", True):
-        plot_loss(results, figs_dir, orig_cfg, viz_cfg)
-
-    if viz_cfg.get("ecdf", True):
-        plot_ecdf(counts, figs_dir, orig_cfg, viz_cfg)
-
-    if viz_cfg.get("ppc", True):
-        plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
-
-    print("Visualization script finished.")
-
-
-if __name__ == "__main__":
-    main()
