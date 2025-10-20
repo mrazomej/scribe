@@ -22,7 +22,13 @@ import jax.numpy as jnp
 
 # Import shared components
 from .core import InputProcessor
-from .models.config import ModelConfigBuilder, ModelConfig
+from .models.config import (
+    ModelConfigBuilder,
+    ModelConfig,
+    SVIConfig,
+    MCMCConfig,
+    DataConfig,
+)
 from .utils import ParameterCollector
 
 # Import inference-specific components
@@ -87,6 +93,10 @@ def run_scribe(
     vae_standardize: bool = False,
     # General parameters
     seed: int = 42,
+    # Optional configuration objects (advanced users)
+    svi_config: Optional[SVIConfig] = None,
+    mcmc_config: Optional[MCMCConfig] = None,
+    data_config: Optional[DataConfig] = None,
 ) -> Any:
     """
     Unified interface for SCRIBE inference with parameterization unification.
@@ -219,6 +229,25 @@ def run_scribe(
     seed : int, default=42
         Random seed for reproducibility.
 
+    Advanced Configuration (Optional)
+    ---------------------------------
+    svi_config : Optional[SVIConfig], default=None
+        SVI-specific configuration object. If provided, overrides individual
+        SVI parameters (optimizer, loss, n_steps, batch_size, stable_update).
+        Useful for advanced users who want validation and reusability.
+    mcmc_config : Optional[MCMCConfig], default=None
+        MCMC-specific configuration object. If provided, overrides individual
+        MCMC parameters (n_samples, n_warmup, n_chains, mcmc_kwargs).
+    data_config : Optional[DataConfig], default=None
+        Data processing configuration object. If provided, overrides individual
+        data parameters (cells_axis, layer).
+
+    Note
+    ----
+    Configuration objects take priority over individual parameters. For example,
+    if both `n_steps=1000` and `svi_config=SVIConfig(n_steps=5000)` are provided,
+    the value from `svi_config` will be used.
+
     Returns
     -------
     Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
@@ -258,7 +287,74 @@ def run_scribe(
         counts, inference_method="vae", parameterization="linked",
         unconstrained=True, vae_latent_dim=5, vae_hidden_dims=[512, 256]
     )
+
+    Advanced Usage with Configuration Objects
+    -----------------------------------------
+    # Using configuration objects for better validation and reusability
+    from scribe import SVIConfig, MCMCConfig, DataConfig
+
+    # SVI with custom configuration
+    svi_config = SVIConfig(
+        n_steps=50_000,
+        batch_size=256,
+        stable_update=True
+    )
+    results = run_scribe(counts, svi_config=svi_config)
+
+    # MCMC with custom configuration
+    mcmc_config = MCMCConfig(
+        n_samples=5000,
+        n_warmup=1000,
+        n_chains=4
+    )
+    results = run_scribe(counts, inference_method="mcmc", mcmc_config=mcmc_config)
+
+    # Data processing configuration
+    data_config = DataConfig(cells_axis=1, layer="counts")
+    results = run_scribe(counts, data_config=data_config)
+
+    # Configuration objects can be saved and reused
+    import pickle
+    with open("my_svi_config.pkl", "wb") as f:
+        pickle.dump(svi_config, f)
     """
+    # Step 0: Build configuration objects from flat parameters
+    # This allows advanced users to pass config objects while maintaining
+    # backwards compatibility with the flat parameter API
+
+    # Build DataConfig
+    if data_config is None:
+        data_config = DataConfig(cells_axis=cells_axis, layer=layer)
+
+    # Build inference-specific config based on method
+    if inference_method == "svi":
+        if svi_config is None:
+            svi_config = SVIConfig(
+                optimizer=optimizer,
+                loss=loss,
+                n_steps=n_steps,
+                batch_size=batch_size,
+                stable_update=stable_update,
+            )
+    elif inference_method == "mcmc":
+        if mcmc_config is None:
+            mcmc_config = MCMCConfig(
+                n_samples=n_samples,
+                n_warmup=n_warmup,
+                n_chains=n_chains,
+                mcmc_kwargs=mcmc_kwargs,
+            )
+    elif inference_method == "vae":
+        # VAE uses SVI config since it's essentially SVI with neural networks
+        if svi_config is None:
+            svi_config = SVIConfig(
+                optimizer=optimizer,
+                loss=loss,
+                n_steps=n_steps,
+                batch_size=batch_size,
+                stable_update=stable_update,
+            )
+
     # Step 1: Input Processing & Validation
     InputProcessor.validate_model_configuration(
         zero_inflated, variable_capture, mixture_model, n_components
@@ -266,7 +362,7 @@ def run_scribe(
 
     # Process count data
     count_data, adata, n_cells, n_genes = InputProcessor.process_counts_data(
-        counts, cells_axis, layer
+        counts, data_config.cells_axis, data_config.layer
     )
 
     # Determine model type
@@ -343,11 +439,8 @@ def run_scribe(
             adata=adata,
             n_cells=n_cells,
             n_genes=n_genes,
-            optimizer=optimizer,
-            loss=loss,
-            n_steps=n_steps,
-            batch_size=batch_size,
-            stable_update=stable_update,
+            svi_config=svi_config,
+            data_config=data_config,
             seed=seed,
         )
     elif inference_method == "mcmc":
@@ -357,11 +450,9 @@ def run_scribe(
             adata=adata,
             n_cells=n_cells,
             n_genes=n_genes,
-            n_samples=n_samples,
-            n_warmup=n_warmup,
-            n_chains=n_chains,
+            mcmc_config=mcmc_config,
+            data_config=data_config,
             seed=seed,
-            mcmc_kwargs=mcmc_kwargs,
         )
     elif inference_method == "vae":
         results = _run_vae_inference(
@@ -370,11 +461,8 @@ def run_scribe(
             adata=adata,
             n_cells=n_cells,
             n_genes=n_genes,
-            optimizer=optimizer,
-            loss=loss,
-            n_steps=n_steps,
-            batch_size=batch_size,
-            stable_update=stable_update,
+            svi_config=svi_config,
+            data_config=data_config,
             seed=seed,
         )
     else:
@@ -396,14 +484,18 @@ def _run_svi_inference(
     adata: Optional["AnnData"],
     n_cells: int,
     n_genes: int,
-    optimizer: Optional[Any],
-    loss: Optional[Any],
-    n_steps: int,
-    batch_size: Optional[int],
-    stable_update: bool,
+    svi_config: SVIConfig,
+    data_config: DataConfig,
     seed: int,
 ) -> Any:
     """Helper function to run SVI inference."""
+    # Extract parameters from config objects
+    optimizer = svi_config.optimizer
+    loss = svi_config.loss
+    n_steps = svi_config.n_steps
+    batch_size = svi_config.batch_size
+    stable_update = svi_config.stable_update
+
     inference_kwargs = {
         "model_config": model_config,
         "count_data": count_data,
@@ -445,13 +537,17 @@ def _run_mcmc_inference(
     adata: Optional["AnnData"],
     n_cells: int,
     n_genes: int,
-    n_samples: int,
-    n_warmup: int,
-    n_chains: int,
+    mcmc_config: MCMCConfig,
+    data_config: DataConfig,
     seed: int,
-    mcmc_kwargs: Optional[Dict[str, Any]],
 ) -> Any:
     """Helper function to run MCMC inference."""
+    # Extract parameters from config objects
+    n_samples = mcmc_config.n_samples
+    n_warmup = mcmc_config.n_warmup
+    n_chains = mcmc_config.n_chains
+    mcmc_kwargs = mcmc_config.mcmc_kwargs
+
     mcmc = MCMCInferenceEngine.run_inference(
         model_config=model_config,
         count_data=count_data,
@@ -488,14 +584,18 @@ def _run_vae_inference(
     adata: Optional["AnnData"],
     n_cells: int,
     n_genes: int,
-    optimizer: Optional[Any],
-    loss: Optional[Any],
-    n_steps: int,
-    batch_size: Optional[int],
-    stable_update: bool,
+    svi_config: SVIConfig,
+    data_config: DataConfig,
     seed: int,
 ) -> ScribeVAEResults:
     """Helper function to run VAE inference."""
+    # Extract parameters from config objects
+    optimizer = svi_config.optimizer
+    loss = svi_config.loss
+    n_steps = svi_config.n_steps
+    batch_size = svi_config.batch_size
+    stable_update = svi_config.stable_update
+
     # For now, VAE inference uses the same SVI engine but with VAE models
     # This will be enhanced later with dedicated VAE inference
     inference_kwargs = {

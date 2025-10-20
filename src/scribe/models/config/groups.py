@@ -22,7 +22,7 @@ valid, immutable, and explicit. The groups here are the foundational building
 blocks used to create full model configurations in SCRIBE.
 """
 
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import jax.numpy as jnp
 from .enums import VAEPriorType, VAEMaskType, VAEActivation
@@ -288,3 +288,72 @@ class VAEConfig(BaseModel):
         if v is not None and any(d <= 0 for d in v):
             raise ValueError(f"Hidden dimensions must be positive, got {v}")
         return v
+
+
+# ==============================================================================
+# SVI Configuration Group
+# ==============================================================================
+
+
+class SVIConfig(BaseModel):
+    """Configuration for Stochastic Variational Inference."""
+
+    model_config = ConfigDict(
+        frozen=True, arbitrary_types_allowed=True, extra="forbid"
+    )
+
+    optimizer: Optional[Any] = Field(
+        None,
+        description="Optimizer for variational inference (defaults to Adam)",
+    )
+    loss: Optional[Any] = Field(
+        None, description="Loss function (defaults to TraceMeanField_ELBO)"
+    )
+    n_steps: int = Field(
+        100_000, gt=0, description="Number of optimization steps"
+    )
+    batch_size: Optional[int] = Field(
+        None, gt=0, description="Mini-batch size. If None, uses full dataset"
+    )
+    stable_update: bool = Field(
+        True, description="Use numerically stable parameter updates"
+    )
+
+
+# ==============================================================================
+# MCMC Configuration Group
+# ==============================================================================
+
+
+class MCMCConfig(BaseModel):
+    """Configuration for Markov Chain Monte Carlo inference."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    n_samples: int = Field(2_000, gt=0, description="Number of MCMC samples")
+    n_warmup: int = Field(1_000, gt=0, description="Number of warmup samples")
+    n_chains: int = Field(1, gt=0, description="Number of parallel chains")
+    mcmc_kwargs: Optional[Dict[str, Any]] = Field(
+        None, description="Additional keyword arguments for MCMC kernel"
+    )
+
+
+# ==============================================================================
+# Data Configuration Group
+# ==============================================================================
+
+
+class DataConfig(BaseModel):
+    """Configuration for data processing."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cells_axis: int = Field(
+        0,
+        ge=0,
+        le=1,
+        description="Axis for cells in count matrix (0=rows, 1=columns)",
+    )
+    layer: Optional[str] = Field(
+        None, description="Layer in AnnData to use for counts. If None, uses .X"
+    )

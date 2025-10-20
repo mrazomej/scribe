@@ -19,6 +19,9 @@ from .groups import (
     UnconstrainedPriorConfig,
     UnconstrainedGuideConfig,
     VAEConfig,
+    SVIConfig,
+    MCMCConfig,
+    DataConfig,
 )
 from .base import ConstrainedModelConfig, UnconstrainedModelConfig, ModelConfig
 from .builder import ModelConfigBuilder
@@ -43,6 +46,9 @@ __all__ = [
     "UnconstrainedPriorConfig",
     "UnconstrainedGuideConfig",
     "VAEConfig",
+    "SVIConfig",
+    "MCMCConfig",
+    "DataConfig",
     # Enums
     "ModelType",
     "Parameterization",

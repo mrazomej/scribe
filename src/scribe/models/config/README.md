@@ -96,6 +96,33 @@ VAE-specific configuration:
 - `prior_mask_type`: Mask type for decoupled prior
 - `standardize`: Whether to standardize input data
 
+### SVIConfig
+
+SVI-specific configuration for Stochastic Variational Inference:
+
+- `optimizer`: Optimizer for variational inference (defaults to Adam)
+- `loss`: Loss function (defaults to TraceMeanField_ELBO)
+- `n_steps`: Number of optimization steps (must be > 0)
+- `batch_size`: Mini-batch size (must be > 0, None uses full dataset)
+- `stable_update`: Use numerically stable parameter updates
+
+### MCMCConfig
+
+MCMC-specific configuration for Markov Chain Monte Carlo:
+
+- `n_samples`: Number of MCMC samples (must be > 0)
+- `n_warmup`: Number of warmup samples (must be > 0)
+- `n_chains`: Number of parallel chains (must be > 0)
+- `mcmc_kwargs`: Additional keyword arguments for MCMC kernel
+
+### DataConfig
+
+Data processing configuration:
+
+- `cells_axis`: Axis for cells in count matrix (0=rows, 1=columns, must be 0 or
+  1)
+- `layer`: Layer in AnnData to use for counts (None uses .X)
+
 ### Parameter Mapping System
 
 The parameter mapping system provides a robust, declarative way to define which
@@ -210,6 +237,71 @@ config2 = config1.with_updated_priors(r=(2.0, 0.5))
 assert config1.priors.r is None
 assert config2.priors.r == (2.0, 0.5)
 ```
+
+### Using Configuration Objects with run_scribe
+
+The new configuration classes can be used directly with the `run_scribe`
+function for better validation and reusability:
+
+```python
+from scribe import run_scribe, SVIConfig, MCMCConfig, DataConfig
+
+# Simple usage - configuration objects are built automatically
+results = run_scribe(counts, n_steps=5000, batch_size=256)
+
+# Advanced usage - explicit configuration objects
+svi_config = SVIConfig(
+    n_steps=50_000,
+    batch_size=256,
+    stable_update=True
+)
+
+data_config = DataConfig(
+    cells_axis=1,
+    layer="counts"
+)
+
+results = run_scribe(
+    counts,
+    inference_method="svi",
+    svi_config=svi_config,
+    data_config=data_config
+)
+
+# MCMC with custom configuration
+mcmc_config = MCMCConfig(
+    n_samples=5000,
+    n_warmup=1000,
+    n_chains=4
+)
+
+results = run_scribe(
+    counts,
+    inference_method="mcmc",
+    mcmc_config=mcmc_config
+)
+
+# Configuration objects can be saved and reused
+import pickle
+
+# Save configuration
+with open("my_svi_config.pkl", "wb") as f:
+    pickle.dump(svi_config, f)
+
+# Load and reuse
+with open("my_svi_config.pkl", "rb") as f:
+    loaded_config = pickle.load(f)
+
+results = run_scribe(counts, svi_config=loaded_config)
+```
+
+**Benefits of using configuration objects:**
+
+- **Validation**: Automatic parameter validation with helpful error messages
+- **Reusability**: Save and reuse configurations across runs
+- **Type Safety**: Full IDE autocomplete and type checking
+- **Immutability**: Prevents accidental parameter modification
+- **Serialization**: Easy JSON/pickle export for reproducibility
 
 ## Benefits
 
