@@ -8,17 +8,23 @@ results.
 ## 🎯 Quick Start
 
 ```bash
-# Run inference with default settings
-python run_hydra.py
+# Run inference with default settings (includes visualization)
+python infer.py
 
 # Run inference with specific data and model
-python run_hydra.py data=jurkat_cells inference=svi zero_inflated=true
+python infer.py data=jurkat_cells inference=svi zero_inflated=true
 
-# Generate visualizations from inference results
-python viz_hydra.py data=jurkat_cells inference=svi zero_inflated=true
+# Run inference without visualization
+python infer.py data=jurkat_cells inference=svi viz=null
+
+# Generate visualizations from existing inference results
+python visualize.py data=jurkat_cells inference=svi zero_inflated=true
 
 # Override specific parameters
-python run_hydra.py data=jurkat_cells inference.n_steps=100000 inference.batch_size=1024
+python infer.py data=jurkat_cells inference.n_steps=100000 inference.batch_size=1024
+
+# Enable specific plots only
+python infer.py data=jurkat_cells viz.loss=true viz.ppc=true viz.ecdf=false
 ```
 
 ## 📁 Configuration Structure
@@ -89,6 +95,8 @@ viz:
     n_genes: 25          # Number of genes for PPC plots
     n_samples: 1500      # Posterior predictive samples
 ```
+
+**Note**: Visualization is enabled by default when running `infer.py`. Use `viz=null` to disable all plots, or `viz.loss=false` to disable specific plots.
 
 ## 📊 Data Configurations (`data/`)
 
@@ -181,55 +189,64 @@ viz:
 ### Parameter Sweeps
 ```bash
 # Sweep over multiple parameters
-python run_hydra.py -m data=jurkat_cells,singer inference.n_steps=25000,50000,100000
+python infer.py -m data=jurkat_cells,singer inference.n_steps=25000,50000,100000
 
 # Bayesian model comparison
-python run_hydra.py -m zero_inflated=true,false variable_capture=true,false
+python infer.py -m zero_inflated=true,false variable_capture=true,false
 ```
 
 ### Mixture Model Analysis
 ```bash
 # Cell type discovery
-python run_hydra.py data=jurkat_cells mixture_model=true n_components=3 inference.n_steps=100000
+python infer.py data=jurkat_cells mixture_model=true n_components=3 inference.n_steps=100000
 
 # Component-specific parameters
-python run_hydra.py mixture_model=true component_specific_params=true
+python infer.py mixture_model=true component_specific_params=true
 ```
 
 ### Custom Parameterizations
 ```bash
 # Different parameterizations for specialized analysis
-python run_hydra.py parameterization=linked zero_inflated=true
-python run_hydra.py parameterization=odds_ratio mixture_model=true
+python infer.py parameterization=linked zero_inflated=true
+python infer.py parameterization=odds_ratio mixture_model=true
 ```
 
 ### High-Performance Computing
 ```bash
 # Large-scale analysis
-python run_hydra.py inference.batch_size=2048 inference.n_steps=200000
+python infer.py inference.batch_size=2048 inference.n_steps=200000
 
 # Memory-efficient processing
-python run_hydra.py cells_axis=0 inference.batch_size=512
+python infer.py cells_axis=0 inference.batch_size=512
 ```
 
 ## 📈 Visualization Workflows
 
-### Basic Visualization
+### Integrated Visualization (Recommended)
 ```bash
-# Generate all plots in PNG format
-python viz_hydra.py data=jurkat_cells inference=svi
+# Run inference with automatic visualization (default)
+python infer.py data=jurkat_cells inference=svi
 
 # Generate publication-ready PDFs
-python viz_hydra.py data=jurkat_cells inference=svi viz.format=pdf
+python infer.py data=jurkat_cells inference=svi viz.format=pdf
+
+# Enable only specific plots
+python infer.py data=jurkat_cells viz.loss=true viz.ppc=true viz.ecdf=false
 ```
 
-### Custom Visualization
+### Standalone Visualization
 ```bash
+# Generate all plots from existing results
+python visualize.py data=jurkat_cells inference=svi
+
+# Generate publication-ready PDFs
+python visualize.py data=jurkat_cells inference=svi viz.format=pdf
+
 # Focus on specific plots
-python viz_hydra.py viz.loss=false viz.ppc=true viz.ppc_opts.n_genes=50
+python visualize.py viz.loss=false viz.ppc=true viz.ppc_opts.n_genes=50
 
 # High-resolution analysis
-python viz_hydra.py viz.ppc_opts.n_samples=5000 viz.ecdf_opts.n_genes=100
+python visualize.py viz.ppc_opts.n_samples=5000 viz.ecdf_opts.n_genes=100
 ```
 
 ## 🔧 Configuration Tips
@@ -251,13 +268,13 @@ inference:
 Start simple and add complexity:
 ```bash
 # Baseline
-python run_hydra.py
+python infer.py
 
 # Add zero-inflation
-python run_hydra.py zero_inflated=true
+python infer.py zero_inflated=true
 
 # Add mixture modeling
-python run_hydra.py zero_inflated=true mixture_model=true n_components=3
+python infer.py zero_inflated=true mixture_model=true n_components=3
 ```
 
 ### 4. **Convergence**
@@ -287,19 +304,28 @@ outputs/
 ```bash
 # Error: Could not override 'data'
 # Solution: Use + prefix for new parameters
-python run_hydra.py +my_param=value
+python infer.py +my_param=value
 ```
 
 **2. Memory Issues**
 ```bash
 # Reduce batch size or use gradient checkpointing
-python run_hydra.py inference.batch_size=256
+python infer.py inference.batch_size=256
 ```
 
 **3. Convergence Problems**
 ```bash
 # Increase steps or adjust learning rate
-python run_hydra.py inference.n_steps=100000 inference.learning_rate=0.0005
+python infer.py inference.n_steps=100000 inference.learning_rate=0.0005
+```
+
+**4. Visualization Issues**
+```bash
+# Disable visualization if causing problems
+python infer.py viz=null
+
+# Or run visualization separately
+python visualize.py data=your_data inference=your_method
 ```
 
 ## 📚 Integration Examples
@@ -314,7 +340,7 @@ adata = sc.read_h5ad("data.h5ad")
 sc.pp.filter_cells(adata, min_genes=200)
 
 # Run SCRIBE via configuration
-# (equivalent to running run_hydra.py)
+# (equivalent to running infer.py)
 results = scribe.run_scribe(
     counts=adata.X,
     inference_method="svi",
