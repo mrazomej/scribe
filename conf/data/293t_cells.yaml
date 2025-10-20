@@ -1,0 +1,3 @@
+# @package data
+name: "293T_cells"
+path: "data/10xGenomics/293T_cells/data.h5ad"
