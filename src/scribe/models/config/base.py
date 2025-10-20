@@ -198,30 +198,12 @@ class ConstrainedModelConfig(BaseModel):
         is_zero_inflated = self.is_zero_inflated
         uses_variable_capture = self.uses_variable_capture
 
-        # Get required parameters for this configuration
-        required_params = get_required_parameters(
-            self.parameterization,
-            self.base_model,
-            is_mixture,
-            is_zero_inflated,
-            uses_variable_capture,
-        )
-
         # Get all provided priors (non-None fields)
         provided_priors = {
             field_name
             for field_name in self.priors.__class__.model_fields.keys()
             if getattr(self.priors, field_name) is not None
         }
-
-        # Check for missing required priors
-        missing_priors = required_params - provided_priors
-        if missing_priors:
-            raise ValueError(
-                f"Missing required priors for {self.base_model} with "
-                f"{self.parameterization.value} parameterization: "
-                f"{', '.join(sorted(missing_priors))}"
-            )
 
         # Get active parameters (what's allowed)
         active_params = get_active_parameters(
@@ -429,30 +411,12 @@ class UnconstrainedModelConfig(BaseModel):
         is_zero_inflated = self.is_zero_inflated
         uses_variable_capture = self.uses_variable_capture
 
-        # Get required parameters for this configuration
-        required_params = get_required_parameters(
-            self.parameterization,
-            self.base_model,
-            is_mixture,
-            is_zero_inflated,
-            uses_variable_capture,
-        )
-
         # Get all provided priors (non-None fields)
         provided_priors = {
             field_name
             for field_name in self.priors.__class__.model_fields.keys()
             if getattr(self.priors, field_name) is not None
         }
-
-        # Check for missing required priors
-        missing_priors = required_params - provided_priors
-        if missing_priors:
-            raise ValueError(
-                f"Missing required priors for {self.base_model} with "
-                f"{self.parameterization.value} parameterization: "
-                f"{', '.join(sorted(missing_priors))}"
-            )
 
         # Get active parameters (what's allowed)
         active_params = get_active_parameters(

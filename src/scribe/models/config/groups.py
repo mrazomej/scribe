@@ -66,7 +66,7 @@ class PriorConfig(BaseModel):
     # Validation Methods
     # --------------------------------------------------------------------------
 
-    @field_validator("p", "r", "mu", "phi", "gate", "p_capture", "phi_capture")
+    @field_validator("p", "phi", "gate", "p_capture", "phi_capture")
     @classmethod
     def validate_positive_params(
         cls, v: Optional[Tuple[float, float]]
@@ -77,6 +77,24 @@ class PriorConfig(BaseModel):
                 raise ValueError(f"Prior must be a 2-tuple, got {len(v)}")
             if any(x <= 0 for x in v):
                 raise ValueError(f"Prior parameters must be positive, got {v}")
+        return v
+
+    @field_validator("r", "mu")
+    @classmethod
+    def validate_lognormal_params(
+        cls, v: Optional[Tuple[float, float]]
+    ) -> Optional[Tuple[float, float]]:
+        """
+        Validate LogNormal parameters (location can be zero/negative, scale must
+        be positive).
+        """
+        if v is not None:
+            if len(v) != 2:
+                raise ValueError(f"Prior must be a 2-tuple, got {len(v)}")
+            if v[1] <= 0:  # Scale parameter must be positive
+                raise ValueError(
+                    f"LogNormal scale parameter must be positive, got {v}"
+                )
         return v
 
     # --------------------------------------------------------------------------
@@ -160,9 +178,39 @@ class UnconstrainedPriorConfig(BaseModel):
     phi_capture: Optional[Tuple[float, float]] = Field(
         None, description="phi_capture_unconstrained prior (Normal)"
     )
-    mixing: Optional[Tuple[float, float]] = Field(
+    mixing: Optional[Tuple[float, ...]] = Field(
         None, description="mixing_unconstrained prior (Normal)"
     )
+
+    # --------------------------------------------------------------------------
+    # Validation Methods
+    # --------------------------------------------------------------------------
+
+    @field_validator("p", "r", "mu", "phi", "gate", "p_capture", "phi_capture")
+    @classmethod
+    def validate_tuple_length(
+        cls, v: Optional[Tuple[float, float]]
+    ) -> Optional[Tuple[float, float]]:
+        """Validate that parameters are 2-tuples."""
+        if v is not None:
+            if len(v) != 2:
+                raise ValueError(f"Prior must be a 2-tuple, got {len(v)}")
+        return v
+
+    # --------------------------------------------------------------------------
+
+    @field_validator("mixing")
+    @classmethod
+    def validate_mixing_tuple_length(
+        cls, v: Optional[Tuple[float, ...]]
+    ) -> Optional[Tuple[float, ...]]:
+        """Validate mixing parameters are tuples."""
+        if v is not None:
+            if len(v) < 2:
+                raise ValueError(
+                    f"Mixing must have at least 2 elements, got {len(v)}"
+                )
+        return v
 
 
 # ==============================================================================
@@ -182,7 +230,7 @@ class UnconstrainedGuideConfig(BaseModel):
     gate: Optional[Tuple[float, float]] = None
     p_capture: Optional[Tuple[float, float]] = None
     phi_capture: Optional[Tuple[float, float]] = None
-    mixing: Optional[Tuple[float, float]] = None
+    mixing: Optional[Tuple[float, ...]] = None
 
 
 # ==============================================================================
