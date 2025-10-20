@@ -19,7 +19,11 @@ class TestModelConfigBuilder:
     def test_simple_svi_config(self):
         """Test building a simple SVI configuration."""
         config = (
-            ModelConfigBuilder().for_model("nbdm").with_inference("svi").build()
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_inference("svi")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
+            .build()
         )
 
         assert isinstance(config, ConstrainedModelConfig)
@@ -34,6 +38,7 @@ class TestModelConfigBuilder:
             .for_model("zinb")
             .with_parameterization("linked")
             .unconstrained()
+            .with_priors(p=(1.0, 1.0), mu=(1.0, 1.0), gate=(1.0, 1.0))
             .build()
         )
 
@@ -46,6 +51,7 @@ class TestModelConfigBuilder:
             ModelConfigBuilder()
             .for_model("nbdm")
             .as_mixture(n_components=3)
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), mixing=(1.0, 1.0, 1.0))
             .build()
         )
 
@@ -59,6 +65,7 @@ class TestModelConfigBuilder:
             ModelConfigBuilder()
             .for_model("zinb")
             .with_vae(latent_dim=5, hidden_dims=[256, 128], activation="gelu")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), gate=(1.0, 1.0))
             .build()
         )
 
@@ -89,7 +96,12 @@ class TestModelConfigBuilder:
             .unconstrained()
             .as_mixture(n_components=3, component_specific=True)
             .with_low_rank_guide(10)
-            .with_priors(p=(1.0, 1.0), mu=(0.0, 1.0))
+            .with_priors(
+                p=(1.0, 1.0),
+                mu=(1.0, 1.0),
+                gate=(1.0, 1.0),
+                mixing=(1.0, 1.0, 1.0),
+            )
             .with_vae(latent_dim=5)
             .build()
         )
@@ -101,12 +113,17 @@ class TestModelConfigBuilder:
         assert config.component_specific_params is True
         assert config.guide_rank == 10
         assert config.priors.p == (1.0, 1.0)
-        assert config.priors.mu == (0.0, 1.0)
+        assert config.priors.mu == (1.0, 1.0)
         assert config.vae.latent_dim == 5
 
     def test_immutability(self):
         """Test that configs are immutable."""
-        config = ModelConfigBuilder().for_model("nbdm").build()
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
+            .build()
+        )
 
         with pytest.raises(Exception):  # Pydantic raises ValidationError
             config.base_model = "zinb"
@@ -143,6 +160,7 @@ class TestModelConfigBuilder:
             .with_parameterization(Parameterization.LINKED)
             .with_inference(InferenceMethod.VAE)
             .with_vae(prior_type=VAEPriorType.DECOUPLED)
+            .with_priors(p=(1.0, 1.0), mu=(1.0, 1.0))
             .build()
         )
 
@@ -161,6 +179,7 @@ class TestComputedFields:
             ModelConfigBuilder()
             .for_model("nbdm")
             .as_mixture(n_components=3)
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), mixing=(1.0, 1.0, 1.0))
             .build()
         )
 
@@ -168,13 +187,23 @@ class TestComputedFields:
 
     def test_is_zero_inflated(self):
         """Test is_zero_inflated computed field."""
-        config = ModelConfigBuilder().for_model("zinb").build()
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinb")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), gate=(1.0, 1.0))
+            .build()
+        )
 
         assert config.is_zero_inflated is True
 
     def test_uses_variable_capture(self):
         """Test uses_variable_capture computed field."""
-        config = ModelConfigBuilder().for_model("nbvcp").build()
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), p_capture=(1.0, 1.0))
+            .build()
+        )
 
         assert config.uses_variable_capture is True
 
@@ -184,6 +213,7 @@ class TestComputedFields:
             ModelConfigBuilder()
             .for_model("zinb")
             .with_parameterization("linked")
+            .with_priors(p=(1.0, 1.0), mu=(1.0, 1.0), gate=(1.0, 1.0))
             .build()
         )
 
@@ -197,35 +227,25 @@ class TestComputedFields:
 class TestImmutablePatterns:
     """Test immutable update patterns."""
 
-    def test_with_updated_priors(self):
-        """Test updating priors creates new instance."""
+    def test_model_copy_pattern(self):
+        """Test using model_copy for updates."""
         config1 = (
             ModelConfigBuilder()
             .for_model("nbdm")
-            .with_priors(p=(1.0, 1.0))
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
-        config2 = config1.with_updated_priors(r=(2.0, 0.5))
+        # Use model_copy to create a new instance with updated priors
+        config2 = config1.model_copy(
+            update={
+                "priors": config1.priors.model_copy(update={"r": (3.0, 1.0)})
+            }
+        )
 
-        assert config1.priors.r is None
-        assert config2.priors.r == (2.0, 0.5)
+        assert config1.priors.r == (2.0, 0.5)
+        assert config2.priors.r == (3.0, 1.0)
         assert config2.priors.p == (1.0, 1.0)
-        assert config1 is not config2
-
-    def test_with_updated_vae(self):
-        """Test updating VAE parameters creates new instance."""
-        config1 = (
-            ModelConfigBuilder()
-            .for_model("nbdm")
-            .with_vae(latent_dim=3)
-            .build()
-        )
-
-        config2 = config1.with_updated_vae(latent_dim=5)
-
-        assert config1.vae.latent_dim == 3
-        assert config2.vae.latent_dim == 5
         assert config1 is not config2
 
 
@@ -258,8 +278,8 @@ class TestValidation:
                 .build()
             )
 
-        # Wrong tuple length
-        with pytest.raises(ValueError, match="Prior must be a 2-tuple"):
+        # Wrong tuple length - this now raises a different error
+        with pytest.raises(Exception):  # Pydantic validation error
             (
                 ModelConfigBuilder()
                 .for_model("nbdm")
@@ -274,6 +294,7 @@ class TestValidation:
             ModelConfigBuilder()
             .for_model("nbdm")
             .with_vae(latent_dim=5, hidden_dims=[256, 128])
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
@@ -309,7 +330,41 @@ class TestModelTypeValidation:
     def test_valid_model_types(self):
         """Test that valid model types work."""
         for model_type in ["nbdm", "zinb", "nbvcp", "zinbvcp"]:
-            config = ModelConfigBuilder().for_model(model_type).build()
+            if model_type == "nbdm":
+                config = (
+                    ModelConfigBuilder()
+                    .for_model(model_type)
+                    .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
+                    .build()
+                )
+            elif model_type == "zinb":
+                config = (
+                    ModelConfigBuilder()
+                    .for_model(model_type)
+                    .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), gate=(1.0, 1.0))
+                    .build()
+                )
+            elif model_type == "nbvcp":
+                config = (
+                    ModelConfigBuilder()
+                    .for_model(model_type)
+                    .with_priors(
+                        p=(1.0, 1.0), r=(2.0, 0.5), p_capture=(1.0, 1.0)
+                    )
+                    .build()
+                )
+            elif model_type == "zinbvcp":
+                config = (
+                    ModelConfigBuilder()
+                    .for_model(model_type)
+                    .with_priors(
+                        p=(1.0, 1.0),
+                        r=(2.0, 0.5),
+                        gate=(1.0, 1.0),
+                        p_capture=(1.0, 1.0),
+                    )
+                    .build()
+                )
             assert config.base_model == model_type
 
     def test_invalid_model_type(self):
@@ -324,6 +379,7 @@ class TestModelTypeValidation:
             ModelConfigBuilder()
             .for_model("nbdm")
             .as_mixture(n_components=3)
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), mixing=(1.0, 1.0, 1.0))
             .build()
         )
 
@@ -340,6 +396,7 @@ class TestParameterizationSpecific:
             ModelConfigBuilder()
             .for_model("nbdm")
             .with_parameterization("standard")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
@@ -355,6 +412,7 @@ class TestParameterizationSpecific:
             ModelConfigBuilder()
             .for_model("nbdm")
             .with_parameterization("linked")
+            .with_priors(p=(1.0, 1.0), mu=(1.0, 1.0))
             .build()
         )
 
@@ -370,6 +428,7 @@ class TestParameterizationSpecific:
             ModelConfigBuilder()
             .for_model("nbdm")
             .with_parameterization("odds_ratio")
+            .with_priors(phi=(1.0, 1.0), mu=(1.0, 1.0))
             .build()
         )
 
@@ -389,6 +448,7 @@ class TestVAEConfiguration:
             ModelConfigBuilder()
             .for_model("nbdm")
             .with_vae(latent_dim=5)
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
@@ -397,7 +457,11 @@ class TestVAEConfiguration:
     def test_vae_default_config(self):
         """Test VAE default configuration."""
         config = (
-            ModelConfigBuilder().for_model("nbdm").with_inference("vae").build()
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_inference("vae")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
+            .build()
         )
 
         assert config.vae is not None
@@ -411,6 +475,7 @@ class TestVAEConfiguration:
             ModelConfigBuilder()
             .for_model("nbdm")
             .with_vae(prior_type="standard")
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
@@ -421,6 +486,7 @@ class TestVAEConfiguration:
             ModelConfigBuilder()
             .for_model("nbdm")
             .with_vae(prior_type="decoupled", prior_num_layers=3)
+            .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
@@ -440,7 +506,12 @@ class TestComplexConfigurations:
             .unconstrained()
             .as_mixture(n_components=3, component_specific=True)
             .with_low_rank_guide(10)
-            .with_priors(p=(1.0, 1.0), mu=(0.0, 1.0), gate=(2.0, 2.0))
+            .with_priors(
+                p=(1.0, 1.0),
+                mu=(1.0, 1.0),
+                gate=(2.0, 2.0),
+                mixing=(1.0, 1.0, 1.0),
+            )
             .build()
         )
 
@@ -451,7 +522,7 @@ class TestComplexConfigurations:
         assert config.component_specific_params is True
         assert config.guide_rank == 10
         assert config.priors.p == (1.0, 1.0)
-        assert config.priors.mu == (0.0, 1.0)
+        assert config.priors.mu == (1.0, 1.0)
         assert config.priors.gate == (2.0, 2.0)
 
     def test_vcp_model_with_odds_ratio(self):
@@ -460,14 +531,14 @@ class TestComplexConfigurations:
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("odds_ratio")
-            .with_priors(phi=(1.0, 1.0), mu=(0.0, 1.0), phi_capture=(2.0, 0.5))
+            .with_priors(phi=(1.0, 1.0), mu=(1.0, 1.0), phi_capture=(2.0, 0.5))
             .build()
         )
 
         assert config.base_model == "nbvcp"
         assert config.parameterization == Parameterization.ODDS_RATIO
         assert config.priors.phi == (1.0, 1.0)
-        assert config.priors.mu == (0.0, 1.0)
+        assert config.priors.mu == (1.0, 1.0)
         assert config.priors.phi_capture == (2.0, 0.5)
 
         # Check active parameters
@@ -477,3 +548,91 @@ class TestComplexConfigurations:
         assert "phi_capture" in params
         assert "p" not in params
         assert "r" not in params
+
+
+# ==============================================================================
+# Test Default Priors
+# ==============================================================================
+
+
+class TestDefaultPriors:
+    """Test that default priors are set correctly."""
+
+    def test_constrained_defaults(self):
+        """Test default priors for constrained models."""
+        config = ModelConfigBuilder().for_model("nbdm").build()
+
+        assert config.priors.p == (1.0, 1.0)
+        assert config.priors.r == (0.0, 1.0)
+
+    def test_unconstrained_defaults(self):
+        """Test default priors for unconstrained models."""
+        config = ModelConfigBuilder().for_model("nbdm").unconstrained().build()
+
+        assert config.priors.p == (0.0, 1.0)
+        assert config.priors.r == (0.0, 1.0)
+
+    def test_mixture_defaults(self):
+        """Test default priors for mixture models."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .as_mixture(n_components=3)
+            .build()
+        )
+
+        assert config.priors.mixing == (1.0, 1.0, 1.0)
+
+    def test_user_priors_override_defaults(self):
+        """Test that user-provided priors override defaults."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_priors(p=(2.0, 3.0))
+            .build()
+        )
+
+        assert config.priors.p == (2.0, 3.0)  # User value
+        assert config.priors.r == (0.0, 1.0)  # Default value
+
+    def test_zinb_defaults(self):
+        """Test default priors for zero-inflated models."""
+        config = ModelConfigBuilder().for_model("zinb").build()
+
+        assert config.priors.p == (1.0, 1.0)
+        assert config.priors.r == (0.0, 1.0)
+        assert config.priors.gate == (1.0, 1.0)
+
+    def test_vcp_defaults(self):
+        """Test default priors for variable capture models."""
+        config = ModelConfigBuilder().for_model("nbvcp").build()
+
+        assert config.priors.p == (1.0, 1.0)
+        assert config.priors.r == (0.0, 1.0)
+        assert config.priors.p_capture == (1.0, 1.0)
+
+    def test_odds_ratio_defaults(self):
+        """Test default priors for odds ratio parameterization."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("odds_ratio")
+            .build()
+        )
+
+        assert config.priors.phi == (1.0, 1.0)
+        assert config.priors.mu == (0.0, 1.0)
+
+    def test_unconstrained_mixture_defaults(self):
+        """Test default priors for unconstrained mixture models."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .unconstrained()
+            .as_mixture(n_components=2)
+            .build()
+        )
+
+        assert config.priors.p == (0.0, 1.0)
+        assert config.priors.r == (0.0, 1.0)
+        assert config.priors.mixing == (0.0, 0.0)

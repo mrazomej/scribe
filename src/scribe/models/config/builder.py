@@ -10,6 +10,7 @@ from .groups import (
     VAEConfig,
 )
 from .base import ConstrainedModelConfig, UnconstrainedModelConfig, ModelConfig
+from .parameter_mapping import get_required_parameters
 
 # ==============================================================================
 # Model Configuration Builder Class
@@ -252,6 +253,66 @@ class ModelConfigBuilder:
 
     # --------------------------------------------------------------------------
 
+    def _get_default_priors(self) -> Dict[str, Any]:
+        """Get sensible default priors based on model configuration."""
+        defaults = {}
+
+        # Get required parameters for this configuration
+        required_params = get_required_parameters(
+            self._parameterization,
+            self._base_model,
+            self._n_components is not None,
+            "zinb" in self._base_model if self._base_model else False,
+            "vcp" in self._base_model if self._base_model else False,
+        )
+
+        # Set defaults based on constrained vs unconstrained
+        if self._unconstrained:
+            # Unconstrained: Normal distributions
+            for param in required_params:
+                if param in [
+                    "p",
+                    "r",
+                    "mu",
+                    "gate",
+                    "p_capture",
+                    "phi",
+                    "phi_capture",
+                ]:
+                    defaults[param] = (0.0, 1.0)  # Normal(0, 1)
+                elif param == "mixing":
+                    defaults[param] = tuple(
+                        [0.0] * self._n_components
+                    )  # Normal for each
+        else:
+            # Constrained: Appropriate constrained distributions
+            for param in required_params:
+                if param in ["p", "gate", "p_capture"]:
+                    defaults[param] = (1.0, 1.0)  # Beta(1,1) = Uniform
+                elif param in ["r", "mu"]:
+                    defaults[param] = (0.0, 1.0)  # LogNormal(0,1)
+                elif param in ["phi", "phi_capture"]:
+                    defaults[param] = (1.0, 1.0)  # BetaPrime(1,1)
+                elif param == "mixing":
+                    defaults[param] = tuple(
+                        [1.0] * self._n_components
+                    )  # Dirichlet
+
+        return defaults
+
+    # --------------------------------------------------------------------------
+
+    def _apply_defaults(self) -> None:
+        """Apply default priors for any missing parameters."""
+        defaults = self._get_default_priors()
+
+        # Only set defaults for priors that user hasn't provided
+        for param, default_value in defaults.items():
+            if param not in self._priors:
+                self._priors[param] = default_value
+
+    # --------------------------------------------------------------------------
+
     def build(self) -> ModelConfig:
         """Build and validate the configuration.
 
@@ -273,8 +334,13 @@ class ModelConfigBuilder:
 
         # Append _mix if mixture model (but not if already ends with _mix)
         base_model = self._base_model
-        if self._n_components is not None and not self._base_model.endswith("_mix"):
+        if self._n_components is not None and not self._base_model.endswith(
+            "_mix"
+        ):
             base_model = f"{self._base_model}_mix"
+
+        # Apply defaults for any missing priors
+        self._apply_defaults()
 
         # Create VAE config if VAE inference
         vae_config = None
