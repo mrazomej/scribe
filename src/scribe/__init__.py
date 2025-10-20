@@ -5,9 +5,27 @@ A Bayesian method for identifying cell-type specific differences in gene express
 from single-cell RNA-sequencing data.
 """
 
+# Suppress known warnings from dependencies BEFORE any imports
+import warnings
+
+# Suppress FutureWarnings from scanpy/anndata about deprecated __version__ usage
+# Use a more general approach to catch all instances of this warning
+warnings.filterwarnings(
+    "ignore",
+    message=".*__version__ is deprecated.*",
+    category=FutureWarning,
+)
+
+# Also suppress the specific warning from anndata
+warnings.filterwarnings(
+    "ignore",
+    message=".*importlib.metadata.version.*",
+    category=FutureWarning,
+)
+
 # Import core components for advanced usage
 from .core import InputProcessor
-from .models.config import ModelConfig
+from .models.config import ModelConfig, SVIConfig, MCMCConfig, DataConfig
 
 from . import viz
 from . import utils
@@ -17,7 +35,6 @@ from .catalog import ExperimentCatalog
 
 # ------------------------------------------------------------------------------
 # Register KL with NumPyro on import (idempotent)
-import warnings
 
 try:
     from .stats import _kl_betaprime  # side effect: decorator runs
@@ -89,6 +106,9 @@ __all__ = [
     "InputProcessor",
     # Configuration classes
     "ModelConfig",
+    "SVIConfig",
+    "MCMCConfig",
+    "DataConfig",
     # Main inference function
     "run_scribe",
     # Results classes
