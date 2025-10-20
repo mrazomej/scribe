@@ -178,7 +178,8 @@ def register(
                 _GUIDE_REGISTRY[key] = func
             else:
                 raise ValueError(
-                    f"Function {func.__name__} must end with '_model' or '_guide' "
+                    f"Function {func.__name__} must end with "
+                    "'_model' or '_guide' "
                     f"to be registered. Got: {func.__name__}"
                 )
 
@@ -205,10 +206,10 @@ def get_model_and_guide(
     Retrieve the model and guide functions for a specified model type,
     parameterization, inference method, and (optionally) prior type.
 
-    This function looks up the model and guide from the global registry populated
-    by @register decorators. For VAE inference, the returned function is a factory
-    that produces both model and guide; for SVI/MCMC, both model and guide functions
-    are returned separately.
+    This function looks up the model and guide from the global registry
+    populated by @register decorators. For VAE inference, the returned function
+    is a factory that produces both model and guide; for SVI/MCMC, both model
+    and guide functions are returned separately.
 
     Parameters
     ----------
@@ -281,7 +282,8 @@ def get_model_and_guide(
         # For SVI/MCMC, do simple dictionary lookup
         # prior_type is None for non-VAE methods
 
-        # Models are always looked up with mean_field (they're shared between variants)
+        # Models are always looked up with mean_field (they're shared between
+        # variants)
         model_key = (
             model_type,
             parameterization,
@@ -307,13 +309,15 @@ def get_model_and_guide(
         if model_fn is None:
             raise ValueError(
                 f"Model function not found in registry for key: {model_key}. "
-                f"Available model keys: {[k for k in _MODEL_REGISTRY.keys() if k[0] == model_type]}"
+                f"Available model keys: "
+                f"{[k for k in _MODEL_REGISTRY.keys() if k[0] == model_type]}"
             )
 
         if guide_fn is None:
             raise ValueError(
                 f"Guide function not found in registry for key: {guide_key}. "
-                f"Available guide keys: {[k for k in _GUIDE_REGISTRY.keys() if k[0] == model_type]}"
+                f"Available guide keys: "
+                f"{[k for k in _GUIDE_REGISTRY.keys() if k[0] == model_type]}"
             )
 
         return model_fn, guide_fn
@@ -366,7 +370,8 @@ def get_log_likelihood_fn(model_type: str) -> Callable:
     ll_fn = getattr(log_likelihood_module, ll_name, None)
     if ll_fn is None:
         raise ValueError(
-            f"Log likelihood function '{ll_name}' not found in 'log_likelihood' module."
+            f"Log likelihood function '{ll_name}' not found in "
+            "'log_likelihood' module."
         )
 
     return ll_fn
