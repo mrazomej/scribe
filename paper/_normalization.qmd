@@ -144,11 +144,10 @@ statistical modeling. Standard multivariate distributions, such as the
 multivariate Gaussian, are defined on unconstrained Euclidean space
 $\mathbb{R}^{G}$ and cannot be directly applied to model data on the simplex.
 
-The field of *compositional data analysis* [@aitchison1982; @aitchison1986]
-provides a principled framework for statistical inference on the simplex. The
-central insight is that compositional data should be analyzed in an appropriate
-transformed space where standard statistical tools apply, and then the results
-can be mapped back to the simplex.
+The field of *compositional data analysis* provides a principled framework for
+statistical inference on the simplex. The central insight is that compositional
+data should be analyzed in an appropriate transformed space where standard
+statistical tools apply, and then the results can be mapped back to the simplex.
 
 ### Transformations to Euclidean space
 
@@ -156,10 +155,10 @@ To work with distributions on the simplex, we require bijective transformations
 that map between $\Delta^{G-1}$ and $\mathbb{R}^{G-1}$. Two prominent approaches
 have emerged in the literature:
 
-1. **Additive Log-Ratio (ALR) Transformation** [@aitchison1982]: Maps the
-simplex to Euclidean space by taking log-ratios relative to a reference
-component. This transformation is bijective and has a well-defined Jacobian,
-allowing for proper probability density calculations.
+1. **Additive Log-Ratio (ALR) Transformation**: Maps the simplex to Euclidean
+space by taking log-ratios relative to a reference component. This
+transformation is bijective and has a well-defined Jacobian, allowing for proper
+probability density calculations.
 
 2. **Softmax Transformation**: Maps Euclidean space to the simplex via the
 softmax function (popular in machine learning and related to the Boltzmann
@@ -174,11 +173,10 @@ complementary roles in modeling normalized gene expression.
 
 ### Definition and properties
 
-The ALR transformation, introduced by @aitchison1982, maps a point
-$\underline{\rho} \in \Delta^{G-1}$ to coordinates $\underline{z} \in
-\mathbb{R}^{G-1}$ by taking log-ratios with respect to a reference component.
-Without loss of generality, we choose the last component as the reference and
-define
+The ALR transformation maps a point $\underline{\rho} \in \Delta^{G-1}$ to
+coordinates $\underline{z} \in \mathbb{R}^{G-1}$ by taking log-ratios with
+respect to a reference component. Without loss of generality, we choose the last
+component as the reference and define
 
 $$
 z_i = \log(\rho_i) - \log(\rho_G), \quad i = 1, 2, \ldots, G-1.
@@ -270,69 +268,59 @@ $${#eq-norm-change-of-variables}
 where $\frac{\partial \underline{z}}{\partial \underline{\rho}}$ is the Jacobian
 matrix of the transformation.
 
-Let us compute this Jacobian. From @eq-norm-alr-definition, we have
+To compute this Jacobian correctly, we must recognize that the simplex
+constraint makes only $G-1$ components independent. We parameterize the simplex
+with the $G-1$ free components $(\rho_1,\ldots,\rho_{G-1})$ and set $\rho_G = 1
+- \sum_{j=1}^{G-1}\rho_j$. The ALR coordinates are $z_i = \log(\rho_i) -
+\log(\rho_G)$ for $i=1,\ldots,G-1$. 
+
+By direct differentiation, accounting for the dependence of $\rho_G$ on the free
+components,
 
 $$
-\frac{\partial z_i}{\partial \rho_j} = \begin{cases}
-\frac{1}{\rho_i} & \text{if } i = j, \\
--\frac{1}{\rho_G} & \text{if } j = G, \\
-0 & \text{otherwise}.
-\end{cases}
+\frac{\partial z_i}{\partial \rho_j}
+= \frac{\partial}{\partial \rho_j}\big(\log\rho_i - \log\rho_G\big)
+= \frac{\delta_{ij}}{\rho_i} + \frac{1}{\rho_G},
+\qquad i,j=1,\ldots,G-1.
 $${#eq-norm-jacobian-entries}
 
-The Jacobian matrix $\underline{\underline{J}} = \frac{\partial
-\underline{z}}{\partial \underline{\rho}}$ is thus
+In matrix form, letting $\mathbf{1}\in\mathbb{R}^{G-1}$ be the all-ones vector,
 
 $$
-\underline{\underline{J}} = \begin{bmatrix}
-\frac{1}{\rho_1} & 0 & \cdots & 0 & -\frac{1}{\rho_G} \\
-0 & \frac{1}{\rho_2} & \cdots & 0 & -\frac{1}{\rho_G} \\
-\vdots & \vdots & \ddots & \vdots & \vdots \\
-0 & 0 & \cdots & \frac{1}{\rho_{G-1}} & -\frac{1}{\rho_G}
-\end{bmatrix}.
+\underline{\underline{J}}
+= \frac{\partial\,\underline{z}}{\partial(\rho_1,\ldots,\rho_{G-1})}
+= \operatorname{diag}\!\left(\frac{1}{\rho_1},\ldots,\frac{1}{\rho_{G-1}}\right)
+\;+\; \frac{1}{\rho_G}\,\mathbf{1}\mathbf{1}^\top.
 $${#eq-norm-jacobian-matrix}
 
-To compute the determinant, we add the first row to all other rows (a row
-operation that does not change the determinant):
+This is a $(G-1)\times(G-1)$ matrix, as required for computing a determinant.
+The key is to treat only the $G-1$ free simplex components as independent
+variables, rather than all $G$ components, which would yield a non-square
+Jacobian matrix.
+
+Using the matrix determinant lemma $\det(\underline{\underline{D}} +
+\alpha\,\mathbf{u}\mathbf{v}^\top) =
+\det(\underline{\underline{D}})(1+\alpha\,\mathbf{v}^\top\underline{\underline{D}}^{-1}\mathbf{u})$
+with $\underline{\underline{D}}=\operatorname{diag}(1/\rho_i)$,
+$\mathbf{u}=\mathbf{v}=\mathbf{1}$, and $\alpha=1/\rho_G$, we obtain
 
 $$
-\underline{\underline{J}}' = \begin{bmatrix}
-\frac{1}{\rho_1} & 0 & \cdots & 0 & -\frac{1}{\rho_G} \\
-\frac{1}{\rho_1} & \frac{1}{\rho_2} & \cdots & 0 & -\frac{1}{\rho_G} \\
-\vdots & \vdots & \ddots & \vdots & \vdots \\
-\frac{1}{\rho_1} & 0 & \cdots & \frac{1}{\rho_{G-1}} & -\frac{1}{\rho_G}
-\end{bmatrix}.
-$${#eq-norm-jacobian-row-operation}
-
-We then multiply the last column by $\rho_G$ and divide each of the first $G-1$
-columns by their corresponding diagonal entries, giving
-
-$$
-\det(\underline{\underline{J}}) = 
-\frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}} \det\begin{bmatrix}
-1 & 0 & \cdots & 0 & -\rho_G/\rho_1 \\
-1 & 1 & \cdots & 0 & -\rho_G/\rho_2 \\
-\vdots & \vdots & \ddots & \vdots & \vdots \\
-1 & 0 & \cdots & 1 & -\rho_G/\rho_{G-1}
-\end{bmatrix}.
-$${#eq-norm-jacobian-factored}
-
-Adding the first column to the last column yields a lower triangular matrix with
-ones on the diagonal, so the determinant of the matrix is 1. We thus obtain
-
-$$
-\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right) = 
-\frac{1}{\rho_1 \rho_2 \cdots \rho_{G-1}}.
+\begin{aligned}
+\det(\underline{\underline{J}})
+&= \det(\underline{\underline{D}})\,\left(1+\alpha\,\mathbf{1}^\top \underline{\underline{D}}^{-1}\mathbf{1}\right) \\
+&= \left(\prod_{i=1}^{G-1}\frac{1}{\rho_i}\right)\left(1+\frac{1}{\rho_G}\sum_{i=1}^{G-1}\rho_i\right) \\
+&= \left(\prod_{i=1}^{G-1}\frac{1}{\rho_i}\right)\left(1+\frac{1-\rho_G}{\rho_G}\right) \\
+&= \left(\prod_{i=1}^{G-1}\frac{1}{\rho_i}\right)\frac{1}{\rho_G} \\
+&= \frac{1}{\prod_{g=1}^{G}\rho_g}.
+\end{aligned}
 $${#eq-norm-jacobian-result-intermediate}
 
-Using the constraint $\sum_{g=1}^{G} \rho_g = 1$ and $\prod_{g=1}^{G} \rho_g =
-\prod_{i=1}^{G-1} \rho_i \cdot \rho_G$, we can equivalently write
+Hence, the absolute Jacobian determinant for the ALR change of variables is
 
 $$
-\left|\det\left(\frac{\partial \underline{z}}{\partial \underline{\rho}}\right)\right| 
-= \frac{1}{\prod_{i=1}^{G-1} \rho_i} 
-= \frac{1}{\prod_{g=1}^{G} \rho_g / \rho_G} 
-= \frac{\rho_G}{\prod_{g=1}^{G} \rho_g}.
+\left|\det\!\left(\frac{\partial \underline{z}}{\partial (\rho_1,\ldots,\rho_{G-1})}\right)\right|
+= \frac{1}{\prod_{g=1}^{G} \rho_g}
+= \frac{1}{\rho_G\,\prod_{i=1}^{G-1}\rho_i}.
 $${#eq-norm-jacobian-final}
 
 For practical purposes, the key result is that the Jacobian determinant depends
@@ -377,10 +365,9 @@ function, which we explore in the next section.
 
 ### Definition via ALR transformation
 
-The logistic-normal distribution, introduced by @aitchison1980, is defined by
-applying the inverse ALR transformation to a multivariate Gaussian distribution.
-Let $\underline{z} \in \mathbb{R}^{G-1}$ follow a multivariate Gaussian
-distribution,
+The logistic-normal distribution is defined by applying the inverse ALR
+transformation to a multivariate Gaussian distribution. Let $\underline{z} \in
+\mathbb{R}^{G-1}$ follow a multivariate Gaussian distribution,
 
 $$
 \underline{z} \sim \mathcal{N}(\underline{\mu}, \underline{\underline{\Sigma}}),
@@ -409,7 +396,7 @@ we obtain
 $$
 \pi(\underline{\rho}) = 
 \frac{1}{(2\pi)^{(G-1)/2} |\underline{\underline{\Sigma}}|^{1/2} 
-\prod_{i=1}^{G-1} \rho_i} 
+\prod_{g=1}^{G} \rho_g} 
 \exp\left(-\frac{1}{2}(\underline{z} - \underline{\mu})^{\top} 
 \underline{\underline{\Sigma}}^{-1} (\underline{z} - \underline{\mu})\right),
 $${#eq-norm-logistic-normal-density}
@@ -444,7 +431,7 @@ $$
 $${#eq-norm-moment-match-mean}
 
 For the covariance, we match @eq-norm-dirichlet-covariance. This moment matching
-procedure [@aitchison1986] provides a principled way to approximate a Dirichlet
+procedure provides a principled way to approximate a Dirichlet
 distribution with a logistic-normal, though exact matching of all moments is
 generally not possible due to the different parametric families.
 
@@ -614,17 +601,17 @@ We parameterize the covariance matrix as
 
 $$
 \underline{\underline{\Sigma}} = 
-\underline{\underline{W}}\underline{\underline{W}}^{\top} + \underline{\underline{D}},
+\underline{\underline{W}}\;\underline{\underline{W}}^{\top} + 
+\underline{\underline{D}},
 $${#eq-norm-low-rank-structure}
 
 where $\underline{\underline{W}} \in \mathbb{R}^{(G-1) \times k}$ is a factor
 loading matrix with $k \ll G-1$, and $\underline{\underline{D}} =
 \text{diag}(\underline{d})$ is a diagonal matrix with $\underline{d} \in
-\mathbb{R}^{G-1}$. This is known as the *low-rank plus diagonal* structure
-[@tipping1999; @bishop2006].
+\mathbb{R}^{G-1}$. This is known as the *low-rank plus diagonal* structure.
 
 The low-rank component
-$\underline{\underline{W}}\underline{\underline{W}}^{\top}$ captures the
+$\underline{\underline{W}}\;\underline{\underline{W}}^{\top}$ captures the
 dominant correlation structure among genes, while the diagonal component
 $\underline{\underline{D}}$ accounts for gene-specific variance. The total
 number of parameters is $k(G-1) + (G-1) = (k+1)(G-1)$, which for $k = 50$ and $G
@@ -638,7 +625,8 @@ rather than $O(G^2)$. Sampling from $\mathcal{N}(\underline{\mu},
 representation
 
 $$
-\underline{z} = \underline{\mu} + \underline{\underline{W}}\underline{\varepsilon}_w 
+\underline{z} = \underline{\mu} + 
+\underline{\underline{W}}\;\underline{\varepsilon}_w 
 + \sqrt{\underline{d}} \odot \underline{\varepsilon}_d,
 $${#eq-norm-low-rank-sampling}
 
@@ -774,19 +762,19 @@ anisotropic structure in the low-rank component.
 
 The SVD approach provides significant memory and computational savings when $N
 \ll G$. Computing the SVD of the $N \times (G-1)$ matrix
-$\underline{\underline{X}}$ requires $O(NG \min(N, G))$ operations. For $N =
-1{,}500$ and $G = 30{,}000$, this is $O(NG \cdot N) = O(N^2 G) \approx 67.5$
-billion operations. In contrast, forming the covariance matrix via
-@eq-norm-covariance-estimate would require $O(N G^2) \approx 1.35$ trillion
-operations—about 20 times more expensive.
+$\underline{\underline{X}}$ requires $O(NG \min(N, G))$ operations. For $N \sim
+1{,}000$ and $G \sim 30{,}000$, this is $O(NG \cdot N) = O(N^2 G) \approx 3
+\times 10^{10}$ operations. In contrast, forming the covariance matrix via
+@eq-norm-covariance-estimate would require $O(N G^2) \approx 10^{12}$
+operations—about 100 times more expensive.
 
 The memory requirements are even more dramatic. The SVD stores three matrices:
 $\underline{\underline{U}}$ ($N \times N$), $\underline{S}$ ($N \times N$), and
 $\underline{\underline{V}}^{\top}$ ($N \times G$), totaling approximately $N^2 +
-NG$ floating point numbers. For $N = 1{,}500$ and $G = 30{,}000$, this is
-roughly 47 million numbers or 180 MB at 32-bit precision. The covariance matrix
-$\hat{\underline{\underline{\Sigma}}}$ would require $G^2 \approx 900$ million
-numbers or 3.6 GB—20 times more memory.
+NG$ floating point numbers. For $N \sim 1{,}000$ and $G \sim 30{,}000$, this is
+roughly $3 \times 10^ 7$ numbers or 100 MB at 32-bit precision. The covariance
+matrix $\hat{\underline{\underline{\Sigma}}}$ would require $G^2 \approx 900$
+million numbers or roughly 4 GB.
 
 These computational considerations make the SVD-based approach essential for
 scalability to high-dimensional gene expression data.
@@ -814,7 +802,7 @@ two nonlinear transformations—Dirichlet sampling followed by log-ratio
 transformation—can "unfold" this low-rank structure into many dimensions. The
 rank-$k$ approximation captures the $k$ most prominent directions of variation,
 which often correspond to biologically meaningful gene modules or expression
-programs [@blei2003; @stein2019].
+programs.
 
 ## Complete Fitting Procedure
 
@@ -863,7 +851,7 @@ components capture gene-gene correlations and cell-to-cell variability.
 
 By centering the data before fitting the covariance structure, we ensure that
 the low-rank approximation
-$\underline{\underline{W}}\underline{\underline{W}}^{\top}$ captures variation
+$\underline{\underline{W}}\;\underline{\underline{W}}^{\top}$ captures variation
 *around* the mean rather than variation dominated by the mean itself.
 Mathematically, fitting to centered data $\{\tilde{\underline{z}}^{(s)}\}$
 yields a covariance matrix that represents
@@ -881,7 +869,7 @@ The final distribution is
 
 $$
 \underline{z} \sim \mathcal{N}(\bar{\underline{z}}, 
-\underline{\underline{W}}\underline{\underline{W}}^{\top} 
+\underline{\underline{W}}\;\underline{\underline{W}}^{\top} 
 + \underline{\underline{D}}),
 $${#eq-norm-final-centered-distribution}
 
@@ -908,16 +896,28 @@ $${#eq-norm-alr-to-softmax-embedding}
 where the zeros correspond to the reference component.
 
 This embedding is equivalent to setting the $G$-th component to zero in the
-log-space representation. When we sample $\underline{w} \sim
+log-space representation. When we sample 
+
+$$
+\underline{w} \sim
 \mathcal{N}(\underline{\mu},
-\underline{\underline{W}}\underline{\underline{W}}^{\top} +
-\text{diag}(\underline{d}))$ and apply the softmax transformation
+\underline{\underline{W}}\;\underline{\underline{W}}^{\top} +
+\text{diag}(\underline{d}))
+$$ {#eq-norm-softmax-normal-sampling}
+
+and apply the softmax transformation
 @eq-norm-softmax-definition, the resulting $\underline{\rho}$ has the same
-distribution as if we had sampled $\underline{z} \sim
+distribution as if we had sampled 
+
+$$
+\underline{z} \sim
 \mathcal{N}(\underline{\mu}_{\text{ALR}},
-\underline{\underline{W}}_{\text{ALR}}\underline{\underline{W}}_{\text{ALR}}^{\top}
-+ \text{diag}(\underline{d}_{\text{ALR}}))$ and applied the inverse ALR
-transformation.
+\underline{\underline{W}}_{\text{ALR}}
+\underline{\underline{W}}_{\text{ALR}}^{\top}
++ \text{diag}(\underline{d}_{\text{ALR}})),
+$$ {#eq-norm-softmax-normal-sampling-2}
+
+and applied the inverse ALR transformation.
 
 The key insight is that the softmax transformation is invariant to constant
 shifts (see @eq-norm-softmax-invariance), so fixing the reference component to
@@ -933,11 +933,11 @@ $\underline{\underline{\Sigma}}$.
 The logistic-normal distribution provides a flexible approximation to the
 Dirichlet distribution through several mechanisms. First, for large
 concentration parameters, the Dirichlet distribution becomes increasingly
-concentrated and approximately Gaussian in appropriate coordinates
-[@aitchison1986]. Specifically, if $\underline{\rho} \sim
-\text{Dirichlet}(\alpha \underline{r})$ where $\alpha \to \infty$ and
-$\underline{r}$ is held fixed with $\sum r_g = 1$, then the ALR coordinates
-$\underline{z}$ converge in distribution to a multivariate Gaussian.
+concentrated and approximately Gaussian in appropriate coordinates.
+Specifically, if $\underline{\rho} \sim \text{Dirichlet}(\alpha \underline{r})$
+where $\alpha \to \infty$ and $\underline{r}$ is held fixed with $\sum r_g = 1$,
+then the ALR coordinates $\underline{z}$ converge in distribution to a
+multivariate Gaussian.
 
 To see this heuristically, note that for large $\alpha$, the Dirichlet
 concentrates near its mode. The mode of Dirichlet$(\underline{r})$ is
@@ -949,7 +949,7 @@ $${#eq-norm-dirichlet-mode}
 for large $r_g$. Near the mode, a second-order Taylor expansion of the
 log-density yields an approximately Gaussian distribution. When this Gaussian
 approximation is transformed through the ALR mapping, it remains approximately
-Gaussian [@aitchison1986].
+Gaussian.
 
 Second, moment matching provides a practical method for approximating any
 Dirichlet distribution with a logistic-normal. Given target moments
@@ -959,7 +959,7 @@ $\underline{\underline{\Sigma}}$ that approximately match these moments. While
 exact moment matching for all moments is generally impossible (since the
 Dirichlet and logistic-normal are different parametric families), matching the
 first two moments often provides an adequate approximation for practical
-purposes [@blei2003].
+purposes.
 
 ### Preservation of correlation structure
 
@@ -1006,7 +1006,7 @@ When centering is applied, the covariance structure captures variation in
 $\underline{z}$ around its mean, which corresponds to variation in gene
 expression patterns after removing the dominant mean composition. This is
 particularly interpretable: the principal components of
-$\underline{\underline{W}}\underline{\underline{W}}^{\top}$ represent the
+$\underline{\underline{W}}\;\underline{\underline{W}}^{\top}$ represent the
 dominant axes of variation in log-ratio space, often corresponding to
 co-regulated gene modules or biological processes.
 
@@ -1156,7 +1156,7 @@ showing that the SVD approach is approximately 400 times faster.
 These computational advantages make the SVD-based approach not merely convenient
 but essential for scalability to realistic single-cell datasets.
 
-## References to Consult
+<!-- ## References to Consult
 
 The methods described in this section draw on several streams of literature in
 compositional data analysis, probabilistic modeling, and computational
@@ -1226,4 +1226,4 @@ single-cell RNA-seq]
 These references provide mathematical foundations, computational algorithms, and
 domain-specific applications that complement the methods developed in this
 section.
-
+ -->
