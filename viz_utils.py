@@ -20,6 +20,7 @@ for model diagnostics and result interpretation.
 """
 
 import os
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -203,6 +204,7 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
     # Gene selection
     n_genes = viz_cfg.ppc_opts.n_genes
+    print(f"Using n_genes={n_genes} for PPC plot")
     selected_idx, mean_counts = _select_genes(counts, n_genes)
 
     # Sort selected indices - this is crucial for proper indexing of results
@@ -216,8 +218,10 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     print(f"Generating {n_samples} posterior predictive samples...")
     results_subset.get_ppc_samples(n_samples=n_samples)
 
-    # Plotting
-    fig, axes = plt.subplots(5, 5, figsize=(10, 10))
+    # Plotting - dynamically calculate grid size based on n_genes
+    n_cols = int(math.ceil(math.sqrt(n_genes)))
+    n_rows = int(math.ceil(n_genes / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(2 * n_cols, 2 * n_rows))
     axes = axes.flatten()
 
     for i, ax in enumerate(axes):
