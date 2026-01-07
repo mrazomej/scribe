@@ -1227,6 +1227,7 @@ class ScribeSVIResults:
         self,
         rng_key: random.PRNGKey = random.PRNGKey(42),
         n_samples: int = 100,
+        batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution."""
@@ -1244,6 +1245,10 @@ class ScribeSVIResults:
             "n_genes": self.n_genes,
             "model_config": self.model_config,
         }
+
+        # Add batch_size to model_args if provided for memory-efficient sampling
+        if batch_size is not None:
+            model_args["batch_size"] = batch_size
 
         # Sample from posterior
         posterior_samples = sample_variational_posterior(
@@ -1335,6 +1340,7 @@ class ScribeSVIResults:
             self.get_posterior_samples(
                 rng_key=rng_key,
                 n_samples=n_samples,
+                batch_size=batch_size,
                 store_samples=store_samples,
             )
 
@@ -1351,6 +1357,330 @@ class ScribeSVIResults:
             "parameter_samples": self.posterior_samples,
             "predictive_samples": self.predictive_samples,
         }
+
+    # --------------------------------------------------------------------------
+
+    def get_map_ppc_samples(
+        self,
+        rng_key: random.PRNGKey = random.PRNGKey(42),
+        n_samples: int = 1,
+        cell_batch_size: Optional[int] = None,
+        use_mean: bool = True,
+        store_samples: bool = True,
+        verbose: bool = True,
+    ) -> jnp.ndarray:
+        """
+        Generate predictive samples using MAP parameter estimates with cell
+        batching.
+
+        This method is memory-efficient for models with cell-specific parameters
+        (like VCP models) because it:
+            1. Uses MAP estimates directly instead of running the full guide
+            2. Samples from observation distributions in cell batches
+            3. Avoids materializing full (n_cells, n_genes) intermediate arrays
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, default=random.PRNGKey(42)
+            JAX random number generator key
+        n_samples : int, default=1
+            Number of predictive samples to generate
+        cell_batch_size : Optional[int], default=None
+            Number of cells to process at once. If None, processes all cells
+            at once (may cause OOM for VCP models with many cells).
+        use_mean : bool, default=True
+            If True, replaces undefined MAP values (NaN) with posterior means
+        store_samples : bool, default=True
+            If True, stores the samples in self.predictive_samples
+        verbose : bool, default=True
+            If True, prints progress messages
+
+        Returns
+        -------
+        jnp.ndarray
+            Predictive samples with shape (n_samples, n_cells, n_genes)
+
+        Notes
+        -----
+        This method is particularly useful for:
+        - UMAP visualizations where only 1 sample is needed
+        - Large datasets where full posterior sampling causes OOM
+        - VCP models (nbvcp, zinbvcp) with cell-specific capture probabilities
+
+        The method supports all model types:
+        - nbdm, zinb: Standard negative binomial models
+        - nbvcp, zinbvcp: Models with variable capture probability
+        - *_mix variants: Mixture models
+        """
+        import numpyro.distributions as dist
+
+        if verbose:
+            print("Getting MAP estimates...")
+
+        # Get MAP estimates with canonical parameters
+        map_estimates = self.get_map(
+            use_mean=use_mean, canonical=True, verbose=False
+        )
+
+        # Extract common parameters
+        r = map_estimates.get("r")
+        p = map_estimates.get("p")
+
+        if r is None or p is None:
+            raise ValueError(
+                "Could not extract r and p from MAP estimates. "
+                f"Available keys: {list(map_estimates.keys())}"
+            )
+
+        # Determine model characteristics
+        is_mixture = self.n_components is not None and self.n_components > 1
+        has_gate = "gate" in map_estimates
+        has_vcp = "p_capture" in map_estimates
+
+        if verbose:
+            print(
+                f"Model type: {self.model_type} "
+                f"(mixture={is_mixture}, gate={has_gate}, vcp={has_vcp})"
+            )
+
+        # Get optional parameters
+        gate = map_estimates.get("gate")
+        p_capture = map_estimates.get("p_capture")
+        mixing_weights = map_estimates.get("mixing_weights")
+
+        # Determine dimensions
+        if is_mixture:
+            # r has shape (n_components, n_genes)
+            n_genes = r.shape[1]
+        else:
+            # r has shape (n_genes,)
+            n_genes = r.shape[0]
+
+        # Use cell_batch_size or process all at once
+        if cell_batch_size is None:
+            cell_batch_size = self.n_cells
+
+        # Generate samples
+        if is_mixture:
+            samples = self._sample_mixture_model(
+                rng_key=rng_key,
+                n_samples=n_samples,
+                cell_batch_size=cell_batch_size,
+                r=r,
+                p=p,
+                gate=gate,
+                p_capture=p_capture,
+                mixing_weights=mixing_weights,
+                verbose=verbose,
+            )
+        else:
+            samples = self._sample_standard_model(
+                rng_key=rng_key,
+                n_samples=n_samples,
+                cell_batch_size=cell_batch_size,
+                r=r,
+                p=p,
+                gate=gate,
+                p_capture=p_capture,
+                verbose=verbose,
+            )
+
+        if verbose:
+            print(f"Generated predictive samples with shape {samples.shape}")
+
+        # Store samples if requested
+        if store_samples:
+            self.predictive_samples = samples
+
+        return samples
+
+    # --------------------------------------------------------------------------
+
+    def _sample_standard_model(
+        self,
+        rng_key: random.PRNGKey,
+        n_samples: int,
+        cell_batch_size: int,
+        r: jnp.ndarray,
+        p: jnp.ndarray,
+        gate: Optional[jnp.ndarray],
+        p_capture: Optional[jnp.ndarray],
+        verbose: bool = True,
+    ) -> jnp.ndarray:
+        """Sample from standard (non-mixture) models with cell batching."""
+        import numpyro.distributions as dist
+
+        n_cells = self.n_cells
+        n_genes = r.shape[0]
+        has_vcp = p_capture is not None
+        has_gate = gate is not None
+
+        # Initialize output array
+        all_samples = []
+
+        n_batches = (n_cells + cell_batch_size - 1) // cell_batch_size
+
+        for batch_idx in range(n_batches):
+            start = batch_idx * cell_batch_size
+            end = min(start + cell_batch_size, n_cells)
+            batch_size = end - start
+
+            if verbose and n_batches > 1 and batch_idx % 10 == 0:
+                print(f"  Processing cells {start}-{end} of {n_cells}...")
+
+            # Split key for this batch
+            rng_key, batch_key = random.split(rng_key)
+
+            # Compute effective p for this batch
+            if has_vcp:
+                # Get capture probability for this batch of cells
+                p_capture_batch = p_capture[start:end]  # (batch_size,)
+                # Reshape for broadcasting: (batch_size, 1)
+                p_capture_reshaped = p_capture_batch[:, None]
+                # Compute p_hat: (batch_size, 1) broadcasts with p (scalar)
+                p_effective = (
+                    p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+                )
+            else:
+                # No VCP: p is the same for all cells
+                p_effective = p
+
+            # Create base NB distribution
+            # r: (n_genes,), p_effective: scalar or (batch_size, 1)
+            nb_dist = dist.NegativeBinomialProbs(r, p_effective)
+
+            # Apply zero-inflation if present
+            if has_gate:
+                sample_dist = dist.ZeroInflatedDistribution(nb_dist, gate=gate)
+            else:
+                sample_dist = nb_dist
+
+            # Sample counts for this batch
+            # Shape: (n_samples, batch_size, n_genes)
+            batch_samples = sample_dist.sample(batch_key, (n_samples,))
+            all_samples.append(batch_samples)
+
+        # Concatenate all batches along cell dimension (axis=1)
+        samples = jnp.concatenate(all_samples, axis=1)
+
+        return samples
+
+    # --------------------------------------------------------------------------
+
+    def _sample_mixture_model(
+        self,
+        rng_key: random.PRNGKey,
+        n_samples: int,
+        cell_batch_size: int,
+        r: jnp.ndarray,
+        p: jnp.ndarray,
+        gate: Optional[jnp.ndarray],
+        p_capture: Optional[jnp.ndarray],
+        mixing_weights: jnp.ndarray,
+        verbose: bool = True,
+    ) -> jnp.ndarray:
+        """Sample from mixture models with cell batching."""
+        import numpyro.distributions as dist
+
+        n_cells = self.n_cells
+        n_components = self.n_components
+        n_genes = r.shape[1]  # r has shape (n_components, n_genes)
+        has_vcp = p_capture is not None
+        has_gate = gate is not None
+
+        # Determine if p is component-specific
+        p_is_component_specific = (
+            len(p.shape) > 0 and p.shape[0] == n_components
+        )
+
+        # Initialize output array
+        all_samples = []
+
+        n_batches = (n_cells + cell_batch_size - 1) // cell_batch_size
+
+        for batch_idx in range(n_batches):
+            start = batch_idx * cell_batch_size
+            end = min(start + cell_batch_size, n_cells)
+            batch_size = end - start
+
+            if verbose and n_batches > 1 and batch_idx % 10 == 0:
+                print(f"  Processing cells {start}-{end} of {n_cells}...")
+
+            # Split keys for component sampling and count sampling
+            rng_key, component_key, sample_key = random.split(rng_key, 3)
+
+            # Sample component assignments for each cell in batch
+            # Shape: (n_samples, batch_size)
+            components = dist.Categorical(probs=mixing_weights).sample(
+                component_key, (n_samples, batch_size)
+            )
+
+            # Get parameters for assigned components
+            # r: (n_components, n_genes) -> index to get (n_samples, batch_size, n_genes)
+            r_batch = r[components]
+
+            # Handle p parameter
+            if p_is_component_specific:
+                # p: (n_components,) -> (n_samples, batch_size)
+                p_batch = p[components]
+            else:
+                # p is scalar, broadcast to all
+                p_batch = p
+
+            # Handle gate parameter if present
+            if has_gate:
+                # gate: (n_components, n_genes) -> (n_samples, batch_size, n_genes)
+                gate_batch = gate[components]
+            else:
+                gate_batch = None
+
+            # Handle VCP
+            if has_vcp:
+                # Get capture probability for this batch
+                p_capture_batch = p_capture[start:end]  # (batch_size,)
+                # Expand for (n_samples, batch_size, 1)
+                p_capture_expanded = p_capture_batch[None, :, None]
+
+                # Reshape p_batch for broadcasting
+                if p_is_component_specific:
+                    # p_batch: (n_samples, batch_size) -> (n_samples, batch_size, 1)
+                    p_expanded = p_batch[:, :, None]
+                else:
+                    p_expanded = p_batch
+
+                # Compute p_hat
+                p_effective = (
+                    p_expanded
+                    * p_capture_expanded
+                    / (1 - p_expanded * (1 - p_capture_expanded))
+                )
+            else:
+                if p_is_component_specific:
+                    # p_batch: (n_samples, batch_size) -> (n_samples, batch_size, 1)
+                    p_effective = p_batch[:, :, None]
+                else:
+                    p_effective = p_batch
+
+            # Create NB distribution with batch parameters
+            nb_dist = dist.NegativeBinomialProbs(r_batch, p_effective)
+
+            # Apply zero-inflation if present
+            if gate_batch is not None:
+                sample_dist = dist.ZeroInflatedDistribution(
+                    nb_dist, gate=gate_batch
+                )
+            else:
+                sample_dist = nb_dist
+
+            # Sample counts
+            # We already have the right shape from indexing, just sample
+            batch_samples = sample_dist.sample(sample_key)
+            all_samples.append(batch_samples)
+
+        # Concatenate all batches along cell dimension (axis=1)
+        samples = jnp.concatenate(all_samples, axis=1)
+
+        return samples
 
     # --------------------------------------------------------------------------
     # Compute log likelihood methods
