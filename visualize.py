@@ -100,22 +100,40 @@ def main(cfg: DictConfig) -> None:
 
     hydra_cfg = HydraConfig.get()
 
-    # Construct the expected output directory path using the same logic as the
-    # original config
-    # This mirrors the hydra.run.dir pattern:
-    # outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
-    base_output_dir = "outputs"
-    data_name = cfg.data.name
-    inference_method = cfg.inference.method
+    # Check if run_dir is explicitly set in viz config
+    viz_cfg = getattr(cfg, "viz", None)
+    if viz_cfg and hasattr(viz_cfg, "run_dir") and viz_cfg.run_dir != "???":
+        run_dir = hydra.utils.to_absolute_path(viz_cfg.run_dir)
+        print(f"📂 Using explicit run_dir from config: {run_dir}")
+    else:
+        # Construct the expected output directory path using the same logic as the
+        # original config
+        # This mirrors the hydra.run.dir pattern:
+        # outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
+        base_output_dir = "outputs"
+        data_name = cfg.data.name
+        inference_method = cfg.inference.method
 
-    # Get the override dirname from current hydra config
-    override_dirname = hydra_cfg.job.override_dirname
+        # Get the override dirname from current hydra config
+        # Filter out viz.* parameters since they don't affect inference results location
+        override_dirname = hydra_cfg.job.override_dirname
+        if override_dirname:
+            # Remove viz.* parameters from override_dirname
+            override_parts = override_dirname.split(",")
+            filtered_parts = [
+                part
+                for part in override_parts
+                if not part.strip().startswith("viz.")
+            ]
+            override_dirname = (
+                ",".join(filtered_parts) if filtered_parts else ""
+            )
 
-    # Construct the expected run directory
-    run_dir = os.path.join(
-        base_output_dir, data_name, inference_method, override_dirname
-    )
-    run_dir = hydra.utils.to_absolute_path(run_dir)
+        # Construct the expected run directory
+        run_dir = os.path.join(
+            base_output_dir, data_name, inference_method, override_dirname
+        )
+        run_dir = hydra.utils.to_absolute_path(run_dir)
 
     print(f"🔍 Auto-detecting run directory...")
     print(f"📂 Expected directory: {run_dir}")
@@ -205,6 +223,10 @@ def main(cfg: DictConfig) -> None:
         print("⚙️  Using default visualization settings")
     else:
         print("⚙️  Using custom visualization settings")
+        if hasattr(viz_cfg, "ppc_opts") and hasattr(
+            viz_cfg.ppc_opts, "n_genes"
+        ):
+            print(f"   PPC n_genes: {viz_cfg.ppc_opts.n_genes}")
 
     # ==========================================================================
     # Plot Generation Section
