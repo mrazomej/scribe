@@ -53,7 +53,8 @@ viz:
   
   # PPC plot options  
   ppc_opts:
-    n_genes: 25
+    n_rows: 6  # Number of expression bins (logarithmically spaced)
+    n_cols: 6  # Number of genes per bin
     n_samples: 1500
 
 # --- Hydra settings ---
