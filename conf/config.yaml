@@ -56,6 +56,17 @@ viz:
     n_rows: 6  # Number of expression bins (logarithmically spaced)
     n_cols: 6  # Number of genes per bin
     n_samples: 1500
+  
+  # UMAP plot options
+  umap_opts:
+    enabled: true  # Enable UMAP projection plot
+    n_neighbors: 15  # Number of neighbors for UMAP
+    min_dist: 0.1  # Minimum distance for UMAP
+    n_components: 2  # Number of UMAP dimensions
+    random_state: 42  # Random seed for reproducibility
+    batch_size: 1000  # Batch size for PPC sampling (None = no batching, use for memory efficiency)
+    data_color: "dark_blue"  # Color for experimental data
+    synthetic_color: "dark_red"  # Color for synthetic data
 
 # --- Hydra settings ---
 hydra:

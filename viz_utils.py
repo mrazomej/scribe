@@ -24,6 +24,7 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from jax import random
 import scribe
 
 # ==============================================================================
@@ -383,7 +384,9 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     }
 
     # Plotting - use n_rows and n_cols directly
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(2 * n_cols, 2 * n_rows))
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(2.5 * n_cols, 2.5 * n_rows)
+    )
     axes = axes.flatten()
 
     for i, ax in enumerate(axes):
@@ -431,9 +434,10 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
         ax.set_xlabel("counts")
         ax.set_ylabel("frequency")
-        # Format mean expression to one significant figure
-        mean_expr = mean_counts[gene_idx]
-        mean_expr_formatted = f"{mean_expr:.2f}"
+        # Compute actual mean expression (mean_counts is actually median, used
+        # for selection)
+        actual_mean_expr = np.mean(counts[:, gene_idx])
+        mean_expr_formatted = f"{actual_mean_expr:.2f}"
         ax.set_title(
             f"$\\langle U \\rangle = {mean_expr_formatted}$",
             fontsize=8,
@@ -457,4 +461,163 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     output_path = os.path.join(figs_dir, fname)
     fig.savefig(output_path, bbox_inches="tight")
     print(f"Saved PPC plot to {output_path}")
+    plt.close(fig)
+
+    # Clean up results_subset to free memory (it contains samples for subset of
+    # genes) The original results object doesn't have samples, so no cleanup
+    # needed there
+    del results_subset
+
+
+# ------------------------------------------------------------------------------
+
+
+def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
+    """Plot UMAP projection of experimental and synthetic data."""
+    print("Plotting UMAP projection...")
+
+    # Check if UMAP is enabled
+    umap_opts = viz_cfg.get("umap_opts", {})
+    if not umap_opts.get("enabled", False):
+        print("UMAP plot is disabled, skipping...")
+        return
+
+    try:
+        import umap
+    except ImportError:
+        print(
+            "❌ ERROR: umap-learn is not installed."
+            " Install it with: pip install umap-learn"
+        )
+        return
+
+    # Get UMAP parameters from config
+    n_neighbors = umap_opts.get("n_neighbors", 15)
+    min_dist = umap_opts.get("min_dist", 0.1)
+    n_components = umap_opts.get("n_components", 2)
+    random_state = umap_opts.get("random_state", 42)
+    data_color = umap_opts.get("data_color", "dark_blue")
+    synthetic_color = umap_opts.get("synthetic_color", "dark_red")
+
+    # Get colors from scribe.viz if available
+    try:
+        colors = scribe.viz.colors
+        # Convert color names to actual color values if using scribe colors
+        if hasattr(colors, data_color):
+            data_color = getattr(colors, data_color)
+        if hasattr(colors, synthetic_color):
+            synthetic_color = getattr(colors, synthetic_color)
+    except (AttributeError, ImportError):
+        # Fallback to matplotlib color names
+        pass
+
+    print(
+        f"Fitting UMAP on experimental data (n_neighbors={n_neighbors}, min_dist={min_dist})..."
+    )
+
+    # Fit UMAP on experimental data
+    umap_reducer = umap.UMAP(
+        n_components=n_components,
+        n_neighbors=n_neighbors,
+        min_dist=min_dist,
+        random_state=random_state,
+    )
+    umap_embedding = umap_reducer.fit_transform(counts)
+
+    print("Generating single predictive sample for synthetic dataset...")
+
+    # Get batch_size from config for memory-efficient sampling
+    batch_size = umap_opts.get("batch_size", None)
+
+    # For UMAP, we need samples for ALL genes (not just the subset used in PPC
+    # plots). Use the memory-efficient MAP-based sampling method.
+    if results.predictive_samples is None:
+        print("Using MAP estimates for memory-efficient predictive sampling...")
+        if batch_size is not None:
+            print(f"Using cell_batch_size={batch_size} for cell batching...")
+
+        # Use the new memory-efficient method that samples using MAP estimates
+        # and processes cells in batches to avoid OOM for VCP models
+        predictive_samples = results.get_map_ppc_samples(
+            rng_key=random.PRNGKey(42),
+            n_samples=1,
+            cell_batch_size=batch_size or 1000,
+            use_mean=True,
+            store_samples=True,
+            verbose=True,
+        )
+        # Extract single sample: shape is (1, n_cells, n_genes) -> (n_cells, n_genes)
+        synthetic_data = predictive_samples[0, :, :]
+    else:
+        # Use existing predictive samples
+        print("Using existing predictive samples...")
+        # Extract single sample: shape should be (n_cells, n_genes)
+        # predictive_samples shape is (n_samples, n_cells, n_genes)
+        if results.predictive_samples.ndim == 3:
+            synthetic_data = results.predictive_samples[0, :, :]
+        else:
+            # If shape is (n_cells, n_genes), use directly
+            synthetic_data = results.predictive_samples
+
+    # Convert to numpy array (CPU) to avoid memory issues and for UMAP
+    # compatibility
+    if hasattr(synthetic_data, "block_until_ready"):
+        # JAX array - convert to numpy
+        synthetic_data = np.array(synthetic_data)
+    elif not isinstance(synthetic_data, np.ndarray):
+        # Other array type - convert to numpy
+        synthetic_data = np.array(synthetic_data)
+
+    print("Projecting synthetic data onto UMAP space...")
+
+    # Project synthetic data onto the same UMAP space
+    umap_synthetic = umap_reducer.transform(synthetic_data)
+
+    print("Creating overlay plot...")
+
+    # Create overlay plot
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    # Plot experimental data
+    ax.scatter(
+        umap_embedding[:, 0],
+        umap_embedding[:, 1],
+        c=data_color,
+        alpha=0.6,
+        s=1,
+        label="experimental data",
+    )
+
+    # Plot synthetic data
+    ax.scatter(
+        umap_synthetic[:, 0],
+        umap_synthetic[:, 1],
+        c=synthetic_color,
+        alpha=0.6,
+        s=1,
+        label="synthetic data",
+    )
+
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_title("UMAP Projection: Experimental vs Synthetic Data")
+    ax.legend(loc="best")
+
+    plt.tight_layout()
+
+    # Get output format
+    output_format = viz_cfg.get("format", "png")
+
+    # Construct filename
+    config_vals = _get_config_values(cfg)
+    fname = (
+        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['model_type'].replace('_', '-')}_"
+        f"{config_vals['n_components']:02d}components_"
+        f"{config_vals['n_steps']}steps_umap.{output_format}"
+    )
+
+    output_path = os.path.join(figs_dir, fname)
+    fig.savefig(output_path, bbox_inches="tight")
+    print(f"Saved UMAP plot to {output_path}")
     plt.close(fig)
