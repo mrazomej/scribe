@@ -68,7 +68,13 @@ import seaborn as sns
 import scanpy as sc
 import numpy as np
 import warnings
-from viz_utils import _get_config_values, plot_loss, plot_ecdf, plot_ppc
+from viz_utils import (
+    _get_config_values,
+    plot_loss,
+    plot_ecdf,
+    plot_ppc,
+    plot_umap,
+)
 
 # Suppress scanpy/anndata deprecation warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
@@ -252,6 +258,11 @@ def main(cfg: DictConfig) -> None:
         print("🔍 Generating posterior predictive check plots...")
         plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("PPC")
+
+    if viz_cfg.get("umap_opts", {}).get("enabled", False):
+        print("🗺️  Generating UMAP projection plot...")
+        plot_umap(results, counts, figs_dir, orig_cfg, viz_cfg)
+        plots_generated.append("UMAP")
 
     # ==========================================================================
     # Completion Summary
