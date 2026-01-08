@@ -86,6 +86,8 @@ viz:
   loss: true             # Plot loss/ELBO history
   ecdf: true             # Plot empirical CDFs
   ppc: true              # Plot posterior predictive checks
+  umap: true             # Plot UMAP projection (experimental vs synthetic data)
+  heatmap: false         # Plot correlation heatmap (disabled by default, requires posterior sampling)
   format: png            # Output format: png, pdf, svg, eps
   
   ecdf_opts:
@@ -97,7 +99,6 @@ viz:
     n_samples: 1500      # Posterior predictive samples
   
   umap_opts:
-    enabled: true        # Enable UMAP projection plot
     n_neighbors: 15      # Number of neighbors for UMAP
     min_dist: 0.1        # Minimum distance for UMAP
     n_components: 2      # Number of UMAP dimensions
@@ -105,6 +106,12 @@ viz:
     batch_size: 1000     # Batch size for PPC sampling (None = no batching, use for memory efficiency)
     data_color: "dark_blue"      # Color for experimental data
     synthetic_color: "dark_red"  # Color for synthetic data
+  
+  heatmap_opts:
+    n_genes: 500         # Number of genes to display (selected by correlation variance)
+    n_samples: 256       # Posterior samples for correlation computation
+    figsize: 12          # Figure size (square)
+    cmap: "RdBu_r"       # Colormap (red=positive, blue=negative)
 ```
 
 **Note**: Visualization is enabled by default when running `infer.py`. Use
@@ -125,6 +132,12 @@ of how well the model captures the structure of the experimental data. Requires
 `umap-learn` package (`pip install umap-learn`). The `batch_size` parameter can
 be used to process cells in batches during PPC sampling to avoid memory issues
 on large datasets.
+
+**Correlation Heatmap**: The heatmap displays pairwise Pearson correlations
+between genes computed from posterior samples. Genes are selected by correlation
+variance (most informative structure) and displayed with hierarchical clustering
+and dendrograms. This visualization helps identify gene co-expression patterns
+learned by the model. Disabled by default as it requires posterior sampling.
 
 ## 📊 Data Configurations (`data/`)
 
@@ -202,6 +215,8 @@ viz:
   loss: true             # Plot training loss
   ecdf: true             # Plot empirical cumulative distribution
   ppc: true              # Plot posterior predictive checks
+  umap: true             # Plot UMAP projection (experimental vs synthetic)
+  heatmap: false         # Plot correlation heatmap (requires posterior sampling)
   format: png            # png, pdf, svg, eps
   
   ecdf_opts:
@@ -213,14 +228,19 @@ viz:
     n_samples: 1500      # Number of predictive samples
   
   umap_opts:
-    enabled: true        # Enable UMAP projection plot
     n_neighbors: 15      # Number of neighbors for UMAP
     min_dist: 0.1        # Minimum distance for UMAP
     n_components: 2      # Number of UMAP dimensions
     random_state: 42     # Random seed for reproducibility
-    batch_size: 1000     # Batch size for PPC sampling (None = no batching, use for memory efficiency)
+    batch_size: 1000     # Batch size for PPC sampling
     data_color: "dark_blue"      # Color for experimental data
     synthetic_color: "dark_red"  # Color for synthetic data
+  
+  heatmap_opts:
+    n_genes: 500         # Number of genes to display
+    n_samples: 256       # Posterior samples for correlation
+    figsize: 12          # Figure size (square)
+    cmap: "RdBu_r"       # Colormap
 ```
 
 ## 🚀 Advanced Usage
@@ -270,7 +290,7 @@ python infer.py data=jurkat_cells inference=svi
 python infer.py data=jurkat_cells inference=svi viz.format=pdf
 
 # Enable only specific plots
-python infer.py data=jurkat_cells viz.loss=true viz.ppc=true viz.ecdf=false
+python infer.py data=jurkat_cells viz.loss=true viz.ppc=true viz.ecdf=false viz.umap=true
 ```
 
 ### Standalone Visualization
@@ -284,11 +304,14 @@ python visualize.py data=jurkat_cells inference=svi viz.format=pdf
 # Focus on specific plots
 python visualize.py viz.loss=false viz.ppc=true viz.ppc_opts.n_rows=6 viz.ppc_opts.n_cols=8
 
-# Enable UMAP projection plot
-python visualize.py viz.umap_opts.enabled=true
+# Enable/disable UMAP projection plot
+python visualize.py viz.umap=true
 
 # Customize UMAP parameters
-python visualize.py viz.umap_opts.enabled=true viz.umap_opts.n_neighbors=30 viz.umap_opts.min_dist=0.2
+python visualize.py viz.umap=true viz.umap_opts.n_neighbors=30 viz.umap_opts.min_dist=0.2
+
+# Enable correlation heatmap (requires posterior sampling)
+python visualize.py viz.heatmap=true viz.heatmap_opts.n_genes=300
 
 # High-resolution analysis
 python visualize.py viz.ppc_opts.n_samples=5000 viz.ecdf_opts.n_genes=100
