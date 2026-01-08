@@ -92,11 +92,39 @@ viz:
     n_genes: 25          # Number of genes for ECDF plots
   
   ppc_opts:
-    n_genes: 25          # Number of genes for PPC plots
+    n_rows: 6            # Number of expression bins (logarithmically spaced)
+    n_cols: 6            # Number of genes per bin
     n_samples: 1500      # Posterior predictive samples
+  
+  umap_opts:
+    enabled: true        # Enable UMAP projection plot
+    n_neighbors: 15      # Number of neighbors for UMAP
+    min_dist: 0.1        # Minimum distance for UMAP
+    n_components: 2      # Number of UMAP dimensions
+    random_state: 42     # Random seed for reproducibility
+    batch_size: 1000     # Batch size for PPC sampling (None = no batching, use for memory efficiency)
+    data_color: "dark_blue"      # Color for experimental data
+    synthetic_color: "dark_red"  # Color for synthetic data
 ```
 
-**Note**: Visualization is enabled by default when running `infer.py`. Use `viz=null` to disable all plots, or `viz.loss=false` to disable specific plots.
+**Note**: Visualization is enabled by default when running `infer.py`. Use
+`viz=null` to disable all plots, or `viz.loss=false` to disable specific plots.
+
+**PPC Gene Selection**: The PPC plots use a log-spaced binning strategy to
+ensure good coverage across the expression range. Genes are divided into
+`n_rows` logarithmically-spaced expression bins, and `n_cols` genes are selected
+from each bin (also using logarithmic spacing within the bin). This ensures
+representation of both low-expression and high-expression genes while avoiding
+over-representation of very low-expression genes.
+
+**UMAP Projection**: The UMAP plot provides a 2D visualization comparing
+experimental and synthetic data. UMAP is first fitted on the experimental data,
+then a single posterior predictive sample (one sample per gene per cell) is
+generated and projected onto the same UMAP space. This allows visual comparison
+of how well the model captures the structure of the experimental data. Requires
+`umap-learn` package (`pip install umap-learn`). The `batch_size` parameter can
+be used to process cells in batches during PPC sampling to avoid memory issues
+on large datasets.
 
 ## 📊 Data Configurations (`data/`)
 
@@ -180,8 +208,19 @@ viz:
     n_genes: 25          # Genes to include in ECDF
   
   ppc_opts:
-    n_genes: 25          # Genes for posterior predictive checks
+    n_rows: 6            # Number of expression bins (logarithmically spaced)
+    n_cols: 6            # Number of genes per bin
     n_samples: 1500      # Number of predictive samples
+  
+  umap_opts:
+    enabled: true        # Enable UMAP projection plot
+    n_neighbors: 15      # Number of neighbors for UMAP
+    min_dist: 0.1        # Minimum distance for UMAP
+    n_components: 2      # Number of UMAP dimensions
+    random_state: 42     # Random seed for reproducibility
+    batch_size: 1000     # Batch size for PPC sampling (None = no batching, use for memory efficiency)
+    data_color: "dark_blue"      # Color for experimental data
+    synthetic_color: "dark_red"  # Color for synthetic data
 ```
 
 ## 🚀 Advanced Usage
@@ -243,7 +282,13 @@ python visualize.py data=jurkat_cells inference=svi
 python visualize.py data=jurkat_cells inference=svi viz.format=pdf
 
 # Focus on specific plots
-python visualize.py viz.loss=false viz.ppc=true viz.ppc_opts.n_genes=50
+python visualize.py viz.loss=false viz.ppc=true viz.ppc_opts.n_rows=6 viz.ppc_opts.n_cols=8
+
+# Enable UMAP projection plot
+python visualize.py viz.umap_opts.enabled=true
+
+# Customize UMAP parameters
+python visualize.py viz.umap_opts.enabled=true viz.umap_opts.n_neighbors=30 viz.umap_opts.min_dist=0.2
 
 # High-resolution analysis
 python visualize.py viz.ppc_opts.n_samples=5000 viz.ecdf_opts.n_genes=100
