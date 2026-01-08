@@ -10,6 +10,7 @@ viz:
   ppc: true
   umap: true
   heatmap: false  # Disabled by default (requires posterior sampling which can be slow)
+  mixture_ppc: false  # Only runs when mixture_model=true, shows genes differing between components
   format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options
@@ -39,3 +40,9 @@ viz:
     n_samples: 256  # Number of posterior samples to generate for correlation computation
     figsize: 12  # Figure size (square)
     cmap: "RdBu_r"  # Colormap (red=positive, blue=negative correlation)
+
+  # Mixture model PPC options (genes with highest CV across components)
+  mixture_ppc_opts:
+    n_rows: 6  # Number of rows in the grid
+    n_cols: 6  # Number of columns in the grid
+    n_samples: 1500  # Number of PPC samples per component

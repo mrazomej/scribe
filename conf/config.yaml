@@ -57,8 +57,10 @@ hydra:
           - viz.ppc
           - viz.umap
           - viz.heatmap
+          - viz.mixture_ppc
           - viz.format
           - viz.ecdf_opts
           - viz.ppc_opts
           - viz.umap_opts
           - viz.heatmap_opts
+          - viz.mixture_ppc_opts
