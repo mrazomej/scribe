@@ -7,8 +7,8 @@ viz:
   run_dir: ???
   loss: true
   ecdf: true
-  ppc: true
-  umap: true
+  ppc: false
+  umap: false  # Disabled by default (can be slow for large datasets)
   heatmap: false  # Disabled by default (requires posterior sampling which can be slow)
   mixture_ppc: false  # Only runs when mixture_model=true, shows genes differing between components
   format: png  # Output format: png, pdf, svg, eps

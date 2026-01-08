@@ -1373,50 +1373,51 @@ def _plot_ppc_comparison_figure(
 
         true_counts = counts_np[:, gene_idx]
 
+        # Determine x-axis limit based on observed data (99th percentile)
+        x_max = max(int(np.percentile(true_counts, 99)), 10)
+
+        # Compute histogram for observed data with integer bins up to x_max
+        obs_bins = np.arange(0, x_max + 2)  # +2 to include x_max bin
+        hist_results = np.histogram(true_counts, bins=obs_bins, density=True)
+        y_max = np.max(hist_results[0]) * 1.1  # 10% padding
+
         # Compute credible regions for mixture
         mixture_cr = scribe.stats.compute_histogram_credible_regions(
             mixture_samples[:, :, subset_pos],
             credible_regions=[95, 68, 50],
+            max_bin=x_max,
         )
 
-        # Compute histogram for observed data using mixture bins
-        hist_results = np.histogram(
-            true_counts, bins=mixture_cr["bin_edges"], density=True
-        )
-
-        cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
-        max_bin = np.max(
-            [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
-        )
-
-        # Plot mixture PPC (Blues) - in background
-        scribe.viz.plot_histogram_credible_regions_stairs(
-            ax, mixture_cr, cmap="Blues", alpha=0.3, max_bin=max_bin
-        )
-
-        # Plot each component PPC overlaid with reduced alpha
+        # Plot each component PPC first (in background)
         for k, comp_samples in enumerate(component_samples_list):
             comp_cr = scribe.stats.compute_histogram_credible_regions(
                 comp_samples[:, :, subset_pos],
                 credible_regions=[95, 68, 50],
+                max_bin=x_max,
             )
             cmap = component_cmaps[k % len(component_cmaps)]
             scribe.viz.plot_histogram_credible_regions_stairs(
-                ax, comp_cr, cmap=cmap, alpha=0.4, max_bin=max_bin
+                ax, comp_cr, cmap=cmap, alpha=0.4, max_bin=x_max
             )
 
-        # Plot observed data histogram on top
-        max_bin_hist = (
-            max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
+        # Plot mixture PPC (Blues) on top of components
+        scribe.viz.plot_histogram_credible_regions_stairs(
+            ax, mixture_cr, cmap="Blues", alpha=0.3, max_bin=x_max
         )
+
+        # Plot observed data histogram on top of everything
         ax.step(
-            hist_results[1][:max_bin_hist],
-            hist_results[0][:max_bin_hist],
+            hist_results[1][:-1],  # bin edges (left edges)
+            hist_results[0],
             where="post",
             label="data",
             color="black",
             linewidth=1.5,
         )
+
+        # Set axis limits based on observed data only
+        ax.set_xlim(0, x_max)
+        ax.set_ylim(0, y_max)
 
         ax.set_xlabel("counts")
         ax.set_ylabel("frequency")
