@@ -51,6 +51,7 @@ hydra:
       override_dirname:
         exclude_keys:
           - viz
+          - viz.run_dir
           - viz.loss
           - viz.ecdf
           - viz.ppc
@@ -61,4 +62,3 @@ hydra:
           - viz.ppc_opts
           - viz.umap_opts
           - viz.heatmap_opts
-          - run_dir
