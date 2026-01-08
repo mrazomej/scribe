@@ -1556,8 +1556,18 @@ class ScribeSVIResults:
                 sample_dist = nb_dist
 
             # Sample counts for this batch
-            # Shape: (n_samples, batch_size, n_genes)
-            batch_samples = sample_dist.sample(batch_key, (n_samples,))
+            # For VCP models, p_effective has shape (batch_size, 1) which gives
+            # the distribution a batch dimension, so sample((n_samples,)) works.
+            # For non-VCP models, p_effective is scalar, so we need to
+            # explicitly include batch_size in the sample shape.
+            if has_vcp:
+                # Shape: (n_samples, batch_size, n_genes)
+                batch_samples = sample_dist.sample(batch_key, (n_samples,))
+            else:
+                # Shape: (n_samples, batch_size, n_genes)
+                batch_samples = sample_dist.sample(
+                    batch_key, (n_samples, batch_size)
+                )
             all_samples.append(batch_samples)
 
         # Concatenate all batches along cell dimension (axis=1)
