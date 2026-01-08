@@ -75,6 +75,7 @@ from viz_utils import (
     plot_ppc,
     plot_umap,
     plot_correlation_heatmap,
+    plot_mixture_ppc,
 )
 
 # Suppress scanpy/anndata deprecation warnings
@@ -109,10 +110,20 @@ def main(cfg: DictConfig) -> None:
 
     # Check if run_dir is explicitly set in viz config
     viz_cfg = getattr(cfg, "viz", None)
-    if viz_cfg and hasattr(viz_cfg, "run_dir") and viz_cfg.run_dir != "???":
-        run_dir = hydra.utils.to_absolute_path(viz_cfg.run_dir)
-        print(f"📂 Using explicit run_dir from config: {run_dir}")
-    else:
+    # Use OmegaConf.is_missing to safely check for ??? placeholder
+    run_dir_set = False
+    if viz_cfg and "run_dir" in viz_cfg:
+        try:
+            run_dir_value = viz_cfg.run_dir
+            if run_dir_value is not None and run_dir_value != "???":
+                run_dir = hydra.utils.to_absolute_path(run_dir_value)
+                print(f"📂 Using explicit run_dir from config: {run_dir}")
+                run_dir_set = True
+        except Exception:
+            # run_dir is missing or set to ???
+            pass
+
+    if not run_dir_set:
         # Construct the expected output directory path using the same logic as the
         # original config
         # This mirrors the hydra.run.dir pattern:
@@ -269,6 +280,15 @@ def main(cfg: DictConfig) -> None:
         print("🔥 Generating correlation heatmap...")
         plot_correlation_heatmap(results, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("Correlation Heatmap")
+
+    if viz_cfg.get("mixture_ppc", False) and orig_cfg.get(
+        "mixture_model", False
+    ):
+        print(
+            "🧬 Generating mixture model PPC (genes differing between components)..."
+        )
+        plot_mixture_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
+        plots_generated.append("Mixture PPC")
 
     # ==========================================================================
     # Completion Summary

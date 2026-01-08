@@ -867,3 +867,434 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
     fig.savefig(output_path, bbox_inches="tight")
     print(f"Saved correlation heatmap to {output_path}")
     plt.close(fig.fig)
+
+
+# ------------------------------------------------------------------------------
+
+
+def _select_divergent_genes(results, n_genes):
+    """
+    Select genes with highest coefficient of variation (CV) across mixture
+    components.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults
+        Results object containing model parameters
+    n_genes : int
+        Number of genes to select
+
+    Returns
+    -------
+    jnp.ndarray
+        Indices of selected genes sorted by CV (highest first)
+    """
+    import jax.numpy as jnp
+
+    # Get MAP estimates
+    map_estimates = results.get_map(
+        use_mean=True, canonical=True, verbose=False
+    )
+
+    # Determine which parameter to use based on parameterization
+    parameterization = results.model_config.parameterization
+    if parameterization in ["linked", "odds_ratio"]:
+        param_name = "mu"
+    else:
+        param_name = "r"
+
+    # Get the parameter - should have shape (n_components, n_genes)
+    param = map_estimates.get(param_name)
+    if param is None:
+        raise ValueError(
+            f"Parameter '{param_name}' not found in MAP estimates. "
+            f"Available: {list(map_estimates.keys())}"
+        )
+
+    # Compute CV across components for each gene
+    # CV = std / mean (across components, axis=0)
+    param_std = jnp.std(param, axis=0)
+    param_mean = jnp.mean(param, axis=0)
+
+    # Avoid division by zero
+    param_mean = jnp.where(param_mean == 0, 1e-10, param_mean)
+    cv = param_std / param_mean
+
+    # Get indices of top genes by CV (highest first)
+    n_genes = min(n_genes, len(cv))
+    top_indices = jnp.argsort(cv)[-n_genes:][::-1]
+
+    return top_indices, cv[top_indices]
+
+
+# ------------------------------------------------------------------------------
+
+
+def _get_component_ppc_samples(
+    results,
+    component_idx,
+    n_samples,
+    rng_key,
+    cell_batch_size=500,
+    verbose=True,
+):
+    """
+    Generate PPC samples for a specific mixture component.
+
+    Samples as if all cells came from the specified component,
+    returning shape (n_samples, n_cells, n_genes).
+
+    Parameters
+    ----------
+    results : ScribeSVIResults
+        Results object (should be subset to selected genes)
+    component_idx : int
+        Index of the component to sample from
+    n_samples : int
+        Number of samples to generate
+    rng_key : jax.random.PRNGKey
+        Random number generator key
+    cell_batch_size : int, default=500
+        Batch size for cell processing
+    verbose : bool, default=True
+        Print progress messages
+
+    Returns
+    -------
+    jnp.ndarray
+        Samples with shape (n_samples, n_cells, n_genes)
+    """
+    import jax.numpy as jnp
+    import numpyro.distributions as dist
+
+    # Get MAP estimates
+    map_estimates = results.get_map(
+        use_mean=True, canonical=True, verbose=False
+    )
+
+    # Extract component-specific parameters
+    r_all = map_estimates["r"]  # (n_components, n_genes)
+    p_all = map_estimates["p"]
+
+    r_k = r_all[component_idx]  # (n_genes,)
+    n_genes = r_k.shape[0]
+
+    # Handle p parameter
+    if jnp.ndim(p_all) == 0:
+        p_k = p_all  # scalar
+    elif jnp.ndim(p_all) == 1:
+        p_k = p_all[component_idx]  # scalar
+    else:
+        p_k = p_all[component_idx]  # (n_genes,)
+
+    # Handle gate parameter if present (ZINB models)
+    gate_k = None
+    if "gate" in map_estimates:
+        gate_all = map_estimates["gate"]
+        if jnp.ndim(gate_all) > 1:
+            gate_k = gate_all[component_idx]  # (n_genes,)
+        else:
+            gate_k = gate_all
+
+    # Handle VCP
+    p_capture = map_estimates.get("p_capture")
+    has_vcp = p_capture is not None
+    has_gate = gate_k is not None
+
+    n_cells = results.n_cells
+    all_samples = []
+    n_batches = (n_cells + cell_batch_size - 1) // cell_batch_size
+
+    for batch_idx in range(n_batches):
+        start = batch_idx * cell_batch_size
+        end = min(start + cell_batch_size, n_cells)
+        batch_size = end - start
+
+        if verbose and n_batches > 1 and batch_idx % 5 == 0:
+            print(f"    Processing cells {start}-{end} of {n_cells}...")
+
+        rng_key, batch_key = random.split(rng_key)
+
+        # Compute effective p for this batch
+        if has_vcp:
+            p_capture_batch = p_capture[start:end]  # (batch_size,)
+            p_capture_reshaped = p_capture_batch[:, None]  # (batch_size, 1)
+            # p_k could be scalar or (n_genes,)
+            p_effective = (
+                p_k * p_capture_reshaped / (1 - p_k * (1 - p_capture_reshaped))
+            )  # (batch_size, n_genes) or (batch_size, 1)
+        else:
+            p_effective = p_k
+
+        # Create base NB distribution
+        nb_dist = dist.NegativeBinomialProbs(r_k, p_effective)
+
+        # Apply zero-inflation if present
+        if has_gate:
+            sample_dist = dist.ZeroInflatedDistribution(nb_dist, gate=gate_k)
+        else:
+            sample_dist = nb_dist
+
+        # Sample counts
+        if has_vcp:
+            # p_effective has shape (batch_size, n_genes), so sample gives
+            # (n_samples, batch_size, n_genes)
+            batch_samples = sample_dist.sample(batch_key, (n_samples,))
+        else:
+            # Need to explicitly request batch dimension
+            batch_samples = sample_dist.sample(
+                batch_key, (n_samples, batch_size)
+            )
+
+        all_samples.append(batch_samples)
+
+    # Concatenate along cell dimension
+    samples = jnp.concatenate(all_samples, axis=1)
+    return samples
+
+
+# ------------------------------------------------------------------------------
+
+
+def _plot_ppc_figure(
+    predictive_samples,
+    counts,
+    selected_idx,
+    n_rows,
+    n_cols,
+    title,
+    figs_dir,
+    fname,
+    output_format="png",
+):
+    """
+    Plot a PPC figure in the standard format (same as plot_ppc).
+
+    Parameters
+    ----------
+    predictive_samples : jnp.ndarray
+        Samples with shape (n_samples, n_cells, n_genes_subset)
+    counts : array-like
+        Full count matrix (n_cells, n_genes_total)
+    selected_idx : array-like
+        Indices of selected genes in the full count matrix
+    n_rows, n_cols : int
+        Grid dimensions
+    title : str
+        Figure title
+    figs_dir : str
+        Directory to save figure
+    fname : str
+        Filename
+    output_format : str
+        Output format (png, pdf, etc.)
+    """
+    n_genes_selected = len(selected_idx)
+
+    # Sort selected indices by median expression
+    counts_np = np.array(counts)
+    selected_means = np.array(
+        [np.mean(counts_np[:, idx]) for idx in selected_idx]
+    )
+    sort_order = np.argsort(selected_means)
+    selected_idx_sorted = selected_idx[sort_order]
+
+    # Create mapping from gene index to position in subset
+    # The samples are ordered by the original selected_idx order
+    subset_positions = {
+        gene_idx: pos for pos, gene_idx in enumerate(selected_idx)
+    }
+
+    # Plotting
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(2.5 * n_cols, 2.5 * n_rows)
+    )
+    axes = axes.flatten()
+
+    for i, ax in enumerate(axes):
+        if i >= n_genes_selected:
+            ax.axis("off")
+            continue
+
+        # Get the gene index in sorted order
+        gene_idx = selected_idx_sorted[i]
+        # Get the position of this gene in the samples
+        subset_pos = subset_positions[gene_idx]
+
+        true_counts = counts_np[:, gene_idx]
+
+        # Compute credible regions from samples
+        credible_regions = scribe.stats.compute_histogram_credible_regions(
+            predictive_samples[:, :, subset_pos],
+            credible_regions=[95, 68, 50],
+        )
+
+        hist_results = np.histogram(
+            true_counts, bins=credible_regions["bin_edges"], density=True
+        )
+
+        cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
+        max_bin = np.max(
+            [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
+        )
+
+        scribe.viz.plot_histogram_credible_regions_stairs(
+            ax, credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
+        )
+
+        max_bin_hist = (
+            max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
+        )
+        ax.step(
+            hist_results[1][:max_bin_hist],
+            hist_results[0][:max_bin_hist],
+            where="post",
+            label="data",
+            color="black",
+        )
+
+        ax.set_xlabel("counts")
+        ax.set_ylabel("frequency")
+        actual_mean_expr = np.mean(counts_np[:, gene_idx])
+        mean_expr_formatted = f"{actual_mean_expr:.2f}"
+        ax.set_title(
+            f"$\\langle U \\rangle = {mean_expr_formatted}$",
+            fontsize=8,
+        )
+
+    plt.tight_layout()
+    fig.suptitle(title, y=1.02)
+
+    output_path = os.path.join(figs_dir, f"{fname}.{output_format}")
+    fig.savefig(output_path, bbox_inches="tight")
+    print(f"Saved {title} to {output_path}")
+    plt.close(fig)
+
+
+def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
+    """
+    Plot PPC for mixture models showing genes with highest CV across components.
+
+    Generates separate plots:
+    - One for the combined mixture PPC
+    - One per component
+
+    All plots use the same format as the standard PPC (credible regions).
+
+    Parameters
+    ----------
+    results : ScribeSVIResults
+        Results object containing model parameters
+    counts : array-like
+        Observed count data (n_cells, n_genes)
+    figs_dir : str
+        Directory to save the figure
+    cfg : DictConfig
+        Original inference configuration
+    viz_cfg : DictConfig
+        Visualization configuration
+    """
+    print(
+        "Plotting mixture model PPC (genes with highest CV across components)..."
+    )
+
+    # Check if this is a mixture model
+    n_components = results.n_components
+    if n_components is None or n_components <= 1:
+        print("Not a mixture model, skipping mixture PPC plot...")
+        return
+
+    # Get options from config
+    mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
+    n_rows = mixture_ppc_opts.get("n_rows", 4)
+    n_cols = mixture_ppc_opts.get("n_cols", 4)
+    n_samples = mixture_ppc_opts.get("n_samples", 1500)
+    n_genes_to_plot = n_rows * n_cols
+
+    print(
+        f"Selecting top {n_genes_to_plot} genes by CV across "
+        f"{n_components} components..."
+    )
+
+    # Select genes with highest CV
+    top_gene_indices, top_cvs = _select_divergent_genes(
+        results, n_genes_to_plot
+    )
+    top_gene_indices = np.array(top_gene_indices)
+
+    print(f"Top gene CVs: {np.array(top_cvs[:5])}")
+
+    # Subset results to selected genes for memory efficiency
+    results_subset = results[top_gene_indices]
+
+    # Get output format and config values
+    output_format = viz_cfg.get("format", "png")
+    config_vals = _get_config_values(cfg)
+    base_fname = (
+        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['model_type'].replace('_', '-')}_"
+        f"{config_vals['n_components']:02d}components_"
+        f"{config_vals['n_steps']}steps"
+    )
+
+    rng_key = random.PRNGKey(42)
+
+    # --- Plot 1: Combined Mixture PPC ---
+    print(f"\nGenerating mixture PPC samples ({n_samples} samples)...")
+    rng_key, subkey = random.split(rng_key)
+    mixture_samples = results_subset.get_map_ppc_samples(
+        rng_key=subkey,
+        n_samples=n_samples,
+        cell_batch_size=500,
+        store_samples=False,
+        verbose=True,
+    )
+
+    _plot_ppc_figure(
+        predictive_samples=np.array(mixture_samples),
+        counts=counts,
+        selected_idx=top_gene_indices,
+        n_rows=n_rows,
+        n_cols=n_cols,
+        title="Mixture PPC (High CV Genes)",
+        figs_dir=figs_dir,
+        fname=f"{base_fname}_mixture_ppc",
+        output_format=output_format,
+    )
+
+    del mixture_samples  # Free memory
+
+    # --- Plot 2+: Per-Component PPCs ---
+    for k in range(n_components):
+        print(
+            f"\nGenerating Component {k+1} PPC samples ({n_samples} samples)..."
+        )
+        rng_key, subkey = random.split(rng_key)
+
+        component_samples = _get_component_ppc_samples(
+            results_subset,
+            component_idx=k,
+            n_samples=n_samples,
+            rng_key=subkey,
+            cell_batch_size=500,
+            verbose=True,
+        )
+
+        _plot_ppc_figure(
+            predictive_samples=np.array(component_samples),
+            counts=counts,
+            selected_idx=top_gene_indices,
+            n_rows=n_rows,
+            n_cols=n_cols,
+            title=f"Component {k+1} PPC (High CV Genes)",
+            figs_dir=figs_dir,
+            fname=f"{base_fname}_component{k+1}_ppc",
+            output_format=output_format,
+        )
+
+        del component_samples  # Free memory
+
+    print(f"\nGenerated {1 + n_components} mixture PPC plots")
+
+    # Clean up
+    del results_subset
