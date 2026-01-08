@@ -1,10 +1,10 @@
 # @package _global_
 
-# Path to the hydra run directory containing the inference results
-run_dir: ???
-
 # Plotting options
 viz:
+  # Path to the hydra run directory containing the inference results
+  # Set to ??? to auto-detect based on data/inference config
+  run_dir: ???
   loss: true
   ecdf: true
   ppc: true
