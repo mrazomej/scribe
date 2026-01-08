@@ -478,11 +478,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
 
     print("Plotting UMAP projection...")
 
-    # Check if UMAP is enabled
     umap_opts = viz_cfg.get("umap_opts", {})
-    if not umap_opts.get("enabled", False):
-        print("UMAP plot is disabled, skipping...")
-        return
 
     try:
         import umap
@@ -1291,6 +1287,158 @@ def _plot_ppc_figure(
     plt.close(fig)
 
 
+# ------------------------------------------------------------------------------
+
+
+def _plot_ppc_comparison_figure(
+    mixture_samples,
+    component_samples_list,
+    counts,
+    selected_idx,
+    n_rows,
+    n_cols,
+    figs_dir,
+    fname,
+    output_format="png",
+    component_cmaps=None,
+):
+    """
+    Plot a comparison figure with mixture and all component PPCs overlaid.
+
+    Parameters
+    ----------
+    mixture_samples : np.ndarray
+        Mixture PPC samples with shape (n_samples, n_cells, n_genes_subset)
+    component_samples_list : list of np.ndarray
+        List of component PPC samples, each with shape (n_samples, n_cells,
+        n_genes_subset)
+    counts : array-like
+        Full count matrix (n_cells, n_genes_total)
+    selected_idx : array-like
+        Indices of selected genes in the full count matrix
+    n_rows, n_cols : int
+        Grid dimensions
+    figs_dir : str
+        Directory to save figure
+    fname : str
+        Filename
+    output_format : str
+        Output format (png, pdf, etc.)
+    component_cmaps : list of str, optional
+        Colormaps for each component
+    """
+    if component_cmaps is None:
+        component_cmaps = [
+            "Greens",
+            "Purples",
+            "Reds",
+            "Oranges",
+            "YlOrBr",
+            "BuGn",
+        ]
+
+    n_genes_selected = len(selected_idx)
+    n_components = len(component_samples_list)
+
+    # Sort selected indices by median expression
+    counts_np = np.array(counts)
+    selected_means = np.array(
+        [np.mean(counts_np[:, idx]) for idx in selected_idx]
+    )
+    sort_order = np.argsort(selected_means)
+    selected_idx_sorted = selected_idx[sort_order]
+
+    # Create mapping from gene index to position in subset
+    selected_idx_sorted_by_original = np.sort(selected_idx)
+    subset_positions = {
+        gene_idx: pos
+        for pos, gene_idx in enumerate(selected_idx_sorted_by_original)
+    }
+
+    # Plotting
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(2.5 * n_cols, 2.5 * n_rows)
+    )
+    axes = axes.flatten()
+
+    for i, ax in enumerate(axes):
+        if i >= n_genes_selected:
+            ax.axis("off")
+            continue
+
+        # Get the gene index in sorted order
+        gene_idx = selected_idx_sorted[i]
+        # Get the position of this gene in the samples
+        subset_pos = subset_positions[gene_idx]
+
+        true_counts = counts_np[:, gene_idx]
+
+        # Compute credible regions for mixture
+        mixture_cr = scribe.stats.compute_histogram_credible_regions(
+            mixture_samples[:, :, subset_pos],
+            credible_regions=[95, 68, 50],
+        )
+
+        # Compute histogram for observed data using mixture bins
+        hist_results = np.histogram(
+            true_counts, bins=mixture_cr["bin_edges"], density=True
+        )
+
+        cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
+        max_bin = np.max(
+            [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
+        )
+
+        # Plot mixture PPC (Blues) - in background
+        scribe.viz.plot_histogram_credible_regions_stairs(
+            ax, mixture_cr, cmap="Blues", alpha=0.3, max_bin=max_bin
+        )
+
+        # Plot each component PPC overlaid with reduced alpha
+        for k, comp_samples in enumerate(component_samples_list):
+            comp_cr = scribe.stats.compute_histogram_credible_regions(
+                comp_samples[:, :, subset_pos],
+                credible_regions=[95, 68, 50],
+            )
+            cmap = component_cmaps[k % len(component_cmaps)]
+            scribe.viz.plot_histogram_credible_regions_stairs(
+                ax, comp_cr, cmap=cmap, alpha=0.4, max_bin=max_bin
+            )
+
+        # Plot observed data histogram on top
+        max_bin_hist = (
+            max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
+        )
+        ax.step(
+            hist_results[1][:max_bin_hist],
+            hist_results[0][:max_bin_hist],
+            where="post",
+            label="data",
+            color="black",
+            linewidth=1.5,
+        )
+
+        ax.set_xlabel("counts")
+        ax.set_ylabel("frequency")
+        actual_mean_expr = np.mean(counts_np[:, gene_idx])
+        mean_expr_formatted = f"{actual_mean_expr:.2f}"
+        ax.set_title(
+            f"$\\langle U \\rangle = {mean_expr_formatted}$",
+            fontsize=8,
+        )
+
+    plt.tight_layout()
+    fig.suptitle("PPC Comparison: Mixture vs Components", y=1.02)
+
+    output_path = os.path.join(figs_dir, f"{fname}.{output_format}")
+    fig.savefig(output_path, bbox_inches="tight")
+    print(f"Saved PPC comparison to {output_path}")
+    plt.close(fig)
+
+
+# ------------------------------------------------------------------------------
+
+
 def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     """
     Plot PPC for mixture models showing genes with highest CV across components.
@@ -1369,8 +1517,11 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         verbose=True,
     )
 
+    # Store mixture samples for comparison plot
+    mixture_samples_np = np.array(mixture_samples)
+
     _plot_ppc_figure(
-        predictive_samples=np.array(mixture_samples),
+        predictive_samples=mixture_samples_np,
         counts=counts,
         selected_idx=top_gene_indices,
         n_rows=n_rows,
@@ -1381,11 +1532,13 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         output_format=output_format,
     )
 
-    del mixture_samples  # Free memory
+    del mixture_samples  # Free JAX array
 
     # --- Plot 2+: Per-Component PPCs ---
-    # Different colormaps for each component (cycle if more components than colors)
+    # Different colormaps for each component (cycle if more components than
+    # colors)
     component_cmaps = ["Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn"]
+    all_component_samples = []
 
     for k in range(n_components):
         print(
@@ -1402,11 +1555,14 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
             verbose=True,
         )
 
+        component_samples_np = np.array(component_samples)
+        all_component_samples.append(component_samples_np)
+
         # Cycle through colormaps if more components than colors
         cmap = component_cmaps[k % len(component_cmaps)]
 
         _plot_ppc_figure(
-            predictive_samples=np.array(component_samples),
+            predictive_samples=component_samples_np,
             counts=counts,
             selected_idx=top_gene_indices,
             n_rows=n_rows,
@@ -1418,9 +1574,27 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
             cmap=cmap,
         )
 
-        del component_samples  # Free memory
+        del component_samples  # Free JAX array
 
-    print(f"\nGenerated {1 + n_components} mixture PPC plots")
+    # --- Plot 3: Combined Comparison Plot ---
+    print("\nGenerating combined comparison plot...")
+    _plot_ppc_comparison_figure(
+        mixture_samples=mixture_samples_np,
+        component_samples_list=all_component_samples,
+        counts=counts,
+        selected_idx=top_gene_indices,
+        n_rows=n_rows,
+        n_cols=n_cols,
+        figs_dir=figs_dir,
+        fname=f"{base_fname}_ppc_comparison",
+        output_format=output_format,
+        component_cmaps=component_cmaps,
+    )
+
+    # Clean up
+    del mixture_samples_np, all_component_samples
+
+    print(f"\nGenerated {2 + n_components} mixture PPC plots")
 
     # Clean up
     del results_subset
