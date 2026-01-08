@@ -4,6 +4,7 @@
 defaults:
   - data: singer
   - inference: svi
+  - viz: default
   - _self_
 
 # --- Data Loading ---
@@ -40,37 +41,24 @@ mu_prior: null
 phi_prior: null
 phi_capture_prior: null
 
-# --- Visualization Configuration (for viz_hydra.py) ---
-viz:
-  loss: true
-  ecdf: true
-  ppc: true
-  format: png  # Output format: png, pdf, svg, eps, etc.
-  
-  # ECDF plot options
-  ecdf_opts:
-    n_genes: 25
-  
-  # PPC plot options  
-  ppc_opts:
-    n_rows: 6  # Number of expression bins (logarithmically spaced)
-    n_cols: 6  # Number of genes per bin
-    n_samples: 1500
-  
-  # UMAP plot options
-  umap_opts:
-    enabled: true  # Enable UMAP projection plot
-    n_neighbors: 15  # Number of neighbors for UMAP
-    min_dist: 0.1  # Minimum distance for UMAP
-    n_components: 2  # Number of UMAP dimensions
-    random_state: 42  # Random seed for reproducibility
-    batch_size: 1000  # Batch size for PPC sampling (None = no batching, use for memory efficiency)
-    data_color: "dark_blue"  # Color for experimental data
-    synthetic_color: "dark_red"  # Color for synthetic data
-
 # --- Hydra settings ---
 hydra:
   run:
     dir: outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
   job:
     name: ${data.name}_${inference.method}
+    config:
+      override_dirname:
+        exclude_keys:
+          - viz
+          - viz.loss
+          - viz.ecdf
+          - viz.ppc
+          - viz.umap
+          - viz.heatmap
+          - viz.format
+          - viz.ecdf_opts
+          - viz.ppc_opts
+          - viz.umap_opts
+          - viz.heatmap_opts
+          - run_dir

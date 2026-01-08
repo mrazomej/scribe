@@ -474,6 +474,8 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
 def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     """Plot UMAP projection of experimental and synthetic data."""
+    import pickle
+
     print("Plotting UMAP projection...")
 
     # Check if UMAP is enabled
@@ -498,6 +500,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     random_state = umap_opts.get("random_state", 42)
     data_color = umap_opts.get("data_color", "dark_blue")
     synthetic_color = umap_opts.get("synthetic_color", "dark_red")
+    cache_umap = umap_opts.get("cache_umap", True)
 
     # Get colors from scribe.viz if available
     try:
@@ -511,18 +514,79 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         # Fallback to matplotlib color names
         pass
 
-    print(
-        f"Fitting UMAP on experimental data (n_neighbors={n_neighbors}, min_dist={min_dist})..."
-    )
+    # Determine cache path (same directory as data file)
+    data_path = cfg.data.path if hasattr(cfg, "data") else None
+    cache_path = None
+    if data_path and cache_umap:
+        data_dir = os.path.dirname(data_path)
+        cache_path = os.path.join(data_dir, "2d_umap.pkl")
 
-    # Fit UMAP on experimental data
-    umap_reducer = umap.UMAP(
-        n_components=n_components,
-        n_neighbors=n_neighbors,
-        min_dist=min_dist,
-        random_state=random_state,
-    )
-    umap_embedding = umap_reducer.fit_transform(counts)
+    # Current UMAP parameters for cache validation
+    current_params = {
+        "n_neighbors": n_neighbors,
+        "min_dist": min_dist,
+        "n_components": n_components,
+        "random_state": random_state,
+        "n_cells": counts.shape[0],
+        "n_genes": counts.shape[1],
+    }
+
+    # Try to load cached UMAP
+    umap_reducer = None
+    umap_embedding = None
+
+    if cache_path and os.path.exists(cache_path):
+        print(f"Found cached UMAP at: {cache_path}")
+        try:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+
+            # Validate cached parameters match current parameters
+            cached_params = cached.get("params", {})
+            params_match = all(
+                cached_params.get(k) == v for k, v in current_params.items()
+            )
+
+            if params_match:
+                print("✅ Cache valid - loading UMAP from cache...")
+                umap_reducer = cached["reducer"]
+                umap_embedding = cached["embedding"]
+            else:
+                print("⚠️  Cache parameters mismatch - will re-fit UMAP")
+                print(f"   Cached: {cached_params}")
+                print(f"   Current: {current_params}")
+        except Exception as e:
+            print(f"⚠️  Failed to load cache: {e} - will re-fit UMAP")
+
+    # Fit UMAP if not loaded from cache
+    if umap_reducer is None:
+        print(
+            f"Fitting UMAP on experimental data "
+            f"(n_neighbors={n_neighbors}, min_dist={min_dist})..."
+        )
+
+        umap_reducer = umap.UMAP(
+            n_components=n_components,
+            n_neighbors=n_neighbors,
+            min_dist=min_dist,
+            random_state=random_state,
+        )
+        umap_embedding = umap_reducer.fit_transform(counts)
+
+        # Save to cache if caching is enabled
+        if cache_path:
+            print(f"💾 Saving UMAP cache to: {cache_path}")
+            try:
+                cache_data = {
+                    "reducer": umap_reducer,
+                    "embedding": umap_embedding,
+                    "params": current_params,
+                }
+                with open(cache_path, "wb") as f:
+                    pickle.dump(cache_data, f)
+                print("✅ UMAP cache saved successfully")
+            except Exception as e:
+                print(f"⚠️  Failed to save cache: {e}")
 
     print("Generating single predictive sample for synthetic dataset...")
 
@@ -621,3 +685,185 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     fig.savefig(output_path, bbox_inches="tight")
     print(f"Saved UMAP plot to {output_path}")
     plt.close(fig)
+
+
+# ------------------------------------------------------------------------------
+
+
+def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
+    """
+    Plot clustered correlation heatmap of gene parameters from posterior
+    samples.
+
+    This function computes pairwise Pearson correlations between genes based on
+    posterior samples of the gene expression parameter (mu for linked/odds_ratio
+    parameterization, r for standard parameterization). It then selects the top
+    genes by correlation variance and displays them as a hierarchically
+    clustered heatmap with dendrograms.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults
+        Results object containing model parameters and posterior samples
+    figs_dir : str
+        Directory to save the figure
+    cfg : DictConfig
+        Original inference configuration
+    viz_cfg : DictConfig
+        Visualization configuration containing heatmap_opts
+    """
+    from jax import random
+    import jax.numpy as jnp
+
+    print("Plotting correlation heatmap...")
+
+    # Get options from config
+    heatmap_opts = viz_cfg.get("heatmap_opts", {})
+    n_genes_to_plot = heatmap_opts.get("n_genes", 500)
+    n_samples = heatmap_opts.get("n_samples", 256)
+    figsize = heatmap_opts.get("figsize", 12)
+    cmap = heatmap_opts.get("cmap", "RdBu_r")
+
+    # Determine which parameter to use based on parameterization
+    parameterization = results.model_config.parameterization
+    if parameterization in ["linked", "odds_ratio"]:
+        param_name = "mu"
+    else:
+        param_name = "r"
+
+    print(
+        f"Using parameter '{param_name}' for correlation "
+        f"(parameterization: {parameterization})"
+    )
+
+    # Generate posterior samples if they don't exist
+    if results.posterior_samples is None:
+        print(f"Generating {n_samples} posterior samples...")
+        results.get_posterior_samples(
+            rng_key=random.PRNGKey(42),
+            n_samples=n_samples,
+            store_samples=True,
+        )
+    else:
+        print("Using existing posterior samples...")
+        # Update n_samples to match existing samples
+        n_samples = results.posterior_samples[param_name].shape[0]
+        print(f"Found {n_samples} existing samples")
+
+    # Get the posterior samples for the selected parameter
+    if param_name not in results.posterior_samples:
+        print(
+            f"❌ ERROR: Parameter '{param_name}' "
+            "not found in posterior samples."
+        )
+        print(
+            f"   Available parameters: "
+            f"{list(results.posterior_samples.keys())}"
+        )
+        return
+
+    samples = results.posterior_samples[param_name]
+
+    # Handle mixture models - samples may have shape
+    # (n_samples, n_components, n_genes)
+    # For now, take the first component or flatten
+    if samples.ndim == 3:
+        print(f"Detected mixture model with {samples.shape[1]} components")
+        print("Using first component for correlation heatmap...")
+        samples = samples[:, 0, :]
+
+    print(f"Sample shape: {samples.shape}")
+    n_genes = samples.shape[1]
+
+    # Ensure we don't try to plot more genes than available
+    n_genes_to_plot = min(n_genes_to_plot, n_genes)
+
+    print("Computing pairwise Pearson correlations...")
+
+    # Center the data (subtract column means)
+    samples_centered = samples - jnp.mean(samples, axis=0, keepdims=True)
+
+    # Compute standard deviations
+    samples_std = jnp.std(samples, axis=0, keepdims=True)
+
+    # Avoid division by zero for constant genes
+    samples_std = jnp.where(samples_std == 0, 1.0, samples_std)
+
+    # Standardize the data (z-scores)
+    samples_standardized = samples_centered / samples_std
+
+    # Compute correlation matrix: (X^T @ X) / (n_samples - 1)
+    correlation_matrix = (samples_standardized.T @ samples_standardized) / (
+        n_samples - 1
+    )
+
+    print(f"Correlation matrix shape: {correlation_matrix.shape}")
+    print(
+        f"Correlation range: [{float(jnp.min(correlation_matrix)):.3f}, "
+        f"{float(jnp.max(correlation_matrix)):.3f}]"
+    )
+
+    print(f"Selecting top {n_genes_to_plot} genes by correlation variance...")
+
+    # Compute variance of each gene's correlation pattern
+    correlation_variance = jnp.var(correlation_matrix, axis=1)
+
+    # Get indices of top genes by variance
+    top_var_indices = jnp.argsort(correlation_variance)[-n_genes_to_plot:]
+    top_var_indices = jnp.sort(
+        top_var_indices
+    )  # Sort for easier interpretation
+
+    # Subset the correlation matrix
+    correlation_subset = correlation_matrix[top_var_indices, :][
+        :, top_var_indices
+    ]
+
+    print(f"Selected {n_genes_to_plot} genes with highest correlation variance")
+    print(f"Subset correlation matrix shape: {correlation_subset.shape}")
+
+    # Convert to numpy for seaborn
+    correlation_subset_np = np.array(correlation_subset)
+
+    print("Creating clustered heatmap...")
+
+    # Create clustered heatmap with dendrograms
+    fig = sns.clustermap(
+        correlation_subset_np,
+        cmap=cmap,
+        center=0,
+        vmin=-1,
+        vmax=1,
+        figsize=(figsize, figsize),
+        dendrogram_ratio=0.15,
+        cbar_pos=(0.02, 0.83, 0.03, 0.15),
+        linewidths=0,
+        xticklabels=False,
+        yticklabels=False,
+        cbar_kws={"label": "Pearson Correlation"},
+    )
+
+    # Add title
+    fig.fig.suptitle(
+        f"Gene Correlation Structure (Top {n_genes_to_plot} by Variance)\n"
+        f"Parameter: {param_name} | Samples: {n_samples}",
+        y=1.02,
+        fontsize=12,
+    )
+
+    # Get output format
+    output_format = viz_cfg.get("format", "png")
+
+    # Construct filename
+    config_vals = _get_config_values(cfg)
+    fname = (
+        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['model_type'].replace('_', '-')}_"
+        f"{config_vals['n_components']:02d}components_"
+        f"{config_vals['n_steps']}steps_correlation_heatmap.{output_format}"
+    )
+
+    output_path = os.path.join(figs_dir, fname)
+    fig.savefig(output_path, bbox_inches="tight")
+    print(f"Saved correlation heatmap to {output_path}")
+    plt.close(fig.fig)
