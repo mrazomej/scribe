@@ -74,6 +74,7 @@ from viz_utils import (
     plot_ecdf,
     plot_ppc,
     plot_umap,
+    plot_correlation_heatmap,
 )
 
 # Suppress scanpy/anndata deprecation warnings
@@ -259,10 +260,15 @@ def main(cfg: DictConfig) -> None:
         plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("PPC")
 
-    if viz_cfg.get("umap_opts", {}).get("enabled", False):
+    if viz_cfg.get("umap", False):
         print("🗺️  Generating UMAP projection plot...")
         plot_umap(results, counts, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("UMAP")
+
+    if viz_cfg.get("heatmap", False):
+        print("🔥 Generating correlation heatmap...")
+        plot_correlation_heatmap(results, figs_dir, orig_cfg, viz_cfg)
+        plots_generated.append("Correlation Heatmap")
 
     # ==========================================================================
     # Completion Summary

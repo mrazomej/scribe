@@ -8,6 +8,9 @@ viz:
   loss: true
   ecdf: true
   ppc: true
+  umap: true
+  heatmap: false  # Disabled by default (requires posterior sampling which can be slow)
+  format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options
   ecdf_opts:
@@ -21,7 +24,6 @@ viz:
   
   # UMAP plot options
   umap_opts:
-    enabled: true  # Enable UMAP projection plot
     n_neighbors: 15  # Number of neighbors for UMAP
     min_dist: 0.1  # Minimum distance for UMAP
     n_components: 2  # Number of UMAP dimensions
@@ -29,3 +31,11 @@ viz:
     batch_size: 1000  # Batch size for PPC sampling (None = no batching, use for memory efficiency)
     data_color: "dark_blue"  # Color for experimental data
     synthetic_color: "dark_red"  # Color for synthetic data
+    cache_umap: true  # Cache fitted UMAP in data directory (avoids re-fitting for same data)
+
+  # Correlation heatmap options
+  heatmap_opts:
+    n_genes: 500  # Number of genes to display (selected by correlation variance)
+    n_samples: 256  # Number of posterior samples to generate for correlation computation
+    figsize: 12  # Figure size (square)
+    cmap: "RdBu_r"  # Colormap (red=positive, blue=negative correlation)
