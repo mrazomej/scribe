@@ -872,22 +872,31 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
 # ------------------------------------------------------------------------------
 
 
-def _select_divergent_genes(results, n_genes):
+def _select_divergent_genes(results, counts, n_rows, n_cols):
     """
-    Select genes with highest coefficient of variation (CV) across mixture
-    components.
+    Select genes with highest CV across components, binned by expression level.
+
+    Uses the same log-spaced binning strategy as the standard PPC, but within
+    each expression bin, selects genes with highest coefficient of variation
+    (CV) across mixture components instead of log-spacing.
 
     Parameters
     ----------
     results : ScribeSVIResults
         Results object containing model parameters
-    n_genes : int
-        Number of genes to select
+    counts : array-like
+        Count matrix (n_cells, n_genes) for computing median expression
+    n_rows : int
+        Number of expression bins
+    n_cols : int
+        Number of genes per bin (max)
 
     Returns
     -------
-    jnp.ndarray
-        Indices of selected genes sorted by CV (highest first)
+    selected_idx : np.ndarray
+        Indices of selected genes
+    cv_values : np.ndarray
+        CV values for selected genes
     """
     import jax.numpy as jnp
 
@@ -912,19 +921,122 @@ def _select_divergent_genes(results, n_genes):
         )
 
     # Compute CV across components for each gene
-    # CV = std / mean (across components, axis=0)
     param_std = jnp.std(param, axis=0)
     param_mean = jnp.mean(param, axis=0)
-
-    # Avoid division by zero
     param_mean = jnp.where(param_mean == 0, 1e-10, param_mean)
-    cv = param_std / param_mean
+    cv_all = np.array(param_std / param_mean)
 
-    # Get indices of top genes by CV (highest first)
-    n_genes = min(n_genes, len(cv))
-    top_indices = jnp.argsort(cv)[-n_genes:][::-1]
+    # Compute median expression for binning
+    counts_np = np.array(counts)
+    median_counts = np.median(counts_np, axis=0)
+    nonzero_idx = np.where(median_counts > 0)[0]
 
-    return top_indices, cv[top_indices]
+    if len(nonzero_idx) == 0:
+        return np.array([], dtype=int), np.array([])
+
+    # Sort genes by expression value
+    sorted_order = np.argsort(median_counts[nonzero_idx])
+    sorted_idx = nonzero_idx[sorted_order]
+    sorted_medians = median_counts[sorted_idx]
+    sorted_cvs = cv_all[sorted_idx]
+
+    # Get expression range
+    min_expr = sorted_medians[0]
+    max_expr = sorted_medians[-1]
+
+    # Create logarithmically-spaced bin edges
+    min_expr_safe = max(min_expr, 0.1)
+    bin_edges = np.logspace(
+        np.log10(min_expr_safe), np.log10(max_expr), num=n_rows + 1
+    )
+    bin_edges[0] = min_expr
+
+    # Track selected genes
+    selected_set = set()
+    selected_by_bin = []
+
+    # First pass: select top CV genes from each bin
+    for i in range(n_rows):
+        bin_start = bin_edges[i]
+        bin_end = bin_edges[i + 1]
+
+        # Find genes in this expression range
+        if i == n_rows - 1:
+            in_bin = (sorted_medians >= bin_start) & (sorted_medians <= bin_end)
+        else:
+            in_bin = (sorted_medians >= bin_start) & (sorted_medians < bin_end)
+
+        bin_indices = np.where(in_bin)[0]
+        bin_selected = []
+
+        if len(bin_indices) > 0:
+            # Get CVs for genes in this bin
+            bin_cvs = sorted_cvs[bin_indices]
+
+            if len(bin_indices) <= n_cols:
+                # Use all genes in bin
+                bin_selected = list(bin_indices)
+            else:
+                # Select top n_cols genes by CV within this bin
+                top_cv_order = np.argsort(bin_cvs)[::-1][:n_cols]
+                bin_selected = list(bin_indices[top_cv_order])
+
+        selected_by_bin.append(bin_selected)
+        selected_set.update(bin_selected)
+
+    # Second pass: backfill bins that are short from previous bins
+    # Create pool of unselected genes sorted by CV
+    all_indices = set(range(len(sorted_idx)))
+    unselected_indices = np.array(sorted(list(all_indices - selected_set)))
+
+    if len(unselected_indices) > 0:
+        unselected_cvs = sorted_cvs[unselected_indices]
+        unselected_medians = sorted_medians[unselected_indices]
+
+        # Fill each bin to n_cols
+        for i in range(n_rows):
+            bin_selected = selected_by_bin[i]
+            needed = n_cols - len(bin_selected)
+
+            if needed > 0 and len(unselected_indices) > 0:
+                bin_end = bin_edges[i + 1]
+
+                # Find candidates: prefer genes from this or previous bins
+                # (lower or equal expression)
+                candidates_mask = unselected_medians <= bin_end
+                candidates = unselected_indices[candidates_mask]
+                candidate_cvs = unselected_cvs[candidates_mask]
+
+                if len(candidates) == 0:
+                    # If no candidates below, use all unselected
+                    candidates = unselected_indices
+                    candidate_cvs = unselected_cvs
+
+                # Select top CV candidates
+                n_to_add = min(needed, len(candidates))
+                top_cv_order = np.argsort(candidate_cvs)[::-1][:n_to_add]
+                to_add = candidates[top_cv_order]
+
+                bin_selected.extend(list(to_add))
+                selected_set.update(to_add)
+
+                # Remove from unselected pool
+                mask = ~np.isin(unselected_indices, to_add)
+                unselected_indices = unselected_indices[mask]
+                unselected_cvs = unselected_cvs[mask]
+                unselected_medians = unselected_medians[mask]
+
+            selected_by_bin[i] = bin_selected
+
+    # Flatten and convert back to original gene indices
+    final_selected_sorted = []
+    final_cvs = []
+    for bin_selected in selected_by_bin:
+        for idx in bin_selected:
+            final_selected_sorted.append(sorted_idx[idx])
+            final_cvs.append(sorted_cvs[idx])
+
+    return np.array(final_selected_sorted), np.array(final_cvs)
 
 
 # ------------------------------------------------------------------------------
@@ -1066,6 +1178,7 @@ def _plot_ppc_figure(
     figs_dir,
     fname,
     output_format="png",
+    cmap="Blues",
 ):
     """
     Plot a PPC figure in the standard format (same as plot_ppc).
@@ -1088,6 +1201,8 @@ def _plot_ppc_figure(
         Filename
     output_format : str
         Output format (png, pdf, etc.)
+    cmap : str, default="Blues"
+        Colormap for credible region shading
     """
     n_genes_selected = len(selected_idx)
 
@@ -1100,9 +1215,14 @@ def _plot_ppc_figure(
     selected_idx_sorted = selected_idx[sort_order]
 
     # Create mapping from gene index to position in subset
-    # The samples are ordered by the original selected_idx order
+    # IMPORTANT: results[selected_idx] preserves the original gene order
+    # (sorted by index), not the order of selected_idx. So we need to find
+    # where each gene appears in the sorted original indices.
+    # (Same logic as the original plot_ppc function)
+    selected_idx_sorted_by_original = np.sort(selected_idx)
     subset_positions = {
-        gene_idx: pos for pos, gene_idx in enumerate(selected_idx)
+        gene_idx: pos
+        for pos, gene_idx in enumerate(selected_idx_sorted_by_original)
     }
 
     # Plotting
@@ -1139,7 +1259,7 @@ def _plot_ppc_figure(
         )
 
         scribe.viz.plot_histogram_credible_regions_stairs(
-            ax, credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
+            ax, credible_regions, cmap=cmap, alpha=0.5, max_bin=max_bin
         )
 
         max_bin_hist = (
@@ -1209,20 +1329,19 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     n_rows = mixture_ppc_opts.get("n_rows", 4)
     n_cols = mixture_ppc_opts.get("n_cols", 4)
     n_samples = mixture_ppc_opts.get("n_samples", 1500)
-    n_genes_to_plot = n_rows * n_cols
-
     print(
-        f"Selecting top {n_genes_to_plot} genes by CV across "
-        f"{n_components} components..."
+        f"Selecting high-CV genes from {n_rows} expression bins "
+        f"({n_cols} genes/bin) across {n_components} components..."
     )
 
-    # Select genes with highest CV
+    # Select genes with highest CV within expression bins
     top_gene_indices, top_cvs = _select_divergent_genes(
-        results, n_genes_to_plot
+        results, counts, n_rows, n_cols
     )
     top_gene_indices = np.array(top_gene_indices)
+    n_genes_to_plot = len(top_gene_indices)
 
-    print(f"Top gene CVs: {np.array(top_cvs[:5])}")
+    print(f"Selected {n_genes_to_plot} genes. Top CVs: {np.array(top_cvs[:5])}")
 
     # Subset results to selected genes for memory efficiency
     results_subset = results[top_gene_indices]
@@ -1265,6 +1384,9 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     del mixture_samples  # Free memory
 
     # --- Plot 2+: Per-Component PPCs ---
+    # Different colormaps for each component (cycle if more components than colors)
+    component_cmaps = ["Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn"]
+
     for k in range(n_components):
         print(
             f"\nGenerating Component {k+1} PPC samples ({n_samples} samples)..."
@@ -1280,6 +1402,9 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
             verbose=True,
         )
 
+        # Cycle through colormaps if more components than colors
+        cmap = component_cmaps[k % len(component_cmaps)]
+
         _plot_ppc_figure(
             predictive_samples=np.array(component_samples),
             counts=counts,
@@ -1290,6 +1415,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
             figs_dir=figs_dir,
             fname=f"{base_fname}_component{k+1}_ppc",
             output_format=output_format,
+            cmap=cmap,
         )
 
         del component_samples  # Free memory
