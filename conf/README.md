@@ -88,6 +88,7 @@ viz:
   ppc: true              # Plot posterior predictive checks
   umap: true             # Plot UMAP projection (experimental vs synthetic data)
   heatmap: false         # Plot correlation heatmap (disabled by default, requires posterior sampling)
+  mixture_ppc: false     # Plot mixture model PPCs (only for mixture models)
   format: png            # Output format: png, pdf, svg, eps
   
   ecdf_opts:
@@ -112,6 +113,12 @@ viz:
     n_samples: 256       # Posterior samples for correlation computation
     figsize: 12          # Figure size (square)
     cmap: "RdBu_r"       # Colormap (red=positive, blue=negative)
+  
+  mixture_ppc_opts:
+    n_rows: 6            # Number of rows in the PPC grid
+    n_cols: 6            # Number of columns in the PPC grid
+    n_samples: 500       # Number of posterior predictive samples
+    n_bins: 6            # Number of expression bins for gene selection
 ```
 
 **Note**: Visualization is enabled by default when running `infer.py`. Use
@@ -138,6 +145,17 @@ between genes computed from posterior samples. Genes are selected by correlation
 variance (most informative structure) and displayed with hierarchical clustering
 and dendrograms. This visualization helps identify gene co-expression patterns
 learned by the model. Disabled by default as it requires posterior sampling.
+
+**Mixture PPC**: For mixture models, this generates specialized posterior
+predictive checks that highlight genes with the highest variability between
+mixture components. It produces multiple plots: (1) a combined mixture PPC
+showing the weighted average across all components (blue), and (2) separate
+per-component PPCs using distinct colormaps (green, purple, red, orange, etc.).
+Genes are selected using the coefficient of variation (CV) of MAP estimates
+across components, with expression-based binning to ensure representation across
+the full expression range. This visualization helps assess how well individual
+components capture gene expression patterns and identify genes that distinguish
+cell types. Only available when `mixture_model=true`.
 
 ## 📊 Data Configurations (`data/`)
 
@@ -217,6 +235,7 @@ viz:
   ppc: true              # Plot posterior predictive checks
   umap: true             # Plot UMAP projection (experimental vs synthetic)
   heatmap: false         # Plot correlation heatmap (requires posterior sampling)
+  mixture_ppc: false     # Plot mixture model PPCs (requires mixture_model=true)
   format: png            # png, pdf, svg, eps
   
   ecdf_opts:
@@ -241,6 +260,12 @@ viz:
     n_samples: 256       # Posterior samples for correlation
     figsize: 12          # Figure size (square)
     cmap: "RdBu_r"       # Colormap
+  
+  mixture_ppc_opts:
+    n_rows: 6            # Number of rows in the PPC grid
+    n_cols: 6            # Number of columns in the PPC grid
+    n_samples: 500       # Number of posterior predictive samples
+    n_bins: 6            # Number of expression bins for gene selection
 ```
 
 ## 🚀 Advanced Usage
@@ -261,6 +286,9 @@ python infer.py data=jurkat_cells mixture_model=true n_components=3 inference.n_
 
 # Component-specific parameters
 python infer.py mixture_model=true component_specific_params=true
+
+# Visualize component-specific PPCs (genes that differ between components)
+python visualize.py mixture_model=true n_components=3 viz.mixture_ppc=true
 ```
 
 ### Custom Parameterizations
@@ -312,6 +340,12 @@ python visualize.py viz.umap=true viz.umap_opts.n_neighbors=30 viz.umap_opts.min
 
 # Enable correlation heatmap (requires posterior sampling)
 python visualize.py viz.heatmap=true viz.heatmap_opts.n_genes=300
+
+# Enable mixture PPC (only for mixture models)
+python visualize.py data=5050mix mixture_model=true n_components=2 viz.mixture_ppc=true
+
+# Customize mixture PPC options
+python visualize.py mixture_model=true viz.mixture_ppc=true viz.mixture_ppc_opts.n_samples=1000
 
 # High-resolution analysis
 python visualize.py viz.ppc_opts.n_samples=5000 viz.ecdf_opts.n_genes=100
