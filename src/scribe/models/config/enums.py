@@ -41,8 +41,24 @@ class ModelType(str, Enum):
 
 
 class Parameterization(str, Enum):
-    """Supported parameterization types."""
+    """Supported parameterization types.
 
+    Parameterizations define which parameters are sampled directly vs derived:
+
+    - CANONICAL (STANDARD): Samples p (probability) and r (dispersion) directly
+    - MEAN_PROB (LINKED): Samples p (probability) and mu (mean), derives r
+    - MEAN_ODDS (ODDS_RATIO): Samples phi (odds ratio) and mu (mean), derives p
+      and r
+
+    The old names (STANDARD, LINKED, ODDS_RATIO) are kept for backward
+    compatibility.
+    """
+
+    # New names (preferred)
+    CANONICAL = "canonical"
+    MEAN_PROB = "mean_prob"
+    MEAN_ODDS = "mean_odds"
+    # Backward compatibility
     STANDARD = "standard"
     LINKED = "linked"
     ODDS_RATIO = "odds_ratio"
