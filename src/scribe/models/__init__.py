@@ -1,16 +1,48 @@
-"""
-SCRIBE models package.
+"""SCRIBE models package.
 
 This package contains all model definitions, configurations, and registry functions.
+
+Use `get_model_and_guide()` to create models with flexible per-parameter guide
+families via `GuideFamilyConfig`:
+
+- Mean-field guides (default)
+- Low-rank multivariate normal guides
+- Amortized neural network guides
+
+Examples
+--------
+>>> from scribe.models import get_model_and_guide
+>>> from scribe.models.config import GuideFamilyConfig
+>>> from scribe.models.components import LowRankGuide, AmortizedGuide
+>>>
+>>> # Simple usage (all mean-field)
+>>> model, guide = get_model_and_guide("nbdm")
+>>>
+>>> # With per-parameter guide families
+>>> model, guide = get_model_and_guide(
+...     "nbvcp",
+...     parameterization="linked",
+...     guide_families=GuideFamilyConfig(
+...         mu=LowRankGuide(rank=15),
+...         p_capture=AmortizedGuide(amortizer=my_amortizer),
+...     ),
+... )
+>>>
+>>> # Direct preset usage
+>>> from scribe.models.presets import create_nbvcp
+>>> model, guide = create_nbvcp(
+...     guide_families=GuideFamilyConfig(p_capture=AmortizedGuide(amortizer=net))
+... )
 """
 
 # Model registry
 from .model_registry import (
     get_model_and_guide,
+    get_model_and_guide_legacy,
     get_log_likelihood_fn,
 )
 
-# Export new config system from config subdirectory
+# Export config system from config subdirectory
 from .config import (
     ModelConfigBuilder,
     ModelConfig,
@@ -18,6 +50,7 @@ from .config import (
     UnconstrainedModelConfig,
     PriorConfig,
     GuideConfig,
+    GuideFamilyConfig,
     VAEConfig,
     ModelType,
     Parameterization,
@@ -65,14 +98,16 @@ from . import (
 __all__ = [
     # Registry functions
     "get_model_and_guide",
+    "get_model_and_guide_legacy",
     "get_log_likelihood_fn",
-    # New config system
+    # Config system
     "ModelConfigBuilder",
     "ModelConfig",
     "ConstrainedModelConfig",
     "UnconstrainedModelConfig",
     "PriorConfig",
     "GuideConfig",
+    "GuideFamilyConfig",
     "VAEConfig",
     "ModelType",
     "Parameterization",
