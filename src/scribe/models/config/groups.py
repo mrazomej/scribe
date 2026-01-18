@@ -22,10 +22,15 @@ valid, immutable, and explicit. The groups here are the foundational building
 blocks used to create full model configurations in SCRIBE.
 """
 
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Any as TypingAny, Optional, List, Tuple, Dict, Any
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import jax.numpy as jnp
 from .enums import VAEPriorType, VAEMaskType, VAEActivation
+
+# Import GuideFamily for Pydantic's runtime type checking
+# We use Any as the type hint since GuideFamily is a dataclass that Pydantic
+# doesn't natively understand, and we have arbitrary_types_allowed=True
+from ..components.guide_families import GuideFamily
 
 # ==============================================================================
 # Prior Configuration Group
@@ -145,6 +150,119 @@ class GuideConfig(BaseModel):
             if any(x <= 0 for x in v):
                 raise ValueError(f"Guide parameters must be positive, got {v}")
         return v
+
+
+# ==============================================================================
+# Guide Family Configuration Group
+# ==============================================================================
+
+
+class GuideFamilyConfig(BaseModel):
+    """Per-parameter guide family configuration.
+
+    This class specifies which variational family (MeanField, LowRank,
+    Amortized) to use for each parameter in the model. Unlike `GuideConfig`
+    which stores the hyperparameters (e.g., alpha/beta for a Beta distribution),
+    this class determines the *structure* of the variational approximation.
+
+    Parameters that are not specified default to `MeanFieldGuide()`.
+
+    Parameters
+    ----------
+    p : GuideFamily, optional
+        Guide family for the success probability parameter.
+    r : GuideFamily, optional
+        Guide family for the dispersion parameter.
+    mu : GuideFamily, optional
+        Guide family for the mean parameter (linked parameterization).
+    phi : GuideFamily, optional
+        Guide family for the odds ratio parameter.
+    gate : GuideFamily, optional
+        Guide family for the zero-inflation gate parameter.
+    p_capture : GuideFamily, optional
+        Guide family for the capture probability parameter.
+    phi_capture : GuideFamily, optional
+        Guide family for the capture odds ratio parameter.
+    mixing : GuideFamily, optional
+        Guide family for mixture weights.
+
+    Examples
+    --------
+    >>> from scribe.models.config import GuideFamilyConfig
+    >>> from scribe.models.components import MeanFieldGuide, LowRankGuide, AmortizedGuide
+    >>>
+    >>> # All mean-field (default)
+    >>> config = GuideFamilyConfig()
+    >>>
+    >>> # Low-rank for r, amortized for p_capture
+    >>> config = GuideFamilyConfig(
+    ...     r=LowRankGuide(rank=10),
+    ...     p_capture=AmortizedGuide(amortizer=my_amortizer),
+    ... )
+
+    See Also
+    --------
+    GuideConfig : Configuration for guide hyperparameters (alpha/beta values).
+    scribe.models.components.guide_families : Guide family implementations.
+    """
+
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", arbitrary_types_allowed=True
+    )
+
+    # All possible parameters - None means use default MeanFieldGuide
+    p: Optional[GuideFamily] = Field(
+        None, description="Guide family for success probability"
+    )
+    r: Optional[GuideFamily] = Field(
+        None, description="Guide family for dispersion"
+    )
+    mu: Optional[GuideFamily] = Field(
+        None, description="Guide family for mean (linked parameterization)"
+    )
+    phi: Optional[GuideFamily] = Field(
+        None, description="Guide family for odds ratio"
+    )
+    gate: Optional[GuideFamily] = Field(
+        None, description="Guide family for zero-inflation gate"
+    )
+    p_capture: Optional[GuideFamily] = Field(
+        None, description="Guide family for capture probability"
+    )
+    phi_capture: Optional[GuideFamily] = Field(
+        None, description="Guide family for capture odds ratio"
+    )
+    mixing: Optional[GuideFamily] = Field(
+        None, description="Guide family for mixture weights"
+    )
+
+    # --------------------------------------------------------------------------
+    # Accessor Method
+    # --------------------------------------------------------------------------
+
+    def get(self, name: str) -> GuideFamily:
+        """Get the guide family for a parameter, defaulting to MeanFieldGuide.
+
+        Parameters
+        ----------
+        name : str
+            The parameter name (e.g., "r", "p_capture").
+
+        Returns
+        -------
+        GuideFamily
+            The configured guide family, or MeanFieldGuide() if not specified.
+
+        Examples
+        --------
+        >>> config = GuideFamilyConfig(r=LowRankGuide(rank=10))
+        >>> config.get("r")  # Returns LowRankGuide(rank=10)
+        >>> config.get("p")  # Returns MeanFieldGuide()
+        """
+        from ..components.guide_families import MeanFieldGuide
+
+        value = getattr(self, name, None)
+        return value if value is not None else MeanFieldGuide()
 
 
 # ==============================================================================

@@ -16,6 +16,7 @@ from .enums import (
 from .groups import (
     PriorConfig,
     GuideConfig,
+    GuideFamilyConfig,
     UnconstrainedPriorConfig,
     UnconstrainedGuideConfig,
     VAEConfig,
@@ -43,6 +44,7 @@ __all__ = [
     # Parameter groups
     "PriorConfig",
     "GuideConfig",
+    "GuideFamilyConfig",
     "UnconstrainedPriorConfig",
     "UnconstrainedGuideConfig",
     "VAEConfig",
