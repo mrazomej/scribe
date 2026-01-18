@@ -1,0 +1,154 @@
+# Model Builders
+
+Composable builders for constructing NumPyro models and guides.
+
+## Architecture
+
+```
+ParamSpec (defines WHAT to sample)
+    │
+    ▼
+ModelBuilder / GuideBuilder (composes HOW to sample)
+    │
+    ▼
+model_fn / guide_fn (NumPyro callables)
+```
+
+## Parameter Specifications
+
+Parameter specs define the distribution and metadata for each parameter:
+
+| Spec Type | Distribution | Constraint | Example Params |
+|-----------|--------------|------------|----------------|
+| `BetaSpec` | Beta(α, β) | (0, 1) | p, gate, p_capture |
+| `LogNormalSpec` | LogNormal(μ, σ) | (0, ∞) | r, mu |
+| `BetaPrimeSpec` | BetaPrime(α, β) | (0, ∞) | phi |
+| `DirichletSpec` | Dirichlet(α) | simplex | weights |
+| `SigmoidNormalSpec` | Normal → sigmoid | (0, 1) | p_unconstrained |
+| `ExpNormalSpec` | Normal → exp | (0, ∞) | r_unconstrained |
+| `SoftplusNormalSpec` | Normal → softplus | (0, ∞) | r (smooth) |
+
+### ParamSpec Attributes
+
+Each spec has the following attributes:
+
+- `name`: Parameter name (used as sample site)
+- `shape_dims`: Symbolic dimensions like `()`, `("n_genes",)`, `("n_cells",)`
+- `default_params`: Default distribution parameters
+- `is_gene_specific`: If True, shape is (n_genes,)
+- `is_cell_specific`: If True, sampled inside cell plate
+- `guide_family`: Variational family for this parameter
+- `support`: Derived from distribution/transform (property)
+- `arg_constraints`: Constraints on the distribution's parameters
+
+## Guide Families
+
+Each parameter can have its own guide family:
+
+| Family | Description | Use Case |
+|--------|-------------|----------|
+| `MeanFieldGuide` | Factorized variational family | Default, fast |
+| `LowRankGuide(rank)` | Low-rank MVN covariance | Gene correlations |
+| `AmortizedGuide(net)` | Neural network amortization | High-dim params |
+
+## Usage
+
+### Basic Model
+
+```python
+from scribe.models.builders import ModelBuilder, BetaSpec, LogNormalSpec
+from scribe.models.components import NegativeBinomialLikelihood
+
+model = (ModelBuilder()
+    .add_param(BetaSpec("p", (), (1.0, 1.0)))
+    .add_param(LogNormalSpec("r", ("n_genes",), (0.0, 1.0), is_gene_specific=True))
+    .with_likelihood(NegativeBinomialLikelihood())
+    .build())
+```
+
+### Linked Parameterization
+
+```python
+model = (ModelBuilder()
+    .add_param(BetaSpec("p", (), (1.0, 1.0)))
+    .add_param(LogNormalSpec("mu", ("n_genes",), (0.0, 1.0), is_gene_specific=True))
+    .add_derived("r", lambda p, mu: mu * (1-p) / p, ["p", "mu"])
+    .with_likelihood(NegativeBinomialLikelihood())
+    .build())
+```
+
+### Building Guides
+
+```python
+from scribe.models.builders import GuideBuilder
+from scribe.models.components import MeanFieldGuide, LowRankGuide
+
+specs = [
+    BetaSpec("p", (), (1.0, 1.0), guide_family=MeanFieldGuide()),
+    LogNormalSpec("r", ("n_genes",), (0.0, 1.0), 
+                  is_gene_specific=True, 
+                  guide_family=LowRankGuide(rank=10)),
+]
+
+guide = GuideBuilder().from_specs(specs).build()
+```
+
+### Mixed Guide Families
+
+```python
+from scribe.models.components import AmortizedGuide, Amortizer, TOTAL_COUNT
+
+amortizer = Amortizer(
+    sufficient_statistic=TOTAL_COUNT,
+    hidden_dims=[64, 32],
+    output_params=["log_alpha", "log_beta"],
+)
+
+specs = [
+    BetaSpec("p", (), (1.0, 1.0), guide_family=MeanFieldGuide()),
+    LogNormalSpec("r", ("n_genes",), (0.0, 1.0), guide_family=LowRankGuide(rank=10)),
+    BetaSpec("p_capture", ("n_cells",), (1.0, 1.0), 
+             is_cell_specific=True,
+             guide_family=AmortizedGuide(amortizer=amortizer)),
+]
+```
+
+## Multiple Dispatch
+
+The builders use multiple dispatch to route to the correct implementation:
+
+```python
+from multipledispatch import dispatch
+
+@dispatch(BetaSpec, MeanFieldGuide, dict, object)
+def setup_guide(spec, guide, dims, model_config, **kwargs):
+    # Implementation for Beta + MeanField
+    ...
+
+@dispatch(LogNormalSpec, LowRankGuide, dict, object)
+def setup_guide(spec, guide, dims, model_config, **kwargs):
+    # Implementation for LogNormal + LowRank
+    ...
+```
+
+Adding new combinations is trivial - just add a new dispatch method.
+
+## Plate Handling
+
+The ModelBuilder handles three plate modes:
+
+1. **Prior Predictive** (counts=None): Sample from prior
+2. **Full Sampling** (counts provided, batch_size=None): All cells
+3. **Batch Sampling** (counts provided, batch_size set): Mini-batch
+
+Cell-specific parameters are sampled inside the cell plate and support
+batch indexing for efficient stochastic VI.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `parameter_specs.py` | ParamSpec classes and `sample_prior` dispatch |
+| `model_builder.py` | ModelBuilder class |
+| `guide_builder.py` | GuideBuilder and `setup_guide` dispatch |
+| `__init__.py` | Public API exports |
