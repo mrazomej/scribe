@@ -1,14 +1,42 @@
-"""
-This module provides a registry of model functions and their corresponding
-guide functions. It allows for easy retrieval of model and guide functions
-based on the model type.
+"""Model registry for SCRIBE models.
 
-The registry uses a decorator-based system where models and guides self-register
-upon module import, eliminating the need for complex if-else logic.
+This module provides functions for retrieving model and guide functions based on
+the model type.
+
+The primary API is `get_model_and_guide()` which uses the composable builder
+system via preset factories. This provides:
+
+- Per-parameter guide families (mean-field, low-rank, amortized)
+- Flexible configuration via GuideFamilyConfig
+- Clean, composable architecture
+
+For VAE inference and mixture models, `get_model_and_guide_legacy()` uses
+the decorator-based registry system.
+
+Examples
+--------
+>>> from scribe.models.config import GuideFamilyConfig
+>>> from scribe.models.components import LowRankGuide, AmortizedGuide
+>>>
+>>> # Simple usage (all mean-field)
+>>> model, guide = get_model_and_guide("nbdm")
+>>>
+>>> # With per-parameter guide families
+>>> model, guide = get_model_and_guide(
+...     "nbvcp",
+...     parameterization="linked",
+...     guide_families=GuideFamilyConfig(
+...         mu=LowRankGuide(rank=15),
+...         p_capture=AmortizedGuide(amortizer=my_amortizer),
+...     ),
+... )
 """
 
 import importlib
-from typing import Callable, Tuple, Optional, List
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from .config import GuideFamilyConfig
 
 # ------------------------------------------------------------------------------
 # Model registry - Decorator-based registration system
@@ -190,11 +218,11 @@ def register(
 
 
 # ------------------------------------------------------------------------------
-# Model and guide retrieval
+# Legacy model and guide retrieval (decorator-based registry)
 # ------------------------------------------------------------------------------
 
 
-def get_model_and_guide(
+def get_model_and_guide_legacy(
     model_type: str,
     parameterization: str = "standard",
     inference_method: str = "svi",
@@ -203,8 +231,11 @@ def get_model_and_guide(
     guide_rank: Optional[int] = None,
 ) -> Tuple[Callable, Optional[Callable]]:
     """
-    Retrieve the model and guide functions for a specified model type,
-    parameterization, inference method, and (optionally) prior type.
+    Retrieve the model and guide functions using the legacy registry system.
+
+    This function is kept for VAE inference and mixture models that haven't
+    been migrated to the new builder system. For standard models, use
+    `get_model_and_guide()` instead.
 
     This function looks up the model and guide from the global registry
     populated by @register decorators. For VAE inference, the returned function
@@ -239,6 +270,10 @@ def get_model_and_guide(
     ValueError
         If the parameterization, inference method, prior type, or required
         functions are not found in the registry.
+
+    See Also
+    --------
+    get_model_and_guide : Preferred function using the new builder system.
     """
     # Validate inputs
     if parameterization not in SUPPORTED_PARAMETERIZATIONS:
@@ -375,3 +410,129 @@ def get_log_likelihood_fn(model_type: str) -> Callable:
         )
 
     return ll_fn
+
+
+# ------------------------------------------------------------------------------
+# Main API: Composable builder system
+# ------------------------------------------------------------------------------
+
+
+def get_model_and_guide(
+    model_type: str,
+    parameterization: str = "standard",
+    unconstrained: bool = False,
+    guide_families: Optional["GuideFamilyConfig"] = None,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+) -> Tuple[Callable, Callable]:
+    """Create model and guide functions using the composable builder system.
+
+    This is the new, recommended way to get model/guide functions. It uses
+    the preset factories which provide more flexibility than the legacy
+    decorator-based system.
+
+    Parameters
+    ----------
+    model_type : str
+        Type of model to create:
+            - "nbdm": Negative Binomial Dropout Model
+            - "zinb": Zero-Inflated Negative Binomial
+            - "nbvcp": NB with Variable Capture Probability
+            - "zinbvcp": ZINB with Variable Capture Probability
+    parameterization : str, default="standard"
+        Parameterization scheme:
+            - "standard": Sample p ~ Beta, r ~ LogNormal
+            - "linked": Sample p ~ Beta, mu ~ LogNormal, derive r
+            - "odds_ratio": Sample phi ~ BetaPrime, mu ~ LogNormal, derive r, p
+    unconstrained : bool, default=False
+        If True, use Normal+transform instead of constrained distributions.
+    guide_families : GuideFamilyConfig, optional
+        Per-parameter guide family configuration. Allows specifying different
+        variational families (MeanField, LowRank, Amortized) for each parameter.
+        Unspecified parameters default to MeanFieldGuide().
+    n_components : Optional[int], default=None
+        Number of mixture components. If provided, creates a mixture model.
+    mixture_params : Optional[List[str]], default=None
+        List of parameter names to make mixture-specific. If None and
+        n_components is set, defaults to all gene-specific parameters.
+
+    Returns
+    -------
+    model : Callable
+        NumPyro model function.
+    guide : Callable
+        NumPyro guide function.
+
+    Raises
+    ------
+    ValueError
+        If model_type is not recognized.
+
+    Examples
+    --------
+    >>> # Basic NBDM (all mean-field)
+    >>> model, guide = get_model_and_guide_v2("nbdm")
+    >>>
+    >>> # NBVCP with low-rank for mu and amortized p_capture
+    >>> from scribe.models.config import GuideFamilyConfig
+    >>> from scribe.models.components import LowRankGuide, AmortizedGuide, Amortizer, TOTAL_COUNT
+    >>> amortizer = Amortizer(
+    ...     sufficient_statistic=TOTAL_COUNT,
+    ...     hidden_dims=[64, 32],
+    ...     output_params=["log_alpha", "log_beta"],
+    ... )
+    >>> model, guide = get_model_and_guide_v2(
+    ...     "nbvcp",
+    ...     parameterization="linked",
+    ...     guide_families=GuideFamilyConfig(
+    ...         mu=LowRankGuide(rank=15),
+    ...         p_capture=AmortizedGuide(amortizer=amortizer),
+    ...     ),
+    ... )
+
+    See Also
+    --------
+    scribe.models.presets : Individual preset factory functions.
+    GuideFamilyConfig : Per-parameter guide family configuration.
+    """
+    # Import presets here to avoid circular imports
+    from .presets import create_nbdm, create_zinb, create_nbvcp, create_zinbvcp
+
+    # Dispatch to appropriate preset
+    if model_type == "nbdm":
+        return create_nbdm(
+            parameterization=parameterization,
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+        )
+    elif model_type == "zinb":
+        return create_zinb(
+            parameterization=parameterization,
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+        )
+    elif model_type == "nbvcp":
+        return create_nbvcp(
+            parameterization=parameterization,
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+        )
+    elif model_type == "zinbvcp":
+        return create_zinbvcp(
+            parameterization=parameterization,
+            unconstrained=unconstrained,
+            guide_families=guide_families,
+            n_components=n_components,
+            mixture_params=mixture_params,
+        )
+    else:
+        raise ValueError(
+            f"Unknown model_type: {model_type}. "
+            f"Supported types: 'nbdm', 'zinb', 'nbvcp', 'zinbvcp'."
+        )
