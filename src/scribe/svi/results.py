@@ -157,16 +157,17 @@ class ScribeSVIResults:
         """
         Get the variational distributions for all parameters.
 
-        This method now delegates to the model-specific
-        `get_posterior_distributions` function associated with the
-        parameterization.
+        This method uses the composable builder system to extract posterior
+        distributions from the optimized variational parameters. It
+        automatically handles all parameterizations, constrained/unconstrained
+        variants, and guide families.
 
         Parameters
         ----------
         backend : str, default="numpyro"
-            Statistical package to use for distributions. Must be one of: -
-            "scipy": Returns scipy.stats distributions - "numpyro": Returns
-            numpyro.distributions
+            Statistical package to use for distributions. Must be one of:
+            - "scipy": Returns scipy.stats distributions
+            - "numpyro": Returns numpyro.distributions
         split : bool, default=False
             If True, returns lists of individual distributions for
             multidimensional parameters instead of batch distributions.
@@ -184,96 +185,12 @@ class ScribeSVIResults:
         if backend not in ["scipy", "numpyro"]:
             raise ValueError(f"Invalid backend: {backend}")
 
-        # Define whether the model is unconstrained
-        unconstrained = self.model_config.unconstrained
-        # Define whether the model is low-rank (check guide_families)
-        low_rank = self.model_config.guide_families is not None and any(
-            hasattr(self.model_config.guide_families, param)
-            and getattr(self.model_config.guide_families, param) is not None
-            for param in ["r", "mu", "phi"]
+        # Use the new composable builder system for posterior extraction
+        from ..models.builders import get_posterior_distributions
+
+        distributions = get_posterior_distributions(
+            self.params, self.model_config, split=split
         )
-
-        # Dynamically import the correct posterior distribution function
-        if unconstrained and not low_rank:
-            # For unconstrained variants, import the _unconstrained modules
-            if self.model_config.parameterization == "standard":
-                from ..models.standard_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "linked":
-                from ..models.linked_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "odds_ratio":
-                from ..models.odds_ratio_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            else:
-                raise NotImplementedError(
-                    f"get_distributions not implemented for unconstrained "
-                    f"'{self.model_config.parameterization}'."
-                )
-        elif unconstrained and low_rank:
-            # For unconstrained variants, import the _unconstrained modules
-            if self.model_config.parameterization == "standard":
-                from ..models.standard_low_rank_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "linked":
-                from ..models.linked_low_rank_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "odds_ratio":
-                from ..models.odds_ratio_low_rank_unconstrained import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            else:
-                raise NotImplementedError(
-                    f"get_distributions not implemented for unconstrained "
-                    "low-rank variants of "
-                    f"'{self.model_config.parameterization}'."
-                )
-        elif not unconstrained and not low_rank:
-            # For constrained variants, import the regular modules
-            if self.model_config.parameterization == "standard":
-                from ..models.standard import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "linked":
-                from ..models.linked import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "odds_ratio":
-                from ..models.odds_ratio import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            else:
-                raise NotImplementedError(
-                    f"get_distributions not implemented for "
-                    f"'{self.model_config.parameterization}'."
-                )
-        elif not unconstrained and low_rank:
-            # For constrained variants, import the regular modules
-            if self.model_config.parameterization == "standard":
-                from ..models.standard_low_rank import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "linked":
-                from ..models.linked_low_rank import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            elif self.model_config.parameterization == "odds_ratio":
-                from ..models.odds_ratio_low_rank import (
-                    get_posterior_distributions as get_dist_fn,
-                )
-            else:
-                raise NotImplementedError(
-                    f"get_distributions not implemented for "
-                    "low-rank variants of "
-                    f"'{self.model_config.parameterization}'."
-                )
-
-        distributions = get_dist_fn(self.params, self.model_config, split=split)
 
         if backend == "scipy":
             # Handle conversion to scipy, accounting for split distributions

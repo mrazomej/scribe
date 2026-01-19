@@ -25,7 +25,13 @@ warnings.filterwarnings(
 
 # Import core components for advanced usage
 from .core import InputProcessor
-from .models.config import ModelConfig, SVIConfig, MCMCConfig, DataConfig
+from .models.config import (
+    ModelConfig,
+    SVIConfig,
+    MCMCConfig,
+    DataConfig,
+    InferenceConfig,
+)
 
 from . import viz
 from . import utils
@@ -109,6 +115,7 @@ __all__ = [
     "SVIConfig",
     "MCMCConfig",
     "DataConfig",
+    "InferenceConfig",
     # Main inference function
     "run_scribe",
     # Results classes
