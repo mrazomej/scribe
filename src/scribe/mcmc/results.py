@@ -1694,16 +1694,7 @@ def _get_model_fn(model_config) -> Callable:
     """
     from ..models.model_registry import get_model_and_guide
 
-    parameterization = model_config.parameterization or "standard"
-    return get_model_and_guide(
-        model_config.base_model,
-        parameterization=parameterization,
-        unconstrained=model_config.unconstrained,
-        guide_families=model_config.guide_families,
-        n_components=model_config.n_components,
-        mixture_params=model_config.mixture_params,
-        model_config=model_config,
-    )[0]
+    return get_model_and_guide(model_config, guide_families=None)[0]
 
 
 # ------------------------------------------------------------------------------

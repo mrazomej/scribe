@@ -36,7 +36,10 @@ import importlib
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 if TYPE_CHECKING:
-    from .config import GuideFamilyConfig
+    from ..models.config import ModelConfig, GuideFamilyConfig
+
+if TYPE_CHECKING:
+    from .config import ModelConfig, GuideFamilyConfig
 
 # ------------------------------------------------------------------------------
 # Model registry - Decorator-based registration system
@@ -418,13 +421,9 @@ def get_log_likelihood_fn(model_type: str) -> Callable:
 
 
 def get_model_and_guide(
-    model_type: str,
-    parameterization: str = "standard",
-    unconstrained: bool = False,
+    model_config: "ModelConfig",
+    unconstrained: Optional[bool] = None,
     guide_families: Optional["GuideFamilyConfig"] = None,
-    n_components: Optional[int] = None,
-    mixture_params: Optional[List[str]] = None,
-    model_config: Optional["ModelConfig"] = None,
 ) -> Tuple[Callable, Callable]:
     """Create model and guide functions using the composable builder system.
 
@@ -434,28 +433,23 @@ def get_model_and_guide(
 
     Parameters
     ----------
-    model_type : str
-        Type of model to create:
-            - "nbdm": Negative Binomial Dropout Model
-            - "zinb": Zero-Inflated Negative Binomial
-            - "nbvcp": NB with Variable Capture Probability
-            - "zinbvcp": ZINB with Variable Capture Probability
-    parameterization : str, default="standard"
-        Parameterization scheme:
-            - "standard": Sample p ~ Beta, r ~ LogNormal
-            - "linked": Sample p ~ Beta, mu ~ LogNormal, derive r
-            - "odds_ratio": Sample phi ~ BetaPrime, mu ~ LogNormal, derive r, p
-    unconstrained : bool, default=False
-        If True, use Normal+transform instead of constrained distributions.
+    model_config : ModelConfig
+        Model configuration containing all model parameters:
+            - base_model: Type of model ("nbdm", "zinb", "nbvcp", "zinbvcp")
+            - parameterization: Parameterization scheme ("standard", "linked", "odds_ratio")
+            - unconstrained: Whether to use unconstrained parameterization
+            - guide_families: Per-parameter guide family configuration
+            - n_components: Number of mixture components (if mixture model)
+            - mixture_params: List of mixture-specific parameter names
+            - param_specs: Parameter specifications with priors and guides
+    unconstrained : bool, optional
+        Override the unconstrained setting from model_config. If None, uses
+        model_config.unconstrained. Useful for special cases like predictive
+        sampling where a constrained model is needed.
     guide_families : GuideFamilyConfig, optional
-        Per-parameter guide family configuration. Allows specifying different
-        variational families (MeanField, LowRank, Amortized) for each parameter.
-        Unspecified parameters default to MeanFieldGuide().
-    n_components : Optional[int], default=None
-        Number of mixture components. If provided, creates a mixture model.
-    mixture_params : Optional[List[str]], default=None
-        List of parameter names to make mixture-specific. If None and
-        n_components is set, defaults to all gene-specific parameters.
+        Override the guide families from model_config. If None, uses
+        model_config.guide_families. Useful for special cases where the guide
+        is not needed (e.g., predictive sampling).
 
     Returns
     -------
@@ -467,42 +461,64 @@ def get_model_and_guide(
     Raises
     ------
     ValueError
-        If model_type is not recognized.
+        If model_config.base_model is not recognized.
 
     Examples
     --------
+    >>> from scribe.models.config import ModelConfig, GuideFamilyConfig
+    >>> from scribe.models.components import LowRankGuide, AmortizedGuide
+    >>> from scribe.inference.preset_builder import build_config_from_preset
+    >>>
     >>> # Basic NBDM (all mean-field)
-    >>> model, guide = get_model_and_guide_v2("nbdm")
+    >>> model_config = build_config_from_preset("nbdm")
+    >>> model, guide = get_model_and_guide(model_config)
     >>>
     >>> # NBVCP with low-rank for mu and amortized p_capture
-    >>> from scribe.models.config import GuideFamilyConfig
-    >>> from scribe.models.components import LowRankGuide, AmortizedGuide, Amortizer, TOTAL_COUNT
-    >>> amortizer = Amortizer(
-    ...     sufficient_statistic=TOTAL_COUNT,
-    ...     hidden_dims=[64, 32],
-    ...     output_params=["log_alpha", "log_beta"],
-    ... )
-    >>> model, guide = get_model_and_guide_v2(
+    >>> model_config = build_config_from_preset(
     ...     "nbvcp",
     ...     parameterization="linked",
     ...     guide_families=GuideFamilyConfig(
     ...         mu=LowRankGuide(rank=15),
-    ...         p_capture=AmortizedGuide(amortizer=amortizer),
+    ...         p_capture=AmortizedGuide(amortizer=my_amortizer),
     ...     ),
     ... )
+    >>> model, guide = get_model_and_guide(model_config)
 
     See Also
     --------
     scribe.models.presets : Individual preset factory functions.
+    scribe.inference.preset_builder : Build ModelConfig from presets.
     GuideFamilyConfig : Per-parameter guide family configuration.
     """
     # Import presets here to avoid circular imports
     from .presets import create_nbdm, create_zinb, create_nbvcp, create_zinbvcp
 
-    # Extract priors/guides from model_config if provided
+    # Extract all configuration from model_config
+    model_type = model_config.base_model
+    parameterization = (
+        model_config.parameterization.value
+        if model_config.parameterization
+        else "standard"
+    )
+
+    # Use overrides if provided, otherwise use model_config values
+    unconstrained_value = (
+        unconstrained
+        if unconstrained is not None
+        else model_config.unconstrained
+    )
+    guide_families_value = (
+        guide_families
+        if guide_families is not None
+        else model_config.guide_families
+    )
+    n_components = model_config.n_components
+    mixture_params = model_config.mixture_params
+
+    # Extract priors/guides from model_config
     priors = None
     guides = None
-    if model_config is not None:
+    if model_config.param_specs:
         priors = {
             spec.name: spec.prior
             for spec in model_config.param_specs
@@ -513,20 +529,20 @@ def get_model_and_guide(
             for spec in model_config.param_specs
             if spec.guide is not None
         }
-        # If param_specs is empty, try to extract from builder's _priors/_guides
-        # This handles the case where ModelConfig was built but param_specs
-        # weren't populated yet
-        if not priors and hasattr(model_config, "_priors"):
-            priors = getattr(model_config, "_priors", None)
-        if not guides and hasattr(model_config, "_guides"):
-            guides = getattr(model_config, "_guides", None)
+    # If param_specs is empty, try to extract from builder's _priors/_guides
+    # This handles the case where ModelConfig was built but param_specs
+    # weren't populated yet
+    if not priors and hasattr(model_config, "_priors"):
+        priors = getattr(model_config, "_priors", None)
+    if not guides and hasattr(model_config, "_guides"):
+        guides = getattr(model_config, "_guides", None)
 
     # Dispatch to appropriate preset
     if model_type == "nbdm":
         return create_nbdm(
             parameterization=parameterization,
-            unconstrained=unconstrained,
-            guide_families=guide_families,
+            unconstrained=unconstrained_value,
+            guide_families=guide_families_value,
             n_components=n_components,
             mixture_params=mixture_params,
             priors=priors,
@@ -535,8 +551,8 @@ def get_model_and_guide(
     elif model_type == "zinb":
         return create_zinb(
             parameterization=parameterization,
-            unconstrained=unconstrained,
-            guide_families=guide_families,
+            unconstrained=unconstrained_value,
+            guide_families=guide_families_value,
             n_components=n_components,
             mixture_params=mixture_params,
             priors=priors,
@@ -545,8 +561,8 @@ def get_model_and_guide(
     elif model_type == "nbvcp":
         return create_nbvcp(
             parameterization=parameterization,
-            unconstrained=unconstrained,
-            guide_families=guide_families,
+            unconstrained=unconstrained_value,
+            guide_families=guide_families_value,
             n_components=n_components,
             mixture_params=mixture_params,
             priors=priors,
@@ -555,8 +571,8 @@ def get_model_and_guide(
     elif model_type == "zinbvcp":
         return create_zinbvcp(
             parameterization=parameterization,
-            unconstrained=unconstrained,
-            guide_families=guide_families,
+            unconstrained=unconstrained_value,
+            guide_families=guide_families_value,
             n_components=n_components,
             mixture_params=mixture_params,
             priors=priors,
