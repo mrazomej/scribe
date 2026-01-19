@@ -1,13 +1,12 @@
 # tests/test_zinb_mix.py
-from scribe.models.config import UnconstrainedModelConfig
-
 """
 Tests for the Zero-Inflated Negative Binomial Mixture Model.
 """
 import pytest
 import jax.numpy as jnp
-from jax import random
-import os
+from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
+from scribe.inference import run_scribe
+from scribe.inference.preset_builder import build_config_from_preset
 
 ALL_METHODS = [
     "svi",
@@ -108,60 +107,45 @@ def zinb_mix_results(
 
     counts, _ = small_dataset
 
-    # Set up priors based on parameterization
+    # Set up priors based on parameterization (using new key names without "_prior" suffix)
     if parameterization == "standard":
-        priors = {"r_prior": (2, 0.1), "p_prior": (1, 1), "gate_prior": (1, 1)}
+        priors = {"r": (2, 0.1), "p": (1, 1), "gate": (1, 1)}
     elif parameterization == "linked":
-        priors = {"p_prior": (1, 1), "mu_prior": (1, 1), "gate_prior": (1, 1)}
+        priors = {"p": (1, 1), "mu": (1, 1), "gate": (1, 1)}
     elif parameterization == "odds_ratio":
-        priors = {"phi_prior": (3, 2), "mu_prior": (1, 1), "gate_prior": (1, 1)}
+        priors = {"phi": (3, 2), "mu": (1, 1), "gate": (1, 1)}
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
-    from scribe import run_scribe
+    # Add mixing_prior for mixture models
+    priors["mixing"] = jnp.ones(2)  # Uniform prior for 2 components
 
+    # Build model config using preset builder
+    model_config = build_config_from_preset(
+        model="zinb",
+        parameterization=parameterization,
+        inference_method=inference_method,
+        unconstrained=unconstrained,
+        guide_rank=guide_rank,
+        priors=priors,
+        n_components=2,  # Test with 2 components
+    )
+
+    # Create inference config based on method
     if inference_method == "svi":
-        result = run_scribe(
-            counts=counts,
-            inference_method="svi",
-            zero_inflated=True,
-            variable_capture=False,
-            mixture_model=True,
-            n_components=2,  # Test with 2 components
-            parameterization=parameterization,
-            unconstrained=unconstrained,
-            guide_rank=guide_rank,
-            n_steps=3,
-            batch_size=5,
-            seed=42,
-            r_prior=priors.get("r_prior"),
-            p_prior=priors.get("p_prior"),
-            mu_prior=priors.get("mu_prior"),
-            phi_prior=priors.get("phi_prior"),
-            gate_prior=priors.get("gate_prior"),
-            mixing_prior=jnp.ones(2),  # Uniform prior for 2 components
-        )
+        svi_config = SVIConfig(n_steps=3, batch_size=5)
+        inference_config = InferenceConfig.from_svi(svi_config)
     else:
-        result = run_scribe(
-            counts=counts,
-            inference_method="mcmc",
-            zero_inflated=True,
-            variable_capture=False,
-            mixture_model=True,
-            n_components=2,  # Test with 2 components
-            parameterization=parameterization,
-            unconstrained=unconstrained,
-            n_warmup=2,
-            n_samples=3,
-            n_chains=1,
-            seed=42,
-            r_prior=priors.get("r_prior"),
-            p_prior=priors.get("p_prior"),
-            mu_prior=priors.get("mu_prior"),
-            phi_prior=priors.get("phi_prior"),
-            gate_prior=priors.get("gate_prior"),
-            mixing_prior=jnp.ones(2),  # Uniform prior for 2 components
-        )
+        mcmc_config = MCMCConfig(n_warmup=2, n_samples=3, n_chains=1)
+        inference_config = InferenceConfig.from_mcmc(mcmc_config)
+
+    # Run inference with new API
+    result = run_scribe(
+        counts=counts,
+        model_config=model_config,
+        inference_config=inference_config,
+        seed=42,
+    )
 
     _zinb_mix_results_cache[key] = result
     return result
@@ -179,10 +163,6 @@ def test_inference_run(zinb_mix_results, guide_rank):
     assert hasattr(zinb_mix_results, "model_config")
     assert zinb_mix_results.n_components == 2
 
-    # Check guide_rank configuration
-    if guide_rank is not None:
-        assert zinb_mix_results.model_config.guide_rank == guide_rank
-
 
 # ------------------------------------------------------------------------------
 
@@ -192,13 +172,27 @@ def test_parameterization_config(
 ):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert zinb_mix_results.model_config.parameterization == parameterization
-    # Check that the unconstrained flag is properly set in the model config
-    # Note: This may need to be adjusted based on how the model config stores this information
-    if True:  # Always check unconstrained by type
-        assert (
-            isinstance(zinb_mix_results.model_config, UnconstrainedModelConfig)
-            == unconstrained
-        )
+    # Check unconstrained flag
+    assert zinb_mix_results.model_config.unconstrained == unconstrained
+    # Check that the guide_rank is properly set in the model config
+    # guide_rank is stored in guide_families as LowRankGuide for the gene parameter
+    if guide_rank is not None:
+        # Determine which parameter should have the low-rank guide
+        if parameterization == "standard":
+            gene_param = "r"
+        else:  # linked or odds_ratio
+            gene_param = "mu"
+        # Check that guide_families has LowRankGuide for the gene parameter
+        assert zinb_mix_results.model_config.guide_families is not None
+        guide_family = zinb_mix_results.model_config.guide_families.get(gene_param)
+        assert guide_family is not None
+        from scribe.models.components.guide_families import LowRankGuide
+
+        assert isinstance(guide_family, LowRankGuide)
+        assert guide_family.rank == guide_rank
+    else:
+        # Mean-field guide (default) - no specific check needed
+        pass
 
 
 # ------------------------------------------------------------------------------
@@ -1514,19 +1508,17 @@ def test_low_rank_guide_params(
         # or r (standard)
         if parameterization == "standard":
             # Standard parameterization uses r
-            if isinstance(
-                zinb_mix_results.model_config, UnconstrainedModelConfig
-            ):
-                # Unconstrained: look for r_unconstrained low-rank parameters
+            if zinb_mix_results.model_config.unconstrained:
+                # Unconstrained: look for r low-rank parameters (directly on unconstrained r)
                 assert (
-                    "r_unconstrained_loc" in params
-                ), "Low-rank guide should have r_unconstrained_loc"
+                    "r_loc" in params
+                ), "Low-rank guide should have r_loc"
                 assert (
-                    "r_unconstrained_W" in params
-                ), "Low-rank guide should have r_unconstrained_W (cov_factor)"
+                    "r_W" in params
+                ), "Low-rank guide should have r_W (cov_factor)"
                 assert (
-                    "r_unconstrained_raw_diag" in params
-                ), "Low-rank guide should have r_unconstrained_raw_diag (cov_diag)"
+                    "r_raw_diag" in params
+                ), "Low-rank guide should have r_raw_diag (cov_diag)"
             else:
                 # Constrained: look for log_r low-rank parameters
                 assert (
@@ -1540,19 +1532,17 @@ def test_low_rank_guide_params(
                 ), "Low-rank guide should have log_r_raw_diag (cov_diag)"
         elif parameterization in ["linked", "odds_ratio"]:
             # Linked and odds_ratio use mu
-            if isinstance(
-                zinb_mix_results.model_config, UnconstrainedModelConfig
-            ):
-                # Unconstrained: look for mu_unconstrained low-rank parameters
+            if zinb_mix_results.model_config.unconstrained:
+                # Unconstrained: look for mu low-rank parameters (directly on unconstrained mu)
                 assert (
-                    "mu_unconstrained_loc" in params
-                ), "Low-rank guide should have mu_unconstrained_loc"
+                    "mu_loc" in params
+                ), "Low-rank guide should have mu_loc"
                 assert (
-                    "mu_unconstrained_W" in params
-                ), "Low-rank guide should have mu_unconstrained_W (cov_factor)"
+                    "mu_W" in params
+                ), "Low-rank guide should have mu_W (cov_factor)"
                 assert (
-                    "mu_unconstrained_raw_diag" in params
-                ), "Low-rank guide should have mu_unconstrained_raw_diag (cov_diag)"
+                    "mu_raw_diag" in params
+                ), "Low-rank guide should have mu_raw_diag (cov_diag)"
             else:
                 # Constrained: look for log_mu low-rank parameters
                 assert (
@@ -1579,17 +1569,13 @@ def test_low_rank_covariance_structure(
 
         # Check the shape of W (cov_factor) to verify rank
         if parameterization == "standard":
-            if isinstance(
-                zinb_mix_results.model_config, UnconstrainedModelConfig
-            ):
-                W = params.get("r_unconstrained_W")
+            if zinb_mix_results.model_config.unconstrained:
+                W = params.get("r_W")
             else:
                 W = params.get("log_r_W")
         elif parameterization in ["linked", "odds_ratio"]:
-            if isinstance(
-                zinb_mix_results.model_config, UnconstrainedModelConfig
-            ):
-                W = params.get("mu_unconstrained_W")
+            if zinb_mix_results.model_config.unconstrained:
+                W = params.get("mu_W")
             else:
                 W = params.get("log_mu_W")
 
