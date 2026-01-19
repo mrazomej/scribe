@@ -21,7 +21,7 @@ from ..sampling import (
     generate_predictive_samples,
 )
 from ..stats import fit_dirichlet_minka
-from ..models.config import ModelConfig, UnconstrainedModelConfig
+from ..models.config import ModelConfig
 
 # Import multipledispatch functions from stats
 from ..stats import hellinger, jensen_shannon
@@ -185,11 +185,13 @@ class ScribeSVIResults:
             raise ValueError(f"Invalid backend: {backend}")
 
         # Define whether the model is unconstrained
-        from ..models.config import UnconstrainedModelConfig
-
-        unconstrained = isinstance(self.model_config, UnconstrainedModelConfig)
-        # Define whether the model is low-rank
-        low_rank = self.model_config.guide_rank is not None
+        unconstrained = self.model_config.unconstrained
+        # Define whether the model is low-rank (check guide_families)
+        low_rank = self.model_config.guide_families is not None and any(
+            hasattr(self.model_config.guide_families, param)
+            and getattr(self.model_config.guide_families, param) is not None
+            for param in ["r", "mu", "phi"]
+        )
 
         # Dynamically import the correct posterior distribution function
         if unconstrained and not low_rank:
@@ -406,9 +408,7 @@ class ScribeSVIResults:
         """
         estimates = map_estimates.copy()
         parameterization = self.model_config.parameterization
-        from ..models.config import UnconstrainedModelConfig
-
-        unconstrained = isinstance(self.model_config, UnconstrainedModelConfig)
+        unconstrained = self.model_config.unconstrained
 
         # Handle linked parameterization
         if parameterization == "linked":
@@ -419,9 +419,8 @@ class ScribeSVIResults:
                     )
                 # r = mu * (1 - p) / p
                 p = estimates["p"]
-                if (
-                    self.n_components is not None
-                    and self.model_config.component_specific_params
+                if self.n_components is not None and "p" in (
+                    self.model_config.mixture_params or []
                 ):
                     # Mixture model: mu has shape (n_components, n_genes)
                     # p has shape (n_components,). Reshape for broadcasting.
@@ -453,9 +452,8 @@ class ScribeSVIResults:
                         "Computing r from phi and mu for odds_ratio parameterization"
                     )
                 # Reshape phi to broadcast with mu based on mixture model
-                if (
-                    self.n_components is not None
-                    and self.model_config.component_specific_params
+                if self.n_components is not None and "phi" in (
+                    self.model_config.mixture_params or []
                 ):
                     # Mixture model: mu has shape (n_components, n_genes)
                     phi_reshaped = estimates["phi"][:, None]
@@ -1173,24 +1171,14 @@ class ScribeSVIResults:
         """Get the model and guide functions based on model type."""
         from ..models.model_registry import get_model_and_guide
 
-        parameterization = self.model_config.parameterization or ""
-        inference_method = self.model_config.inference_method or ""
-        prior_type = (
-            self.model_config.vae.prior_type.value
-            if self.model_config.vae
-            else ""
-        )
-        from ..models.config import UnconstrainedModelConfig
-
-        unconstrained = isinstance(self.model_config, UnconstrainedModelConfig)
-        guide_rank = self.model_config.guide_rank
+        # Use new builder-based API
         return get_model_and_guide(
             self.model_type,
-            parameterization,
-            inference_method,
-            prior_type,
-            unconstrained=unconstrained,
-            guide_rank=guide_rank,
+            parameterization=self.model_config.parameterization.value,
+            unconstrained=self.model_config.unconstrained,
+            guide_families=self.model_config.guide_families,
+            n_components=self.model_config.n_components,
+            mixture_params=self.model_config.mixture_params,
         )
 
     # --------------------------------------------------------------------------
@@ -1207,7 +1195,7 @@ class ScribeSVIResults:
 
     def _unconstrained(self) -> bool:
         """Get if the parameterization is unconstrained."""
-        return isinstance(self.model_config, UnconstrainedModelConfig)
+        return self.model_config.unconstrained
 
     # --------------------------------------------------------------------------
     # Get log likelihood function
@@ -1282,15 +1270,11 @@ class ScribeSVIResults:
         # can be used with the constrained model.
         model, _ = get_model_and_guide(
             self.model_type,
-            self.model_config.parameterization,
-            self.model_config.inference_method,
-            (
-                self.model_config.vae.prior_type.value
-                if self.model_config.vae
-                else ""
-            ),
+            parameterization=self.model_config.parameterization.value,
             unconstrained=False,  # Explicitly get the constrained model
-            guide_rank=None,  # Not relevant for the model
+            guide_families=None,  # Not relevant for the model (only guide)
+            n_components=self.model_config.n_components,
+            mixture_params=self.model_config.mixture_params,
         )
 
         # Prepare base model arguments

@@ -451,9 +451,19 @@ class NBWithVCPLikelihood(Likelihood):
 
         capture_prior_params = default_params
         if capture_spec is not None:
+            # Extract prior from param_specs
+            prior_value = None
+            param_name = prior_attr.replace("_prior", "").replace(
+                "_capture", "_capture"
+            )
+            for pspec in model_config.param_specs:
+                if pspec.name == param_name:
+                    prior_value = pspec.prior
+                    break
             capture_prior_params = (
-                getattr(model_config.priors, prior_attr, None)
-                or capture_spec.default_params
+                prior_value
+                if prior_value is not None
+                else capture_spec.default_params
             )
 
         # ====================================================================
@@ -789,9 +799,19 @@ class ZINBWithVCPLikelihood(Likelihood):
 
         capture_prior_params = default_params
         if capture_spec is not None:
+            # Extract prior from param_specs
+            prior_value = None
+            param_name = prior_attr.replace("_prior", "").replace(
+                "_capture", "_capture"
+            )
+            for pspec in model_config.param_specs:
+                if pspec.name == param_name:
+                    prior_value = pspec.prior
+                    break
             capture_prior_params = (
-                getattr(model_config.priors, prior_attr, None)
-                or capture_spec.default_params
+                prior_value
+                if prior_value is not None
+                else capture_spec.default_params
             )
 
         # ====================================================================

@@ -14,17 +14,13 @@ from .enums import (
     VAEActivation,
 )
 from .groups import (
-    PriorConfig,
-    GuideConfig,
     GuideFamilyConfig,
-    UnconstrainedPriorConfig,
-    UnconstrainedGuideConfig,
     VAEConfig,
     SVIConfig,
     MCMCConfig,
     DataConfig,
 )
-from .base import ConstrainedModelConfig, UnconstrainedModelConfig, ModelConfig
+from .base import ModelConfig
 from .builder import ModelConfigBuilder
 from .parameter_mapping import (
     get_active_parameters,
@@ -39,14 +35,8 @@ __all__ = [
     "ModelConfigBuilder",
     # Config types
     "ModelConfig",
-    "ConstrainedModelConfig",
-    "UnconstrainedModelConfig",
     # Parameter groups
-    "PriorConfig",
-    "GuideConfig",
     "GuideFamilyConfig",
-    "UnconstrainedPriorConfig",
-    "UnconstrainedGuideConfig",
     "VAEConfig",
     "SVIConfig",
     "MCMCConfig",
