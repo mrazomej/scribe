@@ -205,16 +205,16 @@ class CanonicalParameterization(Parameterization):
         if unconstrained:
             return [
                 SigmoidNormalSpec(
-                    "p",
-                    (),
-                    (0.0, 1.0),
+                    name="p",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
                     guide_family=p_family,
                     is_mixture=is_p_mixture,
                 ),
                 ExpNormalSpec(
-                    "r",
-                    ("n_genes",),
-                    (0.0, 1.0),
+                    name="r",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=r_family,
                     is_mixture=is_r_mixture,
@@ -223,16 +223,16 @@ class CanonicalParameterization(Parameterization):
         else:
             return [
                 BetaSpec(
-                    "p",
-                    (),
-                    (1.0, 1.0),
+                    name="p",
+                    shape_dims=(),
+                    default_params=(1.0, 1.0),
                     guide_family=p_family,
                     is_mixture=is_p_mixture,
                 ),
                 LogNormalSpec(
-                    "r",
-                    ("n_genes",),
-                    (0.0, 1.0),
+                    name="r",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=r_family,
                     is_mixture=is_r_mixture,
@@ -307,16 +307,16 @@ class MeanProbParameterization(Parameterization):
         if unconstrained:
             return [
                 SigmoidNormalSpec(
-                    "p",
-                    (),
-                    (0.0, 1.0),
+                    name="p",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
                     guide_family=p_family,
                     is_mixture=is_p_mixture,
                 ),
                 ExpNormalSpec(
-                    "mu",
-                    ("n_genes",),
-                    (0.0, 1.0),
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
                     is_mixture=is_mu_mixture,
@@ -325,16 +325,16 @@ class MeanProbParameterization(Parameterization):
         else:
             return [
                 BetaSpec(
-                    "p",
-                    (),
-                    (1.0, 1.0),
+                    name="p",
+                    shape_dims=(),
+                    default_params=(1.0, 1.0),
                     guide_family=p_family,
                     is_mixture=is_p_mixture,
                 ),
                 LogNormalSpec(
-                    "mu",
-                    ("n_genes",),
-                    (0.0, 1.0),
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
                     is_mixture=is_mu_mixture,
@@ -414,16 +414,16 @@ class MeanOddsParameterization(Parameterization):
         if unconstrained:
             return [
                 ExpNormalSpec(
-                    "phi",
-                    (),
-                    (0.0, 1.0),
+                    name="phi",
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
                     guide_family=phi_family,
                     is_mixture=is_phi_mixture,
                 ),
                 ExpNormalSpec(
-                    "mu",
-                    ("n_genes",),
-                    (0.0, 1.0),
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
                     is_mixture=is_mu_mixture,
@@ -432,16 +432,16 @@ class MeanOddsParameterization(Parameterization):
         else:
             return [
                 BetaPrimeSpec(
-                    "phi",
-                    (),
-                    (1.0, 1.0),
+                    name="phi",
+                    shape_dims=(),
+                    default_params=(1.0, 1.0),
                     guide_family=phi_family,
                     is_mixture=is_phi_mixture,
                 ),
                 LogNormalSpec(
-                    "mu",
-                    ("n_genes",),
-                    (0.0, 1.0),
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
                     is_gene_specific=True,
                     guide_family=mu_family,
                     is_mixture=is_mu_mixture,

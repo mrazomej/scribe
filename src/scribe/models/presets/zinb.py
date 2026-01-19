@@ -166,9 +166,9 @@ def create_zinb(
     if unconstrained:
         param_specs.append(
             SigmoidNormalSpec(
-                "gate",
-                ("n_genes",),
-                (-2.0, 1.0),  # Default to low zero-inflation
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(-2.0, 1.0),  # Default to low zero-inflation
                 is_gene_specific=True,
                 guide_family=gate_family,
                 is_mixture=is_gate_mixture,
@@ -177,9 +177,9 @@ def create_zinb(
     else:
         param_specs.append(
             BetaSpec(
-                "gate",
-                ("n_genes",),
-                (1.0, 9.0),  # Default to low zero-inflation (mean ~0.1)
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(1.0, 9.0),  # Default to low zero-inflation (mean ~0.1)
                 is_gene_specific=True,
                 guide_family=gate_family,
                 is_mixture=is_gate_mixture,

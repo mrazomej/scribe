@@ -59,6 +59,8 @@ def create_zinbvcp(
     guide_families: Optional[GuideFamilyConfig] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
+    priors: Optional[Dict[str, Tuple[float, ...]]] = None,
+    guides: Optional[Dict[str, Tuple[float, ...]]] = None,
 ) -> Tuple[Callable, Callable]:
     """Create ZINBVCP model and guide functions.
 
@@ -178,9 +180,9 @@ def create_zinbvcp(
     if unconstrained:
         param_specs.append(
             SigmoidNormalSpec(
-                "gate",
-                ("n_genes",),
-                (-2.0, 1.0),
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(-2.0, 1.0),
                 is_gene_specific=True,
                 guide_family=gate_family,
                 is_mixture=is_gate_mixture,
@@ -189,9 +191,9 @@ def create_zinbvcp(
     else:
         param_specs.append(
             BetaSpec(
-                "gate",
-                ("n_genes",),
-                (1.0, 9.0),
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(1.0, 9.0),
                 is_gene_specific=True,
                 guide_family=gate_family,
                 is_mixture=is_gate_mixture,
@@ -210,9 +212,9 @@ def create_zinbvcp(
     if unconstrained:
         param_specs.append(
             SigmoidNormalSpec(
-                capture_param_name,
-                ("n_cells",),
-                (0.0, 1.0),
+                name=capture_param_name,
+                shape_dims=("n_cells",),
+                default_params=(0.0, 1.0),
                 is_cell_specific=True,
                 guide_family=capture_family,
             )
@@ -222,9 +224,9 @@ def create_zinbvcp(
         if capture_param_name == "phi_capture":
             param_specs.append(
                 BetaPrimeSpec(
-                    capture_param_name,
-                    ("n_cells",),
-                    (1.0, 1.0),  # Uniform prior on capture odds ratio
+                    name=capture_param_name,
+                    shape_dims=("n_cells",),
+                    default_params=(1.0, 1.0),  # Uniform prior on capture odds ratio
                     is_cell_specific=True,
                     guide_family=capture_family,
                 )
@@ -232,9 +234,9 @@ def create_zinbvcp(
         else:
             param_specs.append(
                 BetaSpec(
-                    capture_param_name,
-                    ("n_cells",),
-                    (1.0, 1.0),  # Uniform prior on capture probability
+                    name=capture_param_name,
+                    shape_dims=("n_cells",),
+                    default_params=(1.0, 1.0),  # Uniform prior on capture probability
                     is_cell_specific=True,
                     guide_family=capture_family,
                 )
