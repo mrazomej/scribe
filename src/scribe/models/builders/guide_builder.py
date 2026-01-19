@@ -581,6 +581,69 @@ def setup_cell_specific_guide(
 
 
 # ------------------------------------------------------------------------------
+# BetaPrime Distribution MeanField Guide (Cell-Specific)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(BetaPrimeSpec, MeanFieldGuide, dict, object)
+def setup_cell_specific_guide(
+    spec: BetaPrimeSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    batch_idx: Optional[jnp.ndarray] = None,
+    **kwargs,
+) -> jnp.ndarray:
+    """
+    MeanField guide for cell-specific BetaPrime parameter (e.g., phi_capture).
+
+    When batch_idx is provided, we index into the full parameter arrays to get
+    only the parameters for the current mini-batch.
+
+    Parameters
+    ----------
+    spec : BetaPrimeSpec
+        Parameter specification (must have is_cell_specific=True).
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimensions including n_cells.
+    model_config : ModelConfig
+        Model configuration.
+    batch_idx : Optional[jnp.ndarray]
+        Indices of cells in current mini-batch. None for full sampling.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled parameter value for the current batch.
+    """
+    n_cells = dims["n_cells"]
+    params = spec.guide if spec.guide is not None else spec.default_params
+
+    # Variational parameters for ALL cells (allocated once, indexed into)
+    alpha = numpyro.param(
+        f"{spec.name}_alpha",
+        jnp.full(n_cells, params[0]),
+        constraint=constraints.positive,
+    )
+    beta = numpyro.param(
+        f"{spec.name}_beta",
+        jnp.full(n_cells, params[1]),
+        constraint=constraints.positive,
+    )
+
+    if batch_idx is None:
+        # Full sampling: use all parameters
+        return numpyro.sample(spec.name, BetaPrime(alpha, beta))
+    else:
+        # Batch sampling: index into parameters for this mini-batch
+        return numpyro.sample(
+            spec.name, BetaPrime(alpha[batch_idx], beta[batch_idx])
+        )
+
+
+# ------------------------------------------------------------------------------
 # Beta Distribution Amortized Guide
 # ------------------------------------------------------------------------------
 
@@ -640,27 +703,28 @@ def setup_cell_specific_guide(
 
 
 # ------------------------------------------------------------------------------
-# SigmoidNormal Distribution MeanField Guide
+# Normal with Transform Distribution MeanField Guide (Cell-Specific)
 # ------------------------------------------------------------------------------
 
 
-@dispatch(SigmoidNormalSpec, MeanFieldGuide, dict, object)
+@dispatch(NormalWithTransformSpec, MeanFieldGuide, dict, object)
 def setup_cell_specific_guide(
-    spec: SigmoidNormalSpec,
+    spec: NormalWithTransformSpec,
     guide: MeanFieldGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
     batch_idx: Optional[jnp.ndarray] = None,
     **kwargs,
 ) -> jnp.ndarray:
-    """MeanField guide for cell-specific unconstrained parameter.
+    """MeanField guide for cell-specific unconstrained parameters.
 
-    For unconstrained parameterization of cell-specific parameters.
+    Works for SigmoidNormalSpec (Beta -> [0,1]), ExpNormalSpec (BetaPrime -> [0,+inf)),
+    and other NormalWithTransformSpec subclasses.
 
     Parameters
     ----------
-    spec : SigmoidNormalSpec
-        Parameter specification (unconstrained Beta equivalent).
+    spec : NormalWithTransformSpec
+        Parameter specification (SigmoidNormalSpec, ExpNormalSpec, etc.).
     guide : MeanFieldGuide
         Mean-field guide marker.
     dims : Dict[str, int]
