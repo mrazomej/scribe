@@ -663,7 +663,14 @@ class ScribeMCMCResults(MCMC):
     def _validate_model_config(self):
         """Validate model configuration matches model type."""
         # Validate base model
-        if self.model_config.base_model != self.model_type:
+        # For mixture models, model_type is "nbdm_mix" but base_model is "nbdm"
+        # Check if model_type matches base_model or base_model + "_mix"
+        expected_base = (
+            self.model_type[:-4]
+            if self.model_type.endswith("_mix")
+            else self.model_type
+        )
+        if self.model_config.base_model != expected_base:
             raise ValueError(
                 f"Model type '{self.model_type}' does not match config "
                 f"base model '{self.model_config.base_model}'"
