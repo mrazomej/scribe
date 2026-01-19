@@ -54,7 +54,16 @@ scribe.models.components.guide_families : Guide dispatch implementations.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, Type
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    Type,
+)
 
 import jax.numpy as jnp
 import numpyro
@@ -65,6 +74,7 @@ from numpyro.distributions.transforms import Transform
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 
 from scribe.stats.distributions import BetaPrime
+
 # Import GuideFamily at runtime (safe because guide_families doesn't import from
 # builders)
 from ..components.guide_families import GuideFamily
@@ -1075,6 +1085,9 @@ def sample_prior(
     - Clean integration with NumPyro's inference
     - The sample is already in constrained space
 
+    This works for both mean-field and low-rank guides since both now use
+    TransformedDistribution in the guide, ensuring consistent behavior.
+
     Parameters
     ----------
     spec : NormalWithTransformSpec
@@ -1087,7 +1100,8 @@ def sample_prior(
     Returns
     -------
     jnp.ndarray
-        Sampled parameter value in constrained space.
+        Sampled parameter value in constrained space (transform applied via
+        TransformedDistribution).
     """
     params = spec.prior if spec.prior is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
@@ -1099,6 +1113,8 @@ def sample_prior(
         base_dist = dist.Normal(*params).expand(shape).to_event(len(shape))
 
     # Wrap with transform - handles Jacobian automatically
+    # This works for both mean-field and low-rank guides since both now use
+    # TransformedDistribution in the guide
     transformed_dist = dist.TransformedDistribution(base_dist, spec.transform)
 
     # Sample directly in constrained space (transform applied internally)

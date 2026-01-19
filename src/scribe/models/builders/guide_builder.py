@@ -367,6 +367,87 @@ def setup_guide(
     )
 
 
+# ------------------------------------------------------------------------------
+# Normal with Transform Distribution LowRank Guide (Unconstrained Models)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(NormalWithTransformSpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: NormalWithTransformSpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide for unconstrained parameters (Normal + Transform).
+
+    Uses a low-rank multivariate normal wrapped with TransformedDistribution to
+    handle the transform to constrained space. The covariance structure is:
+        Σ = W @ W.T + diag(D)
+
+    This matches the pattern used for mean-field guides, ensuring consistent
+    Jacobian handling via TransformedDistribution.
+
+    Parameters
+    ----------
+    spec : NormalWithTransformSpec
+        Parameter specification (e.g., ExpNormalSpec for positive parameters).
+    guide : LowRankGuide
+        Low-rank guide marker with rank attribute.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration with guide hyperparameters.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled parameter value in constrained space (transform applied via
+        TransformedDistribution).
+
+    Notes
+    -----
+    This handler enables low-rank guides for unconstrained models (e.g., models
+    using ExpNormalSpec, SigmoidNormalSpec). The low-rank MVN is defined in
+    unconstrained space, then wrapped with TransformedDistribution to apply the
+    transform (exp, sigmoid, etc.) and handle Jacobian automatically.
+
+    Examples
+    --------
+    Works with ExpNormalSpec for positive parameters:
+        >>> spec = ExpNormalSpec("r", ("n_genes",), (0.0, 1.0))
+        >>> guide = LowRankGuide(rank=10)
+        >>> setup_guide(spec, guide, {"n_genes": 100}, model_config)
+        # Samples "r" from TransformedDistribution(LowRankMultivariateNormal, ExpTransform)
+    """
+    resolved_shape = resolve_shape(
+        spec.shape_dims, dims, is_mixture=spec.is_mixture
+    )
+    # For low-rank, G is the first dimension (gene dimension, or component
+    # dimension if mixture)
+    G = resolved_shape[0] if resolved_shape else 1
+    k = guide.rank
+
+    # Low-rank MVN parameters in unconstrained space
+    # Use base parameter name for variational parameters (matching mean-field pattern)
+    loc = numpyro.param(f"{spec.name}_loc", jnp.zeros(G))
+    W = numpyro.param(f"{spec.name}_W", 0.01 * jnp.ones((G, k)))
+    raw_diag = numpyro.param(f"{spec.name}_raw_diag", -3.0 * jnp.ones(G))
+
+    # Ensure diagonal is positive
+    D = jax.nn.softplus(raw_diag) + 1e-4
+
+    # Create low-rank MVN in unconstrained space
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    # Wrap with transform - handles Jacobian automatically
+    transformed_dist = dist.TransformedDistribution(base, spec.transform)
+
+    # Sample in constrained space (transform applied internally)
+    return numpyro.sample(spec.constrained_name, transformed_dist)
+
+
 # ==============================================================================
 # Cell-Specific Parameter Guides (with batch indexing support)
 # ==============================================================================
