@@ -320,7 +320,13 @@ def nbvcp_log_likelihood(
     # Extract parameters from dictionary
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)
-    p_capture = jnp.squeeze(params["p_capture"]).astype(dtype)
+    # Handle both p_capture and phi_capture (odds_ratio parameterization)
+    if "phi_capture" in params:
+        # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
+        phi_capture = jnp.squeeze(params["phi_capture"]).astype(dtype)
+        p_capture = 1.0 / (1.0 + phi_capture)
+    else:
+        p_capture = jnp.squeeze(params["p_capture"]).astype(dtype)
 
     # Extract dimensions
     if cells_axis == 0:
@@ -464,7 +470,13 @@ def zinbvcp_log_likelihood(
     # Extract parameters from dictionary
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)
-    p_capture = jnp.squeeze(params["p_capture"]).astype(dtype)
+    # Handle both p_capture and phi_capture (odds_ratio parameterization)
+    if "phi_capture" in params:
+        # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
+        phi_capture = jnp.squeeze(params["phi_capture"]).astype(dtype)
+        p_capture = 1.0 / (1.0 + phi_capture)
+    else:
+        p_capture = jnp.squeeze(params["p_capture"]).astype(dtype)
     gate = jnp.squeeze(params["gate"]).astype(dtype)
 
     # Extract dimensions
@@ -1078,9 +1090,15 @@ def nbvcp_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
-    p_capture = jnp.squeeze(params["p_capture"]).astype(
-        dtype
-    )  # shape (n_cells,)
+    # Handle both p_capture and phi_capture (odds_ratio parameterization)
+    if "phi_capture" in params:
+        # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
+        phi_capture = jnp.squeeze(params["phi_capture"]).astype(dtype)
+        p_capture = 1.0 / (1.0 + phi_capture)  # shape (n_cells,)
+    else:
+        p_capture = jnp.squeeze(params["p_capture"]).astype(
+            dtype
+        )  # shape (n_cells,)
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
@@ -1328,9 +1346,15 @@ def zinbvcp_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
-    p_capture = jnp.squeeze(params["p_capture"]).astype(
-        dtype
-    )  # shape (n_cells,)
+    # Handle both p_capture and phi_capture (odds_ratio parameterization)
+    if "phi_capture" in params:
+        # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
+        phi_capture = jnp.squeeze(params["phi_capture"]).astype(dtype)
+        p_capture = 1.0 / (1.0 + phi_capture)  # shape (n_cells,)
+    else:
+        p_capture = jnp.squeeze(params["p_capture"]).astype(
+            dtype
+        )  # shape (n_cells,)
     gate = jnp.squeeze(params["gate"]).astype(
         dtype
     )  # shape (n_components, n_genes)
@@ -1382,7 +1406,7 @@ def zinbvcp_mixture_log_likelihood(
 
     if return_by == "cell":
         if batch_size is None:
-            # Create base NB distribution vectorized over 
+            # Create base NB distribution vectorized over
             # cells, genes, components
             # r: (1, n_genes, n_components)
             # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
@@ -1414,7 +1438,7 @@ def zinbvcp_mixture_log_likelihood(
                 # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                # Create base NB distribution vectorized over 
+                # Create base NB distribution vectorized over
                 # cells, genes, components
                 # r: (1, n_genes, n_components)
                 # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
@@ -1443,7 +1467,7 @@ def zinbvcp_mixture_log_likelihood(
 
     else:  # return_by == 'gene'
         if batch_size is None:
-            # Create base NB distribution vectorized over 
+            # Create base NB distribution vectorized over
             # cells, genes, components
             # r: (1, n_genes, n_components)
             # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
@@ -1475,7 +1499,7 @@ def zinbvcp_mixture_log_likelihood(
                 # Get start and end indices for batch
                 start_idx = i * batch_size
                 end_idx = min((i + 1) * batch_size, n_cells)
-                # Create base NB distribution vectorized over 
+                # Create base NB distribution vectorized over
                 # cells, genes, components
                 # r: (1, n_genes, n_components)
                 # p_hat: (n_cells, 1, n_components) or (n_cells, 1, 1)
