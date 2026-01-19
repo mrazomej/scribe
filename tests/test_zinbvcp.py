@@ -1,13 +1,13 @@
 # tests/test_zinbvcp.py
-from scribe.models.config import UnconstrainedModelConfig
-
 """
 Tests for the Zero-Inflated Negative Binomial with Variable Capture Probability model.
 """
 import pytest
 import jax.numpy as jnp
-from jax import random
 import os
+from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
+from scribe.inference import run_scribe
+from scribe.inference.preset_builder import build_config_from_preset
 
 ALL_METHODS = ["svi", "mcmc"]
 ALL_PARAMETERIZATIONS = ["standard", "linked", "odds_ratio"]
@@ -124,74 +124,41 @@ def zinbvcp_results(
         if "JAX_PLATFORM_NAME" in os.environ:
             del os.environ["JAX_PLATFORM_NAME"]
     counts, _ = small_dataset
-    # Set up priors based on parameterization
+    # Set up priors based on parameterization (using new key names without "_prior" suffix)
     if parameterization == "standard":
-        priors = {
-            "r_prior": (2, 0.1),
-            "p_prior": (1, 1),
-            "gate_prior": (1, 1),
-            "p_capture_prior": (1, 1),
-        }
+        priors = {"r": (2, 0.1), "p": (1, 1), "gate": (1, 1), "p_capture": (1, 1)}
     elif parameterization == "linked":
-        priors = {
-            "p_prior": (1, 1),
-            "mu_prior": (1, 1),
-            "gate_prior": (1, 1),
-            "p_capture_prior": (1, 1),
-        }
+        priors = {"p": (1, 1), "mu": (1, 1), "gate": (1, 1), "p_capture": (1, 1)}
     elif parameterization == "odds_ratio":
-        priors = {
-            "phi_prior": (3, 2),
-            "mu_prior": (1, 1),
-            "gate_prior": (1, 1),
-            "phi_capture_prior": (3, 2),
-        }
+        priors = {"phi": (3, 2), "mu": (1, 1), "gate": (1, 1), "phi_capture": (3, 2)}
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
-    from scribe import run_scribe
 
+    # Build model config using preset builder
+    model_config = build_config_from_preset(
+        model="zinbvcp",
+        parameterization=parameterization,
+        inference_method=inference_method,
+        unconstrained=unconstrained,
+        guide_rank=guide_rank,
+        priors=priors,
+    )
+
+    # Create inference config based on method
     if inference_method == "svi":
-        result = run_scribe(
-            counts=counts,
-            inference_method="svi",
-            zero_inflated=True,
-            variable_capture=True,
-            mixture_model=False,
-            parameterization=parameterization,
-            unconstrained=unconstrained,
-            guide_rank=guide_rank,
-            n_steps=3,
-            batch_size=5,
-            seed=42,
-            r_prior=priors.get("r_prior"),
-            p_prior=priors.get("p_prior"),
-            mu_prior=priors.get("mu_prior"),
-            phi_prior=priors.get("phi_prior"),
-            gate_prior=priors.get("gate_prior"),
-            p_capture_prior=priors.get("p_capture_prior"),
-            phi_capture_prior=priors.get("phi_capture_prior"),
-        )
+        svi_config = SVIConfig(n_steps=3, batch_size=5)
+        inference_config = InferenceConfig.from_svi(svi_config)
     else:
-        result = run_scribe(
-            counts=counts,
-            inference_method="mcmc",
-            zero_inflated=True,
-            variable_capture=True,
-            mixture_model=False,
-            parameterization=parameterization,
-            unconstrained=unconstrained,
-            n_warmup=2,
-            n_samples=3,
-            n_chains=1,
-            seed=42,
-            r_prior=priors.get("r_prior"),
-            p_prior=priors.get("p_prior"),
-            mu_prior=priors.get("mu_prior"),
-            phi_prior=priors.get("phi_prior"),
-            gate_prior=priors.get("gate_prior"),
-            p_capture_prior=priors.get("p_capture_prior"),
-            phi_capture_prior=priors.get("phi_capture_prior"),
-        )
+        mcmc_config = MCMCConfig(n_warmup=2, n_samples=3, n_chains=1)
+        inference_config = InferenceConfig.from_mcmc(mcmc_config)
+
+    # Run inference with new API
+    result = run_scribe(
+        counts=counts,
+        model_config=model_config,
+        inference_config=inference_config,
+        seed=42,
+    )
     _zinbvcp_results_cache[key] = result
     return result
 
@@ -216,16 +183,27 @@ def test_parameterization_config(
 ):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert zinbvcp_results.model_config.parameterization == parameterization
-    # Check that the unconstrained flag is properly set in the model config
-    # Note: This may need to be adjusted based on how the model config stores this information
-    if True:  # Always check unconstrained by type
-        assert (
-            isinstance(zinbvcp_results.model_config, UnconstrainedModelConfig)
-            == unconstrained
-        )
+    # Check unconstrained flag
+    assert zinbvcp_results.model_config.unconstrained == unconstrained
     # Check that the guide_rank is properly set in the model config
-    if hasattr(zinbvcp_results.model_config, "guide_rank"):
-        assert zinbvcp_results.model_config.guide_rank == guide_rank
+    # guide_rank is stored in guide_families as LowRankGuide for the gene parameter
+    if guide_rank is not None:
+        # Determine which parameter should have the low-rank guide
+        if parameterization == "standard":
+            gene_param = "r"
+        else:  # linked or odds_ratio
+            gene_param = "mu"
+        # Check that guide_families has LowRankGuide for the gene parameter
+        assert zinbvcp_results.model_config.guide_families is not None
+        guide_family = zinbvcp_results.model_config.guide_families.get(gene_param)
+        assert guide_family is not None
+        from scribe.models.components.guide_families import LowRankGuide
+
+        assert isinstance(guide_family, LowRankGuide)
+        assert guide_family.rank == guide_rank
+    else:
+        # Mean-field guide (default) - no specific check needed
+        pass
 
 
 # ------------------------------------------------------------------------------
