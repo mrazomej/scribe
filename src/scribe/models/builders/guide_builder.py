@@ -624,6 +624,71 @@ def setup_cell_specific_guide(
     return numpyro.sample(spec.constrained_name, transformed_dist)
 
 
+# ------------------------------------------------------------------------------
+# Dirichlet Distribution MeanField Guide
+# ------------------------------------------------------------------------------
+
+
+@dispatch(DirichletSpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: DirichletSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for Dirichlet parameter.
+
+    Creates learnable variational parameters (concentrations) for a Dirichlet
+    distribution approximation. Used for mixture weights and compositional
+    parameters.
+
+    Parameters
+    ----------
+    spec : DirichletSpec
+        Parameter specification.
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration with guide hyperparameters.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled parameter value from Dirichlet distribution (on simplex).
+
+    Notes
+    -----
+    - Concentration parameters must all be positive.
+    - The sampled value will be on the simplex (sums to 1).
+    - For mixture weights, the concentration vector length equals n_components.
+    """
+    # Get guide params or use default
+    params = spec.guide if spec.guide is not None else spec.default_params
+
+    # Convert tuple to array and ensure all values are positive
+    concentrations = jnp.array(params)
+
+    # Determine parameter name: use "mixing_concentrations" for mixing_weights
+    # (matching legacy code), otherwise use "{name}_concentrations"
+    if spec.name == "mixing_weights":
+        param_name = "mixing_concentrations"
+    else:
+        param_name = f"{spec.name}_concentrations"
+
+    # Create variational parameter with positive constraint
+    concentrations_param = numpyro.param(
+        param_name,
+        concentrations,
+        constraint=constraints.positive,
+    )
+
+    # Sample from Dirichlet distribution
+    return numpyro.sample(spec.name, dist.Dirichlet(concentrations_param))
+
+
 # ==============================================================================
 # Guide Builder
 # ==============================================================================
@@ -768,16 +833,23 @@ class GuideBuilder:
                 if mixing_spec is None:
                     # Create default Dirichlet spec for mixing weights
                     n_components = dims["n_components"]
-                    mixing_prior_params = getattr(
-                        model_config.priors, "mixing", None
-                    ) or tuple([1.0] * n_components)
+                    # Get mixing prior from param_specs if available
+                    mixing_prior_params = None
+                    if model_config.param_specs:
+                        for spec in model_config.param_specs:
+                            if spec.name == "mixing" and spec.prior is not None:
+                                mixing_prior_params = spec.prior
+                                break
+                    if mixing_prior_params is None:
+                        mixing_prior_params = tuple([1.0] * n_components)
                     from .parameter_specs import DirichletSpec
 
                     mixing_spec = DirichletSpec(
-                        "mixing_weights",
-                        (),
-                        mixing_prior_params,
-                        is_mixture=False,
+                        name="mixing_weights",
+                        shape_dims=(),
+                        default_params=mixing_prior_params,
+                        prior=mixing_prior_params,
+                        is_mixture=False,  # Mixing weights are not mixture-specific
                     )
                 guide_family = mixing_spec.guide_family or MeanFieldGuide()
                 setup_guide(mixing_spec, guide_family, dims, model_config)
