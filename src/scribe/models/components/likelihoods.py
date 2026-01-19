@@ -979,28 +979,33 @@ class ZINBWithVCPLikelihood(Likelihood):
         if counts is None:
             with numpyro.plate("cells", n_cells):
                 if use_phi_capture:
-                    # Mean-odds parameterization: use phi_capture from
-                    # param_values if available,
-                    # otherwise sample it
-                    capture_param_name = None
+                    # Mean-odds parameterization: sample phi_capture based on spec type
                     if capture_spec is not None:
-                        # For unconstrained models, check for constrained_name
-                        if (
-                            hasattr(capture_spec, "constrained_name")
-                            and capture_spec.constrained_name
-                        ):
-                            capture_param_name = capture_spec.constrained_name
-                        else:
-                            capture_param_name = capture_spec.name
+                        # Check if this is an unconstrained parameter
+                        # (ExpNormalSpec for phi_capture, SigmoidNormalSpec for
+                        # p_capture)
+                        from ..builders.parameter_specs import ExpNormalSpec
 
-                    if (
-                        capture_param_name
-                        and capture_param_name in param_values
-                    ):
-                        # Parameter was already sampled by model builder
-                        phi_capture = param_values[capture_param_name]
+                        if isinstance(capture_spec, ExpNormalSpec):
+                            # Unconstrained: use TransformedDistribution
+                            # (matches model builder pattern)
+                            # We're inside the cell plate, so sample per-cell
+                            base_dist = dist.Normal(*capture_prior_params)
+                            transformed_dist = dist.TransformedDistribution(
+                                base_dist, capture_spec.transform
+                            )
+                            phi_capture = numpyro.sample(
+                                capture_spec.constrained_name, transformed_dist
+                            )
+                        else:
+                            # Constrained: sample directly from BetaPrime
+                            from scribe.stats.distributions import BetaPrime
+
+                            phi_capture = numpyro.sample(
+                                "phi_capture", BetaPrime(*capture_prior_params)
+                            )
                     else:
-                        # Sample phi_capture from prior (legacy behavior)
+                        # Legacy: no spec, sample from BetaPrime
                         from scribe.stats.distributions import BetaPrime
 
                         phi_capture = numpyro.sample(
@@ -1041,9 +1046,32 @@ class ZINBWithVCPLikelihood(Likelihood):
                         numpyro.sample("counts", zinb_dist.to_event(1))
                 else:
                     # Canonical/mean-prob: sample p_capture, compute p_hat
-                    p_capture = numpyro.sample(
-                        "p_capture", dist.Beta(*capture_prior_params)
-                    )
+                    if capture_spec is not None:
+                        # Check if this is an unconstrained parameter
+                        # (SigmoidNormalSpec for p_capture)
+                        from ..builders.parameter_specs import SigmoidNormalSpec
+
+                        if isinstance(capture_spec, SigmoidNormalSpec):
+                            # Unconstrained: use TransformedDistribution
+                            # (matches model builder pattern)
+                            # We're inside the cell plate, so sample per-cell
+                            base_dist = dist.Normal(*capture_prior_params)
+                            transformed_dist = dist.TransformedDistribution(
+                                base_dist, capture_spec.transform
+                            )
+                            p_capture = numpyro.sample(
+                                capture_spec.constrained_name, transformed_dist
+                            )
+                        else:
+                            # Constrained: sample directly from Beta
+                            p_capture = numpyro.sample(
+                                "p_capture", dist.Beta(*capture_prior_params)
+                            )
+                    else:
+                        # Legacy: no spec, sample from Beta
+                        p_capture = numpyro.sample(
+                            "p_capture", dist.Beta(*capture_prior_params)
+                        )
                     p_capture_reshaped = p_capture[:, None, None]
 
                     # Broadcast p and gate if needed
@@ -1093,28 +1121,33 @@ class ZINBWithVCPLikelihood(Likelihood):
         elif batch_size is None:
             with numpyro.plate("cells", n_cells):
                 if use_phi_capture:
-                    # Mean-odds parameterization: use phi_capture from
-                    # param_values if available,
-                    # otherwise sample it
-                    capture_param_name = None
+                    # Mean-odds parameterization: sample phi_capture based on spec type
                     if capture_spec is not None:
-                        # For unconstrained models, check for constrained_name
-                        if (
-                            hasattr(capture_spec, "constrained_name")
-                            and capture_spec.constrained_name
-                        ):
-                            capture_param_name = capture_spec.constrained_name
-                        else:
-                            capture_param_name = capture_spec.name
+                        # Check if this is an unconstrained parameter
+                        # (ExpNormalSpec for phi_capture, SigmoidNormalSpec for
+                        # p_capture)
+                        from ..builders.parameter_specs import ExpNormalSpec
 
-                    if (
-                        capture_param_name
-                        and capture_param_name in param_values
-                    ):
-                        # Parameter was already sampled by model builder
-                        phi_capture = param_values[capture_param_name]
+                        if isinstance(capture_spec, ExpNormalSpec):
+                            # Unconstrained: use TransformedDistribution
+                            # (matches model builder pattern)
+                            # We're inside the cell plate, so sample per-cell
+                            base_dist = dist.Normal(*capture_prior_params)
+                            transformed_dist = dist.TransformedDistribution(
+                                base_dist, capture_spec.transform
+                            )
+                            phi_capture = numpyro.sample(
+                                capture_spec.constrained_name, transformed_dist
+                            )
+                        else:
+                            # Constrained: sample directly from BetaPrime
+                            from scribe.stats.distributions import BetaPrime
+
+                            phi_capture = numpyro.sample(
+                                "phi_capture", BetaPrime(*capture_prior_params)
+                            )
                     else:
-                        # Sample phi_capture from prior (legacy behavior)
+                        # Legacy: no spec, sample from BetaPrime
                         from scribe.stats.distributions import BetaPrime
 
                         phi_capture = numpyro.sample(
@@ -1156,9 +1189,32 @@ class ZINBWithVCPLikelihood(Likelihood):
                         )
                 else:
                     # Canonical/mean-prob: sample p_capture, compute p_hat
-                    p_capture = numpyro.sample(
-                        "p_capture", dist.Beta(*capture_prior_params)
-                    )
+                    if capture_spec is not None:
+                        # Check if this is an unconstrained parameter
+                        # (SigmoidNormalSpec for p_capture)
+                        from ..builders.parameter_specs import SigmoidNormalSpec
+
+                        if isinstance(capture_spec, SigmoidNormalSpec):
+                            # Unconstrained: use TransformedDistribution
+                            # (matches model builder pattern)
+                            # We're inside the cell plate, so sample per-cell
+                            base_dist = dist.Normal(*capture_prior_params)
+                            transformed_dist = dist.TransformedDistribution(
+                                base_dist, capture_spec.transform
+                            )
+                            p_capture = numpyro.sample(
+                                capture_spec.constrained_name, transformed_dist
+                            )
+                        else:
+                            # Constrained: sample directly from Beta
+                            p_capture = numpyro.sample(
+                                "p_capture", dist.Beta(*capture_prior_params)
+                            )
+                    else:
+                        # Legacy: no spec, sample from Beta
+                        p_capture = numpyro.sample(
+                            "p_capture", dist.Beta(*capture_prior_params)
+                        )
                     p_capture_reshaped = p_capture[:, None, None]
 
                     if is_mixture:
@@ -1211,28 +1267,33 @@ class ZINBWithVCPLikelihood(Likelihood):
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
                 if use_phi_capture:
-                    # Mean-odds parameterization: use phi_capture from
-                    # param_values if available,
-                    # otherwise sample it
-                    capture_param_name = None
+                    # Mean-odds parameterization: sample phi_capture based on spec type
                     if capture_spec is not None:
-                        # For unconstrained models, check for constrained_name
-                        if (
-                            hasattr(capture_spec, "constrained_name")
-                            and capture_spec.constrained_name
-                        ):
-                            capture_param_name = capture_spec.constrained_name
-                        else:
-                            capture_param_name = capture_spec.name
+                        # Check if this is an unconstrained parameter
+                        # (ExpNormalSpec for phi_capture, SigmoidNormalSpec for
+                        # p_capture)
+                        from ..builders.parameter_specs import ExpNormalSpec
 
-                    if (
-                        capture_param_name
-                        and capture_param_name in param_values
-                    ):
-                        # Parameter was already sampled by model builder
-                        phi_capture = param_values[capture_param_name]
+                        if isinstance(capture_spec, ExpNormalSpec):
+                            # Unconstrained: use TransformedDistribution
+                            # (matches model builder pattern)
+                            # We're inside the cell plate, so sample per-cell
+                            base_dist = dist.Normal(*capture_prior_params)
+                            transformed_dist = dist.TransformedDistribution(
+                                base_dist, capture_spec.transform
+                            )
+                            phi_capture = numpyro.sample(
+                                capture_spec.constrained_name, transformed_dist
+                            )
+                        else:
+                            # Constrained: sample directly from BetaPrime
+                            from scribe.stats.distributions import BetaPrime
+
+                            phi_capture = numpyro.sample(
+                                "phi_capture", BetaPrime(*capture_prior_params)
+                            )
                     else:
-                        # Sample phi_capture from prior (legacy behavior)
+                        # Legacy: no spec, sample from BetaPrime
                         from scribe.stats.distributions import BetaPrime
 
                         phi_capture = numpyro.sample(
@@ -1274,9 +1335,32 @@ class ZINBWithVCPLikelihood(Likelihood):
                         )
                 else:
                     # Canonical/mean-prob: sample p_capture, compute p_hat
-                    p_capture = numpyro.sample(
-                        "p_capture", dist.Beta(*capture_prior_params)
-                    )
+                    if capture_spec is not None:
+                        # Check if this is an unconstrained parameter
+                        # (SigmoidNormalSpec for p_capture)
+                        from ..builders.parameter_specs import SigmoidNormalSpec
+
+                        if isinstance(capture_spec, SigmoidNormalSpec):
+                            # Unconstrained: use TransformedDistribution
+                            # (matches model builder pattern)
+                            # We're inside the cell plate, so sample per-cell
+                            base_dist = dist.Normal(*capture_prior_params)
+                            transformed_dist = dist.TransformedDistribution(
+                                base_dist, capture_spec.transform
+                            )
+                            p_capture = numpyro.sample(
+                                capture_spec.constrained_name, transformed_dist
+                            )
+                        else:
+                            # Constrained: sample directly from Beta
+                            p_capture = numpyro.sample(
+                                "p_capture", dist.Beta(*capture_prior_params)
+                            )
+                    else:
+                        # Legacy: no spec, sample from Beta
+                        p_capture = numpyro.sample(
+                            "p_capture", dist.Beta(*capture_prior_params)
+                        )
                     p_capture_reshaped = p_capture[:, None, None]
 
                     if is_mixture:
