@@ -136,6 +136,7 @@ class ParameterizationMapping:
 # ==============================================================================
 
 PARAMETERIZATION_MAPPINGS = {
+    # Old names (backward compatibility)
     Parameterization.STANDARD: ParameterizationMapping(
         parameterization=Parameterization.STANDARD,
         core_parameters={"p", "r"},
@@ -156,6 +157,34 @@ PARAMETERIZATION_MAPPINGS = {
     ),
     Parameterization.ODDS_RATIO: ParameterizationMapping(
         parameterization=Parameterization.ODDS_RATIO,
+        core_parameters={"phi", "mu"},
+        optional_parameters=set(),
+        parameter_descriptions={
+            "phi": "Odds ratio parameter (BetaPrime distribution)",
+            "mu": "Mean parameter (LogNormal distribution)",
+        },
+    ),
+    # New names (preferred)
+    Parameterization.CANONICAL: ParameterizationMapping(
+        parameterization=Parameterization.CANONICAL,
+        core_parameters={"p", "r"},
+        optional_parameters=set(),
+        parameter_descriptions={
+            "p": "Success probability parameter (Beta distribution)",
+            "r": "Dispersion parameter (LogNormal distribution)",
+        },
+    ),
+    Parameterization.MEAN_PROB: ParameterizationMapping(
+        parameterization=Parameterization.MEAN_PROB,
+        core_parameters={"p", "mu"},
+        optional_parameters=set(),
+        parameter_descriptions={
+            "p": "Success probability parameter (Beta distribution)",
+            "mu": "Mean parameter (LogNormal distribution)",
+        },
+    ),
+    Parameterization.MEAN_ODDS: ParameterizationMapping(
+        parameterization=Parameterization.MEAN_ODDS,
         core_parameters={"phi", "mu"},
         optional_parameters=set(),
         parameter_descriptions={

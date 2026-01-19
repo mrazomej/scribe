@@ -19,6 +19,7 @@ from .groups import (
     SVIConfig,
     MCMCConfig,
     DataConfig,
+    InferenceConfig,
 )
 from .base import ModelConfig
 from .builder import ModelConfigBuilder
@@ -41,6 +42,7 @@ __all__ = [
     "SVIConfig",
     "MCMCConfig",
     "DataConfig",
+    "InferenceConfig",
     # Enums
     "ModelType",
     "Parameterization",

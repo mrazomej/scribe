@@ -22,10 +22,10 @@ valid, immutable, and explicit. The groups here are the foundational building
 blocks used to create full model configurations in SCRIBE.
 """
 
-from typing import Any as TypingAny, Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 import jax.numpy as jnp
-from .enums import VAEPriorType, VAEMaskType, VAEActivation
+from .enums import VAEPriorType, VAEMaskType, VAEActivation, InferenceMethod
 
 # Import GuideFamily for Pydantic's runtime type checking
 # We use Any as the type hint since GuideFamily is a dataclass that Pydantic
@@ -280,3 +280,230 @@ class DataConfig(BaseModel):
     layer: Optional[str] = Field(
         None, description="Layer in AnnData to use for counts. If None, uses .X"
     )
+
+
+# ==============================================================================
+# Unified Inference Configuration Group
+# ==============================================================================
+
+
+class InferenceConfig(BaseModel):
+    """Unified inference configuration with method-specific validation.
+
+    This class provides a single interface for all inference method
+    configurations (SVI, MCMC, VAE), with automatic validation to ensure the
+    correct config type is provided for each inference method.
+
+    Parameters
+    ----------
+    method : InferenceMethod
+        The inference method this configuration is for.
+    svi : Optional[SVIConfig], default=None
+        SVI-specific configuration. Required if method is SVI or VAE.
+    mcmc : Optional[MCMCConfig], default=None
+        MCMC-specific configuration. Required if method is MCMC.
+
+    Raises
+    ------
+    ValueError
+        If the wrong config type is provided for the specified inference method,
+        or if the required config is missing.
+
+    Examples
+    --------
+    Create from SVIConfig:
+
+    >>> from scribe.models.config import InferenceConfig, SVIConfig
+    >>> svi_config = SVIConfig(n_steps=50000, batch_size=256)
+    >>> inference_config = InferenceConfig.from_svi(svi_config)
+
+    Create from MCMCConfig:
+
+    >>> from scribe.models.config import InferenceConfig, MCMCConfig
+    >>> mcmc_config = MCMCConfig(n_samples=5000, n_chains=4)
+    >>> inference_config = InferenceConfig.from_mcmc(mcmc_config)
+
+    Direct construction (with validation):
+
+    >>> inference_config = InferenceConfig(
+    ...     method=InferenceMethod.SVI,
+    ...     svi=SVIConfig(n_steps=10000),
+    ...     mcmc=None
+    ... )
+
+    See Also
+    --------
+    SVIConfig : Configuration for SVI inference.
+    MCMCConfig : Configuration for MCMC inference.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Discriminator field - determines which config type should be used
+    method: "InferenceMethod" = Field(
+        ..., description="Inference method this configuration is for"
+    )
+
+    # Method-specific configs (only one should be set based on method)
+    svi: Optional[SVIConfig] = Field(
+        None, description="SVI configuration (required for SVI and VAE methods)"
+    )
+    mcmc: Optional[MCMCConfig] = Field(
+        None, description="MCMC configuration (required for MCMC method)"
+    )
+
+    # --------------------------------------------------------------------------
+    # Factory Methods
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_svi(cls, svi_config: SVIConfig) -> "InferenceConfig":
+        """Create InferenceConfig from SVIConfig.
+
+        Parameters
+        ----------
+        svi_config : SVIConfig
+            SVI configuration object.
+
+        Returns
+        -------
+        InferenceConfig
+            InferenceConfig with method=SVI and the provided svi_config.
+
+        Examples
+        --------
+        >>> from scribe.models.config import InferenceConfig, SVIConfig
+        >>> svi_config = SVIConfig(n_steps=50000)
+        >>> inference_config = InferenceConfig.from_svi(svi_config)
+        """
+        from .enums import InferenceMethod
+
+        return cls(method=InferenceMethod.SVI, svi=svi_config, mcmc=None)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_mcmc(cls, mcmc_config: MCMCConfig) -> "InferenceConfig":
+        """Create InferenceConfig from MCMCConfig.
+
+        Parameters
+        ----------
+        mcmc_config : MCMCConfig
+            MCMC configuration object.
+
+        Returns
+        -------
+        InferenceConfig
+            InferenceConfig with method=MCMC and the provided mcmc_config.
+
+        Examples
+        --------
+        >>> from scribe.models.config import InferenceConfig, MCMCConfig
+        >>> mcmc_config = MCMCConfig(n_samples=5000)
+        >>> inference_config = InferenceConfig.from_mcmc(mcmc_config)
+        """
+        from .enums import InferenceMethod
+
+        return cls(method=InferenceMethod.MCMC, svi=None, mcmc=mcmc_config)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_vae(cls, svi_config: SVIConfig) -> "InferenceConfig":
+        """Create InferenceConfig for VAE inference from SVIConfig.
+
+        VAE inference uses SVI configuration since it's essentially SVI with
+        neural network components.
+
+        Parameters
+        ----------
+        svi_config : SVIConfig
+            SVI configuration object (used for VAE inference).
+
+        Returns
+        -------
+        InferenceConfig
+            InferenceConfig with method=VAE and the provided svi_config.
+
+        Examples
+        --------
+        >>> from scribe.models.config import InferenceConfig, SVIConfig
+        >>> svi_config = SVIConfig(n_steps=100000)
+        >>> inference_config = InferenceConfig.from_vae(svi_config)
+        """
+        from .enums import InferenceMethod
+
+        return cls(method=InferenceMethod.VAE, svi=svi_config, mcmc=None)
+
+    # --------------------------------------------------------------------------
+    # Validation
+    # --------------------------------------------------------------------------
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def validate_method(cls, v):
+        """Convert string to InferenceMethod enum if needed."""
+        from .enums import InferenceMethod
+
+        if isinstance(v, str):
+            return InferenceMethod(v)
+        return v
+
+    # --------------------------------------------------------------------------
+
+    # --------------------------------------------------------------------------
+
+    def model_post_init(self, __context):
+        """Validate that the correct config type is provided for the method."""
+        if self.method == InferenceMethod.SVI:
+            if self.svi is None:
+                raise ValueError("SVIConfig required for SVI inference")
+            if self.mcmc is not None:
+                raise ValueError("MCMCConfig not allowed for SVI inference")
+        elif self.method == InferenceMethod.MCMC:
+            if self.mcmc is None:
+                raise ValueError("MCMCConfig required for MCMC inference")
+            if self.svi is not None:
+                raise ValueError("SVIConfig not allowed for MCMC inference")
+        elif self.method == InferenceMethod.VAE:
+            # VAE uses SVI config
+            if self.svi is None:
+                raise ValueError("SVIConfig required for VAE inference")
+            if self.mcmc is not None:
+                raise ValueError("MCMCConfig not allowed for VAE inference")
+        else:
+            raise ValueError(f"Unknown inference method: {self.method}")
+
+    # --------------------------------------------------------------------------
+    # Accessor Methods
+    # --------------------------------------------------------------------------
+
+    def get_config(self) -> Union[SVIConfig, MCMCConfig]:
+        """Get the appropriate config for the inference method.
+
+        Returns
+        -------
+        Union[SVIConfig, MCMCConfig]
+            The SVI or MCMC configuration, depending on the inference method.
+
+        Raises
+        ------
+        ValueError
+            If the inference method is not recognized.
+
+        Examples
+        --------
+        >>> inference_config = InferenceConfig.from_svi(SVIConfig())
+        >>> svi_config = inference_config.get_config()  # Returns SVIConfig
+        """
+        from .enums import InferenceMethod
+
+        if (
+            self.method == InferenceMethod.SVI
+            or self.method == InferenceMethod.VAE
+        ):
+            return self.svi
+        elif self.method == InferenceMethod.MCMC:
+            return self.mcmc
+        else:
+            raise ValueError(f"Unknown inference method: {self.method}")
