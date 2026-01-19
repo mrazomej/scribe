@@ -64,15 +64,7 @@ class SVIInferenceEngine:
             Results from SVI run containing optimized parameters and loss history
         """
         # Get model and guide functions using the new builder-based API
-        model, guide = get_model_and_guide(
-            model_config.base_model,
-            parameterization=model_config.parameterization.value,
-            unconstrained=model_config.unconstrained,
-            guide_families=model_config.guide_families,
-            n_components=model_config.n_components,
-            mixture_params=model_config.mixture_params,
-            model_config=model_config,
-        )
+        model, guide = get_model_and_guide(model_config)
 
         # Create SVI instance
         svi = SVI(model, guide, optimizer, loss=loss)

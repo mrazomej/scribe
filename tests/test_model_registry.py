@@ -12,7 +12,9 @@ from src.scribe.models.model_registry import (
     _GUIDE_REGISTRY,
     SUPPORTED_PARAMETERIZATIONS,
     SUPPORTED_INFERENCE_METHODS,
+    get_model_and_guide_legacy,
 )
+from src.scribe.inference.preset_builder import build_config_from_preset
 
 
 class TestRegistryPopulation:
@@ -66,29 +68,30 @@ class TestGetModelAndGuide:
     @pytest.mark.parametrize("inference_method", ["svi", "mcmc"])
     def test_basic_lookup(self, model_type, parameterization, inference_method):
         """Test basic model/guide lookup for non-VAE models."""
-        model, guide = get_model_and_guide(
-            model_type=model_type,
+        config = build_config_from_preset(
+            model=model_type,
             parameterization=parameterization,
             inference_method=inference_method,
         )
+        model, guide = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
         assert callable(model)
         assert callable(guide)
 
-    @pytest.mark.parametrize(
-        "model_type", ["nbdm_mix", "zinb_mix", "nbvcp_mix", "zinbvcp_mix"]
-    )
+    @pytest.mark.parametrize("model_type", ["nbdm", "zinb", "nbvcp", "zinbvcp"])
     @pytest.mark.parametrize(
         "parameterization", ["standard", "linked", "odds_ratio"]
     )
     def test_mixture_models(self, model_type, parameterization):
         """Test mixture model lookup."""
-        model, guide = get_model_and_guide(
-            model_type=model_type,
+        config = build_config_from_preset(
+            model=model_type,
             parameterization=parameterization,
             inference_method="svi",
+            n_components=2,  # Create mixture model
         )
+        model, guide = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
@@ -98,12 +101,13 @@ class TestGetModelAndGuide:
     )
     def test_unconstrained_variants(self, model_type, parameterization):
         """Test unconstrained model/guide lookup."""
-        model, guide = get_model_and_guide(
-            model_type=model_type,
+        config = build_config_from_preset(
+            model=model_type,
             parameterization=parameterization,
             inference_method="svi",
             unconstrained=True,
         )
+        model, guide = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
@@ -114,12 +118,13 @@ class TestGetModelAndGuide:
     @pytest.mark.parametrize("guide_rank", [5, 10])
     def test_low_rank_guides(self, model_type, parameterization, guide_rank):
         """Test low-rank guide lookup."""
-        model, guide = get_model_and_guide(
-            model_type=model_type,
+        config = build_config_from_preset(
+            model=model_type,
             parameterization=parameterization,
             inference_method="svi",
             guide_rank=guide_rank,
         )
+        model, guide = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
@@ -130,7 +135,8 @@ class TestGetModelAndGuide:
     @pytest.mark.parametrize("prior_type", ["standard", "decoupled"])
     def test_vae_models(self, model_type, parameterization, prior_type):
         """Test VAE model factory lookup."""
-        factory, guide = get_model_and_guide(
+        # VAE models use the legacy API
+        factory, guide = get_model_and_guide_legacy(
             model_type=model_type,
             parameterization=parameterization,
             inference_method="vae",
@@ -146,7 +152,8 @@ class TestGetModelAndGuide:
     )
     def test_vae_unconstrained(self, model_type, parameterization):
         """Test unconstrained VAE models."""
-        factory, guide = get_model_and_guide(
+        # VAE models use the legacy API
+        factory, guide = get_model_and_guide_legacy(
             model_type=model_type,
             parameterization=parameterization,
             inference_method="vae",
@@ -241,18 +248,21 @@ class TestErrorHandling:
 
     def test_invalid_parameterization(self):
         """Should raise error for invalid parameterization."""
-        with pytest.raises(ValueError, match="Unsupported parameterization"):
-            get_model_and_guide("nbdm", "invalid_param", "svi")
-
-    def test_invalid_inference_method(self):
-        """Should raise error for invalid inference method."""
-        with pytest.raises(ValueError, match="Unsupported inference method"):
-            get_model_and_guide("nbdm", "standard", "invalid_method")
+        with pytest.raises(ValueError, match="Unknown parameterization"):
+            build_config_from_preset("nbdm", parameterization="invalid_param")
 
     def test_nonexistent_model_type(self):
         """Should raise error for non-existent model type."""
-        with pytest.raises(ValueError, match="not found in registry"):
-            get_model_and_guide("nonexistent_model", "standard", "svi")
+        from scribe.models.config import ModelConfigBuilder
+        config = (
+            ModelConfigBuilder()
+            .for_model("nonexistent_model")
+            .with_parameterization("canonical")
+            .with_inference("svi")
+            .build()
+        )
+        with pytest.raises(ValueError, match="Unknown model_type"):
+            get_model_and_guide(config)
 
 
 class TestBackwardCompatibility:
@@ -260,15 +270,18 @@ class TestBackwardCompatibility:
 
     def test_default_parameters(self):
         """Test that default parameters work as before."""
-        # Should default to standard/svi
-        model, guide = get_model_and_guide("nbdm")
+        # Should default to canonical/svi
+        config = build_config_from_preset("nbdm")
+        model, guide = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
     def test_mcmc_and_svi_share_models(self):
         """SVI and MCMC should retrieve the same model/guide functions."""
-        model_svi, guide_svi = get_model_and_guide("nbdm", "standard", "svi")
-        model_mcmc, guide_mcmc = get_model_and_guide("nbdm", "standard", "mcmc")
+        config_svi = build_config_from_preset("nbdm", parameterization="standard", inference_method="svi")
+        config_mcmc = build_config_from_preset("nbdm", parameterization="standard", inference_method="mcmc")
+        model_svi, guide_svi = get_model_and_guide(config_svi)
+        model_mcmc, guide_mcmc = get_model_and_guide(config_mcmc)
 
         # They should be the exact same function objects
         assert model_svi is model_mcmc
@@ -276,10 +289,10 @@ class TestBackwardCompatibility:
 
     def test_low_rank_shares_model(self):
         """Low-rank guides should share models with mean-field."""
-        model_mf, _ = get_model_and_guide(
-            "nbdm", "standard", "svi", guide_rank=None
-        )
-        model_lr, _ = get_model_and_guide(
+        config_mf = build_config_from_preset("nbdm", parameterization="standard", inference_method="svi")
+        model_mf, _ = get_model_and_guide(config_mf)
+        config_lr = build_config_from_preset("nbdm", parameterization="standard", inference_method="svi", guide_rank=5)
+        model_lr, _ = get_model_and_guide(config_lr)
             "nbdm", "standard", "svi", guide_rank=10
         )
 

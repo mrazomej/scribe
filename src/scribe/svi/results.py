@@ -1132,16 +1132,7 @@ class ScribeSVIResults:
         """Get the model and guide functions based on model type."""
         from ..models.model_registry import get_model_and_guide
 
-        # Use base_model from config (not model_type which may have _mix suffix)
-        # get_model_and_guide expects base model type and uses n_components for mixture
-        return get_model_and_guide(
-            self.model_config.base_model,
-            parameterization=self.model_config.parameterization.value,
-            unconstrained=self.model_config.unconstrained,
-            guide_families=self.model_config.guide_families,
-            n_components=self.model_config.n_components,
-            mixture_params=self.model_config.mixture_params,
-        )
+        return get_model_and_guide(self.model_config)
 
     # --------------------------------------------------------------------------
     # Get parameterization
@@ -1227,17 +1218,13 @@ class ScribeSVIResults:
         """Generate predictive samples using posterior parameter samples."""
         from ..models.model_registry import get_model_and_guide
 
-        # For predictive sampling, we need the *constrained* model, which has the
-        # 'counts' sample site. The posterior samples from the unconstrained guide
-        # can be used with the constrained model.
-        # Use base_model instead of model_type (which may have _mix suffix)
+        # For predictive sampling, we need the *constrained* model, which has
+        # the 'counts' sample site. The posterior samples from the unconstrained
+        # guide can be used with the constrained model.
         model, _ = get_model_and_guide(
-            self.model_config.base_model,
-            parameterization=self.model_config.parameterization.value,
+            self.model_config,
             unconstrained=False,  # Explicitly get the constrained model
             guide_families=None,  # Not relevant for the model (only guide)
-            n_components=self.model_config.n_components,
-            mixture_params=self.model_config.mixture_params,
         )
 
         # Prepare base model arguments

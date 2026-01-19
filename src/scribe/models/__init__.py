@@ -12,21 +12,35 @@ families via `GuideFamilyConfig`:
 Examples
 --------
 >>> from scribe.models import get_model_and_guide
->>> from scribe.models.config import GuideFamilyConfig
+>>> from scribe.inference.preset_builder import build_config_from_preset
+>>> from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
 >>> from scribe.models.components import LowRankGuide, AmortizedGuide
 >>>
 >>> # Simple usage (all mean-field)
->>> model, guide = get_model_and_guide("nbdm")
+>>> config = build_config_from_preset("nbdm")
+>>> model, guide = get_model_and_guide(config)
 >>>
 >>> # With per-parameter guide families
->>> model, guide = get_model_and_guide(
-...     "nbvcp",
+>>> config = build_config_from_preset(
+...     model="nbvcp",
 ...     parameterization="linked",
-...     guide_families=GuideFamilyConfig(
-...         mu=LowRankGuide(rank=15),
-...         p_capture=AmortizedGuide(amortizer=my_amortizer),
-...     ),
+...     guide_rank=15,  # Creates LowRankGuide for mu
 ... )
+>>> # Or use ModelConfigBuilder for more control
+>>> config = (
+...     ModelConfigBuilder()
+...     .for_model("nbvcp")
+...     .with_parameterization("linked")
+...     .with_inference("svi")
+...     .with_guide_families(
+...         GuideFamilyConfig(
+...             mu=LowRankGuide(rank=15),
+...             p_capture=AmortizedGuide(amortizer=my_amortizer),
+...         )
+...     )
+...     .build()
+... )
+>>> model, guide = get_model_and_guide(config)
 >>>
 >>> # Direct preset usage
 >>> from scribe.models.presets import create_nbvcp
