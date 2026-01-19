@@ -248,8 +248,8 @@ class ScribeSVIResults:
         # Get estimate of map
         map_estimates = {}
         for param, dist_obj in distributions.items():
-            # Handle transformed distributions (dict with 'base' and 'transform')
-            # This is used for low-rank guides with transformations
+            # Handle transformed distributions (dict with 'base' and
+            # 'transform') This is used for low-rank guides with transformations
             if (
                 isinstance(dist_obj, dict)
                 and "base" in dist_obj
@@ -263,6 +263,50 @@ class ScribeSVIResults:
                 else:
                     # Fallback to mean if loc not available
                     map_estimates[param] = transform(base_dist.mean)
+            # Handle TransformedDistribution objects (for low-rank guides) Check
+            # if it's a TransformedDistribution wrapping
+            # LowRankMultivariateNormal
+            elif isinstance(dist_obj, dist.TransformedDistribution) and hasattr(
+                dist_obj, "base_dist"
+            ):
+                base_dist = dist_obj.base_dist
+                # Get transform from transforms list (usually first element)
+                transform = (
+                    dist_obj.transforms[0] if dist_obj.transforms else None
+                )
+                if transform is not None and hasattr(base_dist, "loc"):
+                    # For LowRankMultivariateNormal, MAP is transform(loc)
+                    map_estimates[param] = transform(base_dist.loc)
+                elif hasattr(base_dist, "loc"):
+                    # If no transform, just use loc
+                    map_estimates[param] = base_dist.loc
+                else:
+                    # Fallback: try to get mean from base distribution
+                    try:
+                        base_mean = base_dist.mean
+                        if transform is not None:
+                            map_estimates[param] = transform(base_mean)
+                        else:
+                            map_estimates[param] = base_mean
+                    except (NotImplementedError, AttributeError):
+                        # If mean not available, use the distribution's mean if
+                        # it exists
+                        try:
+                            map_estimates[param] = dist_obj.mean
+                        except NotImplementedError:
+                            # Last resort: use base.loc if available
+                            if hasattr(base_dist, "loc"):
+                                if transform is not None:
+                                    map_estimates[param] = transform(
+                                        base_dist.loc
+                                    )
+                                else:
+                                    map_estimates[param] = base_dist.loc
+                            else:
+                                raise ValueError(
+                                    f"Cannot compute MAP for {param}: "
+                                    "distribution does not support mean or loc"
+                                )
             # Handle multivariate distributions (like LowRankMultivariateNormal)
             # For multivariate normals, mode = mean = loc
             elif hasattr(dist_obj, "loc") and not hasattr(dist_obj, "mode"):
