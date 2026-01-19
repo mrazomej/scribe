@@ -109,9 +109,7 @@ def setup_guide(
     Beta distribution parameters (alpha, beta) must be positive.
     The sampled value will satisfy spec.constraint (unit_interval).
     """
-    params = (
-        getattr(model_config.guides, spec.name, None) or spec.default_params
-    )
+    params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     # Variational params for Beta must be positive
@@ -167,9 +165,7 @@ def setup_guide(
     jnp.ndarray
         Sampled parameter value from variational distribution.
     """
-    params = (
-        getattr(model_config.guides, spec.name, None) or spec.default_params
-    )
+    params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     # Variational params for BetaPrime must be positive
@@ -232,9 +228,7 @@ def setup_guide(
     scale must be positive. The sampled value will satisfy
     spec.constraint (positive).
     """
-    params = (
-        getattr(model_config.guides, spec.name, None) or spec.default_params
-    )
+    params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     loc = numpyro.param(f"{spec.name}_loc", jnp.full(shape, params[0]))
@@ -287,9 +281,7 @@ def setup_guide(
     jnp.ndarray
         Sampled parameter value in constrained space.
     """
-    params = (
-        getattr(model_config.guides, spec.name, None) or spec.default_params
-    )
+    params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     # Variational parameters for the base Normal
@@ -413,9 +405,7 @@ def setup_cell_specific_guide(
         Sampled parameter value for the current batch.
     """
     n_cells = dims["n_cells"]
-    params = (
-        getattr(model_config.guides, spec.name, None) or spec.default_params
-    )
+    params = spec.guide if spec.guide is not None else spec.default_params
 
     # Variational parameters for ALL cells (allocated once, indexed into)
     alpha = numpyro.param(
@@ -535,9 +525,7 @@ def setup_cell_specific_guide(
         Sampled parameter value in constrained space.
     """
     n_cells = dims["n_cells"]
-    params = (
-        getattr(model_config.guides, spec.name, None) or spec.default_params
-    )
+    params = spec.guide if spec.guide is not None else spec.default_params
 
     loc = numpyro.param(f"{spec.name}_loc", jnp.full(n_cells, params[0]))
     scale = numpyro.param(

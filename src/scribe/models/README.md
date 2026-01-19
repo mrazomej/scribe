@@ -35,17 +35,19 @@ config = (ModelConfigBuilder()
     .build())
 ```
 
-### VAE Model
+### Guide Family Configuration
 
 ```python
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import LowRankGuide, AmortizedGuide
+
+# Configure per-parameter guide families
 config = (ModelConfigBuilder()
-    .for_model("nbdm")
-    .with_vae(
-        latent_dim=5,
-        hidden_dims=[256, 128],
-        activation="gelu",
-        prior_type="decoupled"
-    )
+    .for_model("nbvcp")
+    .with_guide_families(GuideFamilyConfig(
+        mu=LowRankGuide(rank=15),
+        p_capture=AmortizedGuide(amortizer=my_amortizer)
+    ))
     .build())
 ```
 
@@ -54,7 +56,7 @@ config = (ModelConfigBuilder()
 ```python
 config = (ModelConfigBuilder()
     .for_model("zinb")
-    .as_mixture(n_components=3, component_specific=True)
+    .as_mixture(n_components=3, mixture_params=["p"])
     .build())
 ```
 
@@ -125,11 +127,12 @@ config.guides.p  # Guide for p parameter
 See individual class docstrings for complete API documentation:
 
 - `ModelConfigBuilder`: Fluent builder for configurations
-- `ConstrainedModelConfig`: Configuration for constrained models
-- `UnconstrainedModelConfig`: Configuration for unconstrained models
-- `PriorConfig`: Prior parameter configuration
-- `GuideConfig`: Guide parameter configuration
-- `VAEConfig`: VAE-specific configuration
+- `ModelConfig`: Unified configuration class (supports both constrained and unconstrained)
+- `PriorConfig`: Prior parameter configuration (constrained)
+- `UnconstrainedPriorConfig`: Prior parameter configuration (unconstrained)
+- `GuideConfig`: Guide parameter configuration (constrained)
+- `UnconstrainedGuideConfig`: Guide parameter configuration (unconstrained)
+- `GuideFamilyConfig`: Per-parameter guide family configuration
 
 ## Configuration Structure
 
@@ -140,7 +143,7 @@ src/scribe/models/config/
 ├── __init__.py          # Export all config classes
 ├── enums.py             # ModelType, Parameterization, InferenceMethod, etc.
 ├── groups.py            # PriorConfig, GuideConfig, VAEConfig
-├── base.py              # ConstrainedModelConfig, UnconstrainedModelConfig
+├── base.py              # Unified ModelConfig class
 └── builder.py           # ModelConfigBuilder
 ```
 
@@ -150,14 +153,16 @@ src/scribe/models/config/
 
 ```python
 # ZINB mixture model with unconstrained parameterization
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import LowRankGuide
+
 config = (ModelConfigBuilder()
     .for_model("zinb")
     .with_parameterization("linked")
     .unconstrained()
-    .as_mixture(n_components=3, component_specific=True)
-    .with_low_rank_guide(10)
+    .as_mixture(n_components=3, mixture_params=["p"])
+    .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=10)))
     .with_priors(p=(1.0, 1.0), mu=(0.0, 1.0), gate=(2.0, 2.0))
-    .with_vae(latent_dim=5, hidden_dims=[256, 128])
     .build())
 ```
 
@@ -174,13 +179,12 @@ config = (ModelConfigBuilder()
 ### Using Enums
 
 ```python
-from scribe.models import ModelType, Parameterization, InferenceMethod, VAEPriorType
+from scribe.models import ModelType, Parameterization, InferenceMethod
 
 config = (ModelConfigBuilder()
     .for_model(ModelType.ZINB)
     .with_parameterization(Parameterization.ODDS_RATIO)
-    .with_inference(InferenceMethod.VAE)
-    .with_vae(prior_type=VAEPriorType.DECOUPLED)
+    .with_inference(InferenceMethod.SVI)
     .build())
 ```
 
@@ -195,10 +199,13 @@ config = (ModelConfigBuilder()
     .as_mixture(n_components=1)
     .build())
 
-# This raises ValueError: guide_rank must be positive
+# This raises ValueError: rank must be positive
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import LowRankGuide
+
 config = (ModelConfigBuilder()
     .for_model("nbdm")
-    .with_low_rank_guide(0)
+    .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=0)))
     .build())
 
 # This raises ValueError: Prior parameters must be positive

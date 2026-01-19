@@ -1,16 +1,14 @@
 """Builder pattern for constructing ModelConfig instances."""
 
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 from .enums import ModelType, Parameterization, InferenceMethod, VAEPriorType
 from .groups import (
-    PriorConfig,
-    GuideConfig,
-    UnconstrainedPriorConfig,
-    UnconstrainedGuideConfig,
     VAEConfig,
+    GuideFamilyConfig,
 )
-from .base import ConstrainedModelConfig, UnconstrainedModelConfig, ModelConfig
+from .base import ModelConfig
 from .parameter_mapping import get_required_parameters
+from ..builders.parameter_specs import ParamSpec
 
 # ==============================================================================
 # Model Configuration Builder Class
@@ -84,10 +82,14 @@ class ModelConfigBuilder:
         self._inference_method: InferenceMethod = InferenceMethod.SVI
         self._unconstrained: bool = False
         self._n_components: Optional[int] = None
-        self._component_specific_params: bool = False
-        self._guide_rank: Optional[int] = None
-        self._priors: Dict[str, Any] = {}
-        self._guides: Dict[str, Any] = {}
+        self._mixture_params: Optional[List[str]] = None
+        self._guide_families: Optional[GuideFamilyConfig] = None
+        self._priors: Dict[str, Any] = (
+            {}
+        )  # For backward compatibility with with_priors()
+        self._guides: Dict[str, Any] = (
+            {}
+        )  # For backward compatibility with with_guides()
         self._vae_params: Dict[str, Any] = {}
 
     # --------------------------------------------------------------------------
@@ -154,7 +156,9 @@ class ModelConfigBuilder:
     # --------------------------------------------------------------------------
 
     def as_mixture(
-        self, n_components: int, component_specific: bool = False
+        self,
+        n_components: int,
+        mixture_params: Optional[List[str]] = None,
     ) -> "ModelConfigBuilder":
         """Configure as mixture model.
 
@@ -162,28 +166,31 @@ class ModelConfigBuilder:
         ----------
         n_components : int
             Number of mixture components (must be >= 2)
-        component_specific : bool
-            Whether to use component-specific parameters
+        mixture_params : List[str], optional
+            List of parameter names that should be mixture-specific.
+            If None, all gene-specific parameters will be mixture-specific
+            by default.
         """
         if n_components < 2:
             raise ValueError("n_components must be >= 2 for mixture models")
         self._n_components = n_components
-        self._component_specific_params = component_specific
+        self._mixture_params = mixture_params
         return self
 
     # --------------------------------------------------------------------------
 
-    def with_low_rank_guide(self, rank: int) -> "ModelConfigBuilder":
-        """Use low-rank guide.
+    def with_guide_families(
+        self, guide_families: GuideFamilyConfig
+    ) -> "ModelConfigBuilder":
+        """Set per-parameter guide family configuration.
 
         Parameters
         ----------
-        rank : int
-            Rank for low-rank guide (must be > 0)
+        guide_families : GuideFamilyConfig
+            Per-parameter guide family configuration specifying which
+            variational families to use for each parameter.
         """
-        if rank <= 0:
-            raise ValueError("guide_rank must be positive")
-        self._guide_rank = rank
+        self._guide_families = guide_families
         return self
 
     # --------------------------------------------------------------------------
@@ -319,8 +326,7 @@ class ModelConfigBuilder:
         Returns
         -------
         ModelConfig
-            Validated model configuration (either ConstrainedModelConfig or
-            UnconstrainedModelConfig)
+            Validated unified model configuration
 
         Raises
         ------
@@ -339,36 +345,26 @@ class ModelConfigBuilder:
         ):
             base_model = f"{self._base_model}_mix"
 
-        # Apply defaults for any missing priors
-        self._apply_defaults()
-
         # Create VAE config if VAE inference
         vae_config = None
         if self._inference_method == InferenceMethod.VAE:
             vae_config = VAEConfig(**self._vae_params)
 
-        # Build appropriate config type
-        if self._unconstrained:
-            return UnconstrainedModelConfig(
-                base_model=base_model,
-                parameterization=self._parameterization,
-                inference_method=self._inference_method,
-                n_components=self._n_components,
-                component_specific_params=self._component_specific_params,
-                guide_rank=self._guide_rank,
-                priors=UnconstrainedPriorConfig(**self._priors),
-                guides=UnconstrainedGuideConfig(**self._guides),
-                vae=vae_config,
-            )
-        else:
-            return ConstrainedModelConfig(
-                base_model=base_model,
-                parameterization=self._parameterization,
-                inference_method=self._inference_method,
-                n_components=self._n_components,
-                component_specific_params=self._component_specific_params,
-                guide_rank=self._guide_rank,
-                priors=PriorConfig(**self._priors),
-                guides=GuideConfig(**self._guides),
-                vae=vae_config,
-            )
+        # param_specs will be created by preset factories
+        # The builder doesn't create them directly - that's handled by the
+        # preset factories which have access to the full model context
+        # For now, pass empty list - preset factories will populate it
+        param_specs: List[ParamSpec] = []
+
+        # Build unified ModelConfig
+        return ModelConfig(
+            base_model=base_model,
+            parameterization=self._parameterization,
+            inference_method=self._inference_method,
+            unconstrained=self._unconstrained,
+            n_components=self._n_components,
+            mixture_params=self._mixture_params,
+            guide_families=self._guide_families,
+            param_specs=param_specs,
+            vae=vae_config,
+        )

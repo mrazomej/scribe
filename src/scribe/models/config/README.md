@@ -6,7 +6,7 @@ This directory contains the modern configuration system for SCRIBE models.
 
 - `enums.py`: Type-safe enums for all categorical values
 - `groups.py`: Grouped configuration classes (priors, guides, VAE)
-- `base.py`: Base configuration classes (constrained/unconstrained)
+- `base.py`: Unified ModelConfig class
 - `builder.py`: Fluent builder for constructing configurations
 - `parameter_mapping.py`: Robust parameter mapping system for parameterizations
 
@@ -48,22 +48,19 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.with_parameterization(param)`: Set parameterization type
 - `.with_inference(method)`: Set inference method
 - `.unconstrained()`: Use unconstrained parameterization
-- `.as_mixture(n_components, component_specific)`: Configure as mixture
-- `.with_low_rank_guide(rank)`: Use low-rank guide
+- `.as_mixture(n_components, mixture_params)`: Configure as mixture
+- `.with_guide_families(guide_families)`: Set per-parameter guide families
 - `.with_priors(**priors)`: Set prior parameters
 - `.with_guides(**guides)`: Set guide parameters
 - `.with_vae(**vae_params)`: Configure VAE parameters
 - `.build()`: Create and validate the configuration
 
-### ConstrainedModelConfig
+### ModelConfig
 
-Configuration for constrained (standard) models. Uses `PriorConfig` and
-`GuideConfig`.
-
-### UnconstrainedModelConfig
-
-Configuration for unconstrained models. Uses `UnconstrainedPriorConfig` and
-`UnconstrainedGuideConfig`.
+Unified configuration class for all SCRIBE models. Supports both constrained and
+unconstrained parameterizations via the `unconstrained` boolean field. Uses
+`PriorConfig`/`UnconstrainedPriorConfig` and
+`GuideConfig`/`UnconstrainedGuideConfig` based on the `unconstrained` flag.
 
 ### PriorConfig / UnconstrainedPriorConfig
 
@@ -197,15 +194,17 @@ config = (ModelConfigBuilder()
 ### Complex Configuration
 
 ```python
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import LowRankGuide
+
 # ZINB mixture with unconstrained parameterization
 config = (ModelConfigBuilder()
     .for_model("zinb")
     .with_parameterization("linked")
     .unconstrained()
-    .as_mixture(n_components=3, component_specific=True)
-    .with_low_rank_guide(10)
+    .as_mixture(n_components=3, mixture_params=["p"])
+    .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=10)))
     .with_priors(p=(1.0, 1.0), mu=(0.0, 1.0), gate=(2.0, 2.0))
-    .with_vae(latent_dim=5, hidden_dims=[256, 128])
     .build())
 ```
 

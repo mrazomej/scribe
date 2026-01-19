@@ -1,6 +1,6 @@
 """Base model configuration classes using Pydantic."""
 
-from typing import Optional, Set, Union, Dict, Any
+from typing import Optional, Set, Union, Dict, Any, List
 from pydantic import (
     BaseModel,
     Field,
@@ -11,28 +11,25 @@ from pydantic import (
 )
 from .enums import ModelType, Parameterization, InferenceMethod
 from .groups import (
-    PriorConfig,
-    GuideConfig,
-    UnconstrainedPriorConfig,
-    UnconstrainedGuideConfig,
     VAEConfig,
+    GuideFamilyConfig,
 )
 from .parameter_mapping import get_active_parameters, get_required_parameters
+from ..builders.parameter_specs import ParamSpec
 
 # ==============================================================================
-# Constrained Model Configuration Class
+# Unified Model Configuration Class
 # ==============================================================================
 
 
-class ConstrainedModelConfig(BaseModel):
+class ModelConfig(BaseModel):
     """
-    Constrained (standard) model configuration.
+    Unified model configuration for SCRIBE models.
 
     This class defines the complete set of configuration options for SCRIBE
-    models using "constrained" (interpretable, strongly-typed) parameters and
-    priors—for example, using distributions like Beta, LogNormal, or Dirichlet
-    with semantic support. The class enforces correctness, immutability, and
-    clarity of model setup.
+    models, supporting both constrained (interpretable) and unconstrained
+    (unconstrained) parameterizations. The class enforces correctness,
+    immutability, and clarity of model setup.
 
     This is not constructed directly; users should assemble configurations via
     the ModelConfigBuilder, which ensures validity and best practices.
@@ -45,16 +42,22 @@ class ConstrainedModelConfig(BaseModel):
         How parameters are represented internally (standard, linked, etc.).
     inference_method : InferenceMethod
         Inference engine type (SVI, MCMC, VAE, etc.).
+    unconstrained : bool, default=False
+        If True, use unconstrained parameterization (Normal distributions).
+        If False, use constrained parameterization (Beta, LogNormal, etc.).
     n_components : int, optional
         Number of mixture components, if mixture modeling is enabled.
-    component_specific_params : bool
-        If True, each mixture component has independent parameters.
-    guide_rank : int, optional
-        For low-rank guide inference, the latent rank.
-    priors : PriorConfig
-        Grouped prior distribution configurations.
-    guides : GuideConfig
-        Guide (variational family) specification for SVI/VAE inference.
+    mixture_params : List[str], optional
+        List of parameter names that should be mixture-specific. If None and
+        n_components is set, all gene-specific parameters will be mixture-specific
+        by default.
+    guide_families : GuideFamilyConfig, optional
+        Per-parameter guide family configuration. Allows specifying different
+        variational families (MeanField, LowRank, Amortized) for each parameter.
+    param_specs : List[ParamSpec]
+        List of parameter specifications. Each ParamSpec contains the
+        parameter's structure (shape, distribution, guide family) and
+        hyperparameters (prior, guide).
     vae : VAEConfig, optional
         Nested configuration for Variational Autoencoders, if applicable.
 
@@ -64,6 +67,8 @@ class ConstrainedModelConfig(BaseModel):
       creation.
     - Unrecognized parameters are forbidden and will raise validation errors.
     - Intended for safe, reproducible, and fully-specified SCRIBE model setups.
+    - Prior and guide hyperparameters are stored in each ParamSpec and validated
+      based on the distribution type.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -78,23 +83,31 @@ class ConstrainedModelConfig(BaseModel):
     inference_method: InferenceMethod = Field(
         InferenceMethod.SVI, description="Inference method"
     )
+    unconstrained: bool = Field(
+        False, description="Use unconstrained parameterization"
+    )
 
     # Mixture configuration
     n_components: Optional[int] = Field(
         None, gt=1, description="Number of mixture components"
     )
-    component_specific_params: bool = Field(
-        False, description="Component-specific parameters"
+    mixture_params: Optional[List[str]] = Field(
+        None,
+        description="List of parameter names that should be mixture-specific",
     )
 
     # Guide configuration
-    guide_rank: Optional[int] = Field(
-        None, gt=0, description="Low-rank guide rank"
+    guide_families: Optional[GuideFamilyConfig] = Field(
+        None,
+        description="Per-parameter guide family configuration",
     )
 
-    # Parameter configurations
-    priors: PriorConfig = Field(default_factory=PriorConfig)
-    guides: GuideConfig = Field(default_factory=GuideConfig)
+    # Parameter specifications (replaces priors/guides)
+    param_specs: List[ParamSpec] = Field(
+        default_factory=list,
+        description="List of parameter specifications with prior/guide hyperparameters",
+    )
+
     vae: Optional[VAEConfig] = Field(
         None, description="VAE configuration (if using VAE inference)"
     )
@@ -130,6 +143,56 @@ class ConstrainedModelConfig(BaseModel):
             # Provide default VAE config
             return VAEConfig()
         return v
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_unconstrained_consistency(self) -> "ModelConfig":
+        """Validate that param_specs match unconstrained flag."""
+        # Check that all param_specs have consistent unconstrained flag
+        for spec in self.param_specs:
+            if spec.unconstrained != self.unconstrained:
+                raise ValueError(
+                    f"Parameter '{spec.name}': "
+                    f"unconstrained flag ({spec.unconstrained}) "
+                    f"must match ModelConfig.unconstrained "
+                    f"({self.unconstrained})"
+                )
+
+        return self
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_priors_consistency(self) -> "ModelConfig":
+        """Validate that param_specs match the model's requirements."""
+        # Determine model characteristics
+        is_mixture = self.n_components is not None
+        is_zero_inflated = self.is_zero_inflated
+        uses_variable_capture = self.uses_variable_capture
+
+        # Get all parameter names from param_specs
+        provided_params = {spec.name for spec in self.param_specs}
+
+        # Get active parameters (what's allowed)
+        active_params = get_active_parameters(
+            self.parameterization,
+            self.base_model,
+            is_mixture,
+            is_zero_inflated,
+            uses_variable_capture,
+        )
+
+        # Check for unexpected parameters
+        unexpected_params = provided_params - active_params
+        if unexpected_params:
+            raise ValueError(
+                f"Unexpected parameters for {self.base_model} with "
+                f"{self.parameterization.value} parameterization: "
+                f"{', '.join(sorted(unexpected_params))}"
+            )
+
+        return self
 
     # --------------------------------------------------------------------------
     # Computed Fields
@@ -172,284 +235,42 @@ class ConstrainedModelConfig(BaseModel):
         )
 
     # --------------------------------------------------------------------------
+    # Helper Methods
+    # --------------------------------------------------------------------------
 
     def get_active_priors(self) -> Dict[str, Any]:
         """Get active prior parameters as a dictionary."""
-        active_params = self.active_parameters
         priors_dict = {}
 
-        for param in active_params:
-            if hasattr(self.priors, param):
-                value = getattr(self.priors, param)
-                if value is not None:
-                    priors_dict[f"{param}_prior"] = value
+        for spec in self.param_specs:
+            if spec.prior is not None:
+                priors_dict[f"{spec.name}_prior"] = spec.prior
 
         return priors_dict
 
     # --------------------------------------------------------------------------
-    # Validation Methods
-    # --------------------------------------------------------------------------
 
-    @model_validator(mode="after")
-    def validate_priors_consistency(self) -> "ConstrainedModelConfig":
-        """Validate that provided priors match the model's requirements."""
-        # Determine model characteristics
-        is_mixture = self.n_components is not None
-        is_zero_inflated = self.is_zero_inflated
-        uses_variable_capture = self.uses_variable_capture
-
-        # Get all provided priors (non-None fields)
-        provided_priors = {
-            field_name
-            for field_name in self.priors.__class__.model_fields.keys()
-            if getattr(self.priors, field_name) is not None
-        }
-
-        # Get active parameters (what's allowed)
-        active_params = get_active_parameters(
-            self.parameterization,
-            self.base_model,
-            is_mixture,
-            is_zero_inflated,
-            uses_variable_capture,
-        )
-
-        # Check for unexpected priors
-        unexpected_priors = provided_priors - active_params
-        if unexpected_priors:
-            raise ValueError(
-                f"Unexpected priors for {self.base_model} with "
-                f"{self.parameterization.value} parameterization: "
-                f"{', '.join(sorted(unexpected_priors))}"
-            )
-
-        return self
-
-    # --------------------------------------------------------------------------
-
-    def with_updated_priors(self, **priors) -> "ConstrainedModelConfig":
+    def with_updated_priors(self, **priors) -> "ModelConfig":
         """Create a new config with updated priors (immutable pattern)."""
-        return self.model_copy(
-            update={"priors": self.priors.model_copy(update=priors)}
-        )
+        # Update param_specs with new prior values
+        updated_specs = []
+        for spec in self.param_specs:
+            if spec.name in priors:
+                updated_spec = spec.model_copy(
+                    update={"prior": priors[spec.name]}
+                )
+                updated_specs.append(updated_spec)
+            else:
+                updated_specs.append(spec)
+
+        return self.model_copy(update={"param_specs": updated_specs})
 
     # --------------------------------------------------------------------------
 
-    def with_updated_vae(self, **vae_params) -> "ConstrainedModelConfig":
+    def with_updated_vae(self, **vae_params) -> "ModelConfig":
         """Create a new config with updated VAE parameters."""
         if self.vae is None:
             raise ValueError("Cannot update VAE config when VAE is None")
         return self.model_copy(
             update={"vae": self.vae.model_copy(update=vae_params)}
         )
-
-
-# ==============================================================================
-# Unconstrained Model Configuration Class
-# ==============================================================================
-
-
-class UnconstrainedModelConfig(BaseModel):
-    """
-    Unconstrained model configuration.
-
-    This class defines the complete set of configuration options for SCRIBE
-    models using "unconstrained" (unconstrained, non-interpretable) parameters
-    and priors—for example, using Normal distributions without semantic support.
-    The class enforces correctness, immutability, and clarity of model setup.
-
-    This is not constructed directly; users should assemble configurations via
-
-    Parameters
-    ----------
-    base_model : str
-        The core model family (e.g., 'nbdm', 'zinb_mix', etc.).
-    parameterization : Parameterization
-        How parameters are represented internally (standard, linked, etc.).
-    inference_method : InferenceMethod
-        Inference engine type (SVI, MCMC, VAE, etc.).
-    n_components : int, optional
-        Number of mixture components, if mixture modeling is enabled.
-    component_specific_params : bool
-        If True, each mixture component has independent parameters.
-    guide_rank : int, optional
-        For low-rank guide inference, the latent rank.
-    priors : UnconstrainedPriorConfig
-        Grouped prior distribution configurations.
-    guides : UnconstrainedGuideConfig
-        Guide (variational family) specification for SVI/VAE inference.
-    vae : VAEConfig, optional
-        Nested configuration for Variational Autoencoders, if applicable.
-
-    Notes
-    -----
-    - Configuration objects are immutable and validated automatically on
-      creation.
-    - Unrecognized parameters are forbidden and will raise validation errors.
-    - Intended for safe, reproducible, and fully-specified SCRIBE model setups.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    # Core configuration
-    base_model: str = Field(..., description="Model type")
-    parameterization: Parameterization = Field(
-        Parameterization.STANDARD, description="Parameterization type"
-    )
-    inference_method: InferenceMethod = Field(
-        InferenceMethod.SVI, description="Inference method"
-    )
-
-    # Mixture configuration
-    n_components: Optional[int] = Field(None, gt=1)
-    component_specific_params: bool = False
-
-    # Guide configuration
-    guide_rank: Optional[int] = Field(None, gt=0)
-
-    # Parameter configurations
-    priors: UnconstrainedPriorConfig = Field(
-        default_factory=UnconstrainedPriorConfig
-    )
-    guides: UnconstrainedGuideConfig = Field(
-        default_factory=UnconstrainedGuideConfig
-    )
-    vae: Optional[VAEConfig] = Field(None)
-
-    # --------------------------------------------------------------------------
-    # Validation Methods
-    # --------------------------------------------------------------------------
-
-    @field_validator("base_model")
-    @classmethod
-    def validate_base_model(cls, v: str) -> str:
-        """Validate base model type."""
-        base = v.replace("_mix", "")
-        valid_models = {m.value for m in ModelType}
-        if base not in valid_models:
-            raise ValueError(f"Invalid model type: {v}")
-        return v
-
-    # --------------------------------------------------------------------------
-
-    @field_validator("vae")
-    @classmethod
-    def validate_vae_inference(
-        cls, v: Optional[VAEConfig], info
-    ) -> Optional[VAEConfig]:
-        """Validate VAE config for VAE inference."""
-        if (
-            info.data.get("inference_method") == InferenceMethod.VAE
-            and v is None
-        ):
-            return VAEConfig()
-        return v
-
-    # --------------------------------------------------------------------------
-    # Computed Fields
-    # --------------------------------------------------------------------------
-
-    @computed_field
-    @property
-    def is_mixture(self) -> bool:
-        """Check if this is a mixture model."""
-        return self.n_components is not None and self.n_components > 1
-
-    # --------------------------------------------------------------------------
-
-    @computed_field
-    @property
-    def is_zero_inflated(self) -> bool:
-        """Check if this is a zero-inflated model."""
-        return "zinb" in self.base_model
-
-    # --------------------------------------------------------------------------
-
-    @computed_field
-    @property
-    def uses_variable_capture(self) -> bool:
-        return "vcp" in self.base_model
-
-    # --------------------------------------------------------------------------
-
-    @computed_field
-    @property
-    def active_parameters(self) -> Set[str]:
-        """Get active parameters (same logic as constrained)."""
-        return get_active_parameters(
-            parameterization=self.parameterization,
-            model_type=self.base_model,
-            is_mixture=self.is_mixture,
-            is_zero_inflated=self.is_zero_inflated,
-            uses_variable_capture=self.uses_variable_capture,
-        )
-
-    # --------------------------------------------------------------------------
-
-    def get_active_priors(self) -> Dict[str, Any]:
-        """Get active prior parameters as a dictionary."""
-        active_params = self.active_parameters
-        priors_dict = {}
-
-        for param in active_params:
-            if hasattr(self.priors, param):
-                value = getattr(self.priors, param)
-                if value is not None:
-                    priors_dict[f"{param}_prior"] = value
-
-        return priors_dict
-
-    # --------------------------------------------------------------------------
-    # Validation Methods
-    # --------------------------------------------------------------------------
-
-    @model_validator(mode="after")
-    def validate_priors_consistency(self) -> "UnconstrainedModelConfig":
-        """Validate that provided priors match the model's requirements."""
-        # Determine model characteristics
-        is_mixture = self.n_components is not None
-        is_zero_inflated = self.is_zero_inflated
-        uses_variable_capture = self.uses_variable_capture
-
-        # Get all provided priors (non-None fields)
-        provided_priors = {
-            field_name
-            for field_name in self.priors.__class__.model_fields.keys()
-            if getattr(self.priors, field_name) is not None
-        }
-
-        # Get active parameters (what's allowed)
-        active_params = get_active_parameters(
-            self.parameterization,
-            self.base_model,
-            is_mixture,
-            is_zero_inflated,
-            uses_variable_capture,
-        )
-
-        # Check for unexpected priors
-        unexpected_priors = provided_priors - active_params
-        if unexpected_priors:
-            raise ValueError(
-                f"Unexpected priors for {self.base_model} with "
-                f"{self.parameterization.value} parameterization: "
-                f"{', '.join(sorted(unexpected_priors))}"
-            )
-
-        return self
-
-    # --------------------------------------------------------------------------
-
-    def with_updated_priors(self, **priors) -> "UnconstrainedModelConfig":
-        """Create a new config with updated priors."""
-        return self.model_copy(
-            update={"priors": self.priors.model_copy(update=priors)}
-        )
-
-
-# ==============================================================================
-# Model Configuration Type Alias
-# ==============================================================================
-
-# Type alias for both config types
-ModelConfig = Union[ConstrainedModelConfig, UnconstrainedModelConfig]

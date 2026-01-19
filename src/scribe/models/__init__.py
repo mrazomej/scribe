@@ -46,8 +46,6 @@ from .model_registry import (
 from .config import (
     ModelConfigBuilder,
     ModelConfig,
-    ConstrainedModelConfig,
-    UnconstrainedModelConfig,
     PriorConfig,
     GuideConfig,
     GuideFamilyConfig,
@@ -103,8 +101,6 @@ __all__ = [
     # Config system
     "ModelConfigBuilder",
     "ModelConfig",
-    "ConstrainedModelConfig",
-    "UnconstrainedModelConfig",
     "PriorConfig",
     "GuideConfig",
     "GuideFamilyConfig",

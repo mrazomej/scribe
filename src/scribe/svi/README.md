@@ -24,11 +24,12 @@ from scribe.svi import SVIInferenceEngine
 from scribe.models import ModelConfig
 
 # Configure your model
-config = ModelConfig(
-    base_model="nbdm",
-    parameterization="standard",
-    inference_method="svi"
-)
+from scribe.models.config import ModelConfigBuilder
+
+config = (ModelConfigBuilder()
+    .for_model("nbdm")
+    .with_inference("svi")
+    .build())
 
 # Run inference
 results = SVIInferenceEngine.run_inference(
@@ -45,7 +46,7 @@ results = SVIInferenceEngine.run_inference(
 - Supports all SCRIBE model types and parameterizations
 - Flexible optimizer and loss function selection
 - Mini-batch training support for large datasets
-- Handles both VAE and traditional SVI models
+- Per-parameter guide family configuration (mean-field, low-rank, amortized)
 - Numerically stable parameter updates
 
 **Parameters:**
@@ -194,11 +195,13 @@ count_data = jnp.array(your_count_matrix)  # cells × genes
 n_cells, n_genes = count_data.shape
 
 # Configure model
-config = ModelConfig(
-    base_model="zinb",
-    parameterization="linked",
-    unconstrained=True
-)
+from scribe.models.config import ModelConfigBuilder
+
+config = (ModelConfigBuilder()
+    .for_model("zinb")
+    .with_parameterization("linked")
+    .unconstrained()
+    .build())
 
 # Run inference
 results = SVIInferenceEngine.run_inference(
@@ -215,11 +218,12 @@ results = SVIInferenceEngine.run_inference(
 
 ```python
 # Configure mixture model
-config = ModelConfig(
-    base_model="nbdm_mix",
-    n_components=3,
-    parameterization="standard"
-)
+from scribe.models.config import ModelConfigBuilder
+
+config = (ModelConfigBuilder()
+    .for_model("nbdm")
+    .as_mixture(n_components=3)
+    .build())
 
 # Run inference
 results = SVIInferenceEngine.run_inference(
@@ -247,7 +251,9 @@ models = ["nbdm", "zinb", "nbvcp"]
 log_likelihoods = {}
 
 for model_type in models:
-    config = ModelConfig(base_model=model_type)
+    config = (ModelConfigBuilder()
+        .for_model(model_type)
+        .build())
     results = SVIInferenceEngine.run_inference(
         model_config=config,
         count_data=count_data,
@@ -273,7 +279,11 @@ adata = sc.read_h5ad("data.h5ad")
 count_data = jnp.array(adata.X.toarray())
 
 # Run inference
-config = ModelConfig(base_model="zinb")
+from scribe.models.config import ModelConfigBuilder
+
+config = (ModelConfigBuilder()
+    .for_model("zinb")
+    .build())
 results = SVIInferenceEngine.run_inference(
     model_config=config,
     count_data=count_data,

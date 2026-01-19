@@ -11,7 +11,7 @@ from jax import random
 import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
 from ..models.model_registry import get_model_and_guide
-from ..models.config import ModelConfig, UnconstrainedModelConfig
+from ..models.config import ModelConfig
 
 
 class SVIInferenceEngine:
@@ -63,30 +63,16 @@ class SVIInferenceEngine:
         numpyro.infer.svi.SVIRunResult
             Results from SVI run containing optimized parameters and loss history
         """
-        # Get model and guide functions
-        if model_config.inference_method == "vae":
-            # For VAE inference, use the registry with VAE-specific parameters
-            model, guide = get_model_and_guide(
-                model_config.base_model,
-                parameterization=model_config.parameterization,
-                inference_method="vae",
-                prior_type=model_config.vae_prior_type,
-                unconstrained=isinstance(model_config, UnconstrainedModelConfig),
-            )
-
-            # For VAE models, the registry returns factory functions that need
-            # to be called to get the actual model and guide functions
-            if model is not None:
-                # Call the factory function to get the actual model and guide
-                model, guide = model(n_genes, model_config)
-        else:
-            # For non-VAE models, use the standard registry
-            model, guide = get_model_and_guide(
-                model_config.base_model,
-                parameterization=model_config.parameterization,
-                unconstrained=isinstance(model_config, UnconstrainedModelConfig),
-                guide_rank=model_config.guide_rank,
-            )
+        # Get model and guide functions using the new builder-based API
+        model, guide = get_model_and_guide(
+            model_config.base_model,
+            parameterization=model_config.parameterization.value,
+            unconstrained=model_config.unconstrained,
+            guide_families=model_config.guide_families,
+            n_components=model_config.n_components,
+            mixture_params=model_config.mixture_params,
+            model_config=model_config,
+        )
 
         # Create SVI instance
         svi = SVI(model, guide, optimizer, loss=loss)

@@ -53,8 +53,7 @@ scribe.models.builders.model_builder : Uses specs to build models.
 scribe.models.components.guide_families : Guide dispatch implementations.
 """
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, Type
 
 import jax.numpy as jnp
 import numpyro
@@ -62,6 +61,7 @@ import numpyro.distributions as dist
 from multipledispatch import dispatch
 from numpyro.distributions import constraints
 from numpyro.distributions.transforms import Transform
+from pydantic import BaseModel, Field, model_validator, ConfigDict
 
 from scribe.stats.distributions import BetaPrime
 
@@ -179,8 +179,7 @@ def resolve_shape(
 # ==============================================================================
 
 
-@dataclass
-class ParamSpec:
+class ParamSpec(BaseModel):
     """
     Base class for parameter specifications.
 
@@ -188,7 +187,8 @@ class ParamSpec:
     the model (prior) and guide (variational posterior). It encapsulates:
 
     - Name and shape information
-    - Default distribution parameters
+    - Distribution type and default parameters
+    - Prior and guide hyperparameters (with validation)
     - Whether the parameter is gene-specific or cell-specific
     - Whether the parameter is mixture-specific (per-component)
     - Which guide family to use for variational inference
@@ -206,6 +206,14 @@ class ParamSpec:
     default_params : Tuple[float, ...]
         Default distribution parameters (distribution-specific).
         E.g., (1.0, 1.0) for Beta(alpha, beta).
+    prior : Tuple[float, float], optional
+        Prior hyperparameters for this parameter. Validated based on distribution type.
+        If None, uses default_params.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters for this parameter. Validated based on distribution type.
+        If None, uses default_params.
+    unconstrained : bool, default=False
+        Whether this uses unconstrained parameterization (Normal + transform).
     is_gene_specific : bool, default=False
         If True, parameter has shape (n_genes,). Used for plate handling.
     is_cell_specific : bool, default=False
@@ -234,6 +242,7 @@ class ParamSpec:
     ------
     ValueError
         If is_mixture=True and is_cell_specific=True (incompatible).
+        If prior/guide hyperparameters are invalid for the distribution type.
 
     See Also
     --------
@@ -241,15 +250,41 @@ class ParamSpec:
     LogNormalSpec : Log-normal distributed parameters.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
     name: str
     shape_dims: Tuple[str, ...]
     default_params: Tuple[float, ...]
-    is_gene_specific: bool = False
-    is_cell_specific: bool = False
-    is_mixture: bool = False
-    guide_family: Optional["GuideFamily"] = None
+    prior: Optional[Tuple[float, float]] = Field(
+        None,
+        description="Prior hyperparameters (validated based on distribution)",
+    )
+    guide: Optional[Tuple[float, float]] = Field(
+        None,
+        description="Guide hyperparameters (validated based on distribution)",
+    )
+    unconstrained: bool = Field(
+        False, description="Whether this uses unconstrained parameterization"
+    )
+    is_gene_specific: bool = Field(
+        False, description="If True, parameter has shape (n_genes,)"
+    )
+    is_cell_specific: bool = Field(
+        False, description="If True, parameter has shape (n_cells,)"
+    )
+    is_mixture: bool = Field(
+        False, description="If True, parameter is mixture-specific"
+    )
+    guide_family: Optional["GuideFamily"] = Field(
+        None, description="Variational family for this parameter"
+    )
 
-    def __post_init__(self):
+    # --------------------------------------------------------------------------
+    # Validation Methods
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_spec(self) -> "ParamSpec":
         """Validate parameter specification."""
         if self.is_mixture and self.is_cell_specific:
             raise ValueError(
@@ -257,6 +292,66 @@ class ParamSpec:
                 "cannot both be True. Cell-specific parameters are already "
                 "per-cell and cannot be per-component."
             )
+        return self
+
+    # -------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_hyperparameters(self) -> "ParamSpec":
+        """Validate prior and guide hyperparameters based on distribution type."""
+        # Get distribution type from subclass
+        dist_type = self._get_distribution_type()
+
+        if self.prior is not None:
+            self._validate_hyperparameter(self.prior, "prior", dist_type)
+
+        if self.guide is not None:
+            self._validate_hyperparameter(self.guide, "guide", dist_type)
+
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def _get_distribution_type(self) -> Type:
+        """Get the distribution type for this parameter spec."""
+        # This will be overridden by subclasses
+        raise NotImplementedError(
+            "Subclasses must implement _get_distribution_type"
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _validate_hyperparameter(
+        self, value: Tuple[float, float], name: str, dist_type: Type
+    ) -> None:
+        """Validate hyperparameter tuple based on distribution type."""
+        if len(value) != 2:
+            raise ValueError(
+                f"Parameter '{self.name}': {name} "
+                f"must be a 2-tuple, got {len(value)}"
+            )
+
+        # Beta and BetaPrime: both values must be positive
+        if dist_type in (dist.Beta, BetaPrime):
+            if any(x <= 0 for x in value):
+                raise ValueError(
+                    f"Parameter '{self.name}': {name} values must be positive "
+                    f"for {dist_type.__name__}, got {value}"
+                )
+
+        # LogNormal and Normal: scale (second value) must be positive, location
+        # can be any float
+        elif dist_type in (dist.LogNormal, dist.Normal):
+            if value[1] <= 0:
+                raise ValueError(
+                    f"Parameter '{self.name}': {name} scale (second value) must be "
+                    f"positive for {dist_type.__name__}, got {value}"
+                )
+
+        # Dirichlet: handled separately (variable length tuple)
+        # No validation needed here as it's handled in DirichletSpec
+
+    # --------------------------------------------------------------------------
 
     @property
     def support(self) -> constraints.Constraint:
@@ -310,7 +405,6 @@ class ParamSpec:
 # ------------------------------------------------------------------------------
 
 
-@dataclass
 class BetaSpec(ParamSpec):
     """Parameter with Beta(alpha, beta) distribution.
 
@@ -329,6 +423,10 @@ class BetaSpec(ParamSpec):
         Shape dimensions.
     default_params : Tuple[float, float]
         Default (alpha, beta) parameters. E.g., (1.0, 1.0) for uniform.
+    prior : Tuple[float, float], optional
+        Prior hyperparameters (alpha, beta). Both must be positive.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters (alpha, beta). Both must be positive.
 
     Examples
     --------
@@ -337,6 +435,10 @@ class BetaSpec(ParamSpec):
     >>> # Gene-specific gate with informative prior
     >>> BetaSpec("gate", ("n_genes",), (2.0, 8.0), is_gene_specific=True)
     """
+
+    def _get_distribution_type(self) -> Type:
+        """Return Beta distribution type."""
+        return dist.Beta
 
     @property
     def support(self) -> constraints.Constraint:
@@ -359,7 +461,6 @@ class BetaSpec(ParamSpec):
 # ------------------------------------------------------------------------------
 
 
-@dataclass
 class LogNormalSpec(ParamSpec):
     """Parameter with LogNormal(loc, scale) distribution.
 
@@ -378,12 +479,20 @@ class LogNormalSpec(ParamSpec):
     default_params : Tuple[float, float]
         Default (loc, scale) parameters in log-space.
         E.g., (0.0, 1.0) for median=1, spread of ~1 order of magnitude.
+    prior : Tuple[float, float], optional
+        Prior hyperparameters (loc, scale). Scale must be positive.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters (loc, scale). Scale must be positive.
 
     Examples
     --------
     >>> # Gene-specific dispersion
     >>> LogNormalSpec("r", ("n_genes",), (0.0, 1.0), is_gene_specific=True)
     """
+
+    def _get_distribution_type(self) -> Type:
+        """Return LogNormal distribution type."""
+        return dist.LogNormal
 
     @property
     def support(self) -> constraints.Constraint:
@@ -405,7 +514,6 @@ class LogNormalSpec(ParamSpec):
 # ------------------------------------------------------------------------------
 
 
-@dataclass
 class BetaPrimeSpec(ParamSpec):
     """Parameter with BetaPrime(alpha, beta) distribution.
 
@@ -422,6 +530,10 @@ class BetaPrimeSpec(ParamSpec):
         Shape dimensions.
     default_params : Tuple[float, float]
         Default (alpha, beta) parameters.
+    prior : Tuple[float, float], optional
+        Prior hyperparameters (alpha, beta). Both must be positive.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters (alpha, beta). Both must be positive.
 
     Examples
     --------
@@ -433,6 +545,10 @@ class BetaPrimeSpec(ParamSpec):
     BetaPrime uses the odds-of-Beta convention. If p ~ Beta(α, β),
     then φ = (1-p)/p ~ BetaPrime(α, β).
     """
+
+    def _get_distribution_type(self) -> Type:
+        """Return BetaPrime distribution type."""
+        return BetaPrime
 
     @property
     def support(self) -> constraints.Constraint:
@@ -455,7 +571,6 @@ class BetaPrimeSpec(ParamSpec):
 # ------------------------------------------------------------------------------
 
 
-@dataclass
 class DirichletSpec(ParamSpec):
     """Parameter with Dirichlet(concentration) distribution.
 
@@ -473,12 +588,82 @@ class DirichletSpec(ParamSpec):
         Shape dimensions. Should include component dimension.
     default_params : Tuple[float, ...]
         Default concentration parameters.
+    prior : Tuple[float, ...], optional
+        Prior hyperparameters (concentration). All values must be positive.
+        Variable length tuple.
+    guide : Tuple[float, ...], optional
+        Guide hyperparameters (concentration). All values must be positive.
+        Variable length tuple.
 
     Examples
     --------
     >>> # Mixture weights for 5 components
     >>> DirichletSpec("weights", ("n_components",), (1.0,))
     """
+
+    # Override prior/guide to allow variable length tuples for Dirichlet
+    prior: Optional[Tuple[float, ...]] = Field(
+        None,
+        description="Prior hyperparameters (concentration, variable length)",
+    )
+    guide: Optional[Tuple[float, ...]] = Field(
+        None,
+        description="Guide hyperparameters (concentration, variable length)",
+    )
+
+    # --------------------------------------------------------------------------
+
+    def _get_distribution_type(self) -> Type:
+        """Return Dirichlet distribution type."""
+        return dist.Dirichlet
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_dirichlet_spec(self) -> "DirichletSpec":
+        """Validate Dirichlet-specific constraints."""
+        if self.is_mixture:
+            raise ValueError(
+                f"Parameter '{self.name}': is_mixture cannot be True. "
+                "DirichletSpec is not mixture-specific. "
+                "It defines the mixture weights."
+            )
+        return self
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_dirichlet_hyperparameters(self) -> "DirichletSpec":
+        """Validate Dirichlet hyperparameters (variable length, all positive)."""
+        if self.prior is not None:
+            if len(self.prior) < 2:
+                raise ValueError(
+                    f"Parameter '{self.name}': "
+                    "prior must have at least 2 elements "
+                    f"for Dirichlet, got {len(self.prior)}"
+                )
+            if any(x <= 0 for x in self.prior):
+                raise ValueError(
+                    f"Parameter '{self.name}': "
+                    "prior values must be positive "
+                    f"for Dirichlet, got {self.prior}"
+                )
+
+        if self.guide is not None:
+            if len(self.guide) < 2:
+                raise ValueError(
+                    f"Parameter '{self.name}': "
+                    "guide must have at least 2 elements "
+                    f"for Dirichlet, got {len(self.guide)}"
+                )
+            if any(x <= 0 for x in self.guide):
+                raise ValueError(
+                    f"Parameter '{self.name}': "
+                    "guide values must be positive "
+                    f"for Dirichlet, got {self.guide}"
+                )
+
+        return self
 
     @property
     def support(self) -> constraints.Constraint:
@@ -494,24 +679,12 @@ class DirichletSpec(ParamSpec):
             dist.Dirichlet.arg_constraints
         )  # {"concentration": independent(positive, 1)}
 
-    # --------------------------------------------------------------------------
-
-    # post_init methd that checks DirichletSpec is not mixture-specific
-    def __post_init__(self):
-        """Validate parameter specification."""
-        if self.is_mixture:
-            raise ValueError(
-                f"Parameter '{self.name}': is_mixture cannot be True. "
-                "DirichletSpec is not mixture-specific. It defines the mixture weights."
-            )
-
 
 # ==============================================================================
 # Unconstrained Parameter Types (Normal + NumPyro Transform)
 # ==============================================================================
 
 
-@dataclass
 class NormalWithTransformSpec(ParamSpec):
     """Parameter sampled from Normal, then transformed to constrained space.
 
@@ -534,6 +707,10 @@ class NormalWithTransformSpec(ParamSpec):
         Shape dimensions.
     default_params : Tuple[float, float]
         Default (loc, scale) for the base Normal.
+    prior : Tuple[float, float], optional
+        Prior hyperparameters (loc, scale). Scale must be positive.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters (loc, scale). Scale must be positive.
     transform : Transform
         NumPyro transform object (e.g., SigmoidTransform()).
     constrained_name : str, optional
@@ -552,15 +729,27 @@ class NormalWithTransformSpec(ParamSpec):
     https://num.pyro.ai/en/stable/distributions.html#transforms
     """
 
-    transform: Transform = field(
+    transform: Transform = Field(
         default_factory=lambda: dist.transforms.IdentityTransform()
     )
     constrained_name: Optional[str] = None
 
-    def __post_init__(self):
+    # --------------------------------------------------------------------------
+
+    def _get_distribution_type(self) -> Type:
+        """
+        Return Normal distribution type (base distribution before transform).
+        """
+        return dist.Normal
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def set_constrained_name(self) -> "NormalWithTransformSpec":
         """Set constrained_name to name if not provided."""
         if self.constrained_name is None:
             object.__setattr__(self, "constrained_name", self.name)
+        return self
 
     # --------------------------------------------------------------------------
 
@@ -605,7 +794,6 @@ class NormalWithTransformSpec(ParamSpec):
 # ------------------------------------------------------------------------------
 
 
-@dataclass
 class SigmoidNormalSpec(NormalWithTransformSpec):
     """Normal + SigmoidTransform. For parameters in (0, 1).
 
@@ -622,6 +810,10 @@ class SigmoidNormalSpec(NormalWithTransformSpec):
     default_params : Tuple[float, float]
         Default (loc, scale) for the base Normal.
         Note: These are in unconstrained space.
+    prior : Tuple[float, float], optional
+        Prior hyperparameters (loc, scale). Scale must be positive.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters (loc, scale). Scale must be positive.
 
     Examples
     --------
@@ -633,7 +825,7 @@ class SigmoidNormalSpec(NormalWithTransformSpec):
     Default (0.0, 1.0) gives sigmoid(Normal(0, 1)) which has median ~0.5.
     """
 
-    transform: Transform = field(
+    transform: Transform = Field(
         default_factory=lambda: dist.transforms.SigmoidTransform()
     )
 
@@ -643,7 +835,6 @@ class SigmoidNormalSpec(NormalWithTransformSpec):
 # ------------------------------------------------------------------------------
 
 
-@dataclass
 class ExpNormalSpec(NormalWithTransformSpec):
     """Normal + ExpTransform. For parameters in (0, ∞).
 
@@ -658,6 +849,10 @@ class ExpNormalSpec(NormalWithTransformSpec):
         Shape dimensions.
     default_params : Tuple[float, float]
         Default (loc, scale) for the base Normal (log-space params).
+    prior : Tuple[float, float], optional
+        Prior hyperparameters (loc, scale). Scale must be positive.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters (loc, scale). Scale must be positive.
 
     Examples
     --------
@@ -665,7 +860,7 @@ class ExpNormalSpec(NormalWithTransformSpec):
     >>> ExpNormalSpec("r", ("n_genes",), (0.0, 1.0), is_gene_specific=True)
     """
 
-    transform: Transform = field(
+    transform: Transform = Field(
         default_factory=lambda: dist.transforms.ExpTransform()
     )
 
@@ -675,7 +870,6 @@ class ExpNormalSpec(NormalWithTransformSpec):
 # ------------------------------------------------------------------------------
 
 
-@dataclass
 class SoftplusNormalSpec(NormalWithTransformSpec):
     """Normal + SoftplusTransform. For parameters in (0, ∞).
 
@@ -690,6 +884,10 @@ class SoftplusNormalSpec(NormalWithTransformSpec):
         Shape dimensions.
     default_params : Tuple[float, float]
         Default (loc, scale) for the base Normal.
+    prior : Tuple[float, float], optional
+        Prior hyperparameters (loc, scale). Scale must be positive.
+    guide : Tuple[float, float], optional
+        Guide hyperparameters (loc, scale). Scale must be positive.
 
     Examples
     --------
@@ -702,7 +900,7 @@ class SoftplusNormalSpec(NormalWithTransformSpec):
     as it has a more stable gradient.
     """
 
-    transform: Transform = field(
+    transform: Transform = Field(
         default_factory=lambda: dist.transforms.SoftplusTransform()
     )
 
@@ -737,10 +935,8 @@ def sample_prior(
     jnp.ndarray
         Sampled parameter value.
     """
-    # Get prior params from config or use defaults
-    params = (
-        getattr(model_config.priors, spec.name, None) or spec.default_params
-    )
+    # Get prior params from spec or use defaults
+    params = spec.prior if spec.prior is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     if shape == ():
@@ -778,9 +974,7 @@ def sample_prior(
     jnp.ndarray
         Sampled parameter value.
     """
-    params = (
-        getattr(model_config.priors, spec.name, None) or spec.default_params
-    )
+    params = spec.prior if spec.prior is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     return numpyro.sample(
@@ -813,9 +1007,7 @@ def sample_prior(
     jnp.ndarray
         Sampled parameter value.
     """
-    params = (
-        getattr(model_config.priors, spec.name, None) or spec.default_params
-    )
+    params = spec.prior if spec.prior is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     if shape == ():
@@ -851,9 +1043,7 @@ def sample_prior(
     jnp.ndarray
         Sampled parameter value on the simplex.
     """
-    params = (
-        getattr(model_config.priors, spec.name, None) or spec.default_params
-    )
+    params = spec.prior if spec.prior is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     # For Dirichlet, concentration is a vector
@@ -896,9 +1086,7 @@ def sample_prior(
     jnp.ndarray
         Sampled parameter value in constrained space.
     """
-    params = (
-        getattr(model_config.priors, spec.name, None) or spec.default_params
-    )
+    params = spec.prior if spec.prior is not None else spec.default_params
     shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
 
     # Create base Normal distribution

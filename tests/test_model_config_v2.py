@@ -3,14 +3,15 @@
 import pytest
 from src.scribe.models.config import (
     ModelConfigBuilder,
-    ConstrainedModelConfig,
-    UnconstrainedModelConfig,
+    ModelConfig,
     ModelType,
     Parameterization,
     InferenceMethod,
     VAEPriorType,
     VAEActivation,
+    GuideFamilyConfig,
 )
+from src.scribe.models.components import LowRankGuide
 
 
 class TestModelConfigBuilder:
@@ -26,10 +27,11 @@ class TestModelConfigBuilder:
             .build()
         )
 
-        assert isinstance(config, ConstrainedModelConfig)
+        assert isinstance(config, ModelConfig)
         assert config.base_model == "nbdm"
         assert config.inference_method == InferenceMethod.SVI
         assert config.parameterization == Parameterization.STANDARD
+        assert config.unconstrained is False
 
     def test_unconstrained_config(self):
         """Test unconstrained configuration."""
@@ -42,8 +44,9 @@ class TestModelConfigBuilder:
             .build()
         )
 
-        assert isinstance(config, UnconstrainedModelConfig)
+        assert isinstance(config, ModelConfig)
         assert config.parameterization == Parameterization.LINKED
+        assert config.unconstrained is True
 
     def test_mixture_config(self):
         """Test mixture model configuration."""
@@ -94,8 +97,8 @@ class TestModelConfigBuilder:
             .for_model("zinb")
             .with_parameterization("linked")
             .unconstrained()
-            .as_mixture(n_components=3, component_specific=True)
-            .with_low_rank_guide(10)
+            .as_mixture(n_components=3, mixture_params=["p"])
+            .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=10)))
             .with_priors(
                 p=(1.0, 1.0),
                 mu=(1.0, 1.0),
@@ -106,12 +109,16 @@ class TestModelConfigBuilder:
             .build()
         )
 
-        assert isinstance(config, UnconstrainedModelConfig)
+        assert isinstance(config, ModelConfig)
         assert config.base_model == "zinb_mix"
         assert config.parameterization == Parameterization.LINKED
         assert config.n_components == 3
-        assert config.component_specific_params is True
-        assert config.guide_rank == 10
+        assert config.unconstrained is True
+        assert config.mixture_params == ["p"]
+        assert config.guide_families is not None
+        assert config.guide_families.r is not None
+        assert hasattr(config.guide_families.r, "rank")
+        assert config.guide_families.r.rank == 10
         assert config.priors.p == (1.0, 1.0)
         assert config.priors.mu == (1.0, 1.0)
         assert config.vae.latent_dim == 5
@@ -143,12 +150,12 @@ class TestModelConfigBuilder:
                 .build()
             )
 
-        # Invalid guide_rank
-        with pytest.raises(ValueError, match="guide_rank must be positive"):
+        # Invalid guide_families (rank must be positive)
+        with pytest.raises(ValueError, match="rank must be positive"):
             (
                 ModelConfigBuilder()
                 .for_model("nbdm")
-                .with_low_rank_guide(0)
+                .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=0)))
                 .build()
             )
 
@@ -504,8 +511,8 @@ class TestComplexConfigurations:
             .for_model("zinb")
             .with_parameterization("linked")
             .unconstrained()
-            .as_mixture(n_components=3, component_specific=True)
-            .with_low_rank_guide(10)
+            .as_mixture(n_components=3, mixture_params=["p"])
+            .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=10)))
             .with_priors(
                 p=(1.0, 1.0),
                 mu=(1.0, 1.0),
@@ -515,12 +522,16 @@ class TestComplexConfigurations:
             .build()
         )
 
-        assert isinstance(config, UnconstrainedModelConfig)
+        assert isinstance(config, ModelConfig)
         assert config.base_model == "zinb_mix"
         assert config.parameterization == Parameterization.LINKED
         assert config.n_components == 3
-        assert config.component_specific_params is True
-        assert config.guide_rank == 10
+        assert config.unconstrained is True
+        assert config.mixture_params == ["p"]
+        assert config.guide_families is not None
+        assert config.guide_families.r is not None
+        assert hasattr(config.guide_families.r, "rank")
+        assert config.guide_families.r.rank == 10
         assert config.priors.p == (1.0, 1.0)
         assert config.priors.mu == (1.0, 1.0)
         assert config.priors.gate == (2.0, 2.0)

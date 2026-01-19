@@ -31,7 +31,7 @@ Examples
 ... )
 """
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Dict
 
 from ..builders import (
     GuideBuilder,
@@ -54,6 +54,8 @@ def create_nbdm(
     guide_families: Optional[GuideFamilyConfig] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
+    priors: Optional[Dict[str, Tuple[float, ...]]] = None,
+    guides: Optional[Dict[str, Tuple[float, ...]]] = None,
 ) -> Tuple[Callable, Callable]:
     """Create NBDM model and guide functions.
 
@@ -146,6 +148,23 @@ def create_nbdm(
         n_components=n_components,
         mixture_params=mixture_params,
     )
+
+    # Update param_specs with prior/guide values if provided
+    if priors is not None or guides is not None:
+        updated_specs = []
+        for spec in param_specs:
+            updates = {}
+            if priors is not None and spec.name in priors:
+                updates["prior"] = priors[spec.name]
+            if guides is not None and spec.name in guides:
+                updates["guide"] = guides[spec.name]
+            if updates:
+                updated_spec = spec.model_copy(update=updates)
+                updated_specs.append(updated_spec)
+            else:
+                updated_specs.append(spec)
+        param_specs = updated_specs
+
     derived_params = param_strategy.build_derived_params()
 
     # ========================================================================

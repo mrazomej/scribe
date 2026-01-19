@@ -424,6 +424,7 @@ def get_model_and_guide(
     guide_families: Optional["GuideFamilyConfig"] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
+    model_config: Optional["ModelConfig"] = None,
 ) -> Tuple[Callable, Callable]:
     """Create model and guide functions using the composable builder system.
 
@@ -498,6 +499,28 @@ def get_model_and_guide(
     # Import presets here to avoid circular imports
     from .presets import create_nbdm, create_zinb, create_nbvcp, create_zinbvcp
 
+    # Extract priors/guides from model_config if provided
+    priors = None
+    guides = None
+    if model_config is not None:
+        priors = {
+            spec.name: spec.prior
+            for spec in model_config.param_specs
+            if spec.prior is not None
+        }
+        guides = {
+            spec.name: spec.guide
+            for spec in model_config.param_specs
+            if spec.guide is not None
+        }
+        # If param_specs is empty, try to extract from builder's _priors/_guides
+        # This handles the case where ModelConfig was built but param_specs
+        # weren't populated yet
+        if not priors and hasattr(model_config, "_priors"):
+            priors = getattr(model_config, "_priors", None)
+        if not guides and hasattr(model_config, "_guides"):
+            guides = getattr(model_config, "_guides", None)
+
     # Dispatch to appropriate preset
     if model_type == "nbdm":
         return create_nbdm(
@@ -506,6 +529,8 @@ def get_model_and_guide(
             guide_families=guide_families,
             n_components=n_components,
             mixture_params=mixture_params,
+            priors=priors,
+            guides=guides,
         )
     elif model_type == "zinb":
         return create_zinb(
@@ -514,6 +539,8 @@ def get_model_and_guide(
             guide_families=guide_families,
             n_components=n_components,
             mixture_params=mixture_params,
+            priors=priors,
+            guides=guides,
         )
     elif model_type == "nbvcp":
         return create_nbvcp(
@@ -522,6 +549,8 @@ def get_model_and_guide(
             guide_families=guide_families,
             n_components=n_components,
             mixture_params=mixture_params,
+            priors=priors,
+            guides=guides,
         )
     elif model_type == "zinbvcp":
         return create_zinbvcp(
@@ -530,6 +559,8 @@ def get_model_and_guide(
             guide_families=guide_families,
             n_components=n_components,
             mixture_params=mixture_params,
+            priors=priors,
+            guides=guides,
         )
     else:
         raise ValueError(
