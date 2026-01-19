@@ -1230,8 +1230,9 @@ class ScribeSVIResults:
         # For predictive sampling, we need the *constrained* model, which has the
         # 'counts' sample site. The posterior samples from the unconstrained guide
         # can be used with the constrained model.
+        # Use base_model instead of model_type (which may have _mix suffix)
         model, _ = get_model_and_guide(
-            self.model_type,
+            self.model_config.base_model,
             parameterization=self.model_config.parameterization.value,
             unconstrained=False,  # Explicitly get the constrained model
             guide_families=None,  # Not relevant for the model (only guide)

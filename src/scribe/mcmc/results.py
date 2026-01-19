@@ -131,6 +131,36 @@ class ScribeMCMCSubset:
 
     # --------------------------------------------------------------------------
 
+    def _is_component_specific_param(self, param_name: str) -> bool:
+        """Check if a parameter is component-specific (mixture-specific).
+
+        In the new system, each parameter's `is_mixture` field in `param_specs`
+        indicates if it's component-specific. This replaces the deprecated
+        `component_specific_params` boolean.
+
+        Parameters
+        ----------
+        param_name : str
+            Parameter name (e.g., "p", "phi")
+
+        Returns
+        -------
+        bool
+            True if the parameter has is_mixture=True in param_specs
+        """
+        if not self.model_config.param_specs:
+            # Fallback: check mixture_params if param_specs not populated
+            mixture_params = self.model_config.mixture_params or []
+            return param_name in mixture_params
+
+        # Check param_specs for is_mixture=True
+        for spec in self.model_config.param_specs:
+            if spec.name == param_name:
+                return spec.is_mixture
+        return False
+
+    # --------------------------------------------------------------------------
+
     def get_posterior_samples(self, canonical=True):
         """Get posterior samples in canonical form."""
         if canonical:
@@ -176,8 +206,9 @@ class ScribeMCMCSubset:
             # Reshape phi to broadcast with mu based on mixture model
             if self.n_components is not None:
                 # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                if self.model_config.component_specific_params:
-                    # Component-specific phi: shape (n_samples, n_components) -> reshape
+                if self._is_component_specific_param("phi"):
+                    # Component-specific phi:
+                    # shape (n_samples, n_components) -> reshape
                     phi_reshaped = phi[:, :, None]
                 else:
                     # Shared phi: shape (n_samples,) -> reshape
@@ -200,8 +231,9 @@ class ScribeMCMCSubset:
             # Reshape p to broadcast with mu based on mixture model
             if self.n_components is not None:
                 # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                if self.model_config.component_specific_params:
-                    # Component-specific p: shape (n_samples, n_components) -> reshape
+                if self._is_component_specific_param("p"):
+                    # Component-specific p:
+                    # shape (n_samples, n_components) -> reshape
                     p_reshaped = p[:, :, None]
                 else:
                     # Shared p: shape (n_samples,) -> reshape
@@ -690,6 +722,38 @@ class ScribeMCMCResults(MCMC):
                 )
 
     # --------------------------------------------------------------------------
+    # Helper Methods
+    # --------------------------------------------------------------------------
+
+    def _is_component_specific_param(self, param_name: str) -> bool:
+        """Check if a parameter is component-specific (mixture-specific).
+
+        In the new system, each parameter's `is_mixture` field in `param_specs`
+        indicates if it's component-specific. This replaces the deprecated
+        `component_specific_params` boolean.
+
+        Parameters
+        ----------
+        param_name : str
+            Parameter name (e.g., "p", "phi")
+
+        Returns
+        -------
+        bool
+            True if the parameter has is_mixture=True in param_specs
+        """
+        if not self.model_config.param_specs:
+            # Fallback: check mixture_params if param_specs not populated
+            mixture_params = self.model_config.mixture_params or []
+            return param_name in mixture_params
+
+        # Check param_specs for is_mixture=True
+        for spec in self.model_config.param_specs:
+            if spec.name == param_name:
+                return spec.is_mixture
+        return False
+
+    # --------------------------------------------------------------------------
     # Override get_samples to provide canonical samples by default
     # --------------------------------------------------------------------------
 
@@ -732,7 +796,7 @@ class ScribeMCMCResults(MCMC):
             # component specificity
             if self.n_components is not None:
                 # Mixture model: mu has shape (n_samples, n_components, n_genes)
-                if self.model_config.component_specific_params:
+                if self._is_component_specific_param("phi"):
                     # Component-specific phi: shape (n_samples, n_components)
                     phi_reshaped = phi[:, :, None]
                 else:
@@ -754,9 +818,10 @@ class ScribeMCMCResults(MCMC):
             # Extract p and mu
             p = canonical_samples["p"]
             mu = canonical_samples["mu"]
-            # Reshape p to broadcast with mu based on mixture model and component specificity
+            # Reshape p to broadcast with mu based on mixture model and
+            # component specificity
             if self.n_components is not None:
-                if self.model_config.component_specific_params:
+                if self._is_component_specific_param("p"):
                     # Component-specific p: shape (n_samples, n_components)
                     p_reshaped = p[:, :, None]
                 else:
@@ -840,14 +905,15 @@ class ScribeMCMCResults(MCMC):
             Whether to preserve the chain dimension. If True, all samples will
             have num_chains as the size of their leading dimension.
         canonical : bool, default=True
-            Whether to return samples in canonical (p, r) form. If False, returns
-            raw samples as they were collected during MCMC.
+            Whether to return samples in canonical (p, r) form. If False,
+            returns raw samples as they were collected during MCMC.
 
         Returns
         -------
         Dict
             Dictionary of parameter samples. If canonical=True, parameters are
-            converted to canonical form. If canonical=False, returns raw samples.
+            converted to canonical form. If canonical=False, returns raw
+            samples.
         """
         # Get raw samples from parent class
         raw_samples = super().get_samples(group_by_chain=group_by_chain)
@@ -930,7 +996,7 @@ class ScribeMCMCResults(MCMC):
 
     def _model(self) -> Callable:
         """Get the model function for this model type."""
-        model = _get_model_fn(self.model_type, self.model_config)
+        model = _get_model_fn(self.model_config)
         return model
 
     # --------------------------------------------------------------------------
@@ -1050,31 +1116,41 @@ class ScribeMCMCResults(MCMC):
         Dict[str, Union[jnp.ndarray, object]]
             Dictionary containing normalized expression profiles. Keys depend on
             input arguments:
-            - 'samples': Raw Dirichlet samples (if store_samples=True)
-            - 'concentrations': Fitted concentration parameters (if fit_distribution=True)
-            - 'mean_probabilities': Mean probabilities from fitted distribution (if fit_distribution=True)
-            - 'distributions': Dirichlet distribution objects (if fit_distribution=True)
-            - 'original_concentrations': Original r parameter samples (if return_concentrations=True)
+                - 'samples': Raw Dirichlet samples (if store_samples=True)
+                - 'concentrations': Fitted concentration parameters (if
+                  fit_distribution=True)
+                - 'mean_probabilities': Mean probabilities from fitted
+                  distribution (if fit_distribution=True)
+                - 'distributions': Dirichlet distribution objects (if
+                  fit_distribution=True)
+                - 'original_concentrations': Original r parameter samples (if
+                  return_concentrations=True)
 
             For non-mixture models:
-            - samples: shape (n_posterior_samples, n_genes, n_samples_dirichlet) or
-                      (n_posterior_samples, n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_genes,) - single fitted distribution
-            - mean_probabilities: shape (n_genes,) - single fitted distribution
-            - distributions: single Dirichlet distribution object
+                - samples: shape (n_posterior_samples, n_genes,
+                  n_samples_dirichlet) or (n_posterior_samples, n_genes) if
+                  n_samples_dirichlet=1
+                - concentrations: shape (n_genes,) - single fitted distribution
+                - mean_probabilities: shape (n_genes,) - single fitted
+                  distribution
+                - distributions: single Dirichlet distribution object
 
             For mixture models:
-            - samples: shape (n_posterior_samples, n_components, n_genes, n_samples_dirichlet) or
-                      (n_posterior_samples, n_components, n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_components, n_genes) - one fitted distribution per component
-            - mean_probabilities: shape (n_components, n_genes) - one fitted distribution per component
-            - distributions: list of n_components Dirichlet distribution objects
+                - samples: shape (n_posterior_samples, n_components, n_genes,
+                  n_samples_dirichlet) or (n_posterior_samples, n_components,
+                  n_genes) if n_samples_dirichlet=1
+                - concentrations: shape (n_components, n_genes) - one fitted
+                  distribution per component
+                - mean_probabilities: shape (n_components, n_genes) - one fitted
+                  distribution per component
+                - distributions: list of n_components Dirichlet distribution
+                  objects
 
         Raises
         ------
         ValueError
-            If posterior samples have not been generated yet, or if 'r' parameter
-            is not found in posterior samples
+            If posterior samples have not been generated yet, or if 'r'
+            parameter is not found in posterior samples
 
         Examples
         --------
@@ -1263,14 +1339,16 @@ class ScribeMCMCResults(MCMC):
         original_n_genes = self.n_genes
 
         for key, value in samples.items():
-            # The gene dimension is typically the last one in the posterior sample arrays.
-            # We check if the last dimension's size matches the original number of genes.
+            # The gene dimension is typically the last one in the posterior
+            # sample arrays. We check if the last dimension's size matches the
+            # original number of genes.
             if value.ndim > 0 and value.shape[-1] == original_n_genes:
-                # This is a gene-specific parameter, so we subset it along the last axis.
+                # This is a gene-specific parameter, so we subset it along the
+                # last axis.
                 new_samples[key] = value[..., index]
             else:
-                # This is not a gene-specific parameter (e.g., global, cell-specific),
-                # so we keep it as is.
+                # This is not a gene-specific parameter (e.g., global,
+                # cell-specific), so we keep it as is.
                 new_samples[key] = value
         return new_samples
 
@@ -1389,7 +1467,8 @@ class ScribeMCMCResults(MCMC):
         # Check if component_index is valid
         if component_index < 0 or component_index >= self.n_components:
             raise ValueError(
-                f"Component index {component_index} out of range [0, {self.n_components-1}]"
+                f"Component index {component_index} "
+                f"out of range [0, {self.n_components-1}]"
             )
 
         # Get samples and subset by component
@@ -1480,7 +1559,8 @@ class ScribeMCMCResults(MCMC):
 
         for param_name, values in samples.items():
             if param_name in component_gene_specific:
-                # Component-gene specific parameters: (n_samples, n_components, n_genes)
+                # Component-gene specific parameters:
+                # (n_samples, n_components, n_genes)
                 if values.ndim == 3:
                     new_samples[param_name] = values[:, component_index, :]
                 else:  # Already in correct shape or scalar
@@ -1599,12 +1679,31 @@ class ScribeMCMCResults(MCMC):
 # ------------------------------------------------------------------------------
 
 
-def _get_model_fn(model_type: str, model_config) -> Callable:
-    """Get the model function for this model type and parameterization."""
+def _get_model_fn(model_config) -> Callable:
+    """Get the model function for the given model configuration.
+
+    Parameters
+    ----------
+    model_config : ModelConfig
+        Model configuration containing all necessary parameters
+
+    Returns
+    -------
+    Callable
+        The model function
+    """
     from ..models.model_registry import get_model_and_guide
 
     parameterization = model_config.parameterization or "standard"
-    return get_model_and_guide(model_type, parameterization)[0]
+    return get_model_and_guide(
+        model_config.base_model,
+        parameterization=parameterization,
+        unconstrained=model_config.unconstrained,
+        guide_families=model_config.guide_families,
+        n_components=model_config.n_components,
+        mixture_params=model_config.mixture_params,
+        model_config=model_config,
+    )[0]
 
 
 # ------------------------------------------------------------------------------
@@ -1690,7 +1789,8 @@ def _compute_log_likelihood(
         # Filter out samples with NaNs
         if jnp.any(~valid_samples):
             print(
-                f"    - Fraction of samples removed: {1 - jnp.mean(valid_samples)}"
+                f"    - Fraction of samples removed: "
+                f"{1 - jnp.mean(valid_samples)}"
             )
             return log_liks[valid_samples]
 
@@ -1746,7 +1846,7 @@ def _generate_ppc_samples(
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples."""
     # Get the model function
-    model = _get_model_fn(model_type, model_config)
+    model = _get_model_fn(model_config)
 
     # Prepare base model arguments
     model_args = {
@@ -1781,7 +1881,7 @@ def _generate_prior_predictive_samples(
 ) -> jnp.ndarray:
     """Generate prior predictive samples using the model."""
     # Get the model function
-    model = _get_model_fn(model_type, model_config)
+    model = _get_model_fn(model_config)
 
     # Prepare base model arguments
     model_args = {
