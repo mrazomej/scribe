@@ -1,5 +1,4 @@
 # tests/test_nbdm_mix.py
-from scribe.models.config import UnconstrainedModelConfig
 """
 Tests for the Negative Binomial-Dirichlet Multinomial Mixture Model.
 """
@@ -7,6 +6,9 @@ import pytest
 import jax.numpy as jnp
 from jax import random
 import os
+from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
+from scribe.inference import run_scribe
+from scribe.inference.preset_builder import build_config_from_preset
 
 ALL_METHODS = [
     "svi",
@@ -120,58 +122,45 @@ def nbdm_mix_results(
     # Device is already configured in conftest.py via pytest_configure
     counts, _ = small_dataset
 
-    # Set up priors based on parameterization
+    # Set up priors based on parameterization (using new key names without "_prior" suffix)
     if parameterization == "standard":
-        priors = {"r_prior": (2, 0.1), "p_prior": (1, 1)}
+        priors = {"r": (2, 0.1), "p": (1, 1)}
     elif parameterization == "linked":
-        priors = {"p_prior": (1, 1), "mu_prior": (1, 1)}
+        priors = {"p": (1, 1), "mu": (1, 1)}
     elif parameterization == "odds_ratio":
-        priors = {"phi_prior": (3, 2), "mu_prior": (1, 1)}
+        priors = {"phi": (3, 2), "mu": (1, 1)}
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
-    from scribe import run_scribe
+    # Add mixing_prior for mixture models
+    priors["mixing"] = jnp.ones(2)  # Uniform prior for 2 components
 
+    # Build model config using preset builder
+    model_config = build_config_from_preset(
+        model="nbdm",
+        parameterization=parameterization,
+        inference_method=inference_method,
+        unconstrained=unconstrained,
+        guide_rank=guide_rank,
+        priors=priors,
+        n_components=2,  # Test with 2 components
+    )
+
+    # Create inference config based on method
     if inference_method == "svi":
-        result = run_scribe(
-            counts=counts,
-            inference_method="svi",
-            zero_inflated=False,
-            variable_capture=False,
-            mixture_model=True,
-            n_components=2,  # Test with 2 components
-            parameterization=parameterization,
-            unconstrained=unconstrained,
-            guide_rank=guide_rank,
-            n_steps=3,
-            batch_size=5,
-            seed=42,
-            r_prior=priors.get("r_prior"),
-            p_prior=priors.get("p_prior"),
-            mu_prior=priors.get("mu_prior"),
-            phi_prior=priors.get("phi_prior"),
-            mixing_prior=jnp.ones(2),  # Uniform prior for 2 components
-        )
+        svi_config = SVIConfig(n_steps=3, batch_size=5)
+        inference_config = InferenceConfig.from_svi(svi_config)
     else:
-        result = run_scribe(
-            counts=counts,
-            inference_method="mcmc",
-            zero_inflated=False,
-            variable_capture=False,
-            mixture_model=True,
-            n_components=2,  # Test with 2 components
-            parameterization=parameterization,
-            unconstrained=unconstrained,
-            n_warmup=2,
-            n_samples=3,
-            n_chains=1,
-            seed=42,
-            r_prior=priors.get("r_prior"),
-            p_prior=priors.get("p_prior"),
-            mu_prior=priors.get("mu_prior"),
-            phi_prior=priors.get("phi_prior"),
-            mixing_prior=jnp.ones(2),  # Uniform prior for 2 components
-        )
+        mcmc_config = MCMCConfig(n_warmup=2, n_samples=3, n_chains=1)
+        inference_config = InferenceConfig.from_mcmc(mcmc_config)
+
+    # Run inference with new API
+    result = run_scribe(
+        counts=counts,
+        model_config=model_config,
+        inference_config=inference_config,
+        seed=42,
+    )
 
     _nbdm_mix_results_cache[key] = result
     return result
@@ -198,13 +187,28 @@ def test_parameterization_config(
 ):
     """Test that the correct parameterization and unconstrained flag are used."""
     assert nbdm_mix_results.model_config.parameterization == parameterization
-    # Check that the unconstrained flag is properly set in the model config
-    # Note: This may need to be adjusted based on how the model config stores this information
-    if True:  # Always check unconstrained by type
-        assert isinstance(nbdm_mix_results.model_config, UnconstrainedModelConfig) == unconstrained
+    # Check unconstrained flag
+    assert nbdm_mix_results.model_config.unconstrained == unconstrained
     # Check that the guide_rank is properly set in the model config
-    if hasattr(nbdm_mix_results.model_config, "guide_rank"):
-        assert nbdm_mix_results.model_config.guide_rank == guide_rank
+    # guide_rank is stored in guide_families as LowRankGuide for the gene parameter
+    if guide_rank is not None:
+        # Determine which parameter should have the low-rank guide
+        if parameterization == "standard":
+            gene_param = "r"
+        else:  # linked or odds_ratio
+            gene_param = "mu"
+        assert nbdm_mix_results.model_config.guide_families is not None
+        guide_family = nbdm_mix_results.model_config.guide_families.get(
+            gene_param
+        )
+        from scribe.models.components import LowRankGuide
+
+        assert isinstance(guide_family, LowRankGuide)
+        assert guide_family.rank == guide_rank
+    else:
+        # No guide_rank means mean-field (default), so guide_families might be None
+        # or all guides are MeanFieldGuide
+        pass  # Mean-field is the default, so no specific check needed
 
 
 # ------------------------------------------------------------------------------
