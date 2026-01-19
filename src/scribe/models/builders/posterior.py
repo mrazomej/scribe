@@ -57,9 +57,9 @@ def get_posterior_distributions(
     params : Dict[str, jnp.ndarray]
         Dictionary of optimized variational parameters from SVI inference.
         Expected keys depend on the parameterization:
-        - canonical/standard: p_alpha, p_beta, r_loc, r_scale
-        - mean_prob/linked: p_alpha, p_beta, mu_loc, mu_scale
-        - mean_odds/odds_ratio: phi_alpha, phi_beta, mu_loc, mu_scale
+            - canonical/standard: p_alpha, p_beta, r_loc, r_scale
+            - mean_prob/linked: p_alpha, p_beta, mu_loc, mu_scale
+            - mean_odds/odds_ratio: phi_alpha, phi_beta, mu_loc, mu_scale
         For unconstrained: uses _loc, _scale instead of _alpha, _beta
     model_config : ModelConfig
         Model configuration specifying parameterization and model type.
@@ -92,8 +92,11 @@ def get_posterior_distributions(
     uses_vcp = model_config.uses_variable_capture
 
     # Check if this is a low-rank guide by looking for low-rank parameters
+    # Constrained: log_r_W, log_r_raw_diag
+    # Unconstrained: r_W, r_raw_diag
     low_rank = any(
-        key.startswith("log_") and key.endswith("_W") for key in params.keys()
+        key.endswith("_W") and f"{key.replace('_W', '_raw_diag')}" in params
+        for key in params.keys()
     )
 
     # -------------------------------------------------------------------------
@@ -186,7 +189,7 @@ def _build_canonical_posteriors(
             params, "p", is_scalar=True, split=split
         )
         if low_rank:
-            distributions["r"] = _build_low_rank_lognormal_posterior(
+            distributions["r"] = _build_low_rank_exp_normal_posterior(
                 params, "r", is_mixture, split
             )
         else:
@@ -225,7 +228,7 @@ def _build_mean_prob_posteriors(
             params, "p", is_scalar=True, split=split
         )
         if low_rank:
-            distributions["mu"] = _build_low_rank_lognormal_posterior(
+            distributions["mu"] = _build_low_rank_exp_normal_posterior(
                 params, "mu", is_mixture, split
             )
         else:
@@ -263,7 +266,7 @@ def _build_mean_odds_posteriors(
             params, "phi", is_mixture=False, split=split, is_scalar=True
         )
         if low_rank:
-            distributions["mu"] = _build_low_rank_lognormal_posterior(
+            distributions["mu"] = _build_low_rank_exp_normal_posterior(
                 params, "mu", is_mixture, split
             )
         else:
@@ -449,6 +452,68 @@ def _build_low_rank_lognormal_posterior(
         return posterior
 
     return posterior
+
+
+def _build_low_rank_exp_normal_posterior(
+    params: Dict[str, jnp.ndarray],
+    name: str,
+    is_mixture: bool,
+    split: bool,
+) -> Union[dist.Distribution, List[dist.Distribution]]:
+    """
+    Build low-rank TransformedDistribution posterior for unconstrained models.
+
+    For unconstrained models with low-rank guides, the parameters are:
+        - {name}_loc: location parameter
+        - {name}_W: covariance factor
+        - {name}_raw_diag: raw diagonal (will be softplus'd)
+
+    The guide uses TransformedDistribution(LowRankMultivariateNormal,
+    transform), so we reconstruct the same structure here.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Dictionary of variational parameters.
+    name : str
+        Parameter name (e.g., "r", "mu").
+    is_mixture : bool
+        Whether this is a mixture model.
+    split : bool
+        Whether to split into per-gene distributions (not supported for
+        low-rank).
+
+    Returns
+    -------
+    Union[dist.Distribution, List[dist.Distribution]]
+        Low-rank posterior distribution wrapped with appropriate transform.
+    """
+    import jax
+
+    loc = params[f"{name}_loc"]
+    W = params[f"{name}_W"]
+    raw_diag = params[f"{name}_raw_diag"]
+
+    # Ensure diagonal is positive
+    D = jax.nn.softplus(raw_diag) + 1e-4
+
+    # Create low-rank MVN in unconstrained space
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    # Wrap with transform (ExpTransform for positive, SigmoidTransform for (0,1))
+    # Determine transform from parameter name or use ExpTransform as default
+    if name in ["p", "gate", "p_capture"]:
+        transform = dist.transforms.SigmoidTransform()
+    else:
+        transform = dist.transforms.ExpTransform()
+
+    # Return as dict structure to match get_map expectations
+    # get_map expects {"base": base_dist, "transform": transform} for low-rank guides
+    if split:
+        # For low-rank, we can't easily split - return full distribution
+        return {"base": base, "transform": transform}
+
+    return {"base": base, "transform": transform}
 
 
 def _build_sigmoid_normal_posterior(
