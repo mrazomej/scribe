@@ -47,6 +47,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from ..builders import (
     BetaPrimeSpec,
     BetaSpec,
+    ExpNormalSpec,
     GuideBuilder,
     ModelBuilder,
     SigmoidNormalSpec,
@@ -186,15 +187,28 @@ def create_nbvcp(
     capture_family = guide_families.get(capture_param_name)
 
     if unconstrained:
-        param_specs.append(
-            SigmoidNormalSpec(
-                name=capture_param_name,
-                shape_dims=("n_cells",),
-                default_params=(0.0, 1.0),
-                is_cell_specific=True,
-                guide_family=capture_family,
+        # Use ExpNormalSpec for phi_capture (BetaPrime -> [0, +inf))
+        # Use SigmoidNormalSpec for p_capture (Beta -> [0, 1])
+        if capture_param_name == "phi_capture":
+            param_specs.append(
+                ExpNormalSpec(
+                    name=capture_param_name,
+                    shape_dims=("n_cells",),
+                    default_params=(0.0, 1.0),
+                    is_cell_specific=True,
+                    guide_family=capture_family,
+                )
             )
-        )
+        else:
+            param_specs.append(
+                SigmoidNormalSpec(
+                    name=capture_param_name,
+                    shape_dims=("n_cells",),
+                    default_params=(0.0, 1.0),
+                    is_cell_specific=True,
+                    guide_family=capture_family,
+                )
+            )
     else:
         # Use BetaPrime for phi_capture (mean_odds), Beta for p_capture (others)
         if capture_param_name == "phi_capture":
@@ -202,7 +216,10 @@ def create_nbvcp(
                 BetaPrimeSpec(
                     name=capture_param_name,
                     shape_dims=("n_cells",),
-                    default_params=(1.0, 1.0),  # Uniform prior on capture odds ratio
+                    default_params=(
+                        1.0,
+                        1.0,
+                    ),  # Uniform prior on capture odds ratio
                     is_cell_specific=True,
                     guide_family=capture_family,
                 )
@@ -212,7 +229,10 @@ def create_nbvcp(
                 BetaSpec(
                     name=capture_param_name,
                     shape_dims=("n_cells",),
-                    default_params=(1.0, 1.0),  # Uniform prior on capture probability
+                    default_params=(
+                        1.0,
+                        1.0,
+                    ),  # Uniform prior on capture probability
                     is_cell_specific=True,
                     guide_family=capture_family,
                 )
