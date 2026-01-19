@@ -43,17 +43,23 @@ from .model_registry import (
 )
 
 # Export config system from config subdirectory
+# Note: PriorConfig and GuideConfig have been deprecated in favor of ParamSpec
+# objects with prior/guide tuples directly on the spec. See
+# scribe.models.builders.parameter_specs for the new approach.
 from .config import (
     ModelConfigBuilder,
     ModelConfig,
-    PriorConfig,
-    GuideConfig,
     GuideFamilyConfig,
     VAEConfig,
+    SVIConfig,
+    MCMCConfig,
+    DataConfig,
     ModelType,
     Parameterization,
     InferenceMethod,
     VAEPriorType,
+    VAEMaskType,
+    VAEActivation,
     # Parameter mapping utilities
     get_active_parameters,
     get_required_parameters,

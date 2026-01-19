@@ -113,32 +113,32 @@ class TestParameterSpecs:
 
     def test_beta_spec_support(self):
         """Test BetaSpec has correct support."""
-        spec = BetaSpec("p", (), (1.0, 1.0))
+        spec = BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0))
         assert spec.support.is_discrete == False  # unit_interval is continuous
 
     def test_beta_spec_arg_constraints(self):
         """Test BetaSpec has correct arg_constraints."""
-        spec = BetaSpec("p", (), (1.0, 1.0))
+        spec = BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0))
         assert "concentration1" in spec.arg_constraints
         assert "concentration0" in spec.arg_constraints
 
     def test_lognormal_spec_support(self):
         """Test LogNormalSpec has correct support."""
-        spec = LogNormalSpec("r", ("n_genes",), (0.0, 1.0))
+        spec = LogNormalSpec(name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0))
         # positive support
         assert hasattr(spec, "support")
         assert hasattr(spec, "arg_constraints")
 
     def test_sigmoid_normal_spec_support(self):
         """Test SigmoidNormalSpec has correct support via transform."""
-        spec = SigmoidNormalSpec("p", (), (0.0, 1.0))
+        spec = SigmoidNormalSpec(name="p", shape_dims=(), default_params=(0.0, 1.0))
         # Support derived from transform codomain
         assert hasattr(spec, "support")
         assert hasattr(spec, "arg_constraints")
 
     def test_exp_normal_spec_support(self):
         """Test ExpNormalSpec has correct support via transform."""
-        spec = ExpNormalSpec("r", ("n_genes",), (0.0, 1.0))
+        spec = ExpNormalSpec(name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0))
         # Support derived from transform codomain
         assert hasattr(spec, "support")
         assert hasattr(spec, "arg_constraints")
@@ -156,10 +156,10 @@ class TestModelBuilder:
         """Test building a simple NBDM-like model."""
         model = (
             ModelBuilder()
-            .add_param(BetaSpec("p", (), (1.0, 1.0)))
+            .add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
             .add_param(
                 LogNormalSpec(
-                    "r", ("n_genes",), (0.0, 1.0), is_gene_specific=True
+                    name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0), is_gene_specific=True
                 )
             )
             .with_likelihood(NegativeBinomialLikelihood())
@@ -188,10 +188,10 @@ class TestModelBuilder:
         """Test building model with derived parameters (linked parameterization)."""
         model = (
             ModelBuilder()
-            .add_param(BetaSpec("p", (), (1.0, 1.0)))
+            .add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
             .add_param(
                 LogNormalSpec(
-                    "mu", ("n_genes",), (0.0, 1.0), is_gene_specific=True
+                    name="mu", shape_dims=("n_genes",), default_params=(0.0, 1.0), is_gene_specific=True
                 )
             )
             .add_derived("r", lambda p, mu: mu * (1 - p) / p, ["p", "mu"])
@@ -215,7 +215,7 @@ class TestModelBuilder:
 
     def test_build_requires_likelihood(self):
         """Test that build() fails without likelihood."""
-        builder = ModelBuilder().add_param(BetaSpec("p", (), (1.0, 1.0)))
+        builder = ModelBuilder().add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
 
         with pytest.raises(ValueError, match="Likelihood must be set"):
             builder.build()
@@ -232,11 +232,11 @@ class TestGuideBuilder:
     def test_build_mean_field_guide(self, model_config, small_counts):
         """Test building a mean-field guide."""
         specs = [
-            BetaSpec("p", (), (1.0, 1.0), guide_family=MeanFieldGuide()),
+            BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0), guide_family=MeanFieldGuide()),
             LogNormalSpec(
-                "r",
-                ("n_genes",),
-                (0.0, 1.0),
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
                 is_gene_specific=True,
                 guide_family=MeanFieldGuide(),
             ),
@@ -263,11 +263,11 @@ class TestGuideBuilder:
     def test_build_low_rank_guide(self, model_config, small_counts):
         """Test building a guide with low-rank component."""
         specs = [
-            BetaSpec("p", (), (1.0, 1.0), guide_family=MeanFieldGuide()),
+            BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0), guide_family=MeanFieldGuide()),
             LogNormalSpec(
-                "r",
-                ("n_genes",),
-                (0.0, 1.0),
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
                 is_gene_specific=True,
                 guide_family=LowRankGuide(rank=5),
             ),
@@ -613,15 +613,15 @@ class TestMixtureModels:
         from scribe.models.builders import BetaSpec
 
         # This should work
-        spec1 = BetaSpec("p", (), (1.0, 1.0), is_mixture=True)
+        spec1 = BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0), is_mixture=True)
         assert spec1.is_mixture is True
 
         # This should fail
         with pytest.raises(ValueError, match="is_mixture and is_cell_specific"):
             BetaSpec(
-                "p_capture",
-                ("n_cells",),
-                (1.0, 1.0),
+                name="p_capture",
+                shape_dims=("n_cells",),
+                default_params=(1.0, 1.0),
                 is_cell_specific=True,
                 is_mixture=True,
             )
@@ -655,11 +655,11 @@ class TestMixtureModels:
         builder = ModelBuilder()
         assert builder.is_mixture is False
 
-        builder.add_param(BetaSpec("p", (), (1.0, 1.0)))
+        builder.add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
         assert builder.is_mixture is False
 
         builder.add_param(
-            LogNormalSpec("r", ("n_genes",), (0.0, 1.0), is_mixture=True)
+            LogNormalSpec(name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0), is_mixture=True)
         )
         assert builder.is_mixture is True
 

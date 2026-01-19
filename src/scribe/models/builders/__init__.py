@@ -74,6 +74,7 @@ from .guide_builder import (
     setup_guide,
     setup_cell_specific_guide,
 )
+from .posterior import get_posterior_distributions
 
 __all__ = [
     # Parameter specs
@@ -96,4 +97,6 @@ __all__ = [
     # Guide functions
     "setup_guide",
     "setup_cell_specific_guide",
+    # Posterior extraction
+    "get_posterior_distributions",
 ]

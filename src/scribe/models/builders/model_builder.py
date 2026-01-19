@@ -274,13 +274,12 @@ class ModelBuilder:
                 )
                 if mixing_spec is None:
                     # Create default Dirichlet spec for mixing weights
-                    mixing_prior_params = getattr(
-                        model_config.priors, "mixing", None
-                    ) or tuple([1.0] * n_components)
+                    # Use uniform prior (all concentrations = 1)
+                    mixing_prior_params = tuple([1.0] * n_components)
                     mixing_spec = DirichletSpec(
-                        "mixing_weights",
-                        (),
-                        mixing_prior_params,
+                        name="mixing_weights",
+                        shape_dims=(),
+                        default_params=mixing_prior_params,
                         is_mixture=False,  # Mixing weights are not mixture-specific
                     )
 

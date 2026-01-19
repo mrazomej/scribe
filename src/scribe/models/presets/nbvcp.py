@@ -188,9 +188,9 @@ def create_nbvcp(
     if unconstrained:
         param_specs.append(
             SigmoidNormalSpec(
-                capture_param_name,
-                ("n_cells",),
-                (0.0, 1.0),
+                name=capture_param_name,
+                shape_dims=("n_cells",),
+                default_params=(0.0, 1.0),
                 is_cell_specific=True,
                 guide_family=capture_family,
             )
@@ -200,9 +200,9 @@ def create_nbvcp(
         if capture_param_name == "phi_capture":
             param_specs.append(
                 BetaPrimeSpec(
-                    capture_param_name,
-                    ("n_cells",),
-                    (1.0, 1.0),  # Uniform prior on capture odds ratio
+                    name=capture_param_name,
+                    shape_dims=("n_cells",),
+                    default_params=(1.0, 1.0),  # Uniform prior on capture odds ratio
                     is_cell_specific=True,
                     guide_family=capture_family,
                 )
@@ -210,9 +210,9 @@ def create_nbvcp(
         else:
             param_specs.append(
                 BetaSpec(
-                    capture_param_name,
-                    ("n_cells",),
-                    (1.0, 1.0),  # Uniform prior on capture probability
+                    name=capture_param_name,
+                    shape_dims=("n_cells",),
+                    default_params=(1.0, 1.0),  # Uniform prior on capture probability
                     is_cell_specific=True,
                     guide_family=capture_family,
                 )

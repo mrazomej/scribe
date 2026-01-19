@@ -53,7 +53,8 @@ scribe.models.builders.model_builder : Uses specs to build models.
 scribe.models.components.guide_families : Guide dispatch implementations.
 """
 
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union, Type
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, Type
 
 import jax.numpy as jnp
 import numpyro
@@ -64,9 +65,11 @@ from numpyro.distributions.transforms import Transform
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 
 from scribe.stats.distributions import BetaPrime
+# Import GuideFamily at runtime (safe because guide_families doesn't import from
+# builders)
+from ..components.guide_families import GuideFamily
 
 if TYPE_CHECKING:
-    from ..components.guide_families import GuideFamily
     from ..config import ModelConfig
 
 
@@ -275,7 +278,7 @@ class ParamSpec(BaseModel):
     is_mixture: bool = Field(
         False, description="If True, parameter is mixture-specific"
     )
-    guide_family: Optional["GuideFamily"] = Field(
+    guide_family: Optional[GuideFamily] = Field(
         None, description="Variational family for this parameter"
     )
 
