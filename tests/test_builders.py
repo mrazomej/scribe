@@ -52,6 +52,7 @@ from scribe.models.presets import (
 
 # Import main API
 from scribe.models import get_model_and_guide
+from scribe.inference.preset_builder import build_config_from_preset
 
 # Import parameterizations
 from scribe.models.parameterizations import (
@@ -124,21 +125,27 @@ class TestParameterSpecs:
 
     def test_lognormal_spec_support(self):
         """Test LogNormalSpec has correct support."""
-        spec = LogNormalSpec(name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0))
+        spec = LogNormalSpec(
+            name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0)
+        )
         # positive support
         assert hasattr(spec, "support")
         assert hasattr(spec, "arg_constraints")
 
     def test_sigmoid_normal_spec_support(self):
         """Test SigmoidNormalSpec has correct support via transform."""
-        spec = SigmoidNormalSpec(name="p", shape_dims=(), default_params=(0.0, 1.0))
+        spec = SigmoidNormalSpec(
+            name="p", shape_dims=(), default_params=(0.0, 1.0)
+        )
         # Support derived from transform codomain
         assert hasattr(spec, "support")
         assert hasattr(spec, "arg_constraints")
 
     def test_exp_normal_spec_support(self):
         """Test ExpNormalSpec has correct support via transform."""
-        spec = ExpNormalSpec(name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0))
+        spec = ExpNormalSpec(
+            name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0)
+        )
         # Support derived from transform codomain
         assert hasattr(spec, "support")
         assert hasattr(spec, "arg_constraints")
@@ -156,10 +163,15 @@ class TestModelBuilder:
         """Test building a simple NBDM-like model."""
         model = (
             ModelBuilder()
-            .add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
+            .add_param(
+                BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0))
+            )
             .add_param(
                 LogNormalSpec(
-                    name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0), is_gene_specific=True
+                    name="r",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
                 )
             )
             .with_likelihood(NegativeBinomialLikelihood())
@@ -188,10 +200,15 @@ class TestModelBuilder:
         """Test building model with derived parameters (linked parameterization)."""
         model = (
             ModelBuilder()
-            .add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
+            .add_param(
+                BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0))
+            )
             .add_param(
                 LogNormalSpec(
-                    name="mu", shape_dims=("n_genes",), default_params=(0.0, 1.0), is_gene_specific=True
+                    name="mu",
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    is_gene_specific=True,
                 )
             )
             .add_derived("r", lambda p, mu: mu * (1 - p) / p, ["p", "mu"])
@@ -215,7 +232,9 @@ class TestModelBuilder:
 
     def test_build_requires_likelihood(self):
         """Test that build() fails without likelihood."""
-        builder = ModelBuilder().add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
+        builder = ModelBuilder().add_param(
+            BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0))
+        )
 
         with pytest.raises(ValueError, match="Likelihood must be set"):
             builder.build()
@@ -232,7 +251,12 @@ class TestGuideBuilder:
     def test_build_mean_field_guide(self, model_config, small_counts):
         """Test building a mean-field guide."""
         specs = [
-            BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0), guide_family=MeanFieldGuide()),
+            BetaSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(1.0, 1.0),
+                guide_family=MeanFieldGuide(),
+            ),
             LogNormalSpec(
                 name="r",
                 shape_dims=("n_genes",),
@@ -263,7 +287,12 @@ class TestGuideBuilder:
     def test_build_low_rank_guide(self, model_config, small_counts):
         """Test building a guide with low-rank component."""
         specs = [
-            BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0), guide_family=MeanFieldGuide()),
+            BetaSpec(
+                name="p",
+                shape_dims=(),
+                default_params=(1.0, 1.0),
+                guide_family=MeanFieldGuide(),
+            ),
             LogNormalSpec(
                 name="r",
                 shape_dims=("n_genes",),
@@ -473,7 +502,8 @@ class TestMainAPI:
     @pytest.mark.parametrize("model_type", ["nbdm", "zinb", "nbvcp", "zinbvcp"])
     def test_all_model_types(self, model_type, model_config, small_counts):
         """Test v2 API supports all model types."""
-        model, guide = get_model_and_guide(model_type)
+        config = build_config_from_preset(model=model_type)
+        model, guide = get_model_and_guide(config)
 
         with numpyro.handlers.seed(rng_seed=0):
             model(
@@ -491,11 +521,12 @@ class TestMainAPI:
 
     def test_with_guide_families(self, model_config, small_counts):
         """Test get_model_and_guide with GuideFamilyConfig options."""
-        model, guide = get_model_and_guide(
-            model_type="nbdm",
+        config = build_config_from_preset(
+            model="nbdm",
             parameterization="linked",
-            guide_families=GuideFamilyConfig(mu=LowRankGuide(rank=5)),
+            guide_rank=5,  # This creates LowRankGuide for mu
         )
+        model, guide = get_model_and_guide(config)
 
         with numpyro.handlers.seed(rng_seed=0):
             guide(
@@ -512,12 +543,20 @@ class TestMainAPI:
             hidden_dims=[32, 16],
             output_params=["log_alpha", "log_beta"],
         )
-        model, guide = get_model_and_guide(
-            model_type="nbvcp",
-            guide_families=GuideFamilyConfig(
-                p_capture=AmortizedGuide(amortizer=amortizer)
-            ),
+        # Build config with amortized guide using ModelConfigBuilder
+        from scribe.models.config import ModelConfigBuilder
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("canonical")
+            .with_inference("svi")
+            .with_guide_families(
+                GuideFamilyConfig(p_capture=AmortizedGuide(amortizer=amortizer))
+            )
+            .build()
         )
+        model, guide = get_model_and_guide(config)
 
         with numpyro.handlers.seed(rng_seed=0):
             guide(
@@ -528,9 +567,21 @@ class TestMainAPI:
             )
 
     def test_unknown_model_type(self):
-        """Test get_model_and_guide raises error for unknown model type."""
-        with pytest.raises(ValueError, match="Unknown model_type"):
-            get_model_and_guide("unknown_model")
+        """Test that ModelConfigBuilder raises error for unknown model type."""
+        from scribe.models.config import ModelConfigBuilder
+        from pydantic import ValidationError
+
+        # ModelConfigBuilder validates model type at build time
+        with pytest.raises(
+            (ValueError, ValidationError), match="Invalid model type"
+        ):
+            config = (
+                ModelConfigBuilder()
+                .for_model("unknown_model")
+                .with_parameterization("canonical")
+                .with_inference("svi")
+                .build()
+            )
 
 
 # ==============================================================================
@@ -613,7 +664,9 @@ class TestMixtureModels:
         from scribe.models.builders import BetaSpec
 
         # This should work
-        spec1 = BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0), is_mixture=True)
+        spec1 = BetaSpec(
+            name="p", shape_dims=(), default_params=(1.0, 1.0), is_mixture=True
+        )
         assert spec1.is_mixture is True
 
         # This should fail
@@ -655,11 +708,18 @@ class TestMixtureModels:
         builder = ModelBuilder()
         assert builder.is_mixture is False
 
-        builder.add_param(BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0)))
+        builder.add_param(
+            BetaSpec(name="p", shape_dims=(), default_params=(1.0, 1.0))
+        )
         assert builder.is_mixture is False
 
         builder.add_param(
-            LogNormalSpec(name="r", shape_dims=("n_genes",), default_params=(0.0, 1.0), is_mixture=True)
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_mixture=True,
+            )
         )
         assert builder.is_mixture is True
 
