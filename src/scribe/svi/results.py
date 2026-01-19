@@ -1132,9 +1132,10 @@ class ScribeSVIResults:
         """Get the model and guide functions based on model type."""
         from ..models.model_registry import get_model_and_guide
 
-        # Use new builder-based API
+        # Use base_model from config (not model_type which may have _mix suffix)
+        # get_model_and_guide expects base model type and uses n_components for mixture
         return get_model_and_guide(
-            self.model_type,
+            self.model_config.base_model,
             parameterization=self.model_config.parameterization.value,
             unconstrained=self.model_config.unconstrained,
             guide_families=self.model_config.guide_families,

@@ -114,6 +114,11 @@ def _run_mcmc_inference(
         mcmc_kwargs=mcmc_kwargs,
     )
 
+    # Compute model_type: add _mix suffix for mixture models
+    model_type = model_config.base_model
+    if model_config.n_components is not None:
+        model_type = f"{model_config.base_model}_mix"
+
     # Package results using the factory
     return MCMCResultsFactory.create_results(
         mcmc_results=mcmc,
@@ -122,7 +127,7 @@ def _run_mcmc_inference(
         count_data=count_data,
         n_cells=n_cells,
         n_genes=n_genes,
-        model_type=model_config.base_model,
+        model_type=model_type,
         n_components=model_config.n_components,
         prior_params=model_config.get_active_priors(),
     )
