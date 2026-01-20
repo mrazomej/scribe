@@ -1,0 +1,8 @@
+# @package _global_
+# NBVCP (Negative Binomial with Variable Capture Probability) preset
+# Models cell-specific technical dropout/capture efficiency
+
+model: nbvcp
+parameterization: canonical
+unconstrained: false
+n_components: null

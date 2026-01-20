@@ -1,7 +1,13 @@
 # @package inference
-method: "svi"
+# Stochastic Variational Inference configuration
 
-# SVI Parameters
+method: svi
+
+# Number of optimization steps
 n_steps: 50_000
+
+# Mini-batch size (null = use full dataset)
 batch_size: null
+
+# Use numerically stable parameter updates
 stable_update: true

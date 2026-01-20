@@ -1,0 +1,8 @@
+# @package _global_
+# NBDM (Negative Binomial Dropout Model) preset
+# Simplest model - good baseline for well-behaved data
+
+model: nbdm
+parameterization: canonical
+unconstrained: false
+n_components: null

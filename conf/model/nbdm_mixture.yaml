@@ -1,0 +1,9 @@
+# @package _global_
+# NBDM mixture model preset
+# For cell type discovery with 3 components
+
+model: nbdm
+parameterization: canonical
+unconstrained: false
+n_components: 3
+mixture_params: null
