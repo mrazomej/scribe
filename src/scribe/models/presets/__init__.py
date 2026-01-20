@@ -77,28 +77,37 @@ scribe.models.config : Configuration classes.
 """
 
 # Unified factory
-from .factory import create_model, create_model_from_params
+from .factory import (
+    create_model,
+    create_model_from_params,
+    validate_model_guide_compatibility,
+)
 
 # Registries and helpers
 from .registry import (
+    GUIDE_FAMILY_REGISTRY,
     LIKELIHOOD_REGISTRY,
     MODEL_EXTRA_PARAMS,
     apply_prior_guide_overrides,
     build_capture_spec,
     build_extra_param_spec,
     build_gate_spec,
+    get_guide_family,
 )
 
 __all__ = [
     # Unified factory
     "create_model",
     "create_model_from_params",
+    "validate_model_guide_compatibility",
     # Registries
     "MODEL_EXTRA_PARAMS",
     "LIKELIHOOD_REGISTRY",
+    "GUIDE_FAMILY_REGISTRY",
     # Registry helpers
     "build_gate_spec",
     "build_capture_spec",
     "build_extra_param_spec",
     "apply_prior_guide_overrides",
+    "get_guide_family",
 ]

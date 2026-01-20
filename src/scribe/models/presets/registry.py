@@ -10,6 +10,8 @@ MODEL_EXTRA_PARAMS : Dict[str, List[str]]
     Maps model types to their extra parameters beyond core parameterization.
 LIKELIHOOD_REGISTRY : Dict[str, Type[Likelihood]]
     Maps model types to their likelihood classes.
+GUIDE_FAMILY_REGISTRY : Dict[str, Type[GuideFamily]]
+    Maps string names to guide family classes for YAML configuration.
 
 Functions
 ---------
@@ -21,6 +23,8 @@ build_extra_param_spec
     Dispatch to appropriate builder based on parameter name.
 apply_prior_guide_overrides
     Apply user-provided prior/guide overrides to param specs.
+get_guide_family
+    Get a guide family instance by name.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Type
@@ -29,9 +33,14 @@ from ..builders.parameter_specs import (
     BetaPrimeSpec,
     BetaSpec,
     ExpNormalSpec,
-    LogNormalSpec,
     ParamSpec,
     SigmoidNormalSpec,
+)
+from ..components.guide_families import (
+    AmortizedGuide,
+    GuideFamily,
+    LowRankGuide,
+    MeanFieldGuide,
 )
 from ..components.likelihoods import (
     Likelihood,
@@ -63,6 +72,53 @@ LIKELIHOOD_REGISTRY: Dict[str, Type[Likelihood]] = {
     "nbvcp": NBWithVCPLikelihood,
     "zinbvcp": ZINBWithVCPLikelihood,
 }
+
+# Guide family registry - maps string names to guide family classes
+# This allows string-based specification in YAML configs
+GUIDE_FAMILY_REGISTRY: Dict[str, Type[GuideFamily]] = {
+    "mean_field": MeanFieldGuide,
+    "low_rank": LowRankGuide,
+    "amortized": AmortizedGuide,
+}
+
+
+def get_guide_family(name: str, **kwargs: Any) -> GuideFamily:
+    """Get a guide family instance by name.
+
+    This allows creating guide families from string names, which is useful
+    for YAML configuration.
+
+    Parameters
+    ----------
+    name : str
+        Name of the guide family: "mean_field", "low_rank", or "amortized".
+    **kwargs
+        Additional arguments to pass to the guide family constructor.
+        For "low_rank", pass rank=int.
+        For "amortized", pass amortizer=Amortizer instance.
+
+    Returns
+    -------
+    GuideFamily
+        Instance of the requested guide family.
+
+    Raises
+    ------
+    ValueError
+        If name is not recognized.
+
+    Examples
+    --------
+    >>> guide = get_guide_family("mean_field")
+    >>> guide = get_guide_family("low_rank", rank=10)
+    """
+    if name not in GUIDE_FAMILY_REGISTRY:
+        raise ValueError(
+            f"Unknown guide family: {name}. "
+            f"Valid options: {list(GUIDE_FAMILY_REGISTRY.keys())}"
+        )
+    return GUIDE_FAMILY_REGISTRY[name](**kwargs)
+
 
 # ==============================================================================
 # Extra Parameter Builders
@@ -292,6 +348,10 @@ def apply_prior_guide_overrides(
     user-provided prior and guide hyperparameters. It creates new spec
     instances (immutable pattern) rather than modifying in place.
 
+    Validation is performed automatically:
+    - Parameter names are checked against the available specs
+    - Hyperparameter tuple length and values are validated by ParamSpec
+
     Parameters
     ----------
     param_specs : List[ParamSpec]
@@ -307,6 +367,12 @@ def apply_prior_guide_overrides(
     List[ParamSpec]
         Updated list of parameter specifications with overrides applied.
 
+    Raises
+    ------
+    ValueError
+        If a parameter name in priors/guides is not found in param_specs.
+        If hyperparameter values are invalid for the parameter's distribution.
+
     Examples
     --------
     >>> specs = [BetaSpec(name="p", ...), LogNormalSpec(name="r", ...)]
@@ -318,6 +384,26 @@ def apply_prior_guide_overrides(
     if priors is None and guides is None:
         return param_specs
 
+    # Validate parameter names exist in specs
+    spec_names = {spec.name for spec in param_specs}
+
+    if priors is not None:
+        unknown_priors = set(priors.keys()) - spec_names
+        if unknown_priors:
+            raise ValueError(
+                f"Unknown parameter names in priors: {sorted(unknown_priors)}. "
+                f"Valid parameters for this model: {sorted(spec_names)}"
+            )
+
+    if guides is not None:
+        unknown_guides = set(guides.keys()) - spec_names
+        if unknown_guides:
+            raise ValueError(
+                f"Unknown parameter names in guides: {sorted(unknown_guides)}. "
+                f"Valid parameters for this model: {sorted(spec_names)}"
+            )
+
+    # Apply overrides (ParamSpec validates hyperparameter values)
     updated_specs = []
     for spec in param_specs:
         updates = {}
@@ -328,6 +414,7 @@ def apply_prior_guide_overrides(
 
         if updates:
             # Create new spec with updates (immutable pattern)
+            # ParamSpec's validate_hyperparameters will validate the values
             updated_spec = spec.model_copy(update=updates)
             updated_specs.append(updated_spec)
         else:
@@ -344,10 +431,12 @@ __all__ = [
     # Registries
     "MODEL_EXTRA_PARAMS",
     "LIKELIHOOD_REGISTRY",
+    "GUIDE_FAMILY_REGISTRY",
     # Builders
     "build_gate_spec",
     "build_capture_spec",
     "build_extra_param_spec",
     # Helpers
     "apply_prior_guide_overrides",
+    "get_guide_family",
 ]

@@ -59,6 +59,14 @@ from .inference.utils import (
 from .inference.preset_builder import build_config_from_preset
 from .inference.dispatcher import _run_inference
 
+# Import result types for type annotations
+from .svi.results import ScribeSVIResults
+from .mcmc.results import ScribeMCMCResults
+from .vae.results import ScribeVAEResults
+
+# Type alias for return type
+ScribeResults = Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
+
 # Valid model types
 VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp"}
 
@@ -105,7 +113,7 @@ def fit(
     # Power user: explicit configs override above
     model_config: Optional[ModelConfig] = None,
     inference_config: Optional[InferenceConfig] = None,
-) -> Any:
+) -> ScribeResults:
     """
     Simplified entry point for SCRIBE inference.
 
