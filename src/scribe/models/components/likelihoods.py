@@ -533,8 +533,12 @@ class NBWithVCPLikelihood(Likelihood):
                         )
                     phi = param_values["phi"]
                     # Reshape phi_capture for broadcasting:
-                    # (n_cells,) -> (n_cells, 1, 1)
-                    phi_capture_reshaped = phi_capture[:, None, None]
+                    # - Mixture: (n_cells,) -> (n_cells, 1, 1) for (n_components, n_genes)
+                    # - Single: (n_cells,) -> (n_cells, 1) for (n_genes,)
+                    if is_mixture:
+                        phi_capture_reshaped = phi_capture[:, None, None]
+                    else:
+                        phi_capture_reshaped = phi_capture[:, None]
 
                     if is_mixture:
                         # Mixture model
@@ -600,10 +604,13 @@ class NBWithVCPLikelihood(Likelihood):
                         p_capture = numpyro.sample(
                             "p_capture", dist.Beta(*capture_prior_params)
                         )
-                    # Reshape p_capture for broadcasting with components
-                    # p_capture is (n_cells,) or (batch_size,),
-                    # reshape to (n_cells, 1, 1)
-                    p_capture_reshaped = p_capture[:, None, None]
+                    # Reshape p_capture for broadcasting
+                    # - Mixture: [:, None, None] for (n_cells, 1, 1) to broadcast with (n_components, n_genes)
+                    # - Single: [:, None] for (n_cells, 1) to broadcast with (n_genes,)
+                    if is_mixture:
+                        p_capture_reshaped = p_capture[:, None, None]
+                    else:
+                        p_capture_reshaped = p_capture[:, None]
 
                     # Broadcast p to match if needed (for component-specific p)
                     if is_mixture:
@@ -691,7 +698,11 @@ class NBWithVCPLikelihood(Likelihood):
                             "phi_capture", BetaPrime(*capture_prior_params)
                         )
                     phi = param_values["phi"]
-                    phi_capture_reshaped = phi_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        phi_capture_reshaped = phi_capture[:, None, None]
+                    else:
+                        phi_capture_reshaped = phi_capture[:, None]
 
                     if is_mixture:
                         mixing_weights = param_values["mixing_weights"]
@@ -746,8 +757,13 @@ class NBWithVCPLikelihood(Likelihood):
                         p_capture = numpyro.sample(
                             "p_capture", dist.Beta(*capture_prior_params)
                         )
-                    # Reshape p_capture for broadcasting with components
-                    p_capture_reshaped = p_capture[:, None, None]
+                    # Reshape p_capture for broadcasting
+                    # - Mixture: [:, None, None] for (n_cells, 1, 1) to broadcast with (n_components, n_genes)
+                    # - Single: [:, None] for (n_cells, 1) to broadcast with (n_genes,)
+                    if is_mixture:
+                        p_capture_reshaped = p_capture[:, None, None]
+                    else:
+                        p_capture_reshaped = p_capture[:, None]
 
                     # Broadcast p to match if needed
                     if is_mixture:
@@ -818,7 +834,11 @@ class NBWithVCPLikelihood(Likelihood):
                             "phi_capture", BetaPrime(*capture_prior_params)
                         )
                     phi = param_values["phi"]
-                    phi_capture_reshaped = phi_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        phi_capture_reshaped = phi_capture[:, None, None]
+                    else:
+                        phi_capture_reshaped = phi_capture[:, None]
 
                     if is_mixture:
                         mixing_weights = param_values["mixing_weights"]
@@ -873,8 +893,13 @@ class NBWithVCPLikelihood(Likelihood):
                         p_capture = numpyro.sample(
                             "p_capture", dist.Beta(*capture_prior_params)
                         )
-                    # Reshape p_capture for broadcasting with components
-                    p_capture_reshaped = p_capture[:, None, None]
+                    # Reshape p_capture for broadcasting
+                    # - Mixture: [:, None, None] for (batch, 1, 1) to broadcast with (n_components, n_genes)
+                    # - Single: [:, None] for (batch, 1) to broadcast with (n_genes,)
+                    if is_mixture:
+                        p_capture_reshaped = p_capture[:, None, None]
+                    else:
+                        p_capture_reshaped = p_capture[:, None]
 
                     # Broadcast p to match if needed
                     if is_mixture:
@@ -1062,7 +1087,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                             "phi_capture", BetaPrime(*capture_prior_params)
                         )
                     phi = param_values["phi"]
-                    phi_capture_reshaped = phi_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        phi_capture_reshaped = phi_capture[:, None, None]
+                    else:
+                        phi_capture_reshaped = phi_capture[:, None]
 
                     if is_mixture:
                         mixing_weights = param_values["mixing_weights"]
@@ -1122,7 +1151,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                         p_capture = numpyro.sample(
                             "p_capture", dist.Beta(*capture_prior_params)
                         )
-                    p_capture_reshaped = p_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        p_capture_reshaped = p_capture[:, None, None]
+                    else:
+                        p_capture_reshaped = p_capture[:, None]
 
                     # Broadcast p and gate if needed
                     if is_mixture:
@@ -1204,7 +1237,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                             "phi_capture", BetaPrime(*capture_prior_params)
                         )
                     phi = param_values["phi"]
-                    phi_capture_reshaped = phi_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        phi_capture_reshaped = phi_capture[:, None, None]
+                    else:
+                        phi_capture_reshaped = phi_capture[:, None]
 
                     if is_mixture:
                         mixing_weights = param_values["mixing_weights"]
@@ -1265,7 +1302,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                         p_capture = numpyro.sample(
                             "p_capture", dist.Beta(*capture_prior_params)
                         )
-                    p_capture_reshaped = p_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        p_capture_reshaped = p_capture[:, None, None]
+                    else:
+                        p_capture_reshaped = p_capture[:, None]
 
                     if is_mixture:
                         if p.ndim == 0:
@@ -1350,7 +1391,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                             "phi_capture", BetaPrime(*capture_prior_params)
                         )
                     phi = param_values["phi"]
-                    phi_capture_reshaped = phi_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        phi_capture_reshaped = phi_capture[:, None, None]
+                    else:
+                        phi_capture_reshaped = phi_capture[:, None]
 
                     if is_mixture:
                         mixing_weights = param_values["mixing_weights"]
@@ -1411,7 +1456,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                         p_capture = numpyro.sample(
                             "p_capture", dist.Beta(*capture_prior_params)
                         )
-                    p_capture_reshaped = p_capture[:, None, None]
+                    # Reshape for broadcasting
+                    if is_mixture:
+                        p_capture_reshaped = p_capture[:, None, None]
+                    else:
+                        p_capture_reshaped = p_capture[:, None]
 
                     if is_mixture:
                         if p.ndim == 0:
