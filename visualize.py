@@ -68,8 +68,10 @@ import seaborn as sns
 import scanpy as sc
 import numpy as np
 import warnings
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
 from viz_utils import (
-    _get_config_values,
     plot_loss,
     plot_ecdf,
     plot_ppc,
@@ -77,6 +79,8 @@ from viz_utils import (
     plot_correlation_heatmap,
     plot_mixture_ppc,
 )
+
+console = Console()
 
 # Suppress scanpy/anndata deprecation warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
@@ -87,20 +91,31 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
-    print("=" * 80)
-    print("🎨 SCRIBE VISUALIZATION PIPELINE")
-    print("=" * 80)
-    print(f"📁 Working directory: {os.getcwd()}")
-    print("\n📋 Configuration:")
-    print("-" * 40)
-    print(OmegaConf.to_yaml(cfg))
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_magenta]🎨 SCRIBE VISUALIZATION PIPELINE[/bold bright_magenta]",
+            border_style="bright_magenta",
+        )
+    )
+    console.print(
+        f"[dim]📁 Working directory:[/dim] [cyan]{os.getcwd()}[/cyan]"
+    )
+    console.print("\n[bold]📋 Configuration:[/bold]")
+    config_yaml = OmegaConf.to_yaml(cfg)
+    syntax = Syntax(config_yaml, "yaml", theme="monokai", line_numbers=False)
+    console.print(syntax)
 
     # ==========================================================================
     # Directory Detection Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("🔍 DETECTING INFERENCE RESULTS")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_cyan]🔍 DETECTING INFERENCE RESULTS[/bold bright_cyan]",
+            border_style="bright_cyan",
+        )
+    )
 
     # Auto-detect the run directory based on the same Hydra path structure
     # that would have been used for the original inference run
@@ -117,7 +132,9 @@ def main(cfg: DictConfig) -> None:
             run_dir_value = viz_cfg.run_dir
             if run_dir_value is not None and run_dir_value != "???":
                 run_dir = hydra.utils.to_absolute_path(run_dir_value)
-                print(f"📂 Using explicit run_dir from config: {run_dir}")
+                console.print(
+                    f"[dim]📂 Using explicit run_dir from config:[/dim] [cyan]{run_dir}[/cyan]"
+                )
                 run_dir_set = True
         except Exception:
             # run_dir is missing or set to ???
@@ -153,75 +170,97 @@ def main(cfg: DictConfig) -> None:
         )
         run_dir = hydra.utils.to_absolute_path(run_dir)
 
-    print(f"🔍 Auto-detecting run directory...")
-    print(f"📂 Expected directory: {run_dir}")
+    console.print("[dim]🔍 Auto-detecting run directory...[/dim]")
+    console.print(f"[dim]📂 Expected directory:[/dim] [cyan]{run_dir}[/cyan]")
 
     # Check if the directory exists
     if not os.path.exists(run_dir):
-        print("❌ ERROR: Run directory does not exist!")
-        print(f"   Missing: {run_dir}")
-        print(
-            "💡 Make sure you've run the inference first with the same "
-            "configuration."
+        console.print(
+            "[bold red]❌ ERROR: Run directory does not exist![/bold red]"
+        )
+        console.print(f"[red]   Missing:[/red] [cyan]{run_dir}[/cyan]")
+        console.print(
+            "[yellow]💡 Make sure you've run the inference first with the same "
+            "configuration.[/yellow]"
         )
         return
 
-    print("✅ Run directory found!")
+    console.print("[green]✅ Run directory found![/green]")
 
     # ==========================================================================
     # Results Loading Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("📊 LOADING INFERENCE RESULTS")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_blue]📊 LOADING INFERENCE RESULTS[/bold bright_blue]",
+            border_style="bright_blue",
+        )
+    )
 
     # Create figs directory
     figs_dir = os.path.join(run_dir, "figs")
     os.makedirs(figs_dir, exist_ok=True)
-    print(f"📁 Figures directory: {figs_dir}")
+    console.print(f"[dim]📁 Figures directory:[/dim] [cyan]{figs_dir}[/cyan]")
 
     # Load scribe results
     results_file = os.path.join(run_dir, "scribe_results.pkl")
-    print(f"📦 Loading results from: {results_file}")
+    console.print(
+        f"[dim]📦 Loading results from:[/dim] [cyan]{results_file}[/cyan]"
+    )
     with open(results_file, "rb") as f:
         results = pickle.load(f)
-    print("✅ Results loaded successfully!")
+    console.print("[green]✅ Results loaded successfully![/green]")
 
     # Load original config from the run directory
     orig_cfg_file = os.path.join(run_dir, ".hydra", "config.yaml")
     if not os.path.exists(orig_cfg_file):
-        print("❌ ERROR: Original config file not found!")
-        print(f"   Missing: {orig_cfg_file}")
+        console.print(
+            "[bold red]❌ ERROR: Original config file not found![/bold red]"
+        )
+        console.print(f"[red]   Missing:[/red] [cyan]{orig_cfg_file}[/cyan]")
         return
 
-    print(f"📋 Loading original config from: {orig_cfg_file}")
+    console.print(
+        f"[dim]📋 Loading original config from:[/dim] [cyan]{orig_cfg_file}[/cyan]"
+    )
     orig_cfg = OmegaConf.load(orig_cfg_file)
-    print("✅ Original config loaded successfully!")
+    console.print("[green]✅ Original config loaded successfully![/green]")
 
     # ==========================================================================
     # Data Loading Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("📊 LOADING ORIGINAL DATA")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_cyan]📊 LOADING ORIGINAL DATA[/bold bright_cyan]",
+            border_style="bright_cyan",
+        )
+    )
 
     # Load data using the original config's data settings
     data_path = hydra.utils.to_absolute_path(orig_cfg.data.path)
-    print(f"📂 Loading data from: {data_path}")
+    console.print(f"[dim]📂 Loading data from:[/dim] [cyan]{data_path}[/cyan]")
     counts = scribe.data_loader.load_and_preprocess_anndata(
         data_path, orig_cfg.data.get("preprocessing")
     )
-    print(f"✅ Data loaded successfully! Shape: {counts.shape}")
+    console.print(
+        f"[green]✅ Data loaded successfully![/green] [dim]Shape:[/dim] {counts.shape}"
+    )
 
     # ==========================================================================
     # Visualization Setup Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("🎨 VISUALIZATION SETUP")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_magenta]🎨 VISUALIZATION SETUP[/bold bright_magenta]",
+            border_style="bright_magenta",
+        )
+    )
 
     # Set plotting style
-    print("🎨 Setting up matplotlib style...")
+    console.print("[dim]🎨 Setting up matplotlib style...[/dim]")
     scribe.viz.matplotlib_style()
 
     # Get visualization settings from current config or use defaults
@@ -238,54 +277,62 @@ def main(cfg: DictConfig) -> None:
                 "ppc_opts": {"n_genes": 25, "n_samples": 1500},
             }
         )
-        print("⚙️  Using default visualization settings")
+        console.print("[dim]⚙️  Using default visualization settings[/dim]")
     else:
-        print("⚙️  Using custom visualization settings")
+        console.print("[dim]⚙️  Using custom visualization settings[/dim]")
         if hasattr(viz_cfg, "ppc_opts") and hasattr(
             viz_cfg.ppc_opts, "n_genes"
         ):
-            print(f"   PPC n_genes: {viz_cfg.ppc_opts.n_genes}")
+            console.print(
+                f"[dim]   PPC n_genes:[/dim] {viz_cfg.ppc_opts.n_genes}"
+            )
 
     # ==========================================================================
     # Plot Generation Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("📈 GENERATING PLOTS")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_yellow]📈 GENERATING PLOTS[/bold bright_yellow]",
+            border_style="bright_yellow",
+        )
+    )
 
     plots_generated = []
 
     # --- Plotting functions will be called here based on viz config ---
     if viz_cfg.get("loss", True):
-        print("📈 Generating loss history plot...")
+        console.print("[dim]📈 Generating loss history plot...[/dim]")
         plot_loss(results, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("loss")
 
     if viz_cfg.get("ecdf", True):
-        print("📊 Generating ECDF plot...")
+        console.print("[dim]📊 Generating ECDF plot...[/dim]")
         plot_ecdf(counts, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("ECDF")
 
     if viz_cfg.get("ppc", True):
-        print("🔍 Generating posterior predictive check plots...")
+        console.print(
+            "[dim]🔍 Generating posterior predictive check plots...[/dim]"
+        )
         plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("PPC")
 
     if viz_cfg.get("umap", False):
-        print("🗺️  Generating UMAP projection plot...")
+        console.print("[dim]🗺️  Generating UMAP projection plot...[/dim]")
         plot_umap(results, counts, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("UMAP")
 
     if viz_cfg.get("heatmap", False):
-        print("🔥 Generating correlation heatmap...")
+        console.print("[dim]🔥 Generating correlation heatmap...[/dim]")
         plot_correlation_heatmap(results, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("Correlation Heatmap")
 
     if viz_cfg.get("mixture_ppc", False) and orig_cfg.get(
         "mixture_model", False
     ):
-        print(
-            "🧬 Generating mixture model PPC (genes differing between components)..."
+        console.print(
+            "[dim]🧬 Generating mixture model PPC (genes differing between components)...[/dim]"
         )
         plot_mixture_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
         plots_generated.append("Mixture PPC")
@@ -293,15 +340,18 @@ def main(cfg: DictConfig) -> None:
     # ==========================================================================
     # Completion Summary
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("🎉 VISUALIZATION COMPLETED SUCCESSFULLY!")
-    print("=" * 80)
-    print(f"📁 Results directory: {run_dir}")
-    print(f"🎨 Figures directory: {figs_dir}")
-    print(
-        f"📊 Plots generated: {', '.join(plots_generated) if plots_generated else 'None'}"
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_green]🎉 VISUALIZATION COMPLETED SUCCESSFULLY![/bold bright_green]",
+            border_style="bright_green",
+        )
     )
-    print("=" * 80)
+    console.print(f"[dim]📁 Results directory:[/dim] [cyan]{run_dir}[/cyan]")
+    console.print(f"[dim]🎨 Figures directory:[/dim] [cyan]{figs_dir}[/cyan]")
+    plots_str = ", ".join(plots_generated) if plots_generated else "None"
+    console.print(f"[dim]📊 Plots generated:[/dim] [bold]{plots_str}[/bold]")
+    console.print()
 
 
 if __name__ == "__main__":

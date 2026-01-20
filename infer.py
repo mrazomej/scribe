@@ -71,7 +71,12 @@ import scribe
 import pickle
 import os
 import warnings
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
 from scribe.data_loader import load_and_preprocess_anndata
+
+console = Console()
 
 # Suppress scanpy/anndata deprecation warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
@@ -140,34 +145,49 @@ def _build_priors_dict(priors_cfg):
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
-    print("=" * 80)
-    print("SCRIBE PROBABILISTIC INFERENCE PIPELINE")
-    print("=" * 80)
-    print(f"Working directory: {os.getcwd()}")
-    print("\nConfiguration:")
-    print("-" * 40)
-    print(OmegaConf.to_yaml(cfg))
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_blue]SCRIBE PROBABILISTIC INFERENCE PIPELINE[/bold bright_blue]",
+            border_style="bright_blue",
+        )
+    )
+    console.print(f"[dim]Working directory:[/dim] [cyan]{os.getcwd()}[/cyan]")
+    console.print("\n[bold]Configuration:[/bold]")
+    config_yaml = OmegaConf.to_yaml(cfg)
+    syntax = Syntax(config_yaml, "yaml", theme="monokai", line_numbers=False)
+    console.print(syntax)
 
     # ==========================================================================
     # Data Loading Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("DATA LOADING")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_cyan]DATA LOADING[/bold bright_cyan]",
+            border_style="bright_cyan",
+        )
+    )
 
     data_path = hydra.utils.to_absolute_path(cfg.data.path)
-    print(f"Loading data from: {data_path}")
+    console.print(f"[dim]Loading data from:[/dim] [cyan]{data_path}[/cyan]")
     counts = load_and_preprocess_anndata(
         data_path, cfg.data.get("preprocessing")
     )
-    print(f"Data loaded successfully! Shape: {counts.shape}")
+    console.print(
+        f"[green]✓[/green] [bold green]Data loaded successfully![/bold green] [dim]Shape:[/dim] {counts.shape}"
+    )
 
     # ==========================================================================
     # Configuration Preparation Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("CONFIGURATION PREPARATION")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_magenta]CONFIGURATION PREPARATION[/bold bright_magenta]",
+            border_style="bright_magenta",
+        )
+    )
 
     # Extract inference config
     inference_cfg = OmegaConf.to_container(cfg.inference, resolve=True)
@@ -228,59 +248,83 @@ def main(cfg: DictConfig) -> None:
     # Add inference-specific parameters
     kwargs.update(inference_cfg)
 
-    print(f"Model: {kwargs['model']}")
-    print(f"Parameterization: {kwargs['parameterization']}")
-    print(f"Inference method: {kwargs['inference_method']}")
+    console.print(f"[dim]Model:[/dim] [bold]{kwargs['model']}[/bold]")
+    console.print(
+        f"[dim]Parameterization:[/dim] [bold]{kwargs['parameterization']}[/bold]"
+    )
+    console.print(
+        f"[dim]Inference method:[/dim] [bold]{kwargs['inference_method']}[/bold]"
+    )
     if kwargs.get("n_components"):
-        print(f"Mixture components: {kwargs['n_components']}")
+        console.print(
+            f"[dim]Mixture components:[/dim] [bold]{kwargs['n_components']}[/bold]"
+        )
     if kwargs.get("guide_rank"):
-        print(f"Guide rank: {kwargs['guide_rank']}")
+        console.print(
+            f"[dim]Guide rank:[/dim] [bold]{kwargs['guide_rank']}[/bold]"
+        )
     if kwargs.get("amortize_capture"):
-        print(
-            f"Amortized capture: {kwargs['capture_hidden_dims']} "
-            f"({kwargs['capture_activation']})"
+        console.print(
+            f"[dim]Amortized capture:[/dim] [bold]{kwargs['capture_hidden_dims']}[/bold] "
+            f"[dim]({kwargs['capture_activation']})[/dim]"
         )
 
     # ==========================================================================
     # Model Inference Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("MODEL INFERENCE")
-    print("=" * 80)
-    print("Starting probabilistic inference...")
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_yellow]MODEL INFERENCE[/bold bright_yellow]",
+            border_style="bright_yellow",
+        )
+    )
+    console.print("[dim]Starting probabilistic inference...[/dim]")
 
     # Run the inference using the simplified API
     results = scribe.fit(counts=counts, **kwargs)
 
-    print("Inference completed successfully!")
+    console.print(
+        "[green]✓[/green] [bold green]Inference completed successfully![/bold green]"
+    )
 
     # ==========================================================================
     # Results Saving Section
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("SAVING RESULTS")
-    print("=" * 80)
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_green]SAVING RESULTS[/bold bright_green]",
+            border_style="bright_green",
+        )
+    )
 
     from hydra.core.hydra_config import HydraConfig
 
     hydra_cfg = HydraConfig.get()
     output_dir = hydra_cfg.runtime.output_dir
     output_file = os.path.join(output_dir, "scribe_results.pkl")
-    print(f"Output directory: {output_dir}")
-    print(f"Saving results to: {output_file}")
+    console.print(f"[dim]Output directory:[/dim] [cyan]{output_dir}[/cyan]")
+    console.print(f"[dim]Saving results to:[/dim] [cyan]{output_file}[/cyan]")
 
     with open(output_file, "wb") as f:
         pickle.dump(results, f)
-    print("Results saved successfully!")
+    console.print(
+        "[green]✓[/green] [bold green]Results saved successfully![/bold green]"
+    )
 
     # ==========================================================================
     # Visualization Section
     # ==========================================================================
     viz_cfg = cfg.get("viz")
     if viz_cfg:
-        print("\n" + "=" * 80)
-        print("VISUALIZATION")
-        print("=" * 80)
+        console.print()
+        console.print(
+            Panel.fit(
+                "[bold bright_cyan]VISUALIZATION[/bold bright_cyan]",
+                border_style="bright_cyan",
+            )
+        )
 
         from viz_utils import plot_loss, plot_ecdf, plot_ppc
 
@@ -295,40 +339,57 @@ def main(cfg: DictConfig) -> None:
         if should_plot_loss or should_plot_ecdf or should_plot_ppc:
             figs_dir = os.path.join(output_dir, "figs")
             os.makedirs(figs_dir, exist_ok=True)
-            print(f"Creating figures directory: {figs_dir}")
+            console.print(
+                f"[dim]Creating figures directory:[/dim] [cyan]{figs_dir}[/cyan]"
+            )
 
             scribe.viz.matplotlib_style()
-            print("Setting up matplotlib style...")
+            console.print("[dim]Setting up matplotlib style...[/dim]")
 
             if should_plot_loss:
-                print("Generating loss history plot...")
+                console.print("[dim]Generating loss history plot...[/dim]")
                 plot_loss(results, figs_dir, cfg, viz_cfg)
             if should_plot_ecdf:
-                print("Generating ECDF plot...")
+                console.print("[dim]Generating ECDF plot...[/dim]")
                 plot_ecdf(counts, figs_dir, cfg, viz_cfg)
             if should_plot_ppc:
-                print("Generating posterior predictive check plots...")
+                console.print(
+                    "[dim]Generating posterior predictive check plots...[/dim]"
+                )
                 plot_ppc(results, counts, figs_dir, cfg, viz_cfg)
 
-            print("All visualizations completed!")
+            console.print(
+                "[green]✓[/green] [bold green]All visualizations completed![/bold green]"
+            )
         else:
-            print("No plots requested (all visualization options disabled)")
+            console.print(
+                "[yellow]⚠[/yellow] [yellow]No plots requested (all visualization options disabled)[/yellow]"
+            )
     else:
-        print("\n" + "=" * 80)
-        print("VISUALIZATION SKIPPED")
-        print("=" * 80)
-        print("No visualization configuration provided")
+        console.print()
+        console.print(
+            Panel.fit(
+                "[bold dim]VISUALIZATION SKIPPED[/bold dim]", border_style="dim"
+            )
+        )
+        console.print("[dim]No visualization configuration provided[/dim]")
 
     # ==========================================================================
     # Completion Summary
     # ==========================================================================
-    print("\n" + "=" * 80)
-    print("PIPELINE COMPLETED SUCCESSFULLY!")
-    print("=" * 80)
-    print(f"Results saved to: {output_dir}")
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold bright_green]✓ PIPELINE COMPLETED SUCCESSFULLY![/bold bright_green]",
+            border_style="bright_green",
+        )
+    )
+    console.print(f"[dim]Results saved to:[/dim] [cyan]{output_dir}[/cyan]")
     if viz_cfg and (should_plot_loss or should_plot_ecdf or should_plot_ppc):
-        print(f"Figures saved to: {os.path.join(output_dir, 'figs')}")
-    print("=" * 80)
+        console.print(
+            f"[dim]Figures saved to:[/dim] [cyan]{os.path.join(output_dir, 'figs')}[/cyan]"
+        )
+    console.print()
 
 
 if __name__ == "__main__":
