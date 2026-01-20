@@ -242,6 +242,25 @@ class SVIConfig(BaseModel):
         True, description="Use numerically stable parameter updates"
     )
 
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "SVIConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
 
 # ==============================================================================
 # MCMC Configuration Group
@@ -259,6 +278,25 @@ class MCMCConfig(BaseModel):
     mcmc_kwargs: Optional[Dict[str, Any]] = Field(
         None, description="Additional keyword arguments for MCMC kernel"
     )
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "MCMCConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
 
 
 # ==============================================================================
@@ -507,3 +545,90 @@ class InferenceConfig(BaseModel):
             return self.mcmc
         else:
             raise ValueError(f"Unknown inference method: {self.method}")
+
+    # --------------------------------------------------------------------------
+    # Serialization Methods
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string.
+
+        Returns
+        -------
+        str
+            YAML representation of the config.
+
+        Examples
+        --------
+        >>> config = InferenceConfig.from_svi(SVIConfig())
+        >>> yaml_str = config.to_yaml()
+        >>> print(yaml_str)
+        """
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "InferenceConfig":
+        """Deserialize config from YAML string.
+
+        Parameters
+        ----------
+        yaml_str : str
+            YAML string representation of the config.
+
+        Returns
+        -------
+        InferenceConfig
+            Deserialized config object.
+
+        Examples
+        --------
+        >>> yaml_str = '''
+        ... method: svi
+        ... svi:
+        ...   n_steps: 50000
+        ... '''
+        >>> config = InferenceConfig.from_yaml(yaml_str)
+        """
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+    def to_yaml_file(self, path: str) -> None:
+        """Save config to YAML file.
+
+        Parameters
+        ----------
+        path : str
+            Path to save the YAML file.
+
+        Examples
+        --------
+        >>> config.to_yaml_file("inference_config.yaml")
+        """
+        with open(path, "w") as f:
+            f.write(self.to_yaml())
+
+    @classmethod
+    def from_yaml_file(cls, path: str) -> "InferenceConfig":
+        """Load config from YAML file.
+
+        Parameters
+        ----------
+        path : str
+            Path to the YAML file.
+
+        Returns
+        -------
+        InferenceConfig
+            Loaded config object.
+
+        Examples
+        --------
+        >>> config = InferenceConfig.from_yaml_file("inference_config.yaml")
+        """
+        with open(path) as f:
+            return cls.from_yaml(f.read())

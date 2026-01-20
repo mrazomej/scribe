@@ -395,3 +395,268 @@ class TestModelConfigIntegration:
         assert config2.is_mixture is False
         assert config2.is_zero_inflated is False
         assert config2.uses_variable_capture is False
+
+
+# ==============================================================================
+# Test Parameter Name Validation
+# ==============================================================================
+
+
+class TestPriorGuideValidation:
+    """Test validation of prior/guide parameter names."""
+
+    def test_unknown_prior_param_raises_error(self):
+        """Test that unknown prior parameter names raise ValueError."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+
+        specs = [
+            BetaSpec(
+                name="p",
+                shape_dims=("n_genes",),
+                default_params=(1.0, 1.0),
+                prior=(1.0, 1.0),
+            )
+        ]
+        with pytest.raises(
+            ValueError, match="Unknown parameter names in priors"
+        ):
+            apply_prior_guide_overrides(
+                specs,
+                priors={"unknown_param": (2.0, 2.0)},
+            )
+
+    def test_unknown_guide_param_raises_error(self):
+        """Test that unknown guide parameter names raise ValueError."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+
+        specs = [
+            BetaSpec(
+                name="p",
+                shape_dims=("n_genes",),
+                default_params=(1.0, 1.0),
+                prior=(1.0, 1.0),
+            )
+        ]
+        with pytest.raises(
+            ValueError, match="Unknown parameter names in guides"
+        ):
+            apply_prior_guide_overrides(
+                specs,
+                guides={"invalid_param": (0.5, 0.5)},
+            )
+
+    def test_valid_prior_params_succeed(self):
+        """Test that valid prior parameter names work."""
+        from scribe.models.builders.parameter_specs import (
+            BetaSpec,
+            LogNormalSpec,
+        )
+
+        specs = [
+            BetaSpec(
+                name="p",
+                shape_dims=("n_genes",),
+                default_params=(1.0, 1.0),
+                prior=(1.0, 1.0),
+            ),
+            LogNormalSpec(
+                name="r",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                prior=(0.0, 1.0),
+            ),
+        ]
+        result = apply_prior_guide_overrides(
+            specs,
+            priors={"p": (2.0, 2.0), "r": (1.0, 0.5)},
+        )
+        assert len(result) == 2
+        assert result[0].prior == (2.0, 2.0)
+        assert result[1].prior == (1.0, 0.5)
+
+    def test_factory_validates_prior_params(self):
+        """Test that create_model validates prior parameter names."""
+        config = ModelConfigBuilder().for_model("nbdm").build()
+        with pytest.raises(ValueError, match="Unknown parameter names"):
+            create_model(
+                config, priors={"nonexistent": (1.0, 1.0)}, validate=False
+            )
+
+
+# ==============================================================================
+# Test Model/Guide Validation
+# ==============================================================================
+
+
+class TestModelGuideValidation:
+    """Test the validate_model_guide_compatibility function."""
+
+    def test_validation_runs_successfully(self):
+        """Test that validation passes for correct model/guide pairs."""
+        from scribe.models.presets.factory import (
+            validate_model_guide_compatibility,
+        )
+
+        config = ModelConfigBuilder().for_model("nbdm").build()
+        model, guide = create_model(config, validate=False)
+        # Should not raise
+        validate_model_guide_compatibility(model, guide, config)
+
+    def test_validation_disabled(self):
+        """Test that validation can be disabled."""
+        config = ModelConfigBuilder().for_model("nbdm").build()
+        # Should not raise even with validate=False
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
+        assert callable(guide)
+
+    def test_validation_with_different_models(self):
+        """Test validation works for different model types."""
+        for model_type in ["nbdm", "zinb", "nbvcp", "zinbvcp"]:
+            config = ModelConfigBuilder().for_model(model_type).build()
+            # Should not raise
+            model, guide = create_model(config, validate=True)
+            assert callable(model)
+
+
+# ==============================================================================
+# Test Guide Family Registry
+# ==============================================================================
+
+
+class TestGuideFamilyRegistry:
+    """Test the guide family registry."""
+
+    def test_registry_contains_families(self):
+        """Test GUIDE_FAMILY_REGISTRY contains expected families."""
+        from scribe.models.presets.registry import GUIDE_FAMILY_REGISTRY
+
+        assert "mean_field" in GUIDE_FAMILY_REGISTRY
+        assert "low_rank" in GUIDE_FAMILY_REGISTRY
+        assert "amortized" in GUIDE_FAMILY_REGISTRY
+
+    def test_get_guide_family_mean_field(self):
+        """Test get_guide_family returns MeanFieldGuide."""
+        from scribe.models.components.guide_families import MeanFieldGuide
+        from scribe.models.presets.registry import get_guide_family
+
+        guide = get_guide_family("mean_field")
+        assert isinstance(guide, MeanFieldGuide)
+
+    def test_get_guide_family_low_rank(self):
+        """Test get_guide_family returns LowRankGuide with rank."""
+        from scribe.models.components.guide_families import LowRankGuide
+        from scribe.models.presets.registry import get_guide_family
+
+        guide = get_guide_family("low_rank", rank=10)
+        assert isinstance(guide, LowRankGuide)
+        assert guide.rank == 10
+
+    def test_get_guide_family_invalid(self):
+        """Test get_guide_family raises error for invalid name."""
+        from scribe.models.presets.registry import get_guide_family
+
+        with pytest.raises(ValueError, match="Unknown guide family"):
+            get_guide_family("invalid_family")
+
+
+# ==============================================================================
+# Test Config YAML Serialization
+# ==============================================================================
+
+
+class TestConfigSerialization:
+    """Test YAML serialization for config classes."""
+
+    def test_model_config_to_yaml(self):
+        """Test ModelConfig.to_yaml produces valid YAML."""
+        config = ModelConfigBuilder().for_model("nbdm").build()
+        yaml_str = config.to_yaml()
+        assert isinstance(yaml_str, str)
+        assert "base_model: nbdm" in yaml_str
+
+    def test_model_config_from_yaml(self):
+        """Test ModelConfig.from_yaml loads config correctly."""
+        from scribe.models.config import ModelConfig
+
+        yaml_str = """
+base_model: zinb
+parameterization: linked
+unconstrained: false
+"""
+        config = ModelConfig.from_yaml(yaml_str)
+        assert config.base_model == "zinb"
+        assert config.parameterization.value == "linked"
+        assert config.unconstrained is False
+
+    def test_model_config_roundtrip(self):
+        """Test ModelConfig serialization roundtrip."""
+        from scribe.models.config import ModelConfig
+
+        original = ModelConfigBuilder().for_model("nbvcp").build()
+        yaml_str = original.to_yaml()
+        loaded = ModelConfig.from_yaml(yaml_str)
+        assert loaded.base_model == original.base_model
+        assert loaded.parameterization == original.parameterization
+        assert loaded.unconstrained == original.unconstrained
+
+    def test_inference_config_to_yaml(self):
+        """Test InferenceConfig.to_yaml produces valid YAML."""
+        from scribe.models.config import InferenceConfig, SVIConfig
+
+        config = InferenceConfig.from_svi(SVIConfig(n_steps=50000))
+        yaml_str = config.to_yaml()
+        assert isinstance(yaml_str, str)
+        assert "method: svi" in yaml_str
+        assert "n_steps: 50000" in yaml_str
+
+    def test_inference_config_from_yaml(self):
+        """Test InferenceConfig.from_yaml loads config correctly."""
+        from scribe.models.config import InferenceConfig
+
+        yaml_str = """
+method: svi
+svi:
+  n_steps: 25000
+  batch_size: 256
+  stable_update: true
+mcmc: null
+"""
+        config = InferenceConfig.from_yaml(yaml_str)
+        assert config.method.value == "svi"
+        assert config.svi.n_steps == 25000
+        assert config.svi.batch_size == 256
+
+    def test_inference_config_roundtrip(self):
+        """Test InferenceConfig serialization roundtrip."""
+        from scribe.models.config import InferenceConfig, SVIConfig
+
+        original = InferenceConfig.from_svi(
+            SVIConfig(n_steps=75000, batch_size=512)
+        )
+        yaml_str = original.to_yaml()
+        loaded = InferenceConfig.from_yaml(yaml_str)
+        assert loaded.method == original.method
+        assert loaded.svi.n_steps == original.svi.n_steps
+        assert loaded.svi.batch_size == original.svi.batch_size
+
+    def test_svi_config_serialization(self):
+        """Test SVIConfig standalone serialization."""
+        from scribe.models.config import SVIConfig
+
+        original = SVIConfig(n_steps=10000, batch_size=128)
+        yaml_str = original.to_yaml()
+        loaded = SVIConfig.from_yaml(yaml_str)
+        assert loaded.n_steps == 10000
+        assert loaded.batch_size == 128
+
+    def test_mcmc_config_serialization(self):
+        """Test MCMCConfig standalone serialization."""
+        from scribe.models.config import MCMCConfig
+
+        original = MCMCConfig(n_samples=5000, n_warmup=2000, n_chains=4)
+        yaml_str = original.to_yaml()
+        loaded = MCMCConfig.from_yaml(yaml_str)
+        assert loaded.n_samples == 5000
+        assert loaded.n_warmup == 2000
+        assert loaded.n_chains == 4

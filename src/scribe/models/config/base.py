@@ -1,6 +1,6 @@
 """Base model configuration classes using Pydantic."""
 
-from typing import Optional, Set, Union, Dict, Any, List
+from typing import Optional, Set, Dict, Any, List
 from pydantic import (
     BaseModel,
     Field,
@@ -14,7 +14,7 @@ from .groups import (
     VAEConfig,
     GuideFamilyConfig,
 )
-from .parameter_mapping import get_active_parameters, get_required_parameters
+from .parameter_mapping import get_active_parameters
 from ..builders.parameter_specs import ParamSpec
 
 # ==============================================================================
@@ -52,8 +52,8 @@ class ModelConfig(BaseModel):
         Number of mixture components, if mixture modeling is enabled.
     mixture_params : List[str], optional
         List of parameter names that should be mixture-specific. If None and
-        n_components is set, all gene-specific parameters will be mixture-specific
-        by default.
+        n_components is set, all gene-specific parameters will be
+        mixture-specific by default.
     guide_families : GuideFamilyConfig, optional
         Per-parameter guide family configuration. Allows specifying different
         variational families (MeanField, LowRank, Amortized) for each parameter.
@@ -360,3 +360,105 @@ class ModelConfig(BaseModel):
         return self.model_copy(
             update={"vae": self.vae.model_copy(update=vae_params)}
         )
+
+    # --------------------------------------------------------------------------
+    # Serialization Methods
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string.
+
+        Returns
+        -------
+        str
+            YAML representation of the config.
+
+        Examples
+        --------
+        >>> config = ModelConfigBuilder().for_model("nbdm").build()
+        >>> yaml_str = config.to_yaml()
+        >>> print(yaml_str)
+        """
+        import yaml
+
+        # Use model_dump with mode="json" to get serializable dict
+        # Exclude computed properties that shouldn't be serialized
+        data = self.model_dump(
+            mode="json",
+            exclude={
+                "is_mixture",
+                "is_zero_inflated",
+                "uses_variable_capture",
+                "active_parameters",
+            },
+        )
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "ModelConfig":
+        """Deserialize config from YAML string.
+
+        Parameters
+        ----------
+        yaml_str : str
+            YAML string representation of the config.
+
+        Returns
+        -------
+        ModelConfig
+            Deserialized config object.
+
+        Examples
+        --------
+        >>> yaml_str = '''
+        ... base_model: nbdm
+        ... parameterization: standard
+        ... '''
+        >>> config = ModelConfig.from_yaml(yaml_str)
+        """
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml_file(self, path: str) -> None:
+        """Save config to YAML file.
+
+        Parameters
+        ----------
+        path : str
+            Path to save the YAML file.
+
+        Examples
+        --------
+        >>> config.to_yaml_file("model_config.yaml")
+        """
+        with open(path, "w") as f:
+            f.write(self.to_yaml())
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml_file(cls, path: str) -> "ModelConfig":
+        """Load config from YAML file.
+
+        Parameters
+        ----------
+        path : str
+            Path to the YAML file.
+
+        Returns
+        -------
+        ModelConfig
+            Loaded config object.
+
+        Examples
+        --------
+        >>> config = ModelConfig.from_yaml_file("model_config.yaml")
+        """
+        with open(path) as f:
+            return cls.from_yaml(f.read())

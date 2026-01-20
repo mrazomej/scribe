@@ -30,16 +30,116 @@ Examples
 
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
+import numpyro
+
 from ..builders import GuideBuilder, ModelBuilder
 from ..config import GuideFamilyConfig, ModelConfig
+from ..config.enums import InferenceMethod
 from ..config.enums import Parameterization as ParamEnum
-from ..parameterizations import PARAMETERIZATIONS, Parameterization
+from ..parameterizations import PARAMETERIZATIONS
 from .registry import (
     LIKELIHOOD_REGISTRY,
     MODEL_EXTRA_PARAMS,
     apply_prior_guide_overrides,
     build_extra_param_spec,
 )
+
+
+# ==============================================================================
+# Model/Guide Validation
+# ==============================================================================
+
+
+def validate_model_guide_compatibility(
+    model: Callable,
+    guide: Callable,
+    model_config: ModelConfig,
+    n_cells: int = 10,
+    n_genes: int = 5,
+) -> None:
+    """Validate that model and guide are compatible by performing a dry run.
+
+    This function runs both the model and guide with small synthetic dimensions
+    to verify they work correctly together. It checks that:
+    - Both model and guide execute without errors
+    - All sample sites in the guide have corresponding sites in the model
+
+    Parameters
+    ----------
+    model : Callable
+        NumPyro model function.
+    guide : Callable
+        NumPyro guide function.
+    model_config : ModelConfig
+        Model configuration (passed to model/guide).
+    n_cells : int, default=10
+        Number of cells for dry run.
+    n_genes : int, default=5
+        Number of genes for dry run.
+
+    Raises
+    ------
+    RuntimeError
+        If the model or guide fails to execute.
+    ValueError
+        If guide sample sites don't match model sample sites.
+
+    Examples
+    --------
+    >>> model, guide = create_model(config, validate=False)
+    >>> validate_model_guide_compatibility(model, guide, config)
+    """
+    # Run model to get sample sites
+    with numpyro.handlers.seed(rng_seed=0):
+        with numpyro.handlers.trace() as model_trace:
+            try:
+                model(
+                    n_cells=n_cells,
+                    n_genes=n_genes,
+                    model_config=model_config,
+                    counts=None,  # Prior predictive mode
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Model validation failed during dry run: {e}"
+                ) from e
+
+    # Extract model sample sites (excluding observed sites and deterministic)
+    model_sample_sites = {
+        name
+        for name, site in model_trace.items()
+        if site["type"] == "sample" and not site.get("is_observed", False)
+    }
+
+    # Run guide to get sample sites
+    with numpyro.handlers.seed(rng_seed=0):
+        with numpyro.handlers.trace() as guide_trace:
+            try:
+                guide(
+                    n_cells=n_cells,
+                    n_genes=n_genes,
+                    model_config=model_config,
+                    counts=None,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Guide validation failed during dry run: {e}"
+                ) from e
+
+    # Extract guide sample sites
+    guide_sample_sites = {
+        name for name, site in guide_trace.items() if site["type"] == "sample"
+    }
+
+    # Check that guide sites are a subset of model sites
+    # (guide doesn't need to cover observed or derived parameters)
+    extra_guide_sites = guide_sample_sites - model_sample_sites
+    if extra_guide_sites:
+        raise ValueError(
+            f"Guide has sample sites not found in model: {extra_guide_sites}. "
+            f"Model sample sites: {model_sample_sites}"
+        )
+
 
 # ==============================================================================
 # Unified Model Factory
@@ -50,6 +150,7 @@ def create_model(
     model_config: ModelConfig,
     priors: Optional[Dict[str, Tuple[float, ...]]] = None,
     guides: Optional[Dict[str, Tuple[float, ...]]] = None,
+    validate: bool = True,
 ) -> Tuple[Callable, Callable]:
     """Create model and guide functions from a ModelConfig.
 
@@ -57,6 +158,10 @@ def create_model(
     create_nbvcp, and create_zinbvcp. It uses registries to determine
     model-specific components and builds the model/guide using the
     composable builder pattern.
+
+    By default, the factory validates that the model and guide are compatible
+    by performing a dry run. This catches configuration errors early. Set
+    ``validate=False`` to skip validation (e.g., for performance).
 
     Parameters
     ----------
@@ -73,6 +178,12 @@ def create_model(
         Overrides default priors. Example: {"p": (2.0, 2.0)}
     guides : Dict[str, Tuple[float, ...]], optional
         User-provided guide hyperparameters keyed by parameter name.
+    validate : bool, default=True
+        If True, perform a dry run to validate model and guide compatibility.
+        This catches configuration errors early but adds a small overhead.
+        Set to False for performance-critical code or when validation has
+        already been done. Note: validation is skipped for MCMC inference
+        since MCMC doesn't use a guide.
 
     Returns
     -------
@@ -86,6 +197,9 @@ def create_model(
     ------
     ValueError
         If model type or parameterization is not recognized.
+        If parameter names in priors/guides are not valid for this model.
+    RuntimeError
+        If validation fails (model or guide doesn't run correctly).
 
     Examples
     --------
@@ -194,8 +308,16 @@ def create_model(
         model_builder.add_derived(d_param.name, d_param.compute, d_param.deps)
 
     # Get likelihood from registry
+    # For VCP models, pass the capture parameter name from the parameterization
     likelihood_class = LIKELIHOOD_REGISTRY[base_model]
-    model_builder.with_likelihood(likelihood_class())
+    if base_model in ("nbvcp", "zinbvcp"):
+        # Get the transformed capture param name (p_capture or phi_capture)
+        capture_param_name = param_strategy.transform_model_param("p_capture")
+        model_builder.with_likelihood(
+            likelihood_class(capture_param_name=capture_param_name)
+        )
+    else:
+        model_builder.with_likelihood(likelihood_class())
 
     model = model_builder.build()
 
@@ -203,6 +325,19 @@ def create_model(
     # Step 8: Build guide using GuideBuilder
     # ==========================================================================
     guide = GuideBuilder().from_specs(param_specs).build()
+
+    # ==========================================================================
+    # Step 9: Validate model/guide compatibility (optional)
+    # ==========================================================================
+    if validate:
+        # Only validate guide for SVI/VAE - MCMC doesn't use a guide
+        needs_guide = model_config.inference_method != InferenceMethod.MCMC
+        # Skip validation for mixture models - they have dynamic guide structure
+        is_mixture = model_config.n_components is not None
+        # Skip validation if any guide uses amortization (requires actual data)
+        has_amortized = _has_amortized_guide(model_config.guide_families)
+        if needs_guide and not is_mixture and not has_amortized:
+            validate_model_guide_compatibility(model, guide, model_config)
 
     return model, guide
 
@@ -219,6 +354,7 @@ def create_model_from_params(
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Tuple[float, ...]]] = None,
     guides: Optional[Dict[str, Tuple[float, ...]]] = None,
+    validate: bool = True,
 ) -> Tuple[Callable, Callable]:
     """Create model and guide functions from individual parameters.
 
@@ -245,6 +381,8 @@ def create_model_from_params(
         Prior hyperparameters keyed by parameter name.
     guides : Dict[str, Tuple[float, ...]], optional
         Guide hyperparameters keyed by parameter name.
+    validate : bool, default=True
+        If True, validate model/guide compatibility with a dry run.
 
     Returns
     -------
@@ -281,7 +419,9 @@ def create_model_from_params(
 
     model_config = builder.build()
 
-    return create_model(model_config, priors=priors, guides=guides)
+    return create_model(
+        model_config, priors=priors, guides=guides, validate=validate
+    )
 
 
 # ==============================================================================
@@ -327,7 +467,29 @@ def _extract_guides_from_param_specs(
     for spec in param_specs:
         if hasattr(spec, "guide") and spec.guide is not None:
             guides[spec.name] = spec.guide
-    return guides
+
+
+# ------------------------------------------------------------------------------
+
+
+def _has_amortized_guide(guide_families: Optional[GuideFamilyConfig]) -> bool:
+    """Check if any guide uses amortization.
+
+    Amortized guides require actual data during execution, so validation
+    with dummy data will fail.
+    """
+    if guide_families is None:
+        return False
+
+    from ..components.guide_families import AmortizedGuide
+
+    # Check all configured guide families
+    # Access model_fields from the class, not the instance
+    for field in GuideFamilyConfig.model_fields:
+        value = getattr(guide_families, field, None)
+        if isinstance(value, AmortizedGuide):
+            return True
+    return False
 
 
 # ==============================================================================
@@ -337,4 +499,5 @@ def _extract_guides_from_param_specs(
 __all__ = [
     "create_model",
     "create_model_from_params",
+    "validate_model_guide_compatibility",
 ]

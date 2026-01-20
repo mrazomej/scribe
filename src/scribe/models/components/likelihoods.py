@@ -398,14 +398,34 @@ class NBWithVCPLikelihood(Likelihood):
 
     Parameters
     ----------
-    None
+    capture_param_name : str, optional
+        Name of the capture parameter ("p_capture" or "phi_capture").
+        If provided, this explicitly sets which parameterization to use.
+        If None (default), the likelihood will detect it from cell_specs
+        for backward compatibility.
 
     Examples
     --------
+    >>> # Explicit capture parameter name (recommended)
+    >>> likelihood = NBWithVCPLikelihood(capture_param_name="phi_capture")
+    >>>
+    >>> # Auto-detect from cell_specs (backward compatible)
     >>> likelihood = NBWithVCPLikelihood()
     >>> # In model building (p_capture spec should be in cell_specs):
     >>> builder.with_likelihood(likelihood)
     """
+
+    def __init__(self, capture_param_name: Optional[str] = None):
+        """Initialize likelihood with optional capture parameter name.
+
+        Parameters
+        ----------
+        capture_param_name : str, optional
+            "p_capture" for canonical/mean_prob parameterization,
+            "phi_capture" for mean_odds parameterization.
+            If None, auto-detect from cell_specs.
+        """
+        self.capture_param_name = capture_param_name
 
     def sample(
         self,
@@ -438,9 +458,14 @@ class NBWithVCPLikelihood(Likelihood):
                 break
 
         # Determine which capture parameter we're using
-        use_phi_capture = (
-            capture_spec is not None and capture_spec.name == "phi_capture"
-        )
+        # If capture_param_name is explicitly set, use that; otherwise
+        # auto-detect
+        if self.capture_param_name is not None:
+            use_phi_capture = self.capture_param_name == "phi_capture"
+        else:
+            use_phi_capture = (
+                capture_spec is not None and capture_spec.name == "phi_capture"
+            )
 
         # Get prior params - check both p_capture and phi_capture
         if use_phi_capture:
@@ -903,14 +928,34 @@ class ZINBWithVCPLikelihood(Likelihood):
 
     Parameters
     ----------
-    None
+    capture_param_name : str, optional
+        Name of the capture parameter ("p_capture" or "phi_capture").
+        If provided, this explicitly sets which parameterization to use.
+        If None (default), the likelihood will detect it from cell_specs
+        for backward compatibility.
 
     Examples
     --------
+    >>> # Explicit capture parameter name (recommended)
+    >>> likelihood = ZINBWithVCPLikelihood(capture_param_name="phi_capture")
+    >>>
+    >>> # Auto-detect from cell_specs (backward compatible)
     >>> likelihood = ZINBWithVCPLikelihood()
     >>> # In model building:
     >>> builder.with_likelihood(likelihood)
     """
+
+    def __init__(self, capture_param_name: Optional[str] = None):
+        """Initialize likelihood with optional capture parameter name.
+
+        Parameters
+        ----------
+        capture_param_name : str, optional
+            "p_capture" for canonical/mean_prob parameterization,
+            "phi_capture" for mean_odds parameterization.
+            If None, auto-detect from cell_specs.
+        """
+        self.capture_param_name = capture_param_name
 
     def sample(
         self,
@@ -944,9 +989,14 @@ class ZINBWithVCPLikelihood(Likelihood):
                 break
 
         # Determine which capture parameter we're using
-        use_phi_capture = (
-            capture_spec is not None and capture_spec.name == "phi_capture"
-        )
+        # If capture_param_name is explicitly set, use that; otherwise
+        # auto-detect
+        if self.capture_param_name is not None:
+            use_phi_capture = self.capture_param_name == "phi_capture"
+        else:
+            use_phi_capture = (
+                capture_spec is not None and capture_spec.name == "phi_capture"
+            )
 
         # Get prior params - check both p_capture and phi_capture
         if use_phi_capture:
