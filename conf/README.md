@@ -20,11 +20,14 @@ python infer.py model=zinb parameterization=linked n_components=3
 # Override inference parameters
 python infer.py model=nbdm inference.n_steps=100000 inference.batch_size=512
 
-# Use model presets
+# Use different datasets
 python infer.py model=zinb data=jurkat_cells
 
 # Disable visualization
 python infer.py model=nbdm viz=null
+
+# NBVCP with amortized capture probability
+python infer.py model=nbvcp amortization=capture
 ```
 
 ## Configuration Structure
@@ -42,11 +45,11 @@ conf/
 │   └── vae.yaml         # Variational Autoencoder
 ├── amortization/        # Amortized inference presets
 │   └── capture.yaml     # Amortized capture probability
-├── model/               # Model presets (optional)
-│   ├── nbdm.yaml
-│   ├── zinb.yaml
-│   ├── nbvcp.yaml
-│   └── zinbvcp.yaml
+├── model/               # Model presets
+│   ├── nbdm.yaml        # Negative Binomial Dropout Model
+│   ├── zinb.yaml        # Zero-Inflated NB
+│   ├── nbvcp.yaml       # NB with Variable Capture Probability
+│   └── zinbvcp.yaml     # ZINB with Variable Capture
 ├── viz/                 # Visualization configurations
 │   └── default.yaml
 └── README.md
@@ -201,15 +204,21 @@ stable_update: true
 
 ## Model Presets (`model/`)
 
-Optional preset files for common model configurations:
+Model preset files configure the model type and default options:
 
 ```bash
 # Use ZINB preset
 python infer.py model=zinb
 
-# These are equivalent to setting model options directly
-python infer.py model=zinb parameterization=canonical unconstrained=false
+# Use NBVCP preset
+python infer.py model=nbvcp
+
+# Presets set: model type, parameterization, unconstrained, n_components
+# You can override any of these:
+python infer.py model=zinb parameterization=linked n_components=3
 ```
+
+Each preset file (e.g., `model/zinb.yaml`) sets sensible defaults that can be overridden.
 
 ## Advanced Usage
 
