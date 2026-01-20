@@ -15,8 +15,7 @@ scalability, and rigorous uncertainty quantification.
 
 ### Key Features
 
-- **🎯 Unified Interface**: Single `run_scribe()` function for all inference
-  methods
+- **🎯 Simple API**: `scribe.fit()` with flat kwargs and sensible defaults
 - **🧬 Specialized Models**: Four probabilistic models designed for scRNA-seq
   data
 - **⚡ Multiple Inference**: SVI for speed, MCMC for accuracy, VAE for
@@ -37,13 +36,15 @@ import scanpy as sc
 adata = sc.read_h5ad("your_data.h5ad")
 
 # Run SCRIBE with default settings (SVI inference, NBDM model)
-from scribe.models.config import InferenceConfig, SVIConfig
+results = scribe.fit(adata, model="nbdm")
 
-results = scribe.run_scribe(
-    counts=adata,
-    model="nbdm",
-    inference_method="svi",
-    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=50000)),
+# With customization
+results = scribe.fit(
+    adata,
+    model="zinb",
+    n_components=3,
+    n_steps=100000,
+    batch_size=512,
 )
 
 # Analyze results
@@ -72,42 +73,69 @@ scribe/
 
 ### Core Components
 
-#### 🎯 **Unified Interface** (`inference.py`)
-Single entry point for all SCRIBE functionality:
+#### 🎯 **Simplified API** (`api.py`)
+The recommended entry point with flat kwargs and sensible defaults:
 
 ```python
-from scribe.inference.preset_builder import build_config_from_preset
-from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
+import scribe
 
-# SVI inference (fast, scalable) – use model="zinb"/"nbvcp"/"zinbvcp" for variants
-model_config = build_config_from_preset(
-    model="nbdm",
+# SVI inference (fast, scalable) - default
+svi_results = scribe.fit(data, model="nbdm", n_steps=75000)
+
+# Zero-inflated model with linked parameterization
+svi_results = scribe.fit(
+    data,
+    model="zinb",
     parameterization="linked",
-    inference_method="svi",
     unconstrained=True,
-)
-svi_results = scribe.run_scribe(
-    counts=data,
-    model_config=model_config,
-    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=75000)),
+    n_steps=75000,
 )
 
 # MCMC inference (exact, high-quality)
-mcmc_results = scribe.run_scribe(
-    counts=data,
+mcmc_results = scribe.fit(
+    data,
     model="nbdm",
     inference_method="mcmc",
-    inference_config=InferenceConfig.from_mcmc(
-        MCMCConfig(n_samples=3000, n_chains=4)
-    ),
+    n_samples=3000,
+    n_chains=4,
 )
 
-# VAE inference (representation learning; see vae module for VAE-specific options)
-vae_results = scribe.run_scribe(
-    counts=data,
+# VAE inference (representation learning)
+vae_results = scribe.fit(
+    data,
     model="nbdm",
     inference_method="vae",
-    inference_config=InferenceConfig.from_vae(SVIConfig(n_steps=50000)),
+    n_steps=50000,
+)
+
+# Mixture model for cell type discovery
+mixture_results = scribe.fit(
+    data,
+    model="zinb",
+    n_components=5,
+    n_steps=100000,
+)
+```
+
+#### 🔧 **Power User API** (`inference/`)
+For full control, use explicit configuration objects:
+
+```python
+from scribe.models.config import ModelConfigBuilder, InferenceConfig, SVIConfig
+
+model_config = (
+    ModelConfigBuilder()
+    .for_model("zinb")
+    .with_parameterization("linked")
+    .as_mixture(n_components=3)
+    .build()
+)
+inference_config = InferenceConfig.from_svi(SVIConfig(n_steps=100000))
+
+results = scribe.fit(
+    data,
+    model_config=model_config,
+    inference_config=inference_config,
 )
 ```
 

@@ -100,6 +100,9 @@ except Exception as _e:
 # Import main inference function
 from .inference import run_scribe
 
+# Import simplified API
+from .api import fit
+
 # Import results classes
 from .mcmc import ScribeMCMCResults
 from .svi import ScribeSVIResults
@@ -116,8 +119,9 @@ __all__ = [
     "MCMCConfig",
     "DataConfig",
     "InferenceConfig",
-    # Main inference function
-    "run_scribe",
+    # Main inference functions
+    "fit",  # Simplified API (recommended)
+    "run_scribe",  # Lower-level API
     # Results classes
     "ScribeSVIResults",
     "ScribeMCMCResults",
