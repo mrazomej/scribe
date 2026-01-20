@@ -42,13 +42,8 @@ from scribe.models.components import (
     TOTAL_COUNT,
 )
 
-# Import presets
-from scribe.models.presets import (
-    create_nbdm,
-    create_zinb,
-    create_nbvcp,
-    create_zinbvcp,
-)
+# Import unified factory
+from scribe.models.presets import create_model_from_params
 
 # Import main API
 from scribe.models import get_model_and_guide
@@ -329,8 +324,10 @@ class TestPresets:
         "parameterization", ["standard", "linked", "odds_ratio"]
     )
     def test_create_nbdm(self, parameterization, model_config, small_counts):
-        """Test create_nbdm with different parameterizations."""
-        model, guide = create_nbdm(parameterization=parameterization)
+        """Test create_model_from_params with different parameterizations."""
+        model, guide = create_model_from_params(
+            model="nbdm", parameterization=parameterization
+        )
 
         # Both should be callable
         assert callable(model)
@@ -355,8 +352,10 @@ class TestPresets:
     def test_create_nbdm_unconstrained(
         self, unconstrained, model_config, small_counts
     ):
-        """Test create_nbdm with unconstrained option."""
-        model, guide = create_nbdm(unconstrained=unconstrained)
+        """Test create_model_from_params with unconstrained option."""
+        model, guide = create_model_from_params(
+            model="nbdm", unconstrained=unconstrained
+        )
 
         with numpyro.handlers.seed(rng_seed=0):
             model(
@@ -367,9 +366,10 @@ class TestPresets:
             )
 
     def test_create_nbdm_low_rank(self, model_config, small_counts):
-        """Test create_nbdm with low-rank guide using GuideFamilyConfig."""
-        model, guide = create_nbdm(
-            guide_families=GuideFamilyConfig(r=LowRankGuide(rank=5))
+        """Test create_model_from_params with low-rank guide using GuideFamilyConfig."""
+        model, guide = create_model_from_params(
+            model="nbdm",
+            guide_families=GuideFamilyConfig(r=LowRankGuide(rank=5)),
         )
 
         with numpyro.handlers.seed(rng_seed=0):
@@ -381,8 +381,9 @@ class TestPresets:
             )
 
     def test_create_nbdm_linked_low_rank(self, model_config, small_counts):
-        """Test create_nbdm linked parameterization with low-rank guide for mu."""
-        model, guide = create_nbdm(
+        """Test create_model_from_params linked parameterization with low-rank guide for mu."""
+        model, guide = create_model_from_params(
+            model="nbdm",
             parameterization="linked",
             guide_families=GuideFamilyConfig(mu=LowRankGuide(rank=5)),
         )
@@ -396,8 +397,8 @@ class TestPresets:
             )
 
     def test_create_zinb(self, model_config, small_counts):
-        """Test create_zinb."""
-        model, guide = create_zinb()
+        """Test create_model_from_params for ZINB."""
+        model, guide = create_model_from_params(model="zinb")
 
         with numpyro.handlers.seed(rng_seed=0):
             with numpyro.handlers.trace() as tr:
@@ -412,8 +413,8 @@ class TestPresets:
         assert "gate" in tr
 
     def test_create_nbvcp(self, model_config, small_counts):
-        """Test create_nbvcp."""
-        model, guide = create_nbvcp()
+        """Test create_model_from_params for NBVCP."""
+        model, guide = create_model_from_params(model="nbvcp")
 
         with numpyro.handlers.seed(rng_seed=0):
             with numpyro.handlers.trace() as tr:
@@ -428,17 +429,18 @@ class TestPresets:
         assert "p_capture" in tr
 
     def test_create_nbvcp_amortized(self, model_config, small_counts):
-        """Test create_nbvcp with amortized p_capture using GuideFamilyConfig."""
+        """Test create_model_from_params with amortized p_capture using GuideFamilyConfig."""
         # Create amortizer for p_capture
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
             output_params=["log_alpha", "log_beta"],
         )
-        model, guide = create_nbvcp(
+        model, guide = create_model_from_params(
+            model="nbvcp",
             guide_families=GuideFamilyConfig(
                 p_capture=AmortizedGuide(amortizer=amortizer)
-            )
+            ),
         )
 
         with numpyro.handlers.seed(rng_seed=0):
@@ -450,13 +452,14 @@ class TestPresets:
             )
 
     def test_create_nbvcp_mixed_guides(self, model_config, small_counts):
-        """Test create_nbvcp with mixed guide families."""
+        """Test create_model_from_params with mixed guide families."""
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
             output_params=["log_alpha", "log_beta"],
         )
-        model, guide = create_nbvcp(
+        model, guide = create_model_from_params(
+            model="nbvcp",
             parameterization="linked",
             guide_families=GuideFamilyConfig(
                 p=MeanFieldGuide(),
@@ -474,8 +477,8 @@ class TestPresets:
             )
 
     def test_create_zinbvcp(self, model_config, small_counts):
-        """Test create_zinbvcp."""
-        model, guide = create_zinbvcp()
+        """Test create_model_from_params for ZINBVCP."""
+        model, guide = create_model_from_params(model="zinbvcp")
 
         with numpyro.handlers.seed(rng_seed=0):
             with numpyro.handlers.trace() as tr:
@@ -594,7 +597,7 @@ class TestSVIIntegration:
 
     def test_svi_training_nbdm(self, model_config, small_counts, rng_key):
         """Test that built NBDM model/guide can be trained with SVI."""
-        model, guide = create_nbdm()
+        model, guide = create_model_from_params(model="nbdm")
 
         optimizer = Adam(1e-2)
         svi = SVI(model, guide, optimizer, Trace_ELBO())
@@ -624,7 +627,7 @@ class TestSVIIntegration:
         self, model_config, small_counts, rng_key
     ):
         """Test SVI training with mini-batching."""
-        model, guide = create_nbdm()
+        model, guide = create_model_from_params(model="nbdm")
 
         optimizer = Adam(1e-2)
         svi = SVI(model, guide, optimizer, Trace_ELBO())
@@ -735,7 +738,7 @@ class TestMixtureModels:
             .build()
         )
 
-        model, guide = create_nbdm(n_components=3)
+        model, guide = create_model_from_params(model="nbdm", n_components=3)
 
         with numpyro.handlers.seed(rng_seed=0):
             with numpyro.handlers.trace() as tr:
@@ -763,7 +766,9 @@ class TestMixtureModels:
         )
 
         # Only r is mixture-specific, p is shared
-        model, guide = create_nbdm(n_components=3, mixture_params=["r"])
+        model, guide = create_model_from_params(
+            model="nbdm", n_components=3, mixture_params=["r"]
+        )
 
         with numpyro.handlers.seed(rng_seed=0):
             with numpyro.handlers.trace() as tr:
@@ -790,7 +795,7 @@ class TestMixtureModels:
             .build()
         )
 
-        model, guide = create_zinb(n_components=3)
+        model, guide = create_model_from_params(model="zinb", n_components=3)
 
         with numpyro.handlers.seed(rng_seed=0):
             with numpyro.handlers.trace() as tr:
@@ -916,9 +921,11 @@ class TestParameterizations:
         )
 
     def test_parameterization_with_new_names(self, model_config, small_counts):
-        """Test presets work with new parameterization names."""
+        """Test factory works with new parameterization names."""
         # Test canonical
-        model, guide = create_nbdm(parameterization="canonical")
+        model, guide = create_model_from_params(
+            model="nbdm", parameterization="canonical"
+        )
         with numpyro.handlers.seed(rng_seed=0):
             model(
                 n_cells=50,
@@ -928,7 +935,9 @@ class TestParameterizations:
             )
 
         # Test mean_prob
-        model, guide = create_nbdm(parameterization="mean_prob")
+        model, guide = create_model_from_params(
+            model="nbdm", parameterization="mean_prob"
+        )
         with numpyro.handlers.seed(rng_seed=0):
             model(
                 n_cells=50,
@@ -938,7 +947,9 @@ class TestParameterizations:
             )
 
         # Test mean_odds
-        model, guide = create_nbdm(parameterization="mean_odds")
+        model, guide = create_model_from_params(
+            model="nbdm", parameterization="mean_odds"
+        )
         with numpyro.handlers.seed(rng_seed=0):
             model(
                 n_cells=50,
@@ -949,7 +960,9 @@ class TestParameterizations:
 
     def test_nbvcp_with_mean_odds_phi_capture(self, model_config, small_counts):
         """Test NBVCP with mean_odds uses phi_capture instead of p_capture."""
-        model, guide = create_nbvcp(parameterization="mean_odds")
+        model, guide = create_model_from_params(
+            model="nbvcp", parameterization="mean_odds"
+        )
 
         with numpyro.handlers.seed(rng_seed=0):
             with numpyro.handlers.trace() as tr:

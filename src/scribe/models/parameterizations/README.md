@@ -78,16 +78,16 @@ capture_param = param_strategy.transform_model_param("p_capture")
 # Returns: "phi_capture"
 ```
 
-## Usage in Preset Factories
+## Usage in Unified Factory
 
-Preset factories use parameterizations to eliminate nested conditionals:
+The unified factory uses parameterizations to eliminate nested conditionals:
 
 ```python
 from ..parameterizations import PARAMETERIZATIONS
 
-def create_nbdm(parameterization="canonical", ...):
+def create_model(model_config):
     # Get parameterization strategy
-    param_strategy = PARAMETERIZATIONS[parameterization]
+    param_strategy = PARAMETERIZATIONS[model_config.parameterization]
     
     # Build parameter specs
     param_specs = param_strategy.build_param_specs(
