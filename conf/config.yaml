@@ -4,6 +4,7 @@
 defaults:
   - data: singer
   - inference: svi
+  - model: nbdm
   - viz: default
   - amortization@amortization.capture: null  # Optional: use 'capture' for amortized capture
   - _self_
@@ -12,8 +13,8 @@ defaults:
 # path is now in conf/data
 
 # --- Model Configuration ---
-# Model type: nbdm, zinb, nbvcp, zinbvcp
-model: nbdm
+# Model type can be overridden via: model=zinb, model=nbvcp, etc.
+# Or set options directly below:
 
 # Parameterization scheme
 # - "canonical" (or "standard"): Sample p ~ Beta, r ~ LogNormal directly
