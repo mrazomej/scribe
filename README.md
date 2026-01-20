@@ -95,14 +95,7 @@ import scanpy as sc
 adata = sc.read_h5ad("your_data.h5ad")
 
 # Run SCRIBE with default settings (SVI inference, NBDM model)
-from scribe.models.config import InferenceConfig, SVIConfig
-
-results = scribe.run_scribe(
-    counts=adata,
-    model="nbdm",
-    inference_method="svi",
-    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=50000)),
-)
+results = scribe.fit(adata, model="nbdm")
 
 # Analyze results
 posterior_samples = results.get_posterior_samples()
@@ -112,35 +105,55 @@ log_likelihood = results.log_likelihood()
 scribe.viz.plot_loss_history(results.loss_history)
 ```
 
+### Customize with Simple Arguments
+
+```python
+# Zero-inflated model with more optimization steps
+results = scribe.fit(
+    adata,
+    model="zinb",
+    n_steps=100000,
+    batch_size=512,
+)
+
+# Linked parameterization with low-rank guide
+results = scribe.fit(
+    adata,
+    model="nbdm",
+    parameterization="linked",
+    guide_rank=15,
+)
+
+# Mixture model for cell type discovery
+results = scribe.fit(
+    adata,
+    model="zinb",
+    n_components=3,
+    n_steps=150000,
+)
+```
+
 ### Choose Your Inference Method
 
 ```python
-from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
-
-# Fast exploration with SVI (ZINB model for zero-inflation)
-svi_results = scribe.run_scribe(
-    counts=adata,
-    model="zinb",
-    inference_method="svi",
-    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=75000)),
-)
+# Fast exploration with SVI (default)
+svi_results = scribe.fit(adata, model="zinb", n_steps=75000)
 
 # Exact inference with MCMC
-mcmc_results = scribe.run_scribe(
-    counts=adata,
+mcmc_results = scribe.fit(
+    adata,
     model="nbdm",
     inference_method="mcmc",
-    inference_config=InferenceConfig.from_mcmc(
-        MCMCConfig(n_samples=3000, n_chains=4)
-    ),
+    n_samples=3000,
+    n_chains=4,
 )
 
-# Representation learning with VAE (see scribe.vae docs for VAE-specific config)
-vae_results = scribe.run_scribe(
-    counts=adata,
+# Representation learning with VAE
+vae_results = scribe.fit(
+    adata,
     model="nbdm",
     inference_method="vae",
-    inference_config=InferenceConfig.from_vae(SVIConfig(n_steps=50000)),
+    n_steps=50000,
 )
 ```
 
@@ -149,21 +162,12 @@ vae_results = scribe.run_scribe(
 ### Mixture Models for Cell Type Discovery
 
 ```python
-from scribe.inference.preset_builder import build_config_from_preset
-from scribe.models.config import InferenceConfig, SVIConfig
-
-# Build model config for mixture (nbdm with 5 components)
-model_config = build_config_from_preset(
+# Simple: just specify n_components
+mixture_results = scribe.fit(
+    adata,
     model="nbdm",
-    inference_method="svi",
     n_components=5,
-)
-inference_config = InferenceConfig.from_svi(SVIConfig(n_steps=100000))
-
-mixture_results = scribe.run_scribe(
-    counts=adata,
-    model_config=model_config,
-    inference_config=inference_config,
+    n_steps=100000,
 )
 
 # Analyze cell type assignments
@@ -180,7 +184,7 @@ for i in range(5):
 Choose the right model for your data:
 
 | Model       | Best For                    | Key Features                |
-|-------------|-----------------------------|-----------------------------|
+| ----------- | --------------------------- | --------------------------- |
 | **NBDM**    | Baseline analysis           | Simple, interpretable, fast |
 | **ZINB**    | Data with excess zeros      | Handles dropouts            |
 | **NBVCP**   | Variable sequencing depth   | Models capture efficiency   |
@@ -189,32 +193,22 @@ Choose the right model for your data:
 ### Multi-Method Workflow
 
 ```python
-from scribe.inference.preset_builder import build_config_from_preset
-from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
-
-# Shared model: ZINB mixture with 3 components
-model_config = build_config_from_preset(
-    model="zinb",
-    inference_method="svi",
-    n_components=3,
-)
-
 # Fast exploration with SVI
-svi_results = scribe.run_scribe(
-    counts=adata,
-    model_config=model_config,
-    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=50000)),
+svi_results = scribe.fit(
+    adata,
+    model="zinb",
+    n_components=3,
+    n_steps=50000,
 )
 
 # Exact inference for final analysis
-mcmc_results = scribe.run_scribe(
-    counts=adata,
-    model_config=build_config_from_preset(
-        model="zinb", inference_method="mcmc", n_components=3
-    ),
-    inference_config=InferenceConfig.from_mcmc(
-        MCMCConfig(n_samples=2000, n_chains=4)
-    ),
+mcmc_results = scribe.fit(
+    adata,
+    model="zinb",
+    n_components=3,
+    inference_method="mcmc",
+    n_samples=2000,
+    n_chains=4,
 )
 ```
 
@@ -222,18 +216,17 @@ mcmc_results = scribe.run_scribe(
 
 ```python
 import scanpy as sc
-from scribe.models.config import InferenceConfig, SVIConfig
 
 # Standard scanpy preprocessing
 sc.pp.filter_cells(adata, min_genes=200)
 sc.pp.filter_genes(adata, min_cells=3)
 
-# SCRIBE analysis (use model="nbdm"/"zinb"/"nbvcp"/"zinbvcp" for model choice)
-results = scribe.run_scribe(
-    counts=adata,
+# SCRIBE analysis with VAE for representation learning
+results = scribe.fit(
+    adata,
     model="nbdm",
     inference_method="vae",
-    inference_config=InferenceConfig.from_vae(SVIConfig(n_steps=50000)),
+    n_steps=50000,
 )
 
 # Add results back to AnnData
@@ -244,6 +237,36 @@ adata.obs["scribe_cluster"] = results.cell_type_probabilities().argmax(axis=1)
 sc.pp.neighbors(adata, use_rep="X_scribe")
 sc.tl.umap(adata)
 sc.pl.umap(adata, color="scribe_cluster")
+```
+
+### Power User: Explicit Configuration Objects
+
+For full control, you can still use explicit configuration objects:
+
+```python
+from scribe.models.config import ModelConfigBuilder, InferenceConfig, SVIConfig
+
+# Build detailed model configuration
+model_config = (
+    ModelConfigBuilder()
+    .for_model("zinb")
+    .with_parameterization("linked")
+    .unconstrained()
+    .as_mixture(n_components=3)
+    .build()
+)
+
+# Custom inference configuration
+inference_config = InferenceConfig.from_svi(
+    SVIConfig(n_steps=100000, batch_size=512)
+)
+
+# Run with explicit configs
+results = scribe.fit(
+    adata,
+    model_config=model_config,
+    inference_config=inference_config,
+)
 ```
 
 ## Performance & Scalability
@@ -257,16 +280,12 @@ SCRIBE is designed for real-world single-cell datasets:
 - **Fast**: SVI inference typically completes in minutes
 
 ```python
-from scribe.models.config import InferenceConfig, SVIConfig
-
-# For large datasets
-large_results = scribe.run_scribe(
-    counts=large_adata,
+# For large datasets - just add batch_size
+large_results = scribe.fit(
+    large_adata,
     model="nbdm",
-    inference_method="svi",
-    inference_config=InferenceConfig.from_svi(
-        SVIConfig(n_steps=150000, batch_size=1024)
-    ),
+    n_steps=150000,
+    batch_size=1024,
 )
 ```
 
