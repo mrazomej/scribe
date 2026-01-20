@@ -1,0 +1,8 @@
+# @package _global_
+# ZINB (Zero-Inflated Negative Binomial) preset
+# Handles excess zeros in scRNA-seq data
+
+model: zinb
+parameterization: canonical
+unconstrained: false
+n_components: null

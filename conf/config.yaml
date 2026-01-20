@@ -10,43 +10,59 @@ defaults:
 # --- Data Loading ---
 # path is now in conf/data
 
-# --- run_scribe Configuration ---
+# --- Model Configuration ---
+# Model type: nbdm, zinb, nbvcp, zinbvcp
+model: nbdm
 
-# General
-seed: 42
+# Parameterization scheme
+# - "canonical" (or "standard"): Sample p ~ Beta, r ~ LogNormal directly
+# - "linked" (or "mean_prob"): Sample p ~ Beta, mu ~ LogNormal, derive r
+# - "odds_ratio" (or "mean_odds"): Sample phi ~ BetaPrime, mu ~ LogNormal
+parameterization: canonical
 
-# Model Configuration
-zero_inflated: false
-variable_capture: false
-mixture_model: false
-n_components: null
-component_specific_params: false
-guide_rank: null
-
-# Parameterization
-parameterization: "standard" # "standard", "linked", "odds_ratio"
+# Use unconstrained parameterization (Normal + transform)
 unconstrained: false
 
-# Data Processing in model
+# Mixture model configuration
+# Set to integer >= 2 for mixture models, null for single component
+n_components: null
+
+# Which parameters should be component-specific in mixture models
+# null = default (all gene-specific params), or list like ["r", "gate"]
+mixture_params: null
+
+# Guide configuration
+# null = mean-field, integer = low-rank with that rank
+guide_rank: null
+
+# --- Priors Configuration (optional overrides) ---
+# Each prior is a list [param1, param2] for the distribution
+# - Beta priors: [alpha, beta]
+# - LogNormal priors: [loc, scale]
+# - BetaPrime priors: [alpha, beta]
+priors:
+  p: null           # Beta(alpha, beta) for success probability
+  r: null           # LogNormal(loc, scale) for dispersion
+  mu: null          # LogNormal(loc, scale) for mean (linked/odds_ratio)
+  phi: null         # BetaPrime(alpha, beta) for odds ratio
+  gate: null        # Beta(alpha, beta) for zero-inflation gate
+  p_capture: null   # Beta(alpha, beta) for capture probability
+  phi_capture: null # BetaPrime(alpha, beta) for capture odds
+  mixing: null      # Dirichlet concentrations for mixture weights
+
+# --- General Settings ---
+seed: 42
+
+# Data Processing
 cells_axis: 0
 layer: null
-
-# Prior Configuration
-r_prior: null
-p_prior: null
-gate_prior: null
-p_capture_prior: null
-mixing_prior: null
-mu_prior: null
-phi_prior: null
-phi_capture_prior: null
 
 # --- Hydra settings ---
 hydra:
   run:
-    dir: outputs/${data.name}/${inference.method}/${hydra:job.override_dirname}
+    dir: outputs/${data.name}/${model}/${inference.method}/${hydra:job.override_dirname}
   job:
-    name: ${data.name}_${inference.method}
+    name: ${data.name}_${model}_${inference.method}
     config:
       override_dirname:
         exclude_keys:

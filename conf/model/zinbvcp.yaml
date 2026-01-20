@@ -1,0 +1,8 @@
+# @package _global_
+# ZINBVCP (Zero-Inflated NB with Variable Capture Probability) preset
+# Most comprehensive model - handles both excess zeros and capture efficiency
+
+model: zinbvcp
+parameterization: canonical
+unconstrained: false
+n_components: null

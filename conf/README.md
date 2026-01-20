@@ -5,481 +5,291 @@ visualization pipelines. The configuration system allows you to easily manage
 complex experimental setups, run parameter sweeps, and maintain reproducible
 results.
 
-## 🎯 Quick Start
+## Quick Start
 
 ```bash
-# Run inference with default settings (includes visualization)
+# Run inference with default settings (NBDM model, SVI inference)
 python infer.py
 
-# Run inference with specific data and model
-python infer.py data=jurkat_cells inference=svi zero_inflated=true
+# Specify model and inference method
+python infer.py model=zinb inference=svi
 
-# Run inference without visualization
-python infer.py data=jurkat_cells inference=svi viz=null
+# With model options
+python infer.py model=zinb parameterization=linked n_components=3
 
-# Generate visualizations from existing inference results
-python visualize.py data=jurkat_cells inference=svi zero_inflated=true
+# Override inference parameters
+python infer.py model=nbdm inference.n_steps=100000 inference.batch_size=512
 
-# Override specific parameters
-python infer.py data=jurkat_cells inference.n_steps=100000 inference.batch_size=1024
+# Use model presets
+python infer.py model=zinb data=jurkat_cells
 
-# Enable specific plots only
-python infer.py data=jurkat_cells viz.loss=true viz.ppc=true viz.ecdf=false
+# Disable visualization
+python infer.py model=nbdm viz=null
 ```
 
-## 📁 Configuration Structure
+## Configuration Structure
 
 ```
 conf/
 ├── config.yaml           # Main configuration file
-├── data/                  # Data-specific configurations
+├── data/                 # Data-specific configurations
 │   ├── jurkat_cells.yaml
 │   ├── singer.yaml
 │   └── 5050mix.yaml
-├── inference/             # Inference method configurations
-│   ├── svi.yaml          # Stochastic Variational Inference
-│   ├── mcmc.yaml         # Markov Chain Monte Carlo
-│   └── vae.yaml          # Variational Autoencoder
-├── model/                 # Model-specific configurations
-├── viz/                   # Visualization configurations
+├── inference/            # Inference method configurations
+│   ├── svi.yaml         # Stochastic Variational Inference
+│   ├── mcmc.yaml        # Markov Chain Monte Carlo
+│   └── vae.yaml         # Variational Autoencoder
+├── model/               # Model presets (optional)
+│   ├── nbdm.yaml
+│   ├── zinb.yaml
+│   ├── nbvcp.yaml
+│   └── zinbvcp.yaml
+├── viz/                 # Visualization configurations
 │   └── default.yaml
-└── hydra/                 # Hydra framework settings
+└── README.md
 ```
 
-## ⚙️ Main Configuration (`config.yaml`)
+## Main Configuration (`config.yaml`)
 
 The main configuration file defines the complete experimental setup:
 
-### Data Configuration
-```yaml
-defaults:
-  - data: singer          # Choose dataset configuration
-  - inference: svi        # Choose inference method
-```
+### Model Configuration
 
-### Model Parameters
 ```yaml
-# Model Selection
-zero_inflated: false      # Use zero-inflated models (ZINB/ZINBVCP)
-variable_capture: false   # Use variable capture probability models
-mixture_model: false      # Enable mixture models for cell type discovery
-n_components: null        # Number of mixture components (auto if null)
+# Model type: nbdm, zinb, nbvcp, zinbvcp
+model: nbdm
 
-# Parameterization Options
-parameterization: "standard"  # "standard", "linked", "odds_ratio"
-unconstrained: false          # Use unconstrained parameterization
+# Parameterization scheme
+# - "canonical" (or "standard"): Sample p, r directly
+# - "linked" (or "mean_prob"): Sample p, mu, derive r
+# - "odds_ratio" (or "mean_odds"): Sample phi, mu, derive p and r
+parameterization: canonical
+
+# Use unconstrained parameterization (Normal + transform)
+unconstrained: false
+
+# Mixture model configuration
+n_components: null    # null = single component, int >= 2 for mixture
+mixture_params: null  # which params are component-specific
+
+# Guide configuration
+guide_rank: null      # null = mean-field, int = low-rank
 ```
 
 ### Prior Configuration
+
 ```yaml
-# Customize priors for Bayesian inference
-r_prior: null            # Negative binomial dispersion prior
-p_prior: null            # Success probability prior
-gate_prior: null         # Zero-inflation gate prior
-p_capture_prior: null    # Capture probability prior
-mixing_prior: null       # Mixture component prior
+# Override default priors (each is [param1, param2])
+priors:
+  p: null           # Beta(alpha, beta) for success probability
+  r: null           # LogNormal(loc, scale) for dispersion
+  mu: null          # LogNormal(loc, scale) for mean
+  phi: null         # BetaPrime(alpha, beta) for odds ratio
+  gate: null        # Beta(alpha, beta) for zero-inflation gate
+  p_capture: null   # Beta(alpha, beta) for capture probability
 ```
 
-### Visualization Settings
+### Example Configurations
+
 ```yaml
-viz:
-  loss: true             # Plot loss/ELBO history
-  ecdf: true             # Plot empirical CDFs
-  ppc: true              # Plot posterior predictive checks
-  umap: true             # Plot UMAP projection (experimental vs synthetic data)
-  heatmap: false         # Plot correlation heatmap (disabled by default, requires posterior sampling)
-  mixture_ppc: false     # Plot mixture model PPCs (only for mixture models)
-  format: png            # Output format: png, pdf, svg, eps
-  
-  ecdf_opts:
-    n_genes: 25          # Number of genes for ECDF plots
-  
-  ppc_opts:
-    n_rows: 6            # Number of expression bins (logarithmically spaced)
-    n_cols: 6            # Number of genes per bin
-    n_samples: 1500      # Posterior predictive samples
-  
-  umap_opts:
-    n_neighbors: 15      # Number of neighbors for UMAP
-    min_dist: 0.1        # Minimum distance for UMAP
-    n_components: 2      # Number of UMAP dimensions
-    random_state: 42     # Random seed for reproducibility
-    batch_size: 1000     # Batch size for PPC sampling (None = no batching, use for memory efficiency)
-    data_color: "dark_blue"      # Color for experimental data
-    synthetic_color: "dark_red"  # Color for synthetic data
-  
-  heatmap_opts:
-    n_genes: 500         # Number of genes to display (selected by correlation variance)
-    n_samples: 256       # Posterior samples for correlation computation
-    figsize: 12          # Figure size (square)
-    cmap: "RdBu_r"       # Colormap (red=positive, blue=negative)
-  
-  mixture_ppc_opts:
-    n_rows: 6            # Number of rows in the PPC grid
-    n_cols: 6            # Number of columns in the PPC grid
-    n_samples: 500       # Number of posterior predictive samples
-    n_bins: 6            # Number of expression bins for gene selection
+# ZINB mixture model
+model: zinb
+parameterization: linked
+n_components: 3
+
+# NBVCP with low-rank guide
+model: nbvcp
+parameterization: canonical
+guide_rank: 15
+
+# Custom priors
+model: nbdm
+priors:
+  p: [2.0, 2.0]     # Informative Beta prior
+  r: [0.0, 0.5]     # Tighter LogNormal prior
 ```
 
-**Note**: Visualization is enabled by default when running `infer.py`. Use
-`viz=null` to disable all plots, or `viz.loss=false` to disable specific plots.
-
-**PPC Gene Selection**: The PPC plots use a log-spaced binning strategy to
-ensure good coverage across the expression range. Genes are divided into
-`n_rows` logarithmically-spaced expression bins, and `n_cols` genes are selected
-from each bin (also using logarithmic spacing within the bin). This ensures
-representation of both low-expression and high-expression genes while avoiding
-over-representation of very low-expression genes.
-
-**UMAP Projection**: The UMAP plot provides a 2D visualization comparing
-experimental and synthetic data. UMAP is first fitted on the experimental data,
-then a single posterior predictive sample (one sample per gene per cell) is
-generated and projected onto the same UMAP space. This allows visual comparison
-of how well the model captures the structure of the experimental data. Requires
-`umap-learn` package (`pip install umap-learn`). The `batch_size` parameter can
-be used to process cells in batches during PPC sampling to avoid memory issues
-on large datasets.
-
-**Correlation Heatmap**: The heatmap displays pairwise Pearson correlations
-between genes computed from posterior samples. Genes are selected by correlation
-variance (most informative structure) and displayed with hierarchical clustering
-and dendrograms. This visualization helps identify gene co-expression patterns
-learned by the model. Disabled by default as it requires posterior sampling.
-
-**Mixture PPC**: For mixture models, this generates specialized posterior
-predictive checks that highlight genes with the highest variability between
-mixture components. It produces multiple plots: (1) a combined mixture PPC
-showing the weighted average across all components (blue), and (2) separate
-per-component PPCs using distinct colormaps (green, purple, red, orange, etc.).
-Genes are selected using the coefficient of variation (CV) of MAP estimates
-across components, with expression-based binning to ensure representation across
-the full expression range. This visualization helps assess how well individual
-components capture gene expression patterns and identify genes that distinguish
-cell types. Only available when `mixture_model=true`.
-
-## 📊 Data Configurations (`data/`)
+## Data Configurations (`data/`)
 
 Each dataset has its own configuration file:
 
-### Jurkat Cells (`data/jurkat_cells.yaml`)
-```yaml
-# @package data
-name: "Jurkat_cells"
-path: "data/10xGenomics/Jurkat_cells/data.h5ad"
-```
+### Example: Singer Dataset (`data/singer.yaml`)
 
-### Singer Dataset (`data/singer.yaml`)
 ```yaml
 # @package data
 name: "singer"
-path: "data/singer/data.h5ad"
-preprocessing:
-  min_cells: 3
-  min_genes: 200
+path: "data/singer/singer_transcript_counts.csv"
+
+# Optional preprocessing
+# preprocessing:
+#   filter_cells:
+#     min_genes: 200
+#   filter_genes:
+#     min_cells: 3
 ```
 
-### Custom Dataset
-Create your own data configuration:
+### Creating a Custom Dataset Config
+
 ```yaml
 # @package data
 name: "my_dataset"
 path: "path/to/my_data.h5ad"
 preprocessing:
-  min_cells: 5
-  min_genes: 100
-  max_genes: 5000
+  filter_cells:
+    min_genes: 200
+  filter_genes:
+    min_cells: 5
 ```
 
-## 🔬 Inference Configurations (`inference/`)
+## Inference Configurations (`inference/`)
 
-### Stochastic Variational Inference (`inference/svi.yaml`)
+### SVI (`inference/svi.yaml`)
+
 ```yaml
 # @package inference
 method: svi
-n_steps: 50000           # Number of optimization steps
-batch_size: null         # Mini-batch size (null = full batch)
-stable_update: true      # Use stable parameter updates
-learning_rate: 0.001     # Adam optimizer learning rate
+n_steps: 50_000
+batch_size: null      # null = full batch
+stable_update: true
 ```
 
 ### MCMC (`inference/mcmc.yaml`)
+
 ```yaml
 # @package inference
 method: mcmc
-n_samples: 2000          # Number of MCMC samples
-n_chains: 4              # Number of parallel chains
-n_warmup: 1000           # Warmup samples
-target_accept_prob: 0.8  # Target acceptance probability
+n_samples: 2_000
+n_warmup: 1_000
+n_chains: 1
 ```
 
 ### VAE (`inference/vae.yaml`)
+
 ```yaml
 # @package inference
 method: vae
-n_steps: 50000           # Training steps
-latent_dim: 15           # Latent space dimensionality
-encoder_layers: [128, 64] # Encoder architecture
-decoder_layers: [64, 128] # Decoder architecture
+n_steps: 50_000
+batch_size: null
+stable_update: true
 ```
 
-## 🎨 Visualization Configuration (`viz/default.yaml`)
+## Model Presets (`model/`)
 
-Control visualization output:
-```yaml
-# @package _global_
-run_dir: ???             # Path to inference results (auto-detected)
+Optional preset files for common model configurations:
 
-viz:
-  loss: true             # Plot training loss
-  ecdf: true             # Plot empirical cumulative distribution
-  ppc: true              # Plot posterior predictive checks
-  umap: true             # Plot UMAP projection (experimental vs synthetic)
-  heatmap: false         # Plot correlation heatmap (requires posterior sampling)
-  mixture_ppc: false     # Plot mixture model PPCs (requires mixture_model=true)
-  format: png            # png, pdf, svg, eps
-  
-  ecdf_opts:
-    n_genes: 25          # Genes to include in ECDF
-  
-  ppc_opts:
-    n_rows: 6            # Number of expression bins (logarithmically spaced)
-    n_cols: 6            # Number of genes per bin
-    n_samples: 1500      # Number of predictive samples
-  
-  umap_opts:
-    n_neighbors: 15      # Number of neighbors for UMAP
-    min_dist: 0.1        # Minimum distance for UMAP
-    n_components: 2      # Number of UMAP dimensions
-    random_state: 42     # Random seed for reproducibility
-    batch_size: 1000     # Batch size for PPC sampling
-    data_color: "dark_blue"      # Color for experimental data
-    synthetic_color: "dark_red"  # Color for synthetic data
-  
-  heatmap_opts:
-    n_genes: 500         # Number of genes to display
-    n_samples: 256       # Posterior samples for correlation
-    figsize: 12          # Figure size (square)
-    cmap: "RdBu_r"       # Colormap
-  
-  mixture_ppc_opts:
-    n_rows: 6            # Number of rows in the PPC grid
-    n_cols: 6            # Number of columns in the PPC grid
-    n_samples: 500       # Number of posterior predictive samples
-    n_bins: 6            # Number of expression bins for gene selection
+```bash
+# Use ZINB preset
+python infer.py model=zinb
+
+# These are equivalent to setting model options directly
+python infer.py model=zinb parameterization=canonical unconstrained=false
 ```
 
-## 🚀 Advanced Usage
+## Advanced Usage
 
 ### Parameter Sweeps
-```bash
-# Sweep over multiple parameters
-python infer.py -m data=jurkat_cells,singer inference.n_steps=25000,50000,100000
 
-# Bayesian model comparison
-python infer.py -m zero_inflated=true,false variable_capture=true,false
+```bash
+# Sweep over models
+python infer.py -m model=nbdm,zinb,nbvcp,zinbvcp
+
+# Sweep over mixture components
+python infer.py -m model=zinb n_components=2,3,5
+
+# Sweep over inference steps
+python infer.py -m inference.n_steps=25000,50000,100000
 ```
 
 ### Mixture Model Analysis
+
 ```bash
-# Cell type discovery
-python infer.py data=jurkat_cells mixture_model=true n_components=3 inference.n_steps=100000
+# Cell type discovery with ZINB mixture
+python infer.py model=zinb n_components=5 inference.n_steps=100000
 
-# Component-specific parameters
-python infer.py mixture_model=true component_specific_params=true
-
-# Visualize component-specific PPCs (genes that differ between components)
-python visualize.py mixture_model=true n_components=3 viz.mixture_ppc=true
+# With linked parameterization for better optimization
+python infer.py model=zinb n_components=3 parameterization=linked
 ```
 
-### Custom Parameterizations
+### Custom Priors
+
 ```bash
-# Different parameterizations for specialized analysis
-python infer.py parameterization=linked zero_inflated=true
-python infer.py parameterization=odds_ratio mixture_model=true
+# Informative priors for specific analysis
+python infer.py model=nbdm "priors.p=[2.0,2.0]" "priors.r=[1.0,0.5]"
 ```
 
-### High-Performance Computing
+### High-Performance Settings
+
 ```bash
-# Large-scale analysis
-python infer.py inference.batch_size=2048 inference.n_steps=200000
+# Large dataset with mini-batching
+python infer.py model=zinb inference.batch_size=1024 inference.n_steps=200000
 
-# Memory-efficient processing
-python infer.py cells_axis=0 inference.batch_size=512
+# More MCMC samples for publication-quality inference
+python infer.py model=nbdm inference=mcmc inference.n_samples=5000 inference.n_chains=4
 ```
 
-## 📈 Visualization Workflows
+## Output Organization
 
-### Integrated Visualization (Recommended)
-```bash
-# Run inference with automatic visualization (default)
-python infer.py data=jurkat_cells inference=svi
-
-# Generate publication-ready PDFs
-python infer.py data=jurkat_cells inference=svi viz.format=pdf
-
-# Enable only specific plots
-python infer.py data=jurkat_cells viz.loss=true viz.ppc=true viz.ecdf=false viz.umap=true
-```
-
-### Standalone Visualization
-```bash
-# Generate all plots from existing results
-python visualize.py data=jurkat_cells inference=svi
-
-# Generate publication-ready PDFs
-python visualize.py data=jurkat_cells inference=svi viz.format=pdf
-
-# Focus on specific plots
-python visualize.py viz.loss=false viz.ppc=true viz.ppc_opts.n_rows=6 viz.ppc_opts.n_cols=8
-
-# Enable/disable UMAP projection plot
-python visualize.py viz.umap=true
-
-# Customize UMAP parameters
-python visualize.py viz.umap=true viz.umap_opts.n_neighbors=30 viz.umap_opts.min_dist=0.2
-
-# Enable correlation heatmap (requires posterior sampling)
-python visualize.py viz.heatmap=true viz.heatmap_opts.n_genes=300
-
-# Enable mixture PPC (only for mixture models)
-python visualize.py data=5050mix mixture_model=true n_components=2 viz.mixture_ppc=true
-
-# Customize mixture PPC options
-python visualize.py mixture_model=true viz.mixture_ppc=true viz.mixture_ppc_opts.n_samples=1000
-
-# High-resolution analysis
-python visualize.py viz.ppc_opts.n_samples=5000 viz.ecdf_opts.n_genes=100
-```
-
-## 🔧 Configuration Tips
-
-### 1. **Reproducibility**
-Always specify a seed for reproducible results:
-```yaml
-seed: 42
-```
-
-### 2. **Memory Management**
-For large datasets, use batching:
-```yaml
-inference:
-  batch_size: 1024
-```
-
-### 3. **Model Selection**
-Start simple and add complexity:
-```bash
-# Baseline
-python infer.py
-
-# Add zero-inflation
-python infer.py zero_inflated=true
-
-# Add mixture modeling
-python infer.py zero_inflated=true mixture_model=true n_components=3
-```
-
-### 4. **Convergence**
-Monitor convergence and adjust steps:
-```yaml
-inference:
-  n_steps: 100000  # Increase for complex models
-```
-
-### 5. **Output Organization**
 Hydra automatically organizes outputs:
+
 ```
 outputs/
 ├── {dataset}/
-│   ├── {inference_method}/
-│   │   ├── {parameters}/
-│   │   │   ├── scribe_results.pkl
-│   │   │   ├── figs/
-│   │   │   └── .hydra/
+│   ├── {model}/
+│   │   ├── {inference_method}/
+│   │   │   ├── {parameters}/
+│   │   │   │   ├── scribe_results.pkl
+│   │   │   │   ├── figs/
+│   │   │   │   └── .hydra/
 ```
 
-## 🐛 Troubleshooting
+## Visualization Configuration
 
-### Common Issues
+```yaml
+viz:
+  loss: true       # Plot loss/ELBO history
+  ecdf: true       # Plot empirical CDFs
+  ppc: true        # Plot posterior predictive checks
+  format: png      # Output format: png, pdf, svg, eps
+```
 
-**1. Configuration Not Found**
+### Disable Visualization
+
 ```bash
-# Error: Could not override 'data'
-# Solution: Use + prefix for new parameters
-python infer.py +my_param=value
+# Run inference without any plots
+python infer.py model=nbdm viz=null
+
+# Or disable specific plots
+python infer.py model=nbdm viz.loss=false viz.ppc=true
 ```
 
-**2. Memory Issues**
-```bash
-# Reduce batch size or use gradient checkpointing
-python infer.py inference.batch_size=256
-```
+## Programmatic API
 
-**3. Convergence Problems**
-```bash
-# Increase steps or adjust learning rate
-python infer.py inference.n_steps=100000 inference.learning_rate=0.0005
-```
+The Hydra configuration maps directly to `scribe.fit()` arguments:
 
-**4. Visualization Issues**
-```bash
-# Disable visualization if causing problems
-python infer.py viz=null
-
-# Or run visualization separately
-python visualize.py data=your_data inference=your_method
-```
-
-## 📚 Integration Examples
-
-### With Scanpy
 ```python
-import scanpy as sc
 import scribe
-from scribe.models.config import InferenceConfig, SVIConfig
 
-# Load and preprocess
-adata = sc.read_h5ad("data.h5ad")
-sc.pp.filter_cells(adata, min_genes=200)
-
-# Run SCRIBE (use model="zinb" for zero-inflation, "nbvcp" for variable capture, etc.)
-results = scribe.run_scribe(
-    counts=adata.X,
+# Equivalent to: python infer.py model=zinb n_components=3 inference.n_steps=100000
+results = scribe.fit(
+    adata,
     model="zinb",
-    inference_method="svi",
-    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=50000)),
+    n_components=3,
+    n_steps=100000,
 )
 ```
 
-### Programmatic Configuration
+## Best Practices
 
-`infer.py` and `visualize.py` use Hydra. Their YAML options (e.g. `zero_inflated`,
-`variable_capture`, `mixture_model`) are mapped to the programmatic API
-(`model`, `build_config_from_preset`, `InferenceConfig`) inside the pipeline.
-For direct `run_scribe` calls, use `model`, `model_config`, and
-`inference_config` as in the Scanpy example above.
-
-## 🎯 Best Practices
-
-1. **Start Simple**: Begin with default configurations and add complexity
-   gradually
+1. **Start Simple**: Begin with `model=nbdm` and add complexity gradually
 2. **Version Control**: Track configuration changes alongside code
 3. **Document Experiments**: Use descriptive override names
-4. **Monitor Resources**: Watch memory and GPU usage for large datasets
-5. **Validate Results**: Always check convergence and posterior predictive
-   checks
+4. **Monitor Resources**: Watch memory usage for large datasets
+5. **Validate Results**: Always check convergence and posterior predictive checks
 
-## 📖 Further Reading
+## Further Reading
 
 - [Hydra Documentation](https://hydra.cc/) for advanced configuration patterns
 - [SCRIBE Models](../src/scribe/models/README.md) for model-specific details
-- [SCRIBE Core](../src/scribe/core/README.md) for preprocessing options
+- [SCRIBE Package](../src/scribe/README.md) for full API documentation
 - Main [README.md](../README.md) for package overview
-
-## 🆘 Support
-
-For configuration-related questions:
-- Check the [main documentation](../README.md)
-- Create an issue in the [GitHub
-  repository](https://github.com/mrazomej/scribe/issues)
-- Review example configurations in this directory

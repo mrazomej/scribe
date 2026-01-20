@@ -1,20 +1,16 @@
 # @package inference
-method: "vae"
+# Variational Autoencoder configuration
+# VAE uses SVI internally for optimization
 
-# SVI parameters used by VAE
+method: vae
+
+# SVI parameters used for VAE training
 n_steps: 50_000
 batch_size: null
 stable_update: true
 
-# VAE-specific parameters
-vae_latent_dim: 3
-vae_hidden_dims: [256, 256]
-vae_activation: "gelu"
-vae_vcp_hidden_dims: [64, 32]
-vae_vcp_activation: "relu"
-vae_prior_type: "standard"
-vae_prior_hidden_dims: [64, 64]
-vae_prior_num_layers: 2
-vae_prior_activation: "relu"
-vae_prior_mask_type: "alternating"
-vae_standardize: false
+# VAE architecture (optional overrides)
+# These are advanced options - defaults work well for most cases
+# vae_latent_dim: 3
+# vae_hidden_dims: [256, 256]
+# vae_activation: gelu

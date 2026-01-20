@@ -1,8 +1,13 @@
 # @package inference
-method: "mcmc"
+# Markov Chain Monte Carlo configuration
 
-# MCMC Parameters
+method: mcmc
+
+# Number of MCMC samples to draw
 n_samples: 2_000
+
+# Number of warmup samples
 n_warmup: 1_000
+
+# Number of parallel chains
 n_chains: 1
-mcmc_kwargs: null
