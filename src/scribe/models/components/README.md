@@ -15,22 +15,22 @@ This directory contains the atomic components used by the builders:
 
 All components handle three plate modes:
 
-| Mode | `counts` | `batch_size` | Use Case |
-|------|----------|--------------|----------|
-| Prior Predictive | `None` | - | Generate synthetic data |
-| Full Sampling | provided | `None` | MCMC, small datasets |
-| Batch Sampling | provided | specified | SVI on large datasets |
+| Mode             | `counts` | `batch_size` | Use Case                |
+|------------------|----------|--------------|-------------------------|
+| Prior Predictive | `None`   | -            | Generate synthetic data |
+| Full Sampling    | provided | `None`       | MCMC, small datasets    |
+| Batch Sampling   | provided | specified    | SVI on large datasets   |
 
 ## Likelihoods
 
 Available likelihood components:
 
-| Class | Description | Parameters |
-|-------|-------------|------------|
-| `NegativeBinomialLikelihood` | Standard NB | p, r |
-| `ZeroInflatedNBLikelihood` | Zero-inflated NB | p, r, gate |
-| `NBWithVCPLikelihood` | NB with variable capture | p, r, p_capture |
-| `ZINBWithVCPLikelihood` | ZINB with variable capture | p, r, gate, p_capture |
+| Class                        | Description                | Parameters            |
+|------------------------------|----------------------------|-----------------------|
+| `NegativeBinomialLikelihood` | Standard NB                | p, r                  |
+| `ZeroInflatedNBLikelihood`   | Zero-inflated NB           | p, r, gate            |
+| `NBWithVCPLikelihood`        | NB with variable capture   | p, r, p_capture       |
+| `ZINBWithVCPLikelihood`      | ZINB with variable capture | p, r, gate, p_capture |
 
 ### Example
 
@@ -47,12 +47,12 @@ builder.with_likelihood(likelihood)
 Guide families are **per-parameter** markers that specify which variational
 approximation to use:
 
-| Family | Description | Use Case |
-|--------|-------------|----------|
-| `MeanFieldGuide` | Factorized variational family | Default, fast |
-| `LowRankGuide(rank)` | Low-rank MVN covariance | Gene correlations |
-| `AmortizedGuide(net)` | Neural network amortization | High-dim params |
-| `GroupedAmortizedGuide` | Joint amortization (future VAE) | Multiple params |
+| Family                  | Description                     | Use Case          |
+|-------------------------|---------------------------------|-------------------|
+| `MeanFieldGuide`        | Factorized variational family   | Default, fast     |
+| `LowRankGuide(rank)`    | Low-rank MVN covariance         | Gene correlations |
+| `AmortizedGuide(net)`   | Neural network amortization     | High-dim params   |
+| `GroupedAmortizedGuide` | Joint amortization (future VAE) | Multiple params   |
 
 ### Example
 
@@ -67,16 +67,42 @@ LogNormalSpec("r", ("n_genes",), (0.0, 1.0), guide_family=LowRankGuide(rank=10))
 
 ## Amortizers
 
-Amortizers predict variational parameters from sufficient statistics:
+Amortizers predict variational parameters from sufficient statistics using an
+MLP. This is useful for cell-specific parameters like capture probability, where
+learning separate parameters for each cell would be prohibitive.
+
+### Using the Factory (Recommended)
+
+```python
+from scribe.models.presets import create_capture_amortizer
+from scribe.models.components import AmortizedGuide
+
+# Automatically handles constrained vs unconstrained output parameters
+amortizer = create_capture_amortizer(
+    hidden_dims=[64, 32],
+    activation="leaky_relu",
+    unconstrained=False,  # Outputs (alpha, beta) for Beta distribution
+)
+guide_family = AmortizedGuide(amortizer=amortizer)
+```
+
+### Manual Construction
 
 ```python
 from scribe.models.components import Amortizer, TOTAL_COUNT, AmortizedGuide
 
-# Create amortizer for p_capture
+# Create amortizer for p_capture (constrained)
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[64, 32],
-    output_params=["log_alpha", "log_beta"],
+    output_params=["log_alpha", "log_beta"],  # exp() applied to ensure > 0
+)
+
+# For unconstrained p_capture (Normal + sigmoid)
+amortizer_unconstrained = Amortizer(
+    sufficient_statistic=TOTAL_COUNT,
+    hidden_dims=[64, 32],
+    output_params=["loc", "log_scale"],  # loc unbounded, exp(log_scale) > 0
 )
 
 # Use in guide
@@ -89,9 +115,16 @@ BetaSpec(
 
 ### Built-in Sufficient Statistics
 
-| Name | Description | Formula |
-|------|-------------|---------|
+| Name          | Description                        | Formula              |
+|---------------|------------------------------------|----------------------|
 | `TOTAL_COUNT` | Log-transformed total UMI per cell | `log1p(sum(counts))` |
+
+### Output Parameters
+
+| Parameterization | Output Params           | Distribution                   |
+|------------------|-------------------------|--------------------------------|
+| Constrained      | `log_alpha`, `log_beta` | Beta(α, β) or BetaPrime(α, β)  |
+| Unconstrained    | `loc`, `log_scale`      | Normal(loc, scale) → transform |
 
 ## Adding New Components
 

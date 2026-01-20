@@ -105,7 +105,65 @@ model, guide = create_model_from_params(
 
 ### Amortized Capture Probability
 
-For large datasets (100K+ cells), amortize p_capture inference:
+For large datasets (100K+ cells), amortize p_capture inference. There are
+multiple ways to enable this:
+
+**Option 1: Using the factory function (recommended)**
+
+```python
+from scribe.models.presets import create_capture_amortizer, create_model_from_params
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import AmortizedGuide
+
+# Factory handles constrained/unconstrained output params automatically
+amortizer = create_capture_amortizer(
+    hidden_dims=[64, 32],
+    activation="leaky_relu",
+    unconstrained=False,  # Outputs (alpha, beta) for Beta distribution
+)
+model, guide = create_model_from_params(
+    model="nbvcp",
+    guide_families=GuideFamilyConfig(
+        p_capture=AmortizedGuide(amortizer=amortizer),
+    ),
+)
+```
+
+**Option 2: Using AmortizationConfig (integrates with Hydra)**
+
+```python
+from scribe.models.presets import create_model_from_params
+from scribe.models.config import GuideFamilyConfig, AmortizationConfig
+
+# Config-based approach - works with Hydra YAML files
+model, guide = create_model_from_params(
+    model="nbvcp",
+    guide_families=GuideFamilyConfig(
+        capture_amortization=AmortizationConfig(
+            enabled=True,
+            hidden_dims=[64, 32],
+            activation="leaky_relu",
+        ),
+    ),
+)
+```
+
+**Option 3: Using scribe.fit() directly (simplest)**
+
+```python
+import scribe
+
+# Flat kwargs - no manual config construction needed
+results = scribe.fit(
+    adata,
+    model="nbvcp",
+    amortize_capture=True,
+    capture_hidden_dims=[64, 32],
+    capture_activation="leaky_relu",
+)
+```
+
+**Option 4: Manual Amortizer construction**
 
 ```python
 from scribe.models.presets import create_model_from_params
@@ -115,7 +173,8 @@ from scribe.models.components import AmortizedGuide, TOTAL_COUNT, Amortizer
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[64, 32],
-    output_params=["log_alpha", "log_beta"],
+    output_params=["log_alpha", "log_beta"],  # For constrained (Beta)
+    # output_params=["loc", "log_scale"],     # For unconstrained (Normal)
 )
 model, guide = create_model_from_params(
     model="nbvcp",

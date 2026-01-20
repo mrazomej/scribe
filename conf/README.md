@@ -40,6 +40,8 @@ conf/
 │   ├── svi.yaml         # Stochastic Variational Inference
 │   ├── mcmc.yaml        # Markov Chain Monte Carlo
 │   └── vae.yaml         # Variational Autoencoder
+├── amortization/        # Amortized inference presets
+│   └── capture.yaml     # Amortized capture probability
 ├── model/               # Model presets (optional)
 │   ├── nbdm.yaml
 │   ├── zinb.yaml
@@ -90,6 +92,21 @@ priors:
   p_capture: null   # Beta(alpha, beta) for capture probability
 ```
 
+### Amortization Configuration
+
+For VCP models (nbvcp, zinbvcp), you can enable amortized inference for capture
+probability. This uses a neural network to predict variational parameters from
+total UMI count, reducing parameters from O(n_cells) to O(1):
+
+```yaml
+# Amortization settings (only for VCP models)
+amortization:
+  capture:
+    enabled: false       # Enable amortized capture probability
+    hidden_dims: [64, 32]  # MLP hidden layer dimensions
+    activation: leaky_relu     # Activation: relu, gelu, silu, tanh, etc.
+```
+
 ### Example Configurations
 
 ```yaml
@@ -102,6 +119,14 @@ n_components: 3
 model: nbvcp
 parameterization: canonical
 guide_rank: 15
+
+# NBVCP with amortized capture probability
+model: nbvcp
+amortization:
+  capture:
+    enabled: true
+    hidden_dims: [128, 64]
+    activation: gelu
 
 # Custom priors
 model: nbdm
@@ -228,6 +253,24 @@ python infer.py model=zinb inference.batch_size=1024 inference.n_steps=200000
 python infer.py model=nbdm inference=mcmc inference.n_samples=5000 inference.n_chains=4
 ```
 
+### Amortized Inference for Large Datasets
+
+For datasets with many cells (100K+), amortized inference reduces parameters:
+
+```bash
+# Enable amortized capture probability
+python infer.py model=nbvcp amortization.capture.enabled=true
+
+# Use the capture preset (pre-configured amortization)
+python infer.py model=nbvcp +amortization=capture
+
+# Custom amortizer architecture
+python infer.py model=nbvcp \
+    amortization.capture.enabled=true \
+    amortization.capture.hidden_dims=[128,64,32] \
+    amortization.capture.activation=gelu
+```
+
 ## Output Organization
 
 Hydra automatically organizes outputs:
@@ -276,6 +319,15 @@ results = scribe.fit(
     model="zinb",
     n_components=3,
     n_steps=100000,
+)
+
+# Equivalent to: python infer.py model=nbvcp amortization.capture.enabled=true
+results = scribe.fit(
+    adata,
+    model="nbvcp",
+    amortize_capture=True,
+    capture_hidden_dims=[64, 32],
+    capture_activation="leaky_relu",
 )
 ```
 

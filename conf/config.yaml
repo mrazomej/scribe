@@ -5,6 +5,7 @@ defaults:
   - data: singer
   - inference: svi
   - viz: default
+  - amortization@amortization.capture: null  # Optional: use 'capture' for amortized capture
   - _self_
 
 # --- Data Loading ---
@@ -49,6 +50,16 @@ priors:
   p_capture: null   # Beta(alpha, beta) for capture probability
   phi_capture: null # BetaPrime(alpha, beta) for capture odds
   mixing: null      # Dirichlet concentrations for mixture weights
+
+# --- Amortization Configuration (for VCP models) ---
+# Amortized inference uses a neural network to predict variational parameters
+# from total UMI count instead of learning per-cell parameters.
+# Only applies to nbvcp and zinbvcp models.
+amortization:
+  capture:
+    enabled: false       # Enable amortized capture probability inference
+    hidden_dims: [64, 32]  # MLP hidden layer dimensions
+    activation: leaky_relu     # Activation: relu, gelu, silu, tanh, etc.
 
 # --- General Settings ---
 seed: 42

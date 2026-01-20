@@ -92,6 +92,8 @@ from .registry import (
     build_capture_spec,
     build_extra_param_spec,
     build_gate_spec,
+    create_capture_amortizer,
+    create_capture_amortizer_from_config,
     get_guide_family,
 )
 
@@ -110,4 +112,7 @@ __all__ = [
     "build_extra_param_spec",
     "apply_prior_guide_overrides",
     "get_guide_family",
+    # Amortizer factory
+    "create_capture_amortizer",
+    "create_capture_amortizer_from_config",
 ]

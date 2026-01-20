@@ -14,6 +14,7 @@ from .enums import (
     VAEActivation,
 )
 from .groups import (
+    AmortizationConfig,
     GuideFamilyConfig,
     VAEConfig,
     SVIConfig,
@@ -37,6 +38,7 @@ __all__ = [
     # Config types
     "ModelConfig",
     # Parameter groups
+    "AmortizationConfig",
     "GuideFamilyConfig",
     "VAEConfig",
     "SVIConfig",

@@ -98,6 +98,10 @@ def fit(
     mixture_params: Optional[List[str]] = None,
     guide_rank: Optional[int] = None,
     priors: Optional[Dict[str, Any]] = None,
+    # Amortization options (for VCP models)
+    amortize_capture: bool = False,
+    capture_hidden_dims: Optional[List[int]] = None,
+    capture_activation: str = "leaky_relu",
     # Inference options
     inference_method: str = "svi",
     n_steps: int = 50_000,
@@ -168,6 +172,21 @@ def fit(
         Dictionary of prior hyperparameters keyed by parameter name. Values
         should be tuples of prior hyperparameters. Example: {"p": (1.0, 1.0),
         "r": (0.0, 1.0)}
+
+    amortize_capture : bool, default=False
+        Whether to use amortized inference for capture probability. When True,
+        a neural network predicts variational parameters for p_capture (or
+        phi_capture for mean_odds parameterization) from total UMI count.
+        This reduces the number of parameters from O(n_cells) to O(1).
+        Only applies to VCP models (nbvcp, zinbvcp).
+
+    capture_hidden_dims : List[int], optional
+        Hidden layer dimensions for the capture amortizer MLP. Default is
+        [64, 32]. Only used if amortize_capture=True.
+
+    capture_activation : str, default="leaky_relu"
+        Activation function for the capture amortizer MLP. Options include
+        "relu", "gelu", "silu", "tanh", etc. Only used if amortize_capture=True.
 
     inference_method : str, default="svi"
         Inference method to use:
@@ -323,6 +342,9 @@ def fit(
             n_components=n_components,
             mixture_params=mixture_params,
             priors=priors,
+            amortize_capture=amortize_capture,
+            capture_hidden_dims=capture_hidden_dims,
+            capture_activation=capture_activation,
         )
 
     # ==========================================================================

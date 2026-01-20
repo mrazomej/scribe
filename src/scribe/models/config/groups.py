@@ -123,6 +123,22 @@ class GuideFamilyConfig(BaseModel):
     )
 
     # --------------------------------------------------------------------------
+    # Amortization Configuration
+    # --------------------------------------------------------------------------
+
+    # Note: AmortizationConfig is defined below in this file. We use a forward
+    # reference string to avoid circular dependency issues.
+    capture_amortization: Optional["AmortizationConfig"] = Field(
+        None,
+        description=(
+            "Configuration for amortized inference of capture probability "
+            "(p_capture or phi_capture). When enabled, uses an MLP to predict "
+            "variational parameters from total UMI count instead of learning "
+            "separate parameters per cell."
+        ),
+    )
+
+    # --------------------------------------------------------------------------
     # Accessor Method
     # --------------------------------------------------------------------------
 
@@ -154,6 +170,141 @@ class GuideFamilyConfig(BaseModel):
 # UnconstrainedPriorConfig and UnconstrainedGuideConfig have been removed.
 # Prior and guide hyperparameters are now stored directly in ParamSpec objects
 # with validation based on the distribution type.
+
+
+# ==============================================================================
+# Amortization Configuration Group
+# ==============================================================================
+
+
+class AmortizationConfig(BaseModel):
+    """Configuration for amortized inference of cell-specific parameters.
+
+    This class specifies the architecture of the neural network (MLP) that
+    maps sufficient statistics (e.g., total UMI count) to variational
+    parameters for cell-specific quantities like capture probability.
+
+    The MLP architecture is:
+        sufficient_statistic → [Linear → activation] × n_layers → output_heads
+
+    Parameters
+    ----------
+    enabled : bool, default=False
+        Whether to use amortized inference for this parameter.
+    hidden_dims : List[int], default=[64, 32]
+        Dimensions of hidden layers in the MLP. The number of layers is
+        determined by the length of this list.
+    activation : str, default="relu"
+        Activation function for hidden layers. Supported: "relu", "gelu",
+        "silu", "tanh", "sigmoid", etc.
+    input_transformation : str, default="log1p"
+        Transformation applied to input data before computing sufficient
+        statistic. Options: "log1p", "log", "sqrt", "identity".
+
+    Examples
+    --------
+    >>> # Default configuration
+    >>> config = AmortizationConfig(enabled=True)
+
+    >>> # Custom architecture via YAML
+    >>> # amortization:
+    >>> #   capture:
+    >>> #     enabled: true
+    >>> #     hidden_dims: [128, 64, 32]
+    >>> #     activation: gelu
+
+    See Also
+    --------
+    scribe.models.components.amortizers.Amortizer : The MLP implementation.
+    scribe.models.components.amortizers.TOTAL_COUNT : Sufficient statistic.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(
+        False, description="Whether to use amortized inference"
+    )
+    hidden_dims: List[int] = Field(
+        default_factory=lambda: [64, 32],
+        description="Hidden layer dimensions for the amortizer MLP",
+    )
+    activation: str = Field(
+        "relu", description="Activation function for hidden layers"
+    )
+    input_transformation: str = Field(
+        "log1p",
+        description="Transformation for input data (log1p, log, sqrt, identity)",
+    )
+
+    # --------------------------------------------------------------------------
+
+    @field_validator("hidden_dims")
+    @classmethod
+    def validate_hidden_dims(cls, v: List[int]) -> List[int]:
+        """Validate hidden dimensions are positive."""
+        if not v:
+            raise ValueError("hidden_dims must have at least one layer")
+        if any(d <= 0 for d in v):
+            raise ValueError(f"Hidden dimensions must be positive, got {v}")
+        return v
+
+    # --------------------------------------------------------------------------
+
+    @field_validator("activation")
+    @classmethod
+    def validate_activation(cls, v: str) -> str:
+        """Validate activation function is supported."""
+        valid_activations = {
+            "relu",
+            "gelu",
+            "silu",
+            "tanh",
+            "sigmoid",
+            "elu",
+            "leaky_relu",
+            "softplus",
+            "swish",
+            "celu",
+            "selu",
+        }
+        if v.lower() not in valid_activations:
+            raise ValueError(
+                f"Unknown activation '{v}'. Valid options: {valid_activations}"
+            )
+        return v.lower()
+
+    # --------------------------------------------------------------------------
+
+    @field_validator("input_transformation")
+    @classmethod
+    def validate_input_transformation(cls, v: str) -> str:
+        """Validate input transformation is supported."""
+        valid_transforms = {"log1p", "log", "sqrt", "identity"}
+        if v.lower() not in valid_transforms:
+            raise ValueError(
+                f"Unknown transformation '{v}'. "
+                f"Valid options: {valid_transforms}"
+            )
+        return v.lower()
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "AmortizationConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
 
 
 # ==============================================================================

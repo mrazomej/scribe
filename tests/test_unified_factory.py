@@ -660,3 +660,268 @@ mcmc: null
         assert loaded.n_samples == 5000
         assert loaded.n_warmup == 2000
         assert loaded.n_chains == 4
+
+
+# ==============================================================================
+# Test Amortization Configuration
+# ==============================================================================
+
+
+class TestAmortizationConfig:
+    """Test AmortizationConfig validation and serialization."""
+
+    def test_default_values(self):
+        """Test default AmortizationConfig values."""
+        from scribe.models.config import AmortizationConfig
+
+        config = AmortizationConfig()
+        assert config.enabled is False
+        assert config.hidden_dims == [64, 32]
+        assert config.activation == "relu"
+        assert config.input_transformation == "log1p"
+
+    def test_custom_values(self):
+        """Test AmortizationConfig with custom values."""
+        from scribe.models.config import AmortizationConfig
+
+        config = AmortizationConfig(
+            enabled=True,
+            hidden_dims=[128, 64, 32],
+            activation="gelu",
+            input_transformation="sqrt",
+        )
+        assert config.enabled is True
+        assert config.hidden_dims == [128, 64, 32]
+        assert config.activation == "gelu"
+        assert config.input_transformation == "sqrt"
+
+    def test_hidden_dims_validation_empty(self):
+        """Test that empty hidden_dims raises error."""
+        from scribe.models.config import AmortizationConfig
+
+        with pytest.raises(ValueError, match="at least one layer"):
+            AmortizationConfig(hidden_dims=[])
+
+    def test_hidden_dims_validation_negative(self):
+        """Test that negative hidden_dims raises error."""
+        from scribe.models.config import AmortizationConfig
+
+        with pytest.raises(ValueError, match="must be positive"):
+            AmortizationConfig(hidden_dims=[64, -32])
+
+    def test_activation_validation(self):
+        """Test that invalid activation raises error."""
+        from scribe.models.config import AmortizationConfig
+
+        with pytest.raises(ValueError, match="Unknown activation"):
+            AmortizationConfig(activation="invalid_activation")
+
+    def test_activation_case_insensitive(self):
+        """Test that activation is case-insensitive."""
+        from scribe.models.config import AmortizationConfig
+
+        config = AmortizationConfig(activation="GELU")
+        assert config.activation == "gelu"
+
+    def test_input_transformation_validation(self):
+        """Test that invalid input_transformation raises error."""
+        from scribe.models.config import AmortizationConfig
+
+        with pytest.raises(ValueError, match="Unknown transformation"):
+            AmortizationConfig(input_transformation="invalid")
+
+    def test_serialization_roundtrip(self):
+        """Test AmortizationConfig YAML serialization roundtrip."""
+        from scribe.models.config import AmortizationConfig
+
+        original = AmortizationConfig(
+            enabled=True,
+            hidden_dims=[128, 64],
+            activation="silu",
+            input_transformation="log",
+        )
+        yaml_str = original.to_yaml()
+        loaded = AmortizationConfig.from_yaml(yaml_str)
+
+        assert loaded.enabled == original.enabled
+        assert loaded.hidden_dims == original.hidden_dims
+        assert loaded.activation == original.activation
+        assert loaded.input_transformation == original.input_transformation
+
+
+class TestGuideFamilyConfigWithAmortization:
+    """Test GuideFamilyConfig with capture_amortization field."""
+
+    def test_capture_amortization_none_by_default(self):
+        """Test capture_amortization is None by default."""
+        config = GuideFamilyConfig()
+        assert config.capture_amortization is None
+
+    def test_capture_amortization_can_be_set(self):
+        """Test capture_amortization can be set."""
+        from scribe.models.config import AmortizationConfig
+
+        amort_config = AmortizationConfig(enabled=True, hidden_dims=[32, 16])
+        config = GuideFamilyConfig(capture_amortization=amort_config)
+
+        assert config.capture_amortization is not None
+        assert config.capture_amortization.enabled is True
+        assert config.capture_amortization.hidden_dims == [32, 16]
+
+
+# ==============================================================================
+# Test Amortizer Factory
+# ==============================================================================
+
+
+class TestAmortizeCaptureFactory:
+    """Test create_capture_amortizer factory function."""
+
+    def test_constrained_output_params(self):
+        """Test constrained amortizer outputs alpha/beta parameters."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        amortizer = create_capture_amortizer(unconstrained=False)
+
+        assert "log_alpha" in amortizer.output_params
+        assert "log_beta" in amortizer.output_params
+        assert "loc" not in amortizer.output_params
+
+    def test_unconstrained_output_params(self):
+        """Test unconstrained amortizer outputs loc/scale parameters."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        amortizer = create_capture_amortizer(unconstrained=True)
+
+        assert "loc" in amortizer.output_params
+        assert "log_scale" in amortizer.output_params
+        assert "log_alpha" not in amortizer.output_params
+
+    def test_custom_hidden_dims(self):
+        """Test amortizer with custom hidden dimensions."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        amortizer = create_capture_amortizer(hidden_dims=[128, 64, 32])
+        assert amortizer.hidden_dims == [128, 64, 32]
+        assert len(amortizer.layers) == 3
+
+    def test_invalid_input_transformation(self):
+        """Test that invalid input transformation raises error."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        with pytest.raises(ValueError, match="Unknown input_transformation"):
+            create_capture_amortizer(input_transformation="invalid")
+
+    def test_from_config_constrained(self):
+        """Test create_capture_amortizer_from_config with constrained."""
+        from scribe.models.config import AmortizationConfig
+        from scribe.models.presets.registry import (
+            create_capture_amortizer_from_config,
+        )
+
+        config = AmortizationConfig(
+            enabled=True, hidden_dims=[64, 32], activation="relu"
+        )
+        amortizer = create_capture_amortizer_from_config(
+            config, unconstrained=False
+        )
+
+        assert "log_alpha" in amortizer.output_params
+        assert amortizer.hidden_dims == [64, 32]
+
+    def test_from_config_unconstrained(self):
+        """Test create_capture_amortizer_from_config with unconstrained."""
+        from scribe.models.config import AmortizationConfig
+        from scribe.models.presets.registry import (
+            create_capture_amortizer_from_config,
+        )
+
+        config = AmortizationConfig(
+            enabled=True, hidden_dims=[128, 64], activation="gelu"
+        )
+        amortizer = create_capture_amortizer_from_config(
+            config, unconstrained=True
+        )
+
+        assert "loc" in amortizer.output_params
+        assert "log_scale" in amortizer.output_params
+        assert amortizer.hidden_dims == [128, 64]
+
+
+# ==============================================================================
+# Test Amortization Integration with Factory
+# ==============================================================================
+
+
+class TestAmortizationIntegration:
+    """Test amortization integration with model factory."""
+
+    def test_build_capture_spec_with_amortization(self):
+        """Test build_capture_spec creates AmortizedGuide when enabled."""
+        from scribe.models.components.guide_families import AmortizedGuide
+        from scribe.models.config import AmortizationConfig
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+        from scribe.models.presets.registry import build_capture_spec
+
+        amort_config = AmortizationConfig(enabled=True, hidden_dims=[32])
+        guide_families = GuideFamilyConfig(capture_amortization=amort_config)
+        param_strategy = PARAMETERIZATIONS["canonical"]
+
+        spec = build_capture_spec(
+            unconstrained=False,
+            guide_families=guide_families,
+            param_strategy=param_strategy,
+        )
+
+        assert isinstance(spec.guide_family, AmortizedGuide)
+        assert spec.guide_family.amortizer is not None
+
+    def test_build_capture_spec_without_amortization(self):
+        """Test build_capture_spec uses default guide when amortization disabled."""
+        from scribe.models.components.guide_families import MeanFieldGuide
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+        from scribe.models.presets.registry import build_capture_spec
+
+        guide_families = GuideFamilyConfig()  # No amortization
+        param_strategy = PARAMETERIZATIONS["canonical"]
+
+        spec = build_capture_spec(
+            unconstrained=False,
+            guide_families=guide_families,
+            param_strategy=param_strategy,
+        )
+
+        assert isinstance(spec.guide_family, MeanFieldGuide)
+
+    def test_preset_builder_with_amortization(self):
+        """Test build_config_from_preset with amortization."""
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        config = build_config_from_preset(
+            model="nbvcp",
+            amortize_capture=True,
+            capture_hidden_dims=[64, 32],
+            capture_activation="gelu",
+        )
+
+        assert config.guide_families is not None
+        assert config.guide_families.capture_amortization is not None
+        assert config.guide_families.capture_amortization.enabled is True
+        assert config.guide_families.capture_amortization.hidden_dims == [64, 32]
+        assert config.guide_families.capture_amortization.activation == "gelu"
+
+    def test_preset_builder_amortization_requires_vcp_model(self):
+        """Test that amortize_capture raises error for non-VCP models."""
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        with pytest.raises(ValueError, match="only valid for VCP models"):
+            build_config_from_preset(
+                model="nbdm",
+                amortize_capture=True,
+            )
+
+        with pytest.raises(ValueError, match="only valid for VCP models"):
+            build_config_from_preset(
+                model="zinb",
+                amortize_capture=True,
+            )

@@ -34,7 +34,12 @@ scribe.models.config.ModelConfigBuilder : Builder for ModelConfig objects.
 
 from typing import Any, Dict, List, Optional
 
-from ..models.config import GuideFamilyConfig, ModelConfig, ModelConfigBuilder
+from ..models.config import (
+    AmortizationConfig,
+    GuideFamilyConfig,
+    ModelConfig,
+    ModelConfigBuilder,
+)
 from ..models.parameterizations import PARAMETERIZATIONS
 
 
@@ -52,6 +57,10 @@ def build_config_from_preset(
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
+    # Amortization options
+    amortize_capture: bool = False,
+    capture_hidden_dims: Optional[List[int]] = None,
+    capture_activation: str = "leaky_relu",
 ) -> ModelConfig:
     """Build ModelConfig from simple preset parameters.
 
@@ -89,6 +98,16 @@ def build_config_from_preset(
         Dictionary of prior parameters keyed by parameter name.
         Values should be tuples of prior hyperparameters.
         Example: {"p": (2.0, 2.0), "r": (1.0, 0.5)}
+    amortize_capture : bool, default=False
+        Whether to use amortized inference for capture probability.
+        Only applies to VCP models (nbvcp, zinbvcp). When True, uses a
+        neural network to predict variational parameters from total UMI.
+    capture_hidden_dims : Optional[List[int]], default=None
+        Hidden layer dimensions for the capture amortizer MLP.
+        Default is [64, 32]. Only used if amortize_capture=True.
+    capture_activation : str, default="leaky_relu"
+        Activation function for the capture amortizer MLP.
+        Only used if amortize_capture=True.
 
     Returns
     -------
@@ -153,19 +172,37 @@ def build_config_from_preset(
         )
 
     # ==========================================================================
-    # Build guide families if guide_rank is specified
+    # Build guide families configuration
     # ==========================================================================
-    guide_families = None
+    guide_family_kwargs = {}
+
+    # Handle low-rank guide for gene-specific parameter
     if guide_rank is not None:
         from ..models.components import LowRankGuide
 
         # Get parameterization strategy to determine gene parameter name
         param_strategy = PARAMETERIZATIONS[parameterization]
         gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
+        guide_family_kwargs[gene_param_name] = LowRankGuide(rank=guide_rank)
 
-        guide_families = GuideFamilyConfig(
-            **{gene_param_name: LowRankGuide(rank=guide_rank)}
+    # Handle amortized inference for capture probability (VCP models only)
+    if amortize_capture:
+        if model not in ("nbvcp", "zinbvcp"):
+            raise ValueError(
+                f"amortize_capture=True is only valid for VCP models "
+                f"(nbvcp, zinbvcp), not '{model}'"
+            )
+        guide_family_kwargs["capture_amortization"] = AmortizationConfig(
+            enabled=True,
+            hidden_dims=capture_hidden_dims or [64, 32],
+            activation=capture_activation,
         )
+
+    guide_families = (
+        GuideFamilyConfig(**guide_family_kwargs)
+        if guide_family_kwargs
+        else None
+    )
 
     # ==========================================================================
     # Build ModelConfig using builder

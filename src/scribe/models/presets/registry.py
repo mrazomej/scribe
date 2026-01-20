@@ -27,7 +27,11 @@ get_guide_family
     Get a guide family instance by name.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type
+
+if TYPE_CHECKING:
+    from ..components.amortizers import Amortizer
+    from ..config.groups import AmortizationConfig
 
 from ..builders.parameter_specs import (
     BetaPrimeSpec,
@@ -205,6 +209,10 @@ def build_capture_spec(
     For mean_odds parameterization, the parameter is transformed from p_capture
     to phi_capture (odds ratio parameterization).
 
+    If amortization is enabled in guide_families.capture_amortization, the
+    guide will use a neural network to predict variational parameters from
+    total UMI count instead of learning separate parameters per cell.
+
     Parameters
     ----------
     unconstrained : bool
@@ -212,6 +220,8 @@ def build_capture_spec(
         If False, use constrained distribution (Beta or BetaPrime).
     guide_families : GuideFamilyConfig
         Guide family configuration for retrieving capture's guide family.
+        If capture_amortization is set and enabled, amortized inference
+        will be used.
     param_strategy : Parameterization
         Parameterization strategy to determine parameter name transformation
         (p_capture vs phi_capture for mean_odds).
@@ -220,11 +230,39 @@ def build_capture_spec(
     -------
     ParamSpec
         Parameter specification for the capture parameter.
+
+    Notes
+    -----
+    When amortization is enabled, the guide family will be an AmortizedGuide
+    with an attached Amortizer network, regardless of what was specified in
+    guide_families.p_capture or guide_families.phi_capture.
     """
     # Get the appropriate capture parameter name based on parameterization
     # mean_odds uses phi_capture, others use p_capture
     capture_param_name = param_strategy.transform_model_param("p_capture")
-    capture_family = guide_families.get(capture_param_name)
+
+    # Check if amortization is enabled for capture probability
+    amort_config = guide_families.capture_amortization
+    if amort_config is not None and amort_config.enabled:
+        # Create amortizer and use AmortizedGuide
+        # Pass unconstrained flag so amortizer outputs correct parameter types:
+        # - Constrained: (alpha, beta) for Beta/BetaPrime
+        # - Unconstrained: (loc, scale) for Normal + transform
+        amortizer = create_capture_amortizer(
+            hidden_dims=amort_config.hidden_dims,
+            activation=amort_config.activation,
+            input_transformation=amort_config.input_transformation,
+            parameterization=(
+                param_strategy.name
+                if hasattr(param_strategy, "name")
+                else "canonical"
+            ),
+            unconstrained=unconstrained,
+        )
+        capture_family = AmortizedGuide(amortizer=amortizer)
+    else:
+        # Use the configured guide family or default
+        capture_family = guide_families.get(capture_param_name)
 
     if unconstrained:
         # Use ExpNormalSpec for phi_capture (BetaPrime -> [0, +inf))
@@ -424,6 +462,193 @@ def apply_prior_guide_overrides(
 
 
 # ==============================================================================
+# Amortizer Factory
+# ==============================================================================
+
+
+def create_capture_amortizer(
+    hidden_dims: List[int] = None,
+    activation: str = "relu",
+    input_transformation: str = "log1p",
+    parameterization: str = "canonical",
+    unconstrained: bool = False,
+) -> "Amortizer":
+    """Create an amortizer for capture probability (p_capture or phi_capture).
+
+    This factory creates an MLP that maps total UMI count (a sufficient
+    statistic for capture probability) to variational posterior parameters.
+
+    The output parameters depend on the parameterization:
+
+    **Constrained (unconstrained=False)**:
+        - Output: log_alpha, log_beta → exp → alpha, beta
+        - Distribution: Beta(α, β) for p_capture, BetaPrime(α, β) for
+          phi_capture
+
+    **Unconstrained (unconstrained=True)**:
+        - Output: loc, log_scale → (identity, exp) → loc, scale
+        - Distribution: Normal(loc, scale) → transform → parameter
+        - Transform: sigmoid for p_capture, exp for phi_capture
+
+    Parameters
+    ----------
+    hidden_dims : List[int], optional
+        Hidden layer dimensions for the MLP. Default: [64, 32].
+    activation : str, default="relu"
+        Activation function for hidden layers.
+    input_transformation : str, default="log1p"
+        Transformation applied to counts before computing total.
+        Options: "log1p", "log", "sqrt", "identity".
+    parameterization : str, default="canonical"
+        Model parameterization. Determines output distribution:
+        - "canonical" / "mean_prob": Beta/SigmoidNormal for p_capture
+        - "mean_odds": BetaPrime/ExpNormal for phi_capture
+    unconstrained : bool, default=False
+        Whether to use unconstrained parameterization (Normal + transform).
+        If True, outputs (loc, scale) for Normal. If False, outputs
+        (alpha, beta) for Beta/BetaPrime.
+
+    Returns
+    -------
+    Amortizer
+        Configured amortizer network ready for use with AmortizedGuide.
+
+    Examples
+    --------
+    >>> # Constrained (Beta distribution)
+    >>> amortizer = create_capture_amortizer(
+    ...     hidden_dims=[128, 64],
+    ...     activation="gelu",
+    ... )
+
+    >>> # Unconstrained (Normal + sigmoid)
+    >>> amortizer = create_capture_amortizer(
+    ...     unconstrained=True,
+    ... )
+
+    Notes
+    -----
+    The theoretical justification for using total UMI count as a sufficient
+    statistic comes from the Dirichlet-Multinomial model derivation. In that
+    model, the marginal distribution of total counts T = Σᵢ xᵢ depends only
+    on p_capture (through the effective probability p̂), making T sufficient.
+
+    See Also
+    --------
+    scribe.models.components.amortizers.Amortizer : The MLP class.
+    scribe.models.components.amortizers.TOTAL_COUNT : The sufficient statistic.
+    """
+    import jax.numpy as jnp
+
+    from ..components.amortizers import Amortizer, SufficientStatistic
+
+    # Default hidden dimensions
+    if hidden_dims is None:
+        hidden_dims = [64, 32]
+
+    # Create appropriate sufficient statistic based on input transformation
+    INPUT_TRANSFORMS = {
+        "log1p": lambda counts: jnp.log1p(counts.sum(axis=-1, keepdims=True)),
+        "log": lambda counts: jnp.log(
+            counts.sum(axis=-1, keepdims=True) + 1e-8
+        ),
+        "sqrt": lambda counts: jnp.sqrt(counts.sum(axis=-1, keepdims=True)),
+        "identity": lambda counts: counts.sum(axis=-1, keepdims=True),
+    }
+
+    if input_transformation not in INPUT_TRANSFORMS:
+        raise ValueError(
+            f"Unknown input_transformation: {input_transformation}. "
+            f"Valid options: {list(INPUT_TRANSFORMS.keys())}"
+        )
+
+    sufficient_statistic = SufficientStatistic(
+        name=f"total_count_{input_transformation}",
+        compute=INPUT_TRANSFORMS[input_transformation],
+    )
+
+    # Determine output parameters based on constrained vs unconstrained
+    if unconstrained:
+        # Unconstrained: Normal(loc, scale) → transform → parameter
+        # Output loc directly, output log_scale and exp it
+        output_params = ["loc", "log_scale"]
+        output_transforms = {
+            "loc": lambda x: x,  # loc is unbounded
+            "log_scale": jnp.exp,  # scale must be > 0
+        }
+    else:
+        # Constrained: Beta(alpha, beta) or BetaPrime(alpha, beta)
+        # Both use (alpha, beta) parameterization with alpha, beta > 0
+        output_params = ["log_alpha", "log_beta"]
+        output_transforms = {
+            "log_alpha": jnp.exp,  # Ensure alpha > 0
+            "log_beta": jnp.exp,  # Ensure beta > 0
+        }
+
+    # Create and return the amortizer
+    return Amortizer(
+        sufficient_statistic=sufficient_statistic,
+        hidden_dims=hidden_dims,
+        output_params=output_params,
+        output_transforms=output_transforms,
+        input_dim=1,  # Scalar sufficient statistic (total count)
+    )
+
+
+# ------------------------------------------------------------------------------
+
+
+def create_capture_amortizer_from_config(
+    config: "AmortizationConfig",
+    parameterization: str = "canonical",
+    unconstrained: bool = False,
+) -> "Amortizer":
+    """Create an amortizer from an AmortizationConfig object.
+
+    This is a convenience function that extracts parameters from the config
+    and calls create_capture_amortizer.
+
+    Parameters
+    ----------
+    config : AmortizationConfig
+        Configuration object specifying the MLP architecture.
+    parameterization : str, default="canonical"
+        Model parameterization (affects output distribution interpretation).
+    unconstrained : bool, default=False
+        Whether to use unconstrained parameterization. Determines output
+        parameter types: (loc, scale) for unconstrained, (alpha, beta) for
+        constrained.
+
+    Returns
+    -------
+    Amortizer
+        Configured amortizer network.
+
+    Examples
+    --------
+    >>> from scribe.models.config import AmortizationConfig
+    >>> config = AmortizationConfig(
+    ...     enabled=True,
+    ...     hidden_dims=[128, 64],
+    ...     activation="gelu",
+    ... )
+    >>> amortizer = create_capture_amortizer_from_config(config)
+
+    >>> # Unconstrained version
+    >>> amortizer = create_capture_amortizer_from_config(
+    ...     config, unconstrained=True
+    ... )
+    """
+    return create_capture_amortizer(
+        hidden_dims=config.hidden_dims,
+        activation=config.activation,
+        input_transformation=config.input_transformation,
+        parameterization=parameterization,
+        unconstrained=unconstrained,
+    )
+
+
+# ==============================================================================
 # Export
 # ==============================================================================
 
@@ -439,4 +664,7 @@ __all__ = [
     # Helpers
     "apply_prior_guide_overrides",
     "get_guide_family",
+    # Amortizer factory
+    "create_capture_amortizer",
+    "create_capture_amortizer_from_config",
 ]
