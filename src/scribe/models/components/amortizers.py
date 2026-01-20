@@ -168,10 +168,14 @@ class Amortizer(nnx.Module):
     ----------
     sufficient_statistic : SufficientStatistic
         The statistic computation function.
+    hidden_dims : List[int]
+        Hidden layer dimensions (stored for serialization).
     output_params : List[str]
         Names of output parameters.
     output_transforms : Dict[str, Callable]
         Transforms for each output.
+    input_dim : int
+        Input dimension (stored for serialization).
     layers : List[nnx.Linear]
         Hidden layers of the MLP.
     output_heads : Dict[str, nnx.Linear]
@@ -232,9 +236,14 @@ class Amortizer(nnx.Module):
         if rngs is None:
             rngs = nnx.Rngs(0)
 
+        # ====================================================================
+        # Store configuration for serialization/reconstruction
+        # ====================================================================
         self.sufficient_statistic = sufficient_statistic
+        self.hidden_dims = hidden_dims
         self.output_params = output_params
         self.output_transforms = output_transforms or {}
+        self.input_dim = input_dim
 
         # ====================================================================
         # Build MLP hidden layers

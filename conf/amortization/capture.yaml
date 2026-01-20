@@ -1,0 +1,26 @@
+# Amortized Capture Probability Configuration
+#
+# This preset enables amortized inference for capture probability (p_capture
+# or phi_capture for mean_odds parameterization) in VCP models.
+#
+# Usage:
+#   python infer.py model=nbvcp amortization=capture
+#   python infer.py +amortization=capture
+#
+# The MLP architecture:
+#   log(1 + total_counts) → [Linear → ReLU] × 2 → (log_alpha, log_beta) → exp → (α, β)
+#
+# Output: Beta(α, β) prior/posterior for p_capture, or BetaPrime(α, β) for phi_capture
+
+# Enable amortized inference
+enabled: true
+
+# Hidden layer dimensions (defines network depth and width)
+# Default: 2 layers with 64 and 32 units
+# Larger: [128, 64, 32] for more complex relationships
+# Smaller: [32, 16] for faster training
+hidden_dims: [64, 32]
+
+# Activation function for hidden layers
+# Options: relu, gelu, silu, tanh, sigmoid, elu, leaky_relu, softplus
+activation: leaky_relu

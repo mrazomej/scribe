@@ -156,6 +156,9 @@ Build ModelConfig from preset parameters.
 - `guide_rank`: Rank for low-rank guide
 - `n_components`: Number of mixture components
 - `priors`: Dictionary of prior parameters
+- `amortize_capture`: Enable amortized capture probability (VCP models only)
+- `capture_hidden_dims`: MLP hidden layer dimensions for amortizer
+- `capture_activation`: Activation function for amortizer MLP
 
 **Returns:**
 
@@ -256,13 +259,40 @@ results = run_scribe(
 )
 ```
 
+### Pattern 4: Amortized Inference
+
+For VCP models with large datasets, use amortized capture probability:
+
+```python
+from scribe.inference.preset_builder import build_config_from_preset
+from scribe.models.config import InferenceConfig, SVIConfig
+
+# Using preset builder
+model_config = build_config_from_preset(
+    model="nbvcp",
+    parameterization="canonical",
+    inference_method="svi",
+    amortize_capture=True,
+    capture_hidden_dims=[128, 64],
+    capture_activation="gelu",
+)
+
+results = run_scribe(
+    counts=adata,
+    model_config=model_config,
+    inference_config=InferenceConfig.from_svi(
+        SVIConfig(n_steps=100000, batch_size=512)
+    ),
+)
+```
+
 ## Parameterization Names
 
 The module supports both new and old parameterization names for backward
 compatibility:
 
 | New Name (Preferred) | Old Name (Backward Compat) | Description                         |
-| -------------------- | -------------------------- | ----------------------------------- |
+|----------------------|----------------------------|-------------------------------------|
 | `"canonical"`        | `"standard"`               | Directly samples p and r            |
 | `"mean_prob"`        | `"linked"`                 | Samples p and mu, derives r         |
 | `"mean_odds"`        | `"odds_ratio"`             | Samples phi and mu, derives p and r |

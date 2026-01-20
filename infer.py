@@ -190,6 +190,19 @@ def main(cfg: DictConfig) -> None:
             DeprecationWarning,
         )
 
+    # Build amortization kwargs if configured
+    amortize_capture = False
+    capture_hidden_dims = None
+    capture_activation = "leaky_relu"
+
+    amort_cfg = cfg.get("amortization", {})
+    if amort_cfg:
+        capture_cfg = amort_cfg.get("capture", {})
+        if capture_cfg and capture_cfg.get("enabled", False):
+            amortize_capture = True
+            capture_hidden_dims = capture_cfg.get("hidden_dims")
+            capture_activation = capture_cfg.get("activation", "leaky_relu")
+
     # Build kwargs for scribe.fit()
     kwargs = {
         # Model configuration
@@ -200,6 +213,10 @@ def main(cfg: DictConfig) -> None:
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,
         "priors": priors,
+        # Amortization configuration
+        "amortize_capture": amortize_capture,
+        "capture_hidden_dims": capture_hidden_dims,
+        "capture_activation": capture_activation,
         # Inference configuration
         "inference_method": inference_method,
         # Data configuration
@@ -218,6 +235,11 @@ def main(cfg: DictConfig) -> None:
         print(f"Mixture components: {kwargs['n_components']}")
     if kwargs.get("guide_rank"):
         print(f"Guide rank: {kwargs['guide_rank']}")
+    if kwargs.get("amortize_capture"):
+        print(
+            f"Amortized capture: {kwargs['capture_hidden_dims']} "
+            f"({kwargs['capture_activation']})"
+        )
 
     # ==========================================================================
     # Model Inference Section
