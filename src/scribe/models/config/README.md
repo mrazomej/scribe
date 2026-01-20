@@ -58,9 +58,9 @@ The primary interface for creating configurations. Provides fluent methods:
 ### ModelConfig
 
 Unified configuration class for all SCRIBE models. Supports both constrained and
-unconstrained parameterizations via the `unconstrained` boolean field. Uses
-`PriorConfig`/`UnconstrainedPriorConfig` and
-`GuideConfig`/`UnconstrainedGuideConfig` based on the `unconstrained` flag.
+unconstrained parameterizations via the `unconstrained` boolean field. Prior and
+guide hyperparameters are stored in `param_specs` (list of `ParamSpec`); see
+`scribe.models.builders.parameter_specs`.
 
 ### PriorConfig / UnconstrainedPriorConfig
 
@@ -239,59 +239,55 @@ assert config2.priors.r == (2.0, 0.5)
 
 ### Using Configuration Objects with run_scribe
 
-The new configuration classes can be used directly with the `run_scribe`
-function for better validation and reusability:
+Use `ModelConfig` with `InferenceConfig` and `run_scribe`:
 
 ```python
-from scribe import run_scribe, SVIConfig, MCMCConfig, DataConfig
-
-# Simple usage - configuration objects are built automatically
-results = run_scribe(counts, n_steps=5000, batch_size=256)
-
-# Advanced usage - explicit configuration objects
-svi_config = SVIConfig(
-    n_steps=50_000,
-    batch_size=256,
-    stable_update=True
+from scribe.inference import run_scribe
+from scribe.models.config import (
+    ModelConfigBuilder,
+    InferenceConfig,
+    SVIConfig,
+    MCMCConfig,
+    DataConfig,
 )
 
-data_config = DataConfig(
-    cells_axis=1,
-    layer="counts"
+# SVI with explicit configs
+model_config = (
+    ModelConfigBuilder()
+    .for_model("nbdm")
+    .with_inference("svi")
+    .build()
 )
-
+inference_config = InferenceConfig.from_svi(
+    SVIConfig(n_steps=50_000, batch_size=256, stable_update=True)
+)
 results = run_scribe(
     counts,
-    inference_method="svi",
-    svi_config=svi_config,
-    data_config=data_config
+    model_config=model_config,
+    inference_config=inference_config,
+    data_config=DataConfig(cells_axis=1, layer="counts"),
 )
 
 # MCMC with custom configuration
-mcmc_config = MCMCConfig(
-    n_samples=5000,
-    n_warmup=1000,
-    n_chains=4
-)
-
+mcmc_config = MCMCConfig(n_samples=5000, n_warmup=1000, n_chains=4)
 results = run_scribe(
     counts,
-    inference_method="mcmc",
-    mcmc_config=mcmc_config
+    model_config=(
+        ModelConfigBuilder().for_model("nbdm").with_inference("mcmc").build()
+    ),
+    inference_config=InferenceConfig.from_mcmc(mcmc_config),
 )
 
-# Configuration objects can be saved and reused
+# Save and reuse InferenceConfig
 import pickle
 
-# Save configuration
-with open("my_svi_config.pkl", "wb") as f:
-    pickle.dump(svi_config, f)
+with open("my_inference_config.pkl", "wb") as f:
+    pickle.dump(inference_config, f)
 
-# Load and reuse
-with open("my_svi_config.pkl", "rb") as f:
-    loaded_config = pickle.load(f)
+with open("my_inference_config.pkl", "rb") as f:
+    loaded = pickle.load(f)
 
-results = run_scribe(counts, svi_config=loaded_config)
+results = run_scribe(counts, model="nbdm", inference_config=loaded)
 ```
 
 **Benefits of using configuration objects:**
