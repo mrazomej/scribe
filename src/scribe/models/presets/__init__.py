@@ -1,67 +1,104 @@
-"""Pre-configured model/guide factories for common use cases.
+"""Model factory for creating SCRIBE models.
 
-This module provides factory functions that create ready-to-use model and
-guide functions for the common model types in SCRIBE. These presets hide
-the complexity of the builder pattern while still allowing customization.
+This module provides a unified factory for creating model and guide functions
+for all SCRIBE model types. It uses a registry-based design that consolidates
+the logic for all model variants.
 
-Available Presets
+Factory Functions
 -----------------
-create_nbdm
-    Negative Binomial Dropout Model
-create_zinb
-    Zero-Inflated Negative Binomial
-create_nbvcp
-    NB with Variable Capture Probability
-create_zinbvcp
-    ZINB with Variable Capture Probability
+create_model
+    Unified factory that creates any model type from a ModelConfig.
+create_model_from_params
+    Convenience function with flat parameters.
+
+Registries
+----------
+MODEL_EXTRA_PARAMS
+    Maps model types to their extra parameters (gate, p_capture).
+LIKELIHOOD_REGISTRY
+    Maps model types to their likelihood classes.
+
+Helper Builders
+---------------
+build_gate_spec
+    Build gate parameter spec for zero-inflated models.
+build_capture_spec
+    Build capture parameter spec for VCP models.
+build_extra_param_spec
+    Dispatch to appropriate builder based on parameter name.
+apply_prior_guide_overrides
+    Apply user-provided prior/guide overrides to param specs.
+
+Supported Models
+----------------
+- **nbdm**: Negative Binomial Dropout Model
+- **zinb**: Zero-Inflated Negative Binomial
+- **nbvcp**: NB with Variable Capture Probability
+- **zinbvcp**: ZINB with Variable Capture Probability
 
 Configuration Options
 ---------------------
-All presets support:
+All models support:
 
-- **parameterization**: "standard", "linked", "odds_ratio"
+- **parameterization**: "canonical", "mean_prob", "mean_odds"
+  (or aliases: "standard", "linked", "odds_ratio")
 - **unconstrained**: Use Normal+transform instead of constrained distributions
-- **r_guide** / **mu_guide**: "mean_field" or "low_rank" for gene-specific params
-- **guide_rank**: Rank for low-rank guide
-
-VCP presets additionally support:
-
-- **p_capture_guide**: "mean_field" or "amortized"
-- **capture_amortizer**: Custom Amortizer instance
+- **guide_families**: Per-parameter guide family configuration
+- **n_components**: Number of mixture components
+- **mixture_params**: Which parameters are mixture-specific
 
 Examples
 --------
->>> from scribe.models.presets import create_nbdm, create_nbvcp
+>>> from scribe.models.presets import create_model, create_model_from_params
+>>> from scribe.models.config import ModelConfigBuilder
 >>>
->>> # Basic usage
->>> model, guide = create_nbdm()
+>>> # Using unified factory with ModelConfig
+>>> config = ModelConfigBuilder().for_model("zinb").build()
+>>> model, guide = create_model(config)
 >>>
->>> # With low-rank guide
->>> model, guide = create_nbdm(
+>>> # Using convenience function with flat params
+>>> model, guide = create_model_from_params(
+...     model="zinb",
 ...     parameterization="linked",
-...     r_guide="low_rank",
-...     guide_rank=15,
+...     n_components=3,
 ... )
 >>>
->>> # With amortized p_capture
->>> model, guide = create_nbvcp(
-...     p_capture_guide="amortized",
+>>> # With custom priors
+>>> model, guide = create_model_from_params(
+...     model="nbdm",
+...     priors={"p": (2.0, 2.0), "r": (1.0, 0.5)},
 ... )
 
 See Also
 --------
 scribe.models.builders : Low-level building blocks.
 scribe.models.components : Reusable components.
+scribe.models.config : Configuration classes.
 """
 
-from .nbdm import create_nbdm
-from .zinb import create_zinb
-from .nbvcp import create_nbvcp
-from .zinbvcp import create_zinbvcp
+# Unified factory
+from .factory import create_model, create_model_from_params
+
+# Registries and helpers
+from .registry import (
+    LIKELIHOOD_REGISTRY,
+    MODEL_EXTRA_PARAMS,
+    apply_prior_guide_overrides,
+    build_capture_spec,
+    build_extra_param_spec,
+    build_gate_spec,
+)
 
 __all__ = [
-    "create_nbdm",
-    "create_zinb",
-    "create_nbvcp",
-    "create_zinbvcp",
+    # Unified factory
+    "create_model",
+    "create_model_from_params",
+    # Registries
+    "MODEL_EXTRA_PARAMS",
+    "LIKELIHOOD_REGISTRY",
+    # Registry helpers
+    "build_gate_spec",
+    "build_capture_spec",
+    "build_extra_param_spec",
+    "apply_prior_guide_overrides",
 ]

@@ -34,10 +34,13 @@ class ModelConfig(BaseModel):
     This is not constructed directly; users should assemble configurations via
     the ModelConfigBuilder, which ensures validity and best practices.
 
+    The actual model and guide functions are created by the unified factory
+    `create_model(model_config)` in `scribe.models.presets.factory`.
+
     Parameters
     ----------
     base_model : str
-        The core model family (e.g., 'nbdm', 'zinb_mix', etc.).
+        The core model family (e.g., 'nbdm', 'zinb', 'nbvcp', 'zinbvcp').
     parameterization : Parameterization
         How parameters are represented internally (standard, linked, etc.).
     inference_method : InferenceMethod
@@ -54,10 +57,11 @@ class ModelConfig(BaseModel):
     guide_families : GuideFamilyConfig, optional
         Per-parameter guide family configuration. Allows specifying different
         variational families (MeanField, LowRank, Amortized) for each parameter.
-    param_specs : List[ParamSpec]
-        List of parameter specifications. Each ParamSpec contains the
-        parameter's structure (shape, distribution, guide family) and
-        hyperparameters (prior, guide).
+    param_specs : List[ParamSpec], optional
+        Optional list of parameter specifications for user-provided overrides.
+        When provided, these can contain custom prior/guide hyperparameters
+        that override the defaults. The unified factory uses these to customize
+        the model. If empty (default), the factory uses default hyperparameters.
     vae : VAEConfig, optional
         Nested configuration for Variational Autoencoders, if applicable.
 
@@ -67,8 +71,15 @@ class ModelConfig(BaseModel):
       creation.
     - Unrecognized parameters are forbidden and will raise validation errors.
     - Intended for safe, reproducible, and fully-specified SCRIBE model setups.
-    - Prior and guide hyperparameters are stored in each ParamSpec and validated
-      based on the distribution type.
+    - The `param_specs` field is primarily for user overrides. The unified
+      factory (`create_model`) constructs the complete parameter specifications
+      based on the model type and parameterization, then applies any overrides
+      from `param_specs`.
+
+    See Also
+    --------
+    scribe.models.presets.factory.create_model : Creates model/guide from config.
+    ModelConfigBuilder : Builder for creating ModelConfig objects.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -102,10 +113,14 @@ class ModelConfig(BaseModel):
         description="Per-parameter guide family configuration",
     )
 
-    # Parameter specifications (replaces priors/guides)
+    # Parameter specifications (optional user overrides)
     param_specs: List[ParamSpec] = Field(
         default_factory=list,
-        description="List of parameter specifications with prior/guide hyperparameters",
+        description=(
+            "Optional list of parameter specifications for user-provided "
+            "prior/guide hyperparameter overrides. The unified factory uses "
+            "these to customize default parameters."
+        ),
     )
 
     vae: Optional[VAEConfig] = Field(
@@ -147,9 +162,21 @@ class ModelConfig(BaseModel):
     # --------------------------------------------------------------------------
 
     @model_validator(mode="after")
-    def validate_unconstrained_consistency(self) -> "ModelConfig":
-        """Validate that param_specs match unconstrained flag."""
-        # Check that all param_specs have consistent unconstrained flag
+    def validate_param_specs_consistency(self) -> "ModelConfig":
+        """Validate that param_specs overrides are consistent with config.
+
+        This validates:
+        1. Any provided param_specs have consistent unconstrained flag
+        2. Any provided param_specs are valid for this model type
+
+        Note: param_specs is optional and may be empty. The unified factory
+        constructs complete specs based on model type/parameterization.
+        """
+        if not self.param_specs:
+            # No overrides provided, nothing to validate
+            return self
+
+        # Check unconstrained consistency for any provided specs
         for spec in self.param_specs:
             if spec.unconstrained != self.unconstrained:
                 raise ValueError(
@@ -159,22 +186,12 @@ class ModelConfig(BaseModel):
                     f"({self.unconstrained})"
                 )
 
-        return self
-
-    # --------------------------------------------------------------------------
-
-    @model_validator(mode="after")
-    def validate_priors_consistency(self) -> "ModelConfig":
-        """Validate that param_specs match the model's requirements."""
-        # Determine model characteristics
+        # Validate provided params are valid for this model
         is_mixture = self.n_components is not None
         is_zero_inflated = self.is_zero_inflated
         uses_variable_capture = self.uses_variable_capture
 
-        # Get all parameter names from param_specs
         provided_params = {spec.name for spec in self.param_specs}
-
-        # Get active parameters (what's allowed)
         active_params = get_active_parameters(
             self.parameterization,
             self.base_model,
@@ -183,7 +200,6 @@ class ModelConfig(BaseModel):
             uses_variable_capture,
         )
 
-        # Check for unexpected parameters
         unexpected_params = provided_params - active_params
         if unexpected_params:
             raise ValueError(
@@ -238,20 +254,74 @@ class ModelConfig(BaseModel):
     # Helper Methods
     # --------------------------------------------------------------------------
 
-    def get_active_priors(self) -> Dict[str, Any]:
-        """Get active prior parameters as a dictionary."""
-        priors_dict = {}
+    def get_prior_overrides(self) -> Dict[str, Any]:
+        """Extract prior overrides from param_specs.
 
+        Returns a dictionary mapping parameter names to their prior
+        hyperparameters. Only includes parameters that have explicit
+        prior values set.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary of prior overrides, e.g., {"p": (2.0, 2.0)}.
+        """
+        priors = {}
+        for spec in self.param_specs:
+            if hasattr(spec, "prior") and spec.prior is not None:
+                priors[spec.name] = spec.prior
+        return priors
+
+    # --------------------------------------------------------------------------
+
+    def get_guide_overrides(self) -> Dict[str, Any]:
+        """Extract guide overrides from param_specs.
+
+        Returns a dictionary mapping parameter names to their guide
+        hyperparameters. Only includes parameters that have explicit
+        guide values set.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary of guide overrides.
+        """
+        guides = {}
+        for spec in self.param_specs:
+            if hasattr(spec, "guide") and spec.guide is not None:
+                guides[spec.name] = spec.guide
+        return guides
+
+    # --------------------------------------------------------------------------
+
+    def get_active_priors(self) -> Dict[str, Any]:
+        """Get active prior parameters as a dictionary.
+
+        .. deprecated::
+            Use `get_prior_overrides()` instead.
+        """
+        priors_dict = {}
         for spec in self.param_specs:
             if spec.prior is not None:
                 priors_dict[f"{spec.name}_prior"] = spec.prior
-
         return priors_dict
 
     # --------------------------------------------------------------------------
 
     def with_updated_priors(self, **priors) -> "ModelConfig":
-        """Create a new config with updated priors (immutable pattern)."""
+        """Create a new config with updated priors (immutable pattern).
+
+        Parameters
+        ----------
+        **priors
+            Prior parameters keyed by parameter name.
+            Example: with_updated_priors(p=(2.0, 2.0), r=(1.0, 0.5))
+
+        Returns
+        -------
+        ModelConfig
+            New config with updated priors.
+        """
         # Update param_specs with new prior values
         updated_specs = []
         for spec in self.param_specs:
@@ -268,7 +338,23 @@ class ModelConfig(BaseModel):
     # --------------------------------------------------------------------------
 
     def with_updated_vae(self, **vae_params) -> "ModelConfig":
-        """Create a new config with updated VAE parameters."""
+        """Create a new config with updated VAE parameters.
+
+        Parameters
+        ----------
+        **vae_params
+            VAE parameters to update.
+
+        Returns
+        -------
+        ModelConfig
+            New config with updated VAE settings.
+
+        Raises
+        ------
+        ValueError
+            If VAE config is None.
+        """
         if self.vae is None:
             raise ValueError("Cannot update VAE config when VAE is None")
         return self.model_copy(

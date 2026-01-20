@@ -2,8 +2,9 @@
 
 This package contains all model definitions, configurations, and registry functions.
 
-Use `get_model_and_guide()` to create models with flexible per-parameter guide
-families via `GuideFamilyConfig`:
+Use `get_model_and_guide()` or the unified factory `create_model_from_params()`
+to create models with flexible per-parameter guide families via
+`GuideFamilyConfig`:
 
 - Mean-field guides (default)
 - Low-rank multivariate normal guides
@@ -42,9 +43,10 @@ Examples
 ... )
 >>> model, guide = get_model_and_guide(config)
 >>>
->>> # Direct preset usage
->>> from scribe.models.presets import create_nbvcp
->>> model, guide = create_nbvcp(
+>>> # Using the unified factory directly
+>>> from scribe.models.presets import create_model_from_params
+>>> model, guide = create_model_from_params(
+...     model="nbvcp",
 ...     guide_families=GuideFamilyConfig(p_capture=AmortizedGuide(amortizer=net))
 ... )
 """

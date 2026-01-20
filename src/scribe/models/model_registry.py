@@ -425,23 +425,23 @@ def get_model_and_guide(
     unconstrained: Optional[bool] = None,
     guide_families: Optional["GuideFamilyConfig"] = None,
 ) -> Tuple[Callable, Callable]:
-    """Create model and guide functions using the composable builder system.
+    """Create model and guide functions using the unified factory.
 
-    This is the new, recommended way to get model/guide functions. It uses
-    the preset factories which provide more flexibility than the legacy
-    decorator-based system.
+    This is the primary API for getting model/guide functions. It uses the
+    unified `create_model()` factory which provides a single entry point for
+    all model types, eliminating code duplication.
 
     Parameters
     ----------
     model_config : ModelConfig
         Model configuration containing all model parameters:
             - base_model: Type of model ("nbdm", "zinb", "nbvcp", "zinbvcp")
-            - parameterization: Parameterization scheme ("standard", "linked", "odds_ratio")
+            - parameterization: Parameterization scheme
             - unconstrained: Whether to use unconstrained parameterization
             - guide_families: Per-parameter guide family configuration
             - n_components: Number of mixture components (if mixture model)
             - mixture_params: List of mixture-specific parameter names
-            - param_specs: Parameter specifications with priors and guides
+            - param_specs: Optional user-provided prior/guide overrides
     unconstrained : bool, optional
         Override the unconstrained setting from model_config. If None, uses
         model_config.unconstrained. Useful for special cases like predictive
@@ -465,7 +465,7 @@ def get_model_and_guide(
 
     Examples
     --------
-    >>> from scribe.models.config import ModelConfig, GuideFamilyConfig
+    >>> from scribe.models.config import GuideFamilyConfig
     >>> from scribe.models.components import LowRankGuide, AmortizedGuide
     >>> from scribe.inference.preset_builder import build_config_from_preset
     >>>
@@ -486,100 +486,26 @@ def get_model_and_guide(
 
     See Also
     --------
-    scribe.models.presets : Individual preset factory functions.
+    scribe.models.presets.factory.create_model : Unified model factory.
     scribe.inference.preset_builder : Build ModelConfig from presets.
     GuideFamilyConfig : Per-parameter guide family configuration.
     """
-    # Import presets here to avoid circular imports
-    from .presets import create_nbdm, create_zinb, create_nbvcp, create_zinbvcp
+    # Import the unified factory
+    from .presets.factory import create_model
 
-    # Extract all configuration from model_config
-    model_type = model_config.base_model
-    parameterization = (
-        model_config.parameterization.value
-        if model_config.parameterization
-        else "standard"
-    )
+    # Handle overrides by creating a modified config if needed
+    if unconstrained is not None or guide_families is not None:
+        # Create a modified config with overrides
+        updates = {}
+        if unconstrained is not None:
+            updates["unconstrained"] = unconstrained
+        if guide_families is not None:
+            updates["guide_families"] = guide_families
 
-    # Use overrides if provided, otherwise use model_config values
-    unconstrained_value = (
-        unconstrained
-        if unconstrained is not None
-        else model_config.unconstrained
-    )
-    guide_families_value = (
-        guide_families
-        if guide_families is not None
-        else model_config.guide_families
-    )
-    n_components = model_config.n_components
-    mixture_params = model_config.mixture_params
-
-    # Extract priors/guides from model_config
-    priors = None
-    guides = None
-    if model_config.param_specs:
-        priors = {
-            spec.name: spec.prior
-            for spec in model_config.param_specs
-            if spec.prior is not None
-        }
-        guides = {
-            spec.name: spec.guide
-            for spec in model_config.param_specs
-            if spec.guide is not None
-        }
-    # If param_specs is empty, try to extract from builder's _priors/_guides
-    # This handles the case where ModelConfig was built but param_specs
-    # weren't populated yet
-    if not priors and hasattr(model_config, "_priors"):
-        priors = getattr(model_config, "_priors", None)
-    if not guides and hasattr(model_config, "_guides"):
-        guides = getattr(model_config, "_guides", None)
-
-    # Dispatch to appropriate preset
-    if model_type == "nbdm":
-        return create_nbdm(
-            parameterization=parameterization,
-            unconstrained=unconstrained_value,
-            guide_families=guide_families_value,
-            n_components=n_components,
-            mixture_params=mixture_params,
-            priors=priors,
-            guides=guides,
-        )
-    elif model_type == "zinb":
-        return create_zinb(
-            parameterization=parameterization,
-            unconstrained=unconstrained_value,
-            guide_families=guide_families_value,
-            n_components=n_components,
-            mixture_params=mixture_params,
-            priors=priors,
-            guides=guides,
-        )
-    elif model_type == "nbvcp":
-        return create_nbvcp(
-            parameterization=parameterization,
-            unconstrained=unconstrained_value,
-            guide_families=guide_families_value,
-            n_components=n_components,
-            mixture_params=mixture_params,
-            priors=priors,
-            guides=guides,
-        )
-    elif model_type == "zinbvcp":
-        return create_zinbvcp(
-            parameterization=parameterization,
-            unconstrained=unconstrained_value,
-            guide_families=guide_families_value,
-            n_components=n_components,
-            mixture_params=mixture_params,
-            priors=priors,
-            guides=guides,
-        )
+        # Use model_copy for immutable update
+        effective_config = model_config.model_copy(update=updates)
     else:
-        raise ValueError(
-            f"Unknown model_type: {model_type}. "
-            f"Supported types: 'nbdm', 'zinb', 'nbvcp', 'zinbvcp'."
-        )
+        effective_config = model_config
+
+    # Use the unified factory
+    return create_model(effective_config)

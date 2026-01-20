@@ -2,13 +2,45 @@
 Preset-based model configuration builder.
 
 This module provides functionality to build ModelConfig objects from simple
-preset parameters (model name, parameterization, etc.) using the preset factory
-system.
+preset parameters (model name, parameterization, etc.). The actual model
+and guide construction is handled by the unified factory in
+`scribe.models.presets.factory`.
+
+Functions
+---------
+build_config_from_preset
+    Build a ModelConfig from simple parameters.
+
+Examples
+--------
+>>> from scribe.inference.preset_builder import build_config_from_preset
+>>>
+>>> # Basic usage
+>>> config = build_config_from_preset(model="nbdm")
+>>>
+>>> # With options
+>>> config = build_config_from_preset(
+...     model="zinb",
+...     parameterization="linked",
+...     n_components=3,
+...     guide_rank=15,
+... )
+
+See Also
+--------
+scribe.models.presets.factory.create_model : Creates model/guide from config.
+scribe.models.config.ModelConfigBuilder : Builder for ModelConfig objects.
 """
 
-from typing import Optional, Dict, Any, List
-from ..models.config import ModelConfig, ModelConfigBuilder, GuideFamilyConfig
+from typing import Any, Dict, List, Optional
+
+from ..models.config import GuideFamilyConfig, ModelConfig, ModelConfigBuilder
 from ..models.parameterizations import PARAMETERIZATIONS
+
+
+# ==============================================================================
+# Build ModelConfig from preset parameters
+# ==============================================================================
 
 
 def build_config_from_preset(
@@ -21,11 +53,18 @@ def build_config_from_preset(
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
 ) -> ModelConfig:
-    """Build ModelConfig using preset factories and parameterization strategies.
+    """Build ModelConfig from simple preset parameters.
 
-    This function creates a ModelConfig by leveraging the preset factory system
-    and parameterization strategies. It handles guide family configuration,
-    mixture models, and prior specification.
+    This function creates a ModelConfig by translating simple parameters
+    into the appropriate configuration. It handles:
+
+    - Model type validation
+    - Parameterization validation and aliasing
+    - Guide family configuration from guide_rank
+    - Mixture model configuration
+
+    The actual model/guide construction is done by `create_model()` in
+    the factory module.
 
     Parameters
     ----------
@@ -43,17 +82,19 @@ def build_config_from_preset(
         creates a LowRankGuide for the appropriate parameter (r or mu).
     n_components : Optional[int], default=None
         Number of mixture components. If provided, creates a mixture model.
-    mixture_params : Optional[list], default=None
+    mixture_params : Optional[List[str]], default=None
         List of parameter names to make mixture-specific. If None and
         n_components is set, defaults to all gene-specific parameters.
     priors : Optional[Dict[str, Any]], default=None
         Dictionary of prior parameters keyed by parameter name.
         Values should be tuples of prior hyperparameters.
+        Example: {"p": (2.0, 2.0), "r": (1.0, 0.5)}
 
     Returns
     -------
     ModelConfig
-        Fully configured model configuration object.
+        Configured model configuration object ready for use with
+        `create_model()` or inference functions.
 
     Raises
     ------
@@ -64,77 +105,71 @@ def build_config_from_preset(
     --------
     Basic usage:
 
-    >>> from scribe.inference.preset_builder import build_config_from_preset
-    >>>
-    >>> config = build_config_from_preset(
-    ...     model="nbdm",
-    ...     parameterization="canonical",
-    ...     inference_method="svi"
-    ... )
+    >>> config = build_config_from_preset(model="nbdm")
 
     With low-rank guide:
 
     >>> config = build_config_from_preset(
     ...     model="nbdm",
     ...     parameterization="mean_prob",
-    ...     inference_method="svi",
-    ...     guide_rank=15
+    ...     guide_rank=15,
     ... )
 
     Mixture model:
 
     >>> config = build_config_from_preset(
     ...     model="zinb",
-    ...     parameterization="mean_odds",
-    ...     inference_method="svi",
-    ...     n_components=3
+    ...     n_components=3,
     ... )
 
     With custom priors:
 
     >>> config = build_config_from_preset(
     ...     model="nbdm",
-    ...     parameterization="canonical",
-    ...     inference_method="svi",
-    ...     priors={"p": (1.0, 1.0), "r": (0.0, 1.0)}
+    ...     priors={"p": (2.0, 2.0), "r": (1.0, 0.5)},
     ... )
 
     Notes
     -----
-    - The preset factories are used to create model/guide functions, but the
-      actual ModelConfig is built using ModelConfigBuilder for consistency.
+    - Parameterization names support both new ("canonical", "mean_prob",
+      "mean_odds") and old ("standard", "linked", "odds_ratio") for
+      backward compatibility.
     - Guide rank is applied to the gene-specific parameter (r for canonical,
       mu for mean_prob/mean_odds).
-    - Parameterization names support both new ("canonical", "mean_prob", "mean_odds")
-      and old ("standard", "linked", "odds_ratio") for backward compatibility.
+    - The returned ModelConfig can be passed to `create_model()` to get
+      the actual model and guide functions.
 
     See Also
     --------
-    scribe.models.presets : Preset factory functions.
-    scribe.models.parameterizations : Parameterization strategy classes.
-    ModelConfigBuilder : Builder for ModelConfig objects.
+    scribe.models.presets.factory.create_model : Creates model/guide from config.
     """
-    # Validate parameterization is supported
+    # ==========================================================================
+    # Validate parameterization
+    # ==========================================================================
     if parameterization not in PARAMETERIZATIONS:
         raise ValueError(
             f"Unknown parameterization: {parameterization}. "
             f"Supported: {list(PARAMETERIZATIONS.keys())}"
         )
 
-    # Get parameterization strategy to determine gene parameter name
-    param_strategy = PARAMETERIZATIONS[parameterization]
-    gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
-
+    # ==========================================================================
     # Build guide families if guide_rank is specified
+    # ==========================================================================
     guide_families = None
     if guide_rank is not None:
         from ..models.components import LowRankGuide
+
+        # Get parameterization strategy to determine gene parameter name
+        param_strategy = PARAMETERIZATIONS[parameterization]
+        gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
 
         guide_families = GuideFamilyConfig(
             **{gene_param_name: LowRankGuide(rank=guide_rank)}
         )
 
+    # ==========================================================================
     # Build ModelConfig using builder
+    # ==========================================================================
     builder = (
         ModelConfigBuilder()
         .for_model(model)
@@ -142,20 +177,23 @@ def build_config_from_preset(
         .with_inference(inference_method)
     )
 
-    # Add unconstrained if needed
     if unconstrained:
         builder.unconstrained()
 
-    # Add mixture configuration
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)
 
-    # Add guide families if specified
     if guide_families is not None:
         builder.with_guide_families(guide_families)
 
-    # Add priors if specified
     if priors:
         builder.with_priors(**priors)
 
     return builder.build()
+
+
+# ==============================================================================
+# Export
+# ==============================================================================
+
+__all__ = ["build_config_from_preset"]
