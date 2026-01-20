@@ -37,10 +37,13 @@ import scanpy as sc
 adata = sc.read_h5ad("your_data.h5ad")
 
 # Run SCRIBE with default settings (SVI inference, NBDM model)
+from scribe.models.config import InferenceConfig, SVIConfig
+
 results = scribe.run_scribe(
     counts=adata,
+    model="nbdm",
     inference_method="svi",
-    n_steps=50000
+    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=50000)),
 )
 
 # Analyze results
@@ -73,29 +76,38 @@ scribe/
 Single entry point for all SCRIBE functionality:
 
 ```python
-# SVI inference (fast, scalable)
+from scribe.inference.preset_builder import build_config_from_preset
+from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
+
+# SVI inference (fast, scalable) – use model="zinb"/"nbvcp"/"zinbvcp" for variants
+model_config = build_config_from_preset(
+    model="nbdm",
+    parameterization="linked",
+    inference_method="svi",
+    unconstrained=True,
+)
 svi_results = scribe.run_scribe(
     counts=data,
-    inference_method="svi",
-    parameterization="linked",
-    unconstrained=True,
-    n_steps=75000
+    model_config=model_config,
+    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=75000)),
 )
 
 # MCMC inference (exact, high-quality)
 mcmc_results = scribe.run_scribe(
     counts=data,
+    model="nbdm",
     inference_method="mcmc",
-    n_samples=3000,
-    n_chains=4
+    inference_config=InferenceConfig.from_mcmc(
+        MCMCConfig(n_samples=3000, n_chains=4)
+    ),
 )
 
-# VAE inference (representation learning)
+# VAE inference (representation learning; see vae module for VAE-specific options)
 vae_results = scribe.run_scribe(
     counts=data,
+    model="nbdm",
     inference_method="vae",
-    vae_latent_dim=15,
-    vae_prior_type="decoupled"
+    inference_config=InferenceConfig.from_vae(SVIConfig(n_steps=50000)),
 )
 ```
 
@@ -168,7 +180,7 @@ vae_config = VAEConfig(
     latent_dim=20,
     hidden_dims=[1024, 512, 256],
     activation="gelu",
-    variable_capture=True  # For VCP models
+    variable_capture=True,  # For VCP (variable capture) models
 )
 
 # Latent space analysis
@@ -199,41 +211,46 @@ normalized = normalize_counts_from_posterior(
 
 ### When to Use Each Model
 
-| Model | Best For | Characteristics |
-|-------|----------|----------------|
-| **NBDM** | Baseline analysis, well-behaved data | Simple, interpretable, fast |
-| **ZINB** | Data with excess zeros | Handles technical/biological dropouts |
-| **NBVCP** | Variable sequencing depth | Models capture efficiency |
-| **ZINBVCP** | Complex technical variation | Most comprehensive model |
+| Model       | Best For                             | Characteristics                       |
+|-------------|--------------------------------------|---------------------------------------|
+| **NBDM**    | Baseline analysis, well-behaved data | Simple, interpretable, fast           |
+| **ZINB**    | Data with excess zeros               | Handles technical/biological dropouts |
+| **NBVCP**   | Variable sequencing depth            | Models capture efficiency             |
+| **ZINBVCP** | Complex technical variation          | Most comprehensive model              |
 
 ### When to Use Each Inference Method
 
-| Method | Speed | Accuracy | Use Case |
-|--------|-------|----------|----------|
-| **SVI** | Fast | Good approximation | Exploration, large datasets |
-| **MCMC** | Slow | Exact | Final analysis, publication |
-| **VAE** | Medium | Good + representation | Dimension reduction, clustering |
+| Method   | Speed  | Accuracy              | Use Case                        |
+|----------|--------|-----------------------|---------------------------------|
+| **SVI**  | Fast   | Good approximation    | Exploration, large datasets     |
+| **MCMC** | Slow   | Exact                 | Final analysis, publication     |
+| **VAE**  | Medium | Good + representation | Dimension reduction, clustering |
 
 ### Parameterization Guide
 
-| Parameterization | Parameters | Best For |
-|------------------|------------|----------|
-| **Standard** | Direct p, r | Most interpretable |
-| **Linked** | Links p to expression | When p-expression relationship matters |
-| **Odds Ratio** | Uses odds ratios | When odds ratios are natural scale |
+| Parameterization | Parameters            | Best For                               |
+|------------------|-----------------------|----------------------------------------|
+| **Standard**     | Direct p, r           | Most interpretable                     |
+| **Linked**       | Links p to expression | When p-expression relationship matters |
+| **Odds Ratio**   | Uses odds ratios      | When odds ratios are natural scale     |
 
 ## Advanced Usage Examples
 
 ### Mixture Model Analysis
 
 ```python
-# Discover cell types with mixture models
+from scribe.inference.preset_builder import build_config_from_preset
+from scribe.models.config import InferenceConfig, SVIConfig
+
+model_config = build_config_from_preset(
+    model="nbdm",
+    inference_method="svi",
+    n_components=5,
+)
 mixture_results = scribe.run_scribe(
     counts=adata,
-    mixture_model=True,
-    n_components=5,
-    inference_method="svi",
-    n_steps=100000
+    model_config=model_config,
+    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=100000)),
 )
 
 # Analyze cell type assignments
@@ -249,23 +266,20 @@ for i in range(5):
 ### Model Comparison Workflow
 
 ```python
-# Compare multiple models
+from scribe.models.config import InferenceConfig, SVIConfig
+
+# Compare multiple models (nbdm, zinb, nbvcp, zinbvcp)
 models = ["nbdm", "zinb", "nbvcp", "zinbvcp"]
 results = {}
+inference_config = InferenceConfig.from_svi(SVIConfig(n_steps=75000))
 
 for model in models:
-    # Configure based on data characteristics
-    zero_inflated = "zinb" in model
-    variable_capture = "vcp" in model
-    
     result = scribe.run_scribe(
         counts=adata,
-        zero_inflated=zero_inflated,
-        variable_capture=variable_capture,
+        model=model,
         inference_method="svi",
-        n_steps=75000
+        inference_config=inference_config,
     )
-    
     results[model] = result
 
 # Compare using log-likelihood
@@ -277,42 +291,41 @@ for model, result in results.items():
 ### Multi-Method Analysis
 
 ```python
-# Use multiple inference methods for comprehensive analysis
-config = scribe.ModelConfig(
-    base_model="zinb_mix",
+from scribe.inference.preset_builder import build_config_from_preset
+from scribe.models.config import InferenceConfig, SVIConfig, MCMCConfig
+
+# Shared model: ZINB mixture with 3 components
+model_config = build_config_from_preset(
+    model="zinb",
+    parameterization="linked",
     n_components=3,
-    parameterization="linked"
 )
 
 # Fast exploration with SVI
 svi_results = scribe.run_scribe(
     counts=adata,
-    **config.to_dict(),
-    inference_method="svi",
-    n_steps=50000
+    model_config=model_config,
+    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=50000)),
 )
 
-# Exact inference with MCMC for final analysis
+# Exact inference with MCMC (update model_config.inference_method for mcmc)
+mcmc_model = build_config_from_preset(
+    model="zinb",
+    parameterization="linked",
+    inference_method="mcmc",
+    n_components=3,
+)
 mcmc_results = scribe.run_scribe(
     counts=adata,
-    **config.to_dict(),
-    inference_method="mcmc",
-    n_samples=3000,
-    n_chains=4
-)
-
-# Representation learning with VAE
-vae_results = scribe.run_scribe(
-    counts=adata,
-    **config.to_dict(),
-    inference_method="vae",
-    vae_latent_dim=15
+    model_config=mcmc_model,
+    inference_config=InferenceConfig.from_mcmc(
+        MCMCConfig(n_samples=3000, n_chains=4)
+    ),
 )
 
 # Compare results
 print("SVI log-likelihood:", svi_results.log_likelihood_map())
 print("MCMC log-likelihood:", mcmc_results.log_likelihood())
-embeddings = vae_results.get_latent_embeddings(adata.X)
 ```
 
 ### Advanced VAE Configuration
@@ -320,32 +333,22 @@ embeddings = vae_results.get_latent_embeddings(adata.X)
 ```python
 from scribe.vae import VAEConfig
 
-# Configure sophisticated VAE architecture
+# Configure sophisticated VAE architecture (see vae module for full API)
 vae_config = VAEConfig(
     input_dim=n_genes,
     latent_dim=25,
     hidden_dims=[2048, 1024, 512, 256],
     activation="gelu",
     input_transformation="log1p",
-    
-    # Variable capture modeling
     variable_capture=True,
     variable_capture_hidden_dims=[128, 64],
-    
-    # Data standardization
     standardize_mean=gene_means,
-    standardize_std=gene_stds
+    standardize_std=gene_stds,
 )
 
-# Use with decoupled prior VAE
-results = scribe.run_scribe(
-    counts=adata,
-    inference_method="vae",
-    vae_prior_type="decoupled",
-    vae_config=vae_config,
-    zero_inflated=True,
-    variable_capture=True
-)
+# Use with run_scribe: pass model_config and inference_config;
+# VAE-specific options go in model_config.vae or via ModelConfigBuilder.
+# See scribe.vae and scribe.models.config for full VAE setup.
 ```
 
 ## Integration with Single-Cell Ecosystem
@@ -362,12 +365,18 @@ sc.pp.filter_cells(adata, min_genes=200)
 sc.pp.filter_genes(adata, min_cells=3)
 
 # SCRIBE analysis
+from scribe.inference.preset_builder import build_config_from_preset
+from scribe.models.config import InferenceConfig, SVIConfig
+
+model_config = build_config_from_preset(
+    model="nbdm",
+    inference_method="vae",
+    n_components=8,
+)
 results = scribe.run_scribe(
     counts=adata,
-    mixture_model=True,
-    n_components=8,
-    inference_method="vae",
-    vae_latent_dim=15
+    model_config=model_config,
+    inference_config=InferenceConfig.from_vae(SVIConfig(n_steps=50000)),
 )
 
 # Add results back to AnnData
@@ -386,11 +395,15 @@ sc.pl.umap(adata, color="scribe_cluster")
 
 ```python
 # For large datasets, use mini-batching
+from scribe.models.config import InferenceConfig, SVIConfig
+
 large_results = scribe.run_scribe(
     counts=large_adata,
+    model="nbdm",
     inference_method="svi",
-    batch_size=1024,  # Process in batches
-    n_steps=150000    # More steps for convergence
+    inference_config=InferenceConfig.from_svi(
+        SVIConfig(n_steps=150000, batch_size=1024)
+    ),
 )
 ```
 
@@ -402,11 +415,13 @@ import jax
 print("GPU available:", jax.devices("gpu"))
 
 # All inference methods benefit from GPU acceleration
+from scribe.models.config import InferenceConfig, SVIConfig
+
 gpu_results = scribe.run_scribe(
     counts=adata,
-    inference_method="vae",  # Especially beneficial for VAE
-    vae_latent_dim=20,
-    n_steps=75000
+    model="nbdm",
+    inference_method="vae",
+    inference_config=InferenceConfig.from_vae(SVIConfig(n_steps=75000)),
 )
 ```
 

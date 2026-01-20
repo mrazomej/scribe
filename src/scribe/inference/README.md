@@ -202,19 +202,31 @@ Best for complex configurations and reproducibility:
 
 ```python
 from scribe.inference import run_scribe
+from scribe.inference.preset_builder import build_config_from_preset
 from scribe.models.config import (
-    ModelConfigBuilder,
     InferenceConfig,
     SVIConfig,
+    GuideFamilyConfig,
+)
+from scribe.models.components import LowRankGuide
+
+# Option A: preset with guide_rank
+model_config = build_config_from_preset(
+    model="zinb",
+    parameterization="mean_prob",
+    inference_method="svi",
+    guide_rank=15,
 )
 
-# Build and save configs for reuse
+# Option B: ModelConfigBuilder with explicit guide families
+from scribe.models.config import ModelConfigBuilder
+
 model_config = (
     ModelConfigBuilder()
     .for_model("zinb")
     .with_parameterization("mean_prob")
     .with_inference("svi")
-    .with_low_rank_guide(15)
+    .with_guide_families(GuideFamilyConfig(mu=LowRankGuide(rank=15)))
     .build()
 )
 
@@ -222,7 +234,6 @@ inference_config = InferenceConfig.from_svi(
     SVIConfig(n_steps=100000, batch_size=512)
 )
 
-# Run inference
 results = run_scribe(
     counts=adata,
     model_config=model_config,
@@ -237,12 +248,11 @@ Use defaults for quick testing:
 ```python
 from scribe.inference import run_scribe
 
-# Uses default InferenceConfig (100k steps for SVI)
+# Uses default InferenceConfig (100k steps for SVI) when inference_config=None
 results = run_scribe(
     counts=adata,
     model="nbdm",
     inference_method="svi",
-    # inference_config=None uses defaults
 )
 ```
 
@@ -252,7 +262,7 @@ The module supports both new and old parameterization names for backward
 compatibility:
 
 | New Name (Preferred) | Old Name (Backward Compat) | Description                         |
-|----------------------|----------------------------|-------------------------------------|
+| -------------------- | -------------------------- | ----------------------------------- |
 | `"canonical"`        | `"standard"`               | Directly samples p and r            |
 | `"mean_prob"`        | `"linked"`                 | Samples p and mu, derives r         |
 | `"mean_odds"`        | `"odds_ratio"`             | Samples phi and mu, derives p and r |
@@ -285,9 +295,10 @@ compatibility:
 
 ### From Old API
 
-**Old way (many parameters):**
+**Old way (deprecated: many boolean flags and loose params):**
 
 ```python
+# Deprecated: zero_inflated, variable_capture, mixture_model, etc.
 results = run_scribe(
     counts=adata,
     inference_method="svi",
@@ -296,7 +307,6 @@ results = run_scribe(
     parameterization="standard",
     n_steps=50000,
     batch_size=256,
-    # ... many more parameters
 )
 ```
 

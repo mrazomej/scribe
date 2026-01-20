@@ -436,34 +436,28 @@ python visualize.py data=your_data inference=your_method
 ```python
 import scanpy as sc
 import scribe
+from scribe.models.config import InferenceConfig, SVIConfig
 
 # Load and preprocess
 adata = sc.read_h5ad("data.h5ad")
 sc.pp.filter_cells(adata, min_genes=200)
 
-# Run SCRIBE via configuration
-# (equivalent to running infer.py)
+# Run SCRIBE (use model="zinb" for zero-inflation, "nbvcp" for variable capture, etc.)
 results = scribe.run_scribe(
     counts=adata.X,
+    model="zinb",
     inference_method="svi",
-    zero_inflated=True,
-    n_steps=50000
+    inference_config=InferenceConfig.from_svi(SVIConfig(n_steps=50000)),
 )
 ```
 
 ### Programmatic Configuration
-```python
-from omegaconf import OmegaConf
-import hydra
 
-# Load configuration
-with hydra.initialize(config_path="conf"):
-    cfg = hydra.compose(config_name="config", 
-                       overrides=["data=jurkat_cells", "zero_inflated=true"])
-
-# Use in analysis
-results = scribe.run_scribe(counts=data, **OmegaConf.to_container(cfg))
-```
+`infer.py` and `visualize.py` use Hydra. Their YAML options (e.g. `zero_inflated`,
+`variable_capture`, `mixture_model`) are mapped to the programmatic API
+(`model`, `build_config_from_preset`, `InferenceConfig`) inside the pipeline.
+For direct `run_scribe` calls, use `model`, `model_config`, and
+`inference_config` as in the Scanpy example above.
 
 ## 🎯 Best Practices
 

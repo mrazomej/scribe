@@ -4,48 +4,50 @@ Pre-configured model/guide factories for common use cases.
 
 ## Available Presets
 
-| Function | Model Type | Description |
-|----------|------------|-------------|
-| `create_nbdm()` | NBDM | Negative Binomial Dropout Model |
-| `create_zinb()` | ZINB | Zero-Inflated Negative Binomial |
-| `create_nbvcp()` | NBVCP | NB with Variable Capture Probability |
-| `create_zinbvcp()` | ZINBVCP | ZINB with Variable Capture Probability |
+| Function           | Model Type | Description                            |
+|--------------------|------------|----------------------------------------|
+| `create_nbdm()`    | NBDM       | Negative Binomial Dropout Model        |
+| `create_zinb()`    | ZINB       | Zero-Inflated Negative Binomial        |
+| `create_nbvcp()`   | NBVCP      | NB with Variable Capture Probability   |
+| `create_zinbvcp()` | ZINBVCP    | ZINB with Variable Capture Probability |
 
 ## Configuration Options
 
 All presets support:
 
 ```python
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import LowRankGuide, AmortizedGuide, MeanFieldGuide
+
 model, guide = create_nbvcp(
-    # Parameterization
-    parameterization="standard",     # "standard", "linked", "odds_ratio"
+    parameterization="canonical",    # "canonical", "mean_prob", "mean_odds"
     unconstrained=False,             # Use Normal+transform instead of Beta/LogNormal
-    
-    # Per-parameter guide families
-    r_guide="mean_field",            # "mean_field", "low_rank"
-    guide_rank=10,                   # Rank for low_rank guide
-    
-    # Cell-specific parameter handling (NBVCP/ZINBVCP only)
-    p_capture_guide="mean_field",    # "mean_field", "amortized"
-    capture_amortizer=None,          # Custom Amortizer instance
+    guide_families=GuideFamilyConfig(
+        mu=LowRankGuide(rank=10),    # or MeanFieldGuide() for mean-field
+        p_capture=MeanFieldGuide(),  # or AmortizedGuide(amortizer=...)
+    ),
+    n_components=None,               # int for mixture
+    mixture_params=None,
+    priors=None,                     # e.g. {"p": (1,1), "mu": (0,1)}
+    guides=None,
 )
 ```
 
 ### Parameterization Options
 
-| Name | Parameters | Derived |
-|------|------------|---------|
-| `"standard"` | p, r | - |
-| `"linked"` | p, mu | r = mu*(1-p)/p |
-| `"odds_ratio"` | phi, mu | r = mu*phi, p = 1/(1+phi) |
+| Name           | Parameters | Derived                   |
+|----------------|------------|---------------------------|
+| `"standard"`   | p, r       | -                         |
+| `"linked"`     | p, mu      | r = mu*(1-p)/p            |
+| `"odds_ratio"` | phi, mu    | r = mu*phi, p = 1/(1+phi) |
 
-### Guide Families
+### Guide Families (via `GuideFamilyConfig`)
 
-| Option | Description |
-|--------|-------------|
-| `"mean_field"` | Independent variational distribution per parameter |
-| `"low_rank"` | Low-rank MVN capturing correlations between genes |
-| `"amortized"` | Neural network predicts params from sufficient statistics |
+| Class                           | Description                                                  |
+|---------------------------------|--------------------------------------------------------------|
+| `MeanFieldGuide()`              | Independent variational distribution per parameter (default) |
+| `LowRankGuide(rank=k)`          | Low-rank MVN capturing correlations between genes            |
+| `AmortizedGuide(amortizer=...)` | Neural network predicts params from sufficient statistics    |
 
 ## Examples
 
@@ -64,11 +66,12 @@ svi = numpyro.infer.SVI(model, guide, optimizer, loss)
 
 ```python
 from scribe.models.presets import create_nbdm
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import LowRankGuide
 
 model, guide = create_nbdm(
     parameterization="linked",
-    r_guide="low_rank",
-    guide_rank=15,
+    guide_families=GuideFamilyConfig(mu=LowRankGuide(rank=15)),
 )
 ```
 
@@ -78,9 +81,18 @@ For large datasets (100K+ cells), amortize p_capture inference:
 
 ```python
 from scribe.models.presets import create_nbvcp
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import AmortizedGuide, TOTAL_COUNT, Amortizer
 
+amortizer = Amortizer(
+    sufficient_statistic=TOTAL_COUNT,
+    hidden_dims=[64, 32],
+    output_params=["log_alpha", "log_beta"],
+)
 model, guide = create_nbvcp(
-    p_capture_guide="amortized",
+    guide_families=GuideFamilyConfig(
+        p_capture=AmortizedGuide(amortizer=amortizer),
+    ),
 )
 ```
 
@@ -88,9 +100,9 @@ model, guide = create_nbvcp(
 
 ```python
 from scribe.models.presets import create_nbvcp
-from scribe.models.components import Amortizer, TOTAL_COUNT
+from scribe.models.config import GuideFamilyConfig
+from scribe.models.components import Amortizer, TOTAL_COUNT, LowRankGuide, AmortizedGuide
 
-# Custom amortizer with larger network
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[128, 64, 32],
@@ -99,10 +111,10 @@ amortizer = Amortizer(
 
 model, guide = create_nbvcp(
     parameterization="linked",
-    r_guide="low_rank",
-    guide_rank=15,
-    p_capture_guide="amortized",
-    capture_amortizer=amortizer,
+    guide_families=GuideFamilyConfig(
+        mu=LowRankGuide(rank=15),
+        p_capture=AmortizedGuide(amortizer=amortizer),
+    ),
 )
 ```
 
@@ -119,15 +131,15 @@ model, guide = create_nbdm(
 
 ## Model Equivalence
 
-Each preset creates models equivalent to the old monolithic files:
+Each preset produces the same model/guide as the legacy per-file implementations:
 
-| Preset Call | Equivalent Old File |
-|-------------|---------------------|
-| `create_nbdm()` | `standard.py: nbdm_model/guide` |
-| `create_nbdm(unconstrained=True)` | `standard_unconstrained.py: nbdm_model/guide` |
-| `create_nbdm(r_guide="low_rank")` | `standard_low_rank.py: nbdm_guide` |
-| `create_nbdm(parameterization="linked")` | `linked.py: nbdm_model/guide` |
-| `create_nbdm(parameterization="odds_ratio")` | `odds_ratio.py: nbdm_model/guide` |
+| Preset Call                                                             | Legacy equivalent           |
+|-------------------------------------------------------------------------|-----------------------------|
+| `create_nbdm()`                                                         | `standard.py`               |
+| `create_nbdm(unconstrained=True)`                                       | `standard_unconstrained.py` |
+| `create_nbdm(guide_families=GuideFamilyConfig(r=LowRankGuide(rank=k)))` | `standard_low_rank.py`      |
+| `create_nbdm(parameterization="linked")`                                | `linked.py`                 |
+| `create_nbdm(parameterization="odds_ratio")`                            | `odds_ratio.py`             |
 
 ## Architecture
 
