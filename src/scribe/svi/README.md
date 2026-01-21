@@ -11,8 +11,9 @@ The SVI module provides:
 
 1. **Inference Engine**: Executes SVI optimization using NumPyro's SVI framework
 2. **Early Stopping**: Automatic convergence detection to save computation time
-3. **Results Management**: Comprehensive results class with analysis methods
-4. **Results Factory**: Streamlined creation and packaging of results objects
+3. **Checkpointing**: Orbax-based checkpointing for resumable training
+4. **Results Management**: Comprehensive results class with analysis methods
+5. **Results Factory**: Streamlined creation and packaging of results objects
 
 ## Key Components
 
@@ -103,6 +104,66 @@ if results.early_stopped:
 - `check_every`: How often to check for convergence (reduces overhead)
 - `smoothing_window`: Window size for computing moving average loss
 - `restore_best`: If True, restores parameters from the best checkpoint
+- `checkpoint_dir`: Directory for Orbax checkpoints (enables resumable training)
+- `resume`: If True (default), resumes from checkpoint if one exists
+
+### Checkpointing (`checkpoint.py`)
+
+The SVI module supports Orbax-based checkpointing for resumable training. When
+enabled, the best parameters are saved to disk whenever loss improves, allowing
+training to resume from the last checkpoint if interrupted.
+
+**Via Hydra (automatic):**
+
+When using `infer.py`, checkpoints are automatically saved to the Hydra output
+directory:
+
+```bash
+# Start training
+python infer.py data=singer model=nbdm inference.n_steps=100000
+# Checkpoints saved to: outputs/<date>/<time>/checkpoints/
+
+# If interrupted, re-running resumes automatically
+python infer.py data=singer model=nbdm inference.n_steps=100000
+```
+
+**Direct API (manual checkpoint directory):**
+
+```python
+from scribe.models.config import EarlyStoppingConfig
+
+# Enable checkpointing with explicit directory
+early_stopping = EarlyStoppingConfig(
+    patience=500,
+    checkpoint_dir="./my_checkpoints",  # Enable checkpointing
+    resume=True,  # Resume if checkpoint exists (default)
+)
+
+results = SVIInferenceEngine.run_inference(
+    model_config=config,
+    count_data=data,
+    n_cells=n_cells,
+    n_genes=n_genes,
+    n_steps=100000,
+    early_stopping=early_stopping,
+)
+```
+
+**Checkpoint utilities:**
+
+```python
+from scribe.svi import (
+    checkpoint_exists,
+    load_svi_checkpoint,
+    save_svi_checkpoint,
+    remove_checkpoint,
+)
+
+# Check if checkpoint exists
+if checkpoint_exists("./my_checkpoints"):
+    params, metadata, losses = load_svi_checkpoint("./my_checkpoints")
+    print(f"Resumed from step {metadata.step}, best_loss={metadata.best_loss}")
+```
 
 ### ScribeSVIResults (`results.py`)
 

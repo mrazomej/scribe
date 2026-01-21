@@ -31,7 +31,9 @@ class TestEarlyStoppingConfig:
 
         assert config.enabled is True
         assert config.patience == 500
-        assert config.min_delta == 1.0  # Default is 1 (reasonable for ELBO ~10^6-10^7)
+        assert (
+            config.min_delta == 1.0
+        )  # Default is 1 (reasonable for ELBO ~10^6-10^7)
         assert config.check_every == 10
         assert config.smoothing_window == 50
         assert config.restore_best is True
@@ -383,3 +385,215 @@ class TestEarlyStoppingIntegration:
 
         assert results is not None
         assert len(results.loss_history) <= 50
+
+
+# =============================================================================
+# Checkpoint Tests (Fast unit tests)
+# =============================================================================
+
+
+class TestCheckpointConfig:
+    """Test checkpoint configuration in EarlyStoppingConfig."""
+
+    def test_default_checkpoint_values(self):
+        """Test default checkpoint configuration values."""
+        config = EarlyStoppingConfig()
+
+        assert config.checkpoint_dir is None  # No checkpointing by default
+        assert config.resume is True  # Auto-resume enabled by default
+
+    def test_checkpoint_dir_can_be_set(self):
+        """Test that checkpoint_dir can be configured."""
+        config = EarlyStoppingConfig(
+            checkpoint_dir="/tmp/test_checkpoints",
+            resume=True,
+        )
+
+        assert config.checkpoint_dir == "/tmp/test_checkpoints"
+        assert config.resume is True
+
+    def test_resume_false_disables_auto_resume(self):
+        """Test that resume=False prevents auto-resume."""
+        config = EarlyStoppingConfig(
+            checkpoint_dir="/tmp/test_checkpoints",
+            resume=False,
+        )
+
+        assert config.checkpoint_dir == "/tmp/test_checkpoints"
+        assert config.resume is False
+
+
+class TestCheckpointUtilities:
+    """Test checkpoint save/load utilities."""
+
+    @pytest.fixture
+    def temp_checkpoint_dir(self, tmp_path):
+        """Create a temporary checkpoint directory."""
+        return str(tmp_path / "checkpoints")
+
+    @pytest.fixture
+    def sample_params(self):
+        """Create sample variational parameters."""
+        return {
+            "p_loc": jnp.array([0.5, 0.6, 0.7]),
+            "p_scale": jnp.array([0.1, 0.1, 0.1]),
+            "r_loc": jnp.array([1.0, 2.0, 3.0]),
+            "r_scale": jnp.array([0.5, 0.5, 0.5]),
+        }
+
+    def test_checkpoint_exists_false_for_empty_dir(self, temp_checkpoint_dir):
+        """Test that checkpoint_exists returns False for non-existent dir."""
+        from scribe.svi import checkpoint_exists
+
+        assert checkpoint_exists(temp_checkpoint_dir) is False
+
+    def test_checkpoint_exists_false_for_none(self):
+        """Test that checkpoint_exists returns False for None."""
+        from scribe.svi import checkpoint_exists
+
+        assert checkpoint_exists(None) is False
+
+    def test_save_and_load_checkpoint(self, temp_checkpoint_dir, sample_params):
+        """Test saving and loading a checkpoint."""
+        from scribe.svi import (
+            save_svi_checkpoint,
+            load_svi_checkpoint,
+            checkpoint_exists,
+        )
+
+        # Save checkpoint
+        losses = [100.0, 90.0, 80.0, 75.0, 70.0]
+        save_svi_checkpoint(
+            checkpoint_dir=temp_checkpoint_dir,
+            params=sample_params,
+            step=100,
+            best_loss=70.0,
+            losses=losses,
+            patience_counter=20,
+        )
+
+        # Verify checkpoint exists
+        assert checkpoint_exists(temp_checkpoint_dir) is True
+
+        # Load checkpoint
+        result = load_svi_checkpoint(temp_checkpoint_dir)
+        assert result is not None
+
+        restored_params, metadata, restored_losses = result
+
+        # Verify metadata
+        assert metadata.step == 100
+        assert metadata.best_loss == 70.0
+        assert metadata.n_losses == 5
+        assert metadata.patience_counter == 20
+
+        # Verify losses
+        assert restored_losses == losses
+
+        # Verify params structure (keys should match)
+        assert set(restored_params.keys()) == set(sample_params.keys())
+
+    def test_save_overwrites_existing_checkpoint(
+        self, temp_checkpoint_dir, sample_params
+    ):
+        """Test that saving overwrites existing checkpoint."""
+        from scribe.svi import save_svi_checkpoint, load_svi_checkpoint
+
+        # Save first checkpoint
+        save_svi_checkpoint(
+            checkpoint_dir=temp_checkpoint_dir,
+            params=sample_params,
+            step=50,
+            best_loss=100.0,
+            losses=[100.0],
+            patience_counter=0,
+        )
+
+        # Save second checkpoint (should overwrite)
+        save_svi_checkpoint(
+            checkpoint_dir=temp_checkpoint_dir,
+            params=sample_params,
+            step=100,
+            best_loss=70.0,
+            losses=[100.0, 80.0, 70.0],
+            patience_counter=10,
+        )
+
+        # Load and verify it's the second checkpoint
+        result = load_svi_checkpoint(temp_checkpoint_dir)
+        assert result is not None
+
+        _, metadata, losses = result
+        assert metadata.step == 100
+        assert metadata.best_loss == 70.0
+        assert len(losses) == 3
+
+    def test_remove_checkpoint(self, temp_checkpoint_dir, sample_params):
+        """Test removing a checkpoint."""
+        from scribe.svi import (
+            save_svi_checkpoint,
+            checkpoint_exists,
+            remove_checkpoint,
+        )
+
+        # Save checkpoint
+        save_svi_checkpoint(
+            checkpoint_dir=temp_checkpoint_dir,
+            params=sample_params,
+            step=100,
+            best_loss=70.0,
+            losses=[70.0],
+            patience_counter=0,
+        )
+        assert checkpoint_exists(temp_checkpoint_dir) is True
+
+        # Remove checkpoint
+        remove_checkpoint(temp_checkpoint_dir)
+        assert checkpoint_exists(temp_checkpoint_dir) is False
+
+    def test_load_nonexistent_checkpoint_returns_none(
+        self, temp_checkpoint_dir
+    ):
+        """Test that loading non-existent checkpoint returns None."""
+        from scribe.svi import load_svi_checkpoint
+
+        result = load_svi_checkpoint(temp_checkpoint_dir)
+        assert result is None
+
+
+class TestCheckpointMetadata:
+    """Test CheckpointMetadata dataclass."""
+
+    def test_metadata_to_dict(self):
+        """Test metadata serialization to dict."""
+        from scribe.svi import CheckpointMetadata
+
+        metadata = CheckpointMetadata(
+            step=100,
+            best_loss=70.0,
+            n_losses=50,
+            patience_counter=20,
+        )
+
+        data = metadata.to_dict()
+        assert data["step"] == 100
+        assert data["best_loss"] == 70.0
+        assert data["n_losses"] == 50
+        assert data["patience_counter"] == 20
+
+    def test_metadata_from_dict(self):
+        """Test metadata deserialization from dict."""
+        from scribe.svi import CheckpointMetadata
+
+        data = {
+            "step": 100,
+            "best_loss": 70.0,
+            "n_losses": 50,
+            "patience_counter": 20,
+        }
+
+        metadata = CheckpointMetadata.from_dict(data)
+        assert metadata.step == 100
+        assert metadata.best_loss == 70.0
+        assert metadata.n_losses == 50
+        assert metadata.patience_counter == 20

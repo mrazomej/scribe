@@ -399,10 +399,20 @@ class EarlyStoppingConfig(BaseModel):
     restore_best : bool, default=True
         Whether to restore parameters from the best checkpoint (lowest smoothed
         loss) when early stopping is triggered.
+    checkpoint_dir : str, optional
+        Directory for Orbax checkpoints. When set, saves best parameters to
+        disk whenever loss improves, enabling resumable training. Set
+        automatically by Hydra when using `infer.py`. For direct API use,
+        can be set manually to enable checkpointing. Default is None (no
+        checkpointing).
+    resume : bool, default=True
+        Whether to resume from an existing checkpoint if one exists.
+        Default is True (auto-resume). Set to False to start fresh training
+        while still saving checkpoints for future resumption.
 
     Examples
     --------
-    >>> # Default configuration
+    >>> # Default configuration (no checkpointing)
     >>> config = EarlyStoppingConfig()
 
     >>> # More aggressive early stopping (for large-scale ELBO)
@@ -414,6 +424,12 @@ class EarlyStoppingConfig(BaseModel):
 
     >>> # Disable early stopping
     >>> config = EarlyStoppingConfig(enabled=False)
+
+    >>> # With checkpointing (for direct API use)
+    >>> config = EarlyStoppingConfig(
+    ...     checkpoint_dir="./my_checkpoints",
+    ...     resume=True,  # Will resume if checkpoint exists
+    ... )
 
     Notes
     -----
@@ -460,6 +476,23 @@ class EarlyStoppingConfig(BaseModel):
     restore_best: bool = Field(
         True,
         description="Restore best parameters when early stopping triggers",
+    )
+
+    # Checkpointing configuration
+    checkpoint_dir: Optional[str] = Field(
+        None,
+        description=(
+            "Directory for Orbax checkpoints. When set, saves best parameters "
+            "to disk on improvement. Set automatically by Hydra in infer.py. "
+            "For direct API use, can be set manually to enable checkpointing."
+        ),
+    )
+    resume: bool = Field(
+        True,
+        description=(
+            "Whether to resume from checkpoint if one exists. Default True. "
+            "Set to False to start fresh while still saving checkpoints."
+        ),
     )
 
     # --------------------------------------------------------------------------

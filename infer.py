@@ -193,6 +193,20 @@ def main(cfg: DictConfig) -> None:
     inference_cfg = OmegaConf.to_container(cfg.inference, resolve=True)
     inference_method = inference_cfg.pop("method")
 
+    # Set checkpoint directory for early stopping (automatically within Hydra
+    # output)
+    from hydra.core.hydra_config import HydraConfig
+
+    hydra_cfg = HydraConfig.get()
+    output_dir = hydra_cfg.runtime.output_dir
+
+    if "early_stopping" in inference_cfg and inference_cfg["early_stopping"]:
+        checkpoint_dir = os.path.join(output_dir, "checkpoints")
+        inference_cfg["early_stopping"]["checkpoint_dir"] = checkpoint_dir
+        console.print(
+            f"[dim]Checkpoint directory:[/dim] [cyan]{checkpoint_dir}[/cyan]"
+        )
+
     # Build priors dict (filtering None values)
     priors = _build_priors_dict(cfg.get("priors"))
 
@@ -205,7 +219,8 @@ def main(cfg: DictConfig) -> None:
         # If mixture_model=true but n_components not set, default to 2
         n_components = 2
         warnings.warn(
-            "mixture_model=true without n_components specified. Defaulting to n_components=2. "
+            "mixture_model=true without n_components specified. "
+            "Defaulting to n_components=2. "
             "Please use n_components=N directly instead of mixture_model flag.",
             DeprecationWarning,
         )
@@ -299,10 +314,7 @@ def main(cfg: DictConfig) -> None:
         )
     )
 
-    from hydra.core.hydra_config import HydraConfig
-
-    hydra_cfg = HydraConfig.get()
-    output_dir = hydra_cfg.runtime.output_dir
+    # output_dir was already set earlier when configuring checkpoints
     output_file = os.path.join(output_dir, "scribe_results.pkl")
     console.print(f"[dim]Output directory:[/dim] [cyan]{output_dir}[/cyan]")
     console.print(f"[dim]Saving results to:[/dim] [cyan]{output_file}[/cyan]")
