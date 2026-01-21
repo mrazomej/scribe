@@ -1,13 +1,54 @@
 # @package inference
 # Stochastic Variational Inference configuration
+#
+# SVI optimizes the ELBO (Evidence Lower Bound) using gradient-based methods.
+# This configuration supports early stopping to automatically detect convergence.
 
 method: svi
 
-# Number of optimization steps
+# Maximum number of optimization steps
+# Training may stop earlier if early stopping is enabled and convergence is detected
 n_steps: 50_000
 
-# Mini-batch size (null = use full dataset)
+# Mini-batch size for stochastic optimization
+# null = use full dataset (batch gradient descent)
+# Set to a value (e.g., 256, 512) for large datasets
 batch_size: null
 
 # Use numerically stable parameter updates
+# When true, handles NaN/Inf gracefully
 stable_update: true
+
+# Early stopping configuration
+# Monitors loss and stops when improvement plateaus
+# Supports Orbax checkpointing for resumable training
+early_stopping:
+  # Enable/disable early stopping
+  # Set to false to always run for n_steps
+  enabled: true
+  
+  # Number of steps without improvement before stopping
+  # Higher values = more tolerance for temporary loss increases
+  patience: 500
+  
+  # Minimum improvement to qualify as progress
+  # Improvements smaller than this are ignored
+  # Default is 1.0 (suitable for ELBO values ~10^6-10^7)
+  min_delta: 1.0
+  
+  # How often to check for convergence (in steps)
+  # Lower = more responsive but slightly more overhead
+  check_every: 10
+  
+  # Window size for computing smoothed (moving average) loss
+  # Larger windows reduce noise but respond slower
+  smoothing_window: 50
+  
+  # Restore parameters from best checkpoint when stopping
+  # If false, uses parameters from the final step
+  restore_best: true
+  
+  # Resume from checkpoint if one exists
+  # Checkpoints are automatically saved to the Hydra output directory
+  # Set to false to start fresh training
+  resume: true

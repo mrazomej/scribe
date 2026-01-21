@@ -3,11 +3,11 @@ Inference engine for SVI.
 
 This module handles the execution of SVI inference including setting up the
 SVI instance and running the optimization. Supports early stopping based on
-loss convergence.
+loss convergence and Orbax checkpointing for resumable training.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import numpy as np
 import jax.numpy as jnp
 from jax import random
@@ -23,6 +23,11 @@ from rich.progress import (
 )
 from ..models.model_registry import get_model_and_guide
 from ..models.config import ModelConfig, EarlyStoppingConfig
+from .checkpoint import (
+    checkpoint_exists,
+    save_svi_checkpoint,
+    load_svi_checkpoint,
+)
 
 # ==============================================================================
 # SVIRunResult class
@@ -77,7 +82,8 @@ def _run_with_early_stopping(
     """Run SVI with early stopping based on loss convergence.
 
     This function implements a custom training loop that monitors the loss and
-    stops when convergence is detected.
+    stops when convergence is detected. Supports Orbax checkpointing for
+    resumable training.
 
     Parameters
     ----------
@@ -90,7 +96,7 @@ def _run_with_early_stopping(
     n_steps : int
         Maximum number of optimization steps.
     early_stopping : EarlyStoppingConfig
-        Early stopping configuration.
+        Early stopping configuration, including checkpoint_dir and resume.
     stable_update : bool, default=True
         Whether to use numerically stable updates.
     progress : bool, default=True
@@ -101,17 +107,75 @@ def _run_with_early_stopping(
     SVIRunResult
         Results containing optimized parameters, loss history, and
         early stopping metadata.
-    """
-    # Initialize SVI state
-    svi_state = svi.init(rng_key, **model_args)
 
-    # Loss tracking
-    losses = []
+    Notes
+    -----
+    When `checkpoint_dir` is set in early_stopping config:
+    - Saves checkpoint whenever loss improves
+    - If `resume=True` and checkpoint exists, resumes from it
+    - Checkpoint includes params, step, best_loss, and loss history
+    """
+    # Check for existing checkpoint and restore if requested
+    checkpoint_dir = early_stopping.checkpoint_dir
+    start_step = 0
+    losses: List[float] = []
     best_loss = float("inf")
-    best_state = None
-    best_step = 0
     patience_counter = 0
+    resumed = False
+
+    if (
+        checkpoint_dir
+        and early_stopping.resume
+        and checkpoint_exists(checkpoint_dir)
+    ):
+        # Restore from checkpoint
+        checkpoint_data = load_svi_checkpoint(checkpoint_dir)
+        if checkpoint_data is not None:
+            restored_params, metadata, restored_losses = checkpoint_data
+            start_step = metadata.step + 1
+            best_loss = metadata.best_loss
+            losses = restored_losses
+            patience_counter = metadata.patience_counter
+            resumed = True
+
+            # Initialize SVI state with restored params
+            svi_state = svi.init(rng_key, **model_args)
+            # Replace params in state with restored params
+            # Note: We need to reconstruct the state with restored params
+            # The SVI state is a named tuple, so we update the opt_state
+            from numpyro.infer.svi import SVIState
+
+            svi_state = SVIState(
+                restored_params, svi_state.optim_state, rng_key
+            )
+
+            if progress:
+                print(
+                    f"[bold cyan]Resumed from checkpoint at step {start_step}"
+                    f"[/bold cyan] (best_loss: {best_loss:.4f})"
+                )
+    else:
+        # Fresh start
+        svi_state = svi.init(rng_key, **model_args)
+
+    # Track best state in memory
+    best_state = None
+    best_step = start_step if resumed else 0
     early_stopped = False
+
+    # Calculate remaining steps
+    remaining_steps = n_steps - start_step
+    if remaining_steps <= 0:
+        # Already completed
+        params = svi.get_params(svi_state)
+        return SVIRunResult(
+            params=params,
+            losses=jnp.array(losses),
+            state=svi_state,
+            early_stopped=False,
+            stopped_at_step=len(losses),
+            best_loss=best_loss,
+        )
 
     # Progress bar setup
     progress_ctx = Progress(
@@ -126,12 +190,13 @@ def _run_with_early_stopping(
 
     with progress_ctx as pbar:
         task = pbar.add_task(
-            "SVI optimization",
+            "SVI optimization" + (" (resumed)" if resumed else ""),
             total=n_steps,
-            loss=0.0,
+            completed=start_step,
+            loss=losses[-1] if losses else 0.0,
         )
 
-        for step in range(n_steps):
+        for step in range(start_step, n_steps):
             # Perform update step
             if stable_update:
                 svi_state, loss = svi.stable_update(svi_state, **model_args)
@@ -148,7 +213,7 @@ def _run_with_early_stopping(
             if (
                 early_stopping.enabled
                 and step % early_stopping.check_every == 0
-                and step >= early_stopping.smoothing_window
+                and len(losses) >= early_stopping.smoothing_window
             ):
                 # Compute smoothed loss (moving average)
                 window_start = max(
@@ -164,6 +229,18 @@ def _run_with_early_stopping(
                         best_state = svi_state
                     best_step = step
                     patience_counter = 0
+
+                    # Save checkpoint if checkpoint_dir is set
+                    if checkpoint_dir:
+                        params = svi.get_params(svi_state)
+                        save_svi_checkpoint(
+                            checkpoint_dir=checkpoint_dir,
+                            params=params,
+                            step=step,
+                            best_loss=best_loss,
+                            losses=losses,
+                            patience_counter=patience_counter,
+                        )
                 else:
                     # No improvement
                     patience_counter += early_stopping.check_every
