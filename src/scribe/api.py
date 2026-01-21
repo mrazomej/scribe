@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
 from .models.config import (
     DataConfig,
+    EarlyStoppingConfig,
     InferenceConfig,
     MCMCConfig,
     ModelConfig,
@@ -110,6 +111,8 @@ def fit(
     n_samples: int = 2_000,
     n_warmup: int = 1_000,
     n_chains: int = 1,
+    # Early stopping options (for SVI/VAE)
+    early_stopping: Optional[Union[EarlyStoppingConfig, Dict[str, Any]]] = None,
     # Data options
     cells_axis: int = 0,
     layer: Optional[str] = None,
@@ -214,6 +217,14 @@ def fit(
     n_chains : int, default=1
         Number of MCMC chains to run in parallel (only for
         inference_method="mcmc").
+
+    early_stopping : Union[EarlyStoppingConfig, Dict[str, Any]], optional
+        Early stopping configuration for SVI/VAE inference. Can be:
+        - EarlyStoppingConfig object
+        - Dict with keys: enabled, patience, min_delta, check_every,
+          smoothing_window, restore_best
+        - None (default): no early stopping, runs for full n_steps
+        Only applies to SVI and VAE inference methods.
 
     cells_axis : int, default=0
         Axis for cells in count matrix. 0 means cells are rows (n_cells,
@@ -354,14 +365,37 @@ def fit(
         # Determine inference method from model_config or parameter
         method = model_config.inference_method
 
+        # Process early_stopping configuration
+        early_stop_config = None
+        if early_stopping is not None:
+            if isinstance(early_stopping, EarlyStoppingConfig):
+                early_stop_config = early_stopping
+            elif isinstance(early_stopping, dict):
+                # Convert dict to EarlyStoppingConfig
+                early_stop_config = EarlyStoppingConfig(**early_stopping)
+            else:
+                raise ValueError(
+                    f"early_stopping must be EarlyStoppingConfig or dict, "
+                    f"got {type(early_stopping)}"
+                )
+
         if method == InferenceMethod.SVI:
             svi_config = SVIConfig(
                 n_steps=n_steps,
                 batch_size=batch_size,
                 stable_update=stable_update,
+                early_stopping=early_stop_config,
             )
             inference_config = InferenceConfig.from_svi(svi_config)
         elif method == InferenceMethod.MCMC:
+            if early_stopping is not None:
+                import warnings
+
+                warnings.warn(
+                    "early_stopping is only supported for SVI and VAE "
+                    "inference methods. Ignoring for MCMC.",
+                    UserWarning,
+                )
             mcmc_config = MCMCConfig(
                 n_samples=n_samples,
                 n_warmup=n_warmup,
@@ -374,6 +408,7 @@ def fit(
                 n_steps=n_steps,
                 batch_size=batch_size,
                 stable_update=stable_update,
+                early_stopping=early_stop_config,
             )
             inference_config = InferenceConfig.from_vae(svi_config)
         else:

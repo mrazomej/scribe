@@ -2,7 +2,8 @@
 SVI (Stochastic Variational Inference) execution.
 
 This module handles the execution of SVI inference, including integration
-with the SVI inference engine and results factory.
+with the SVI inference engine and results factory. Supports early stopping
+based on loss convergence.
 """
 
 from typing import TYPE_CHECKING, Any, Optional
@@ -29,11 +30,12 @@ def _run_svi_inference(
     data_config: DataConfig,
     seed: int,
 ) -> Any:
-    """Execute SVI inference.
+    """Execute SVI inference with optional early stopping.
 
     This function runs SVI inference using the provided model and inference
     configurations. It handles the integration between the inference engine
-    and results factory.
+    and results factory, with support for early stopping based on loss
+    convergence.
 
     Parameters
     ----------
@@ -49,7 +51,8 @@ def _run_svi_inference(
     n_genes : int
         Number of genes in the dataset.
     svi_config : SVIConfig
-        SVI-specific configuration (optimizer, loss, n_steps, etc.).
+        SVI-specific configuration (optimizer, loss, n_steps, early_stopping,
+        etc.).
     data_config : DataConfig
         Data processing configuration (not used directly here, but passed
         for consistency).
@@ -64,20 +67,24 @@ def _run_svi_inference(
         - Loss history
         - Posterior distributions
         - Diagnostic information
+        - Early stopping metadata (if early stopping was used)
 
     Examples
     --------
-    >>> from scribe.models.config import ModelConfig, SVIConfig
+    >>> from scribe.models.config import ModelConfig, SVIConfig, EarlyStoppingConfig
     >>> from scribe.inference.svi import _run_svi_inference
     >>>
-    >>> # Run SVI inference
+    >>> # Run SVI inference with early stopping
     >>> results = _run_svi_inference(
     ...     model_config=model_config,
     ...     count_data=count_data,
     ...     adata=adata,
     ...     n_cells=1000,
     ...     n_genes=2000,
-    ...     svi_config=SVIConfig(n_steps=50000),
+    ...     svi_config=SVIConfig(
+    ...         n_steps=50000,
+    ...         early_stopping=EarlyStoppingConfig(patience=500),
+    ...     ),
     ...     data_config=data_config,
     ...     seed=42
     ... )
@@ -85,6 +92,8 @@ def _run_svi_inference(
     Notes
     -----
     - The SVI inference engine handles the actual optimization loop.
+    - When early stopping is enabled, training stops when the loss stops
+      improving (no improvement > min_delta for patience steps).
     - Results are packaged by SVIResultsFactory which creates a comprehensive
       results object with posterior distributions and diagnostics.
     - If adata is provided, results will be integrated with the AnnData object.
@@ -94,6 +103,7 @@ def _run_svi_inference(
     SVIInferenceEngine : Core SVI inference execution.
     SVIResultsFactory : Results packaging and creation.
     ScribeSVIResults : Comprehensive SVI results object.
+    EarlyStoppingConfig : Configuration for early stopping criteria.
     """
     # Extract parameters from SVI config
     optimizer = svi_config.optimizer
@@ -101,6 +111,7 @@ def _run_svi_inference(
     n_steps = svi_config.n_steps
     batch_size = svi_config.batch_size
     stable_update = svi_config.stable_update
+    early_stopping = svi_config.early_stopping
 
     # Build inference kwargs for the engine
     inference_kwargs = {
@@ -112,6 +123,7 @@ def _run_svi_inference(
         "batch_size": batch_size,
         "seed": seed,
         "stable_update": stable_update,
+        "early_stopping": early_stopping,
     }
 
     # Add optional optimizer and loss if provided

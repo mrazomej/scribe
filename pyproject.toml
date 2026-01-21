@@ -34,6 +34,7 @@ dependencies = [
     "sphinx-gallery>=0.19.0",
     "pydantic>=2.12.3",
     "rich>=14.0.0",
+    "orbax>=0.1.9",
 ]
 
 # Development dependencies

@@ -365,12 +365,196 @@ class VAEConfig(BaseModel):
 
 
 # ==============================================================================
+# Early Stopping Configuration Group
+# ==============================================================================
+
+
+class EarlyStoppingConfig(BaseModel):
+    """Configuration for early stopping during SVI optimization.
+
+    Early stopping monitors the training loss and stops optimization when the
+    loss stops improving, preventing overfitting and saving computation time.
+    The implementation uses a smoothed loss (moving average) to reduce noise in
+    the stopping decision.
+
+    Parameters
+    ----------
+    enabled : bool, default=True
+        Whether to enable early stopping. If False, training runs for the full
+        `n_steps` regardless of convergence.
+    patience : int, default=500
+        Number of steps without improvement before stopping. The counter resets
+        each time an improvement is detected.
+    min_delta : float, default=1.0
+        Minimum change in smoothed loss to qualify as an improvement.
+        Improvements smaller than this are ignored. The default of 1.0 is
+        suitable for typical ELBO values (order 10^6-10^7). Adjust based on
+        your loss scale.
+    check_every : int, default=10
+        How often (in steps) to check for convergence. Checking every step adds
+        overhead; checking less frequently may miss the optimal stop point.
+    smoothing_window : int, default=50
+        Window size for computing the smoothed (moving average) loss. Larger
+        windows reduce noise but respond slower to changes.
+    restore_best : bool, default=True
+        Whether to restore parameters from the best checkpoint (lowest smoothed
+        loss) when early stopping is triggered.
+
+    Examples
+    --------
+    >>> # Default configuration
+    >>> config = EarlyStoppingConfig()
+
+    >>> # More aggressive early stopping (for large-scale ELBO)
+    >>> config = EarlyStoppingConfig(
+    ...     patience=200,
+    ...     min_delta=100,  # Higher threshold for large ELBO values
+    ...     check_every=5,
+    ... )
+
+    >>> # Disable early stopping
+    >>> config = EarlyStoppingConfig(enabled=False)
+
+    Notes
+    -----
+    The smoothed loss at step `t` is computed as the mean of the last
+    `smoothing_window` loss values. This helps distinguish true convergence from
+    temporary fluctuations in the ELBO.
+
+    The early stopping algorithm:
+        1. Every `check_every` steps, compute the smoothed loss
+        2. If `best_loss - smoothed_loss > min_delta`, update best_loss and
+           reset patience counter
+        3. Otherwise, increment patience counter by `check_every`
+        4. If patience counter >= `patience`, stop training and optionally
+           restore best parameters
+
+    See Also
+    --------
+    SVIConfig : Parent configuration that includes early stopping.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(True, description="Whether to enable early stopping")
+    patience: int = Field(
+        500,
+        gt=0,
+        description="Steps without improvement before stopping",
+    )
+    min_delta: float = Field(
+        1.0,
+        ge=0,
+        description="Minimum change to qualify as improvement",
+    )
+    check_every: int = Field(
+        10,
+        gt=0,
+        description="Check convergence every N steps",
+    )
+    smoothing_window: int = Field(
+        50,
+        gt=0,
+        description="Window size for loss smoothing (moving average)",
+    )
+    restore_best: bool = Field(
+        True,
+        description="Restore best parameters when early stopping triggers",
+    )
+
+    # --------------------------------------------------------------------------
+
+    @field_validator("smoothing_window")
+    @classmethod
+    def validate_smoothing_window(cls, v: int, info) -> int:
+        """Warn if smoothing window is larger than patience."""
+        # Note: We can't access other fields in field_validator easily,
+        # so we just validate that smoothing_window is reasonable
+        if v > 1000:
+            import warnings
+
+            warnings.warn(
+                f"Large smoothing_window ({v}) may cause slow response "
+                "to convergence. Consider using a smaller value.",
+                UserWarning,
+            )
+        return v
+
+    # --------------------------------------------------------------------------
+
+    def to_yaml(self) -> str:
+        """Serialize config to YAML string."""
+        import yaml
+
+        data = self.model_dump(mode="json")
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    # --------------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "EarlyStoppingConfig":
+        """Deserialize config from YAML string."""
+        import yaml
+
+        data = yaml.safe_load(yaml_str)
+        return cls(**data)
+
+
+# ==============================================================================
 # SVI Configuration Group
 # ==============================================================================
 
 
 class SVIConfig(BaseModel):
-    """Configuration for Stochastic Variational Inference."""
+    """Configuration for Stochastic Variational Inference.
+
+    This class configures the SVI optimization process, including the optimizer,
+    loss function, number of steps, mini-batching, and early stopping.
+
+    Parameters
+    ----------
+    optimizer : Any, optional
+        Optimizer for variational inference. Defaults to Adam with
+        step_size=0.001 if not specified.
+    loss : Any, optional
+        Loss function for variational inference. Defaults to TraceMeanField_ELBO
+        if not specified.
+    n_steps : int, default=100_000
+        Maximum number of optimization steps. Training may stop earlier if early
+        stopping is enabled and convergence is detected.
+    batch_size : int, optional
+        Mini-batch size for stochastic optimization. If None, uses the full
+        dataset (batch gradient descent).
+    stable_update : bool, default=True
+        Use numerically stable parameter updates. When True, uses
+        `svi.stable_update()` which handles NaN/Inf gracefully.
+    early_stopping : EarlyStoppingConfig, optional
+        Configuration for early stopping. If None, early stopping is disabled
+        and training runs for the full `n_steps`.
+
+    Examples
+    --------
+    >>> # Default configuration (no early stopping)
+    >>> config = SVIConfig()
+
+    >>> # With early stopping
+    >>> config = SVIConfig(
+    ...     n_steps=50_000,
+    ...     early_stopping=EarlyStoppingConfig(patience=500),
+    ... )
+
+    >>> # Custom optimizer and loss
+    >>> import numpyro
+    >>> config = SVIConfig(
+    ...     optimizer=numpyro.optim.Adam(step_size=0.01),
+    ...     loss=numpyro.infer.Trace_ELBO(),
+    ...     n_steps=20_000,
+    ... )
+
+    See Also
+    --------
+    EarlyStoppingConfig : Configuration for early stopping criteria.
+    """
 
     model_config = ConfigDict(
         frozen=True, arbitrary_types_allowed=True, extra="forbid"
@@ -384,13 +568,17 @@ class SVIConfig(BaseModel):
         None, description="Loss function (defaults to TraceMeanField_ELBO)"
     )
     n_steps: int = Field(
-        100_000, gt=0, description="Number of optimization steps"
+        100_000, gt=0, description="Maximum number of optimization steps"
     )
     batch_size: Optional[int] = Field(
         None, gt=0, description="Mini-batch size. If None, uses full dataset"
     )
     stable_update: bool = Field(
         True, description="Use numerically stable parameter updates"
+    )
+    early_stopping: Optional[EarlyStoppingConfig] = Field(
+        None,
+        description="Early stopping configuration. If None, disabled.",
     )
 
     # --------------------------------------------------------------------------

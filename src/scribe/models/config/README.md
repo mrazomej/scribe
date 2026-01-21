@@ -99,9 +99,37 @@ SVI-specific configuration for Stochastic Variational Inference:
 
 - `optimizer`: Optimizer for variational inference (defaults to Adam)
 - `loss`: Loss function (defaults to TraceMeanField_ELBO)
-- `n_steps`: Number of optimization steps (must be > 0)
+- `n_steps`: Maximum number of optimization steps (must be > 0)
 - `batch_size`: Mini-batch size (must be > 0, None uses full dataset)
 - `stable_update`: Use numerically stable parameter updates
+- `early_stopping`: Optional `EarlyStoppingConfig` for automatic convergence
+  detection
+
+### EarlyStoppingConfig
+
+Configuration for early stopping during SVI optimization:
+
+- `enabled`: Whether to enable early stopping (default: True)
+- `patience`: Steps without improvement before stopping (default: 500)
+- `min_delta`: Minimum change to qualify as improvement (default: 1.0, suitable
+  for ELBO values ~10^6-10^7)
+- `check_every`: Check convergence every N steps (default: 10)
+- `smoothing_window`: Window size for loss smoothing (default: 50)
+- `restore_best`: Restore best parameters when stopping (default: True)
+
+```python
+from scribe.models.config import SVIConfig, EarlyStoppingConfig
+
+# Configure SVI with early stopping
+svi_config = SVIConfig(
+    n_steps=100000,
+    batch_size=512,
+    early_stopping=EarlyStoppingConfig(
+        patience=500,
+        min_delta=1.0,
+    ),
+)
+```
 
 ### MCMCConfig
 
