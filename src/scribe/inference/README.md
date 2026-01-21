@@ -259,7 +259,43 @@ results = run_scribe(
 )
 ```
 
-### Pattern 4: Amortized Inference
+### Pattern 4: Early Stopping
+
+For SVI and VAE inference, use early stopping to automatically stop when
+convergence is detected:
+
+```python
+from scribe.inference import run_scribe
+from scribe.models.config import (
+    InferenceConfig,
+    SVIConfig,
+    EarlyStoppingConfig,
+)
+
+# Configure early stopping
+early_stopping = EarlyStoppingConfig(
+    patience=500,       # Steps without improvement before stopping
+    min_delta=1.0,      # Minimum improvement to count (adjust for ELBO scale)
+    check_every=10,     # Check convergence every N steps
+    smoothing_window=50,# Window for computing smoothed loss
+    restore_best=True,  # Restore best parameters when stopping
+)
+
+svi_config = SVIConfig(
+    n_steps=100000,     # Maximum steps (may stop earlier)
+    batch_size=512,
+    early_stopping=early_stopping,
+)
+
+results = run_scribe(
+    counts=adata,
+    model="nbdm",
+    inference_method="svi",
+    inference_config=InferenceConfig.from_svi(svi_config),
+)
+```
+
+### Pattern 5: Amortized Inference
 
 For VCP models with large datasets, use amortized capture probability:
 

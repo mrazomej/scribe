@@ -15,6 +15,7 @@ from .enums import (
 )
 from .groups import (
     AmortizationConfig,
+    EarlyStoppingConfig,
     GuideFamilyConfig,
     VAEConfig,
     SVIConfig,
@@ -39,6 +40,7 @@ __all__ = [
     "ModelConfig",
     # Parameter groups
     "AmortizationConfig",
+    "EarlyStoppingConfig",
     "GuideFamilyConfig",
     "VAEConfig",
     "SVIConfig",

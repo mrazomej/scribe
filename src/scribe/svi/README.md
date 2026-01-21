@@ -10,8 +10,9 @@ distribution within a chosen variational family.
 The SVI module provides:
 
 1. **Inference Engine**: Executes SVI optimization using NumPyro's SVI framework
-2. **Results Management**: Comprehensive results class with analysis methods
-3. **Results Factory**: Streamlined creation and packaging of results objects
+2. **Early Stopping**: Automatic convergence detection to save computation time
+3. **Results Management**: Comprehensive results class with analysis methods
+4. **Results Factory**: Streamlined creation and packaging of results objects
 
 ## Key Components
 
@@ -48,15 +49,60 @@ results = SVIInferenceEngine.run_inference(
 - Mini-batch training support for large datasets
 - Per-parameter guide family configuration (mean-field, low-rank, amortized)
 - Numerically stable parameter updates
+- **Early stopping** with automatic convergence detection
 
 **Parameters:**
 - `model_config`: Model configuration specifying architecture
 - `count_data`: Single-cell count matrix (cells × genes)
 - `optimizer`: NumPyro optimizer (default: Adam with lr=0.001)
 - `loss`: ELBO loss function (default: TraceMeanField_ELBO)
-- `n_steps`: Number of optimization steps
+- `n_steps`: Maximum number of optimization steps
 - `batch_size`: Mini-batch size for stochastic optimization
 - `seed`: Random seed for reproducibility
+- `early_stopping`: Optional `EarlyStoppingConfig` for convergence detection
+
+### Early Stopping
+
+The inference engine supports automatic early stopping when the loss converges.
+This saves computation time by stopping training when no further improvement is
+detected.
+
+```python
+from scribe.models.config import EarlyStoppingConfig
+
+# Configure early stopping
+early_stopping = EarlyStoppingConfig(
+    enabled=True,       # Enable early stopping
+    patience=500,       # Steps without improvement before stopping
+    min_delta=1.0,      # Minimum improvement to count as progress
+    check_every=10,     # Check convergence every N steps
+    smoothing_window=50,# Window size for loss smoothing
+    restore_best=True,  # Restore best parameters when stopping
+)
+
+# Run inference with early stopping
+results = SVIInferenceEngine.run_inference(
+    model_config=config,
+    count_data=data,
+    n_cells=n_cells,
+    n_genes=n_genes,
+    n_steps=100000,     # Maximum steps (may stop earlier)
+    early_stopping=early_stopping,
+)
+
+# Check if early stopping triggered
+if results.early_stopped:
+    print(f"Stopped early at step {results.stopped_at_step}")
+    print(f"Best loss: {results.best_loss}")
+```
+
+**Early Stopping Parameters:**
+- `patience`: Number of steps to wait for improvement before stopping
+- `min_delta`: Minimum change in smoothed loss to qualify as improvement
+  (default: 1.0, suitable for ELBO values ~10^6-10^7)
+- `check_every`: How often to check for convergence (reduces overhead)
+- `smoothing_window`: Window size for computing moving average loss
+- `restore_best`: If True, restores parameters from the best checkpoint
 
 ### ScribeSVIResults (`results.py`)
 
@@ -310,10 +356,12 @@ final_results = SVIResultsFactory.create_results(
 ## Optimization Tips
 
 ### Convergence
+- **Use early stopping** to automatically detect convergence and save time
 - Monitor loss history: `results.loss_history`
 - Use longer training for complex models (100k+ steps)
 - Try different optimizers: Adam, AdamW, RMSprop
 - Adjust learning rates based on loss behavior
+- Tune `min_delta` based on your typical ELBO scale
 
 ### Memory Management
 - Use mini-batches for large datasets (`batch_size` parameter)
