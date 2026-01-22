@@ -1241,10 +1241,14 @@ def _get_component_ppc_samples(
                 # Compute effective p for this batch
                 if has_vcp:
                     p_capture_batch = p_capture[start:end]  # (batch_size,)
-                    p_capture_reshaped = p_capture_batch[:, None]  # (batch_size, 1)
+                    p_capture_reshaped = p_capture_batch[
+                        :, None
+                    ]  # (batch_size, 1)
                     # p_k could be scalar or (n_genes,)
                     p_effective = (
-                        p_k * p_capture_reshaped / (1 - p_k * (1 - p_capture_reshaped))
+                        p_k
+                        * p_capture_reshaped
+                        / (1 - p_k * (1 - p_capture_reshaped))
                     )  # (batch_size, n_genes) or (batch_size, 1)
                 else:
                     p_effective = p_k
@@ -1254,7 +1258,9 @@ def _get_component_ppc_samples(
 
                 # Apply zero-inflation if present
                 if has_gate:
-                    sample_dist = dist.ZeroInflatedDistribution(nb_dist, gate=gate_k)
+                    sample_dist = dist.ZeroInflatedDistribution(
+                        nb_dist, gate=gate_k
+                    )
                 else:
                     sample_dist = nb_dist
 
@@ -1286,7 +1292,9 @@ def _get_component_ppc_samples(
                 p_capture_reshaped = p_capture_batch[:, None]  # (batch_size, 1)
                 # p_k could be scalar or (n_genes,)
                 p_effective = (
-                    p_k * p_capture_reshaped / (1 - p_k * (1 - p_capture_reshaped))
+                    p_k
+                    * p_capture_reshaped
+                    / (1 - p_k * (1 - p_capture_reshaped))
                 )  # (batch_size, n_genes) or (batch_size, 1)
             else:
                 p_effective = p_k
@@ -1296,7 +1304,9 @@ def _get_component_ppc_samples(
 
             # Apply zero-inflation if present
             if has_gate:
-                sample_dist = dist.ZeroInflatedDistribution(nb_dist, gate=gate_k)
+                sample_dist = dist.ZeroInflatedDistribution(
+                    nb_dist, gate=gate_k
+                )
             else:
                 sample_dist = nb_dist
 
@@ -1636,11 +1646,15 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         )
         return
 
-    # Get options from config
+    # Get options from config - use same defaults as regular PPC
+    ppc_opts = viz_cfg.get("ppc_opts", {})
     mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
-    n_rows = mixture_ppc_opts.get("n_rows", 4)
-    n_cols = mixture_ppc_opts.get("n_cols", 4)
-    n_samples = mixture_ppc_opts.get("n_samples", 1500)
+    # Use ppc_opts as default, allow mixture_ppc_opts to override if provided
+    n_rows = mixture_ppc_opts.get("n_rows", ppc_opts.get("n_rows", 5))
+    n_cols = mixture_ppc_opts.get("n_cols", ppc_opts.get("n_cols", 5))
+    n_samples = mixture_ppc_opts.get(
+        "n_samples", ppc_opts.get("n_samples", 1500)
+    )
     console.print(
         f"[dim]Selecting high-CV genes from {n_rows} expression bins "
         f"({n_cols} genes/bin) across {n_components} components...[/dim]"
