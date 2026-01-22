@@ -26,6 +26,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from jax import random
 import scribe
+from rich.console import Console
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    BarColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+
+console = Console()
 
 # ==============================================================================
 # Helper functions
@@ -284,7 +294,7 @@ def _select_genes(counts, n_rows, n_cols):
 
 def plot_loss(results, figs_dir, cfg, viz_cfg):
     """Plot and save the ELBO loss history."""
-    print("Plotting loss history...")
+    console.print("[dim]Plotting loss history...[/dim]")
 
     # Initialize figure with two subplots side by side
     fig, (ax_log, ax_linear) = plt.subplots(1, 2, figsize=(7.0, 3))
@@ -318,7 +328,9 @@ def plot_loss(results, figs_dir, cfg, viz_cfg):
 
     output_path = os.path.join(figs_dir, fname)
     fig.savefig(output_path, bbox_inches="tight")
-    print(f"Saved loss plot to {output_path}")
+    console.print(
+        f"[green]✓[/green] [dim]Saved loss plot to[/dim] [cyan]{output_path}[/cyan]"
+    )
     plt.close(fig)
 
 
@@ -329,7 +341,7 @@ def plot_loss(results, figs_dir, cfg, viz_cfg):
 
 def plot_ecdf(counts, figs_dir, cfg, viz_cfg):
     """Plot and save the ECDF of selected genes."""
-    print("Plotting ECDF...")
+    console.print("[dim]Plotting ECDF...[/dim]")
 
     # Gene selection (simple linear spacing for ECDF)
     n_genes = viz_cfg.ecdf_opts.n_genes
@@ -367,7 +379,9 @@ def plot_ecdf(counts, figs_dir, cfg, viz_cfg):
 
     output_path = os.path.join(figs_dir, fname)
     fig.savefig(output_path, bbox_inches="tight")
-    print(f"Saved ECDF plot to {output_path}")
+    console.print(
+        f"[green]✓[/green] [dim]Saved ECDF plot to[/dim] [cyan]{output_path}[/cyan]"
+    )
     plt.close(fig)
 
 
@@ -376,13 +390,13 @@ def plot_ecdf(counts, figs_dir, cfg, viz_cfg):
 
 def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     """Plot and save the posterior predictive checks."""
-    print("Plotting PPC...")
+    console.print("[dim]Plotting PPC...[/dim]")
 
     # Gene selection using log-spaced binning
     n_rows = viz_cfg.ppc_opts.n_rows
     n_cols = viz_cfg.ppc_opts.n_cols
-    print(
-        f"Using n_rows={n_rows}, n_cols={n_cols} for PPC plot (log-spaced binning)"
+    console.print(
+        f"[dim]Using n_rows={n_rows}, n_cols={n_cols} for PPC plot (log-spaced binning)[/dim]"
     )
     selected_idx, mean_counts = _select_genes(counts, n_rows, n_cols)
 
@@ -392,14 +406,18 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     sort_order = np.argsort(selected_means)
     selected_idx_sorted = selected_idx[sort_order]
     n_genes_selected = len(selected_idx_sorted)
-    print(f"Selected {n_genes_selected} genes across {n_rows} expression bins")
+    console.print(
+        f"[dim]Selected {n_genes_selected} genes across {n_rows} expression bins[/dim]"
+    )
 
     # Index results for selected genes (using original unsorted order for subsetting)
     results_subset = results[selected_idx]
 
     # Generate posterior predictive samples
     n_samples = viz_cfg.ppc_opts.n_samples
-    print(f"Generating {n_samples} posterior predictive samples...")
+    console.print(
+        f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
+    )
     results_subset.get_ppc_samples(n_samples=n_samples)
 
     # Create mapping from gene index to position in subset
@@ -418,59 +436,74 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     )
     axes = axes.flatten()
 
-    for i, ax in enumerate(axes):
-        if i >= n_genes_selected:
-            ax.axis("off")
-            continue
-
-        print(f"Plotting gene {i} PPC...")
-
-        # Get the gene index in sorted order
-        gene_idx = selected_idx_sorted[i]
-        # Get the position of this gene in the results_subset
-        subset_pos = subset_positions[gene_idx]
-
-        true_counts = counts[:, gene_idx]
-
-        credible_regions = scribe.stats.compute_histogram_credible_regions(
-            results_subset.predictive_samples[:, :, subset_pos],
-            credible_regions=[95, 68, 50],
+    # Use progress bar for plotting multiple panels
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            "[cyan]Plotting PPC panels...", total=n_genes_selected
         )
 
-        hist_results = np.histogram(
-            true_counts, bins=credible_regions["bin_edges"], density=True
-        )
+        for i, ax in enumerate(axes):
+            if i >= n_genes_selected:
+                ax.axis("off")
+                continue
 
-        cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
-        max_bin = np.max(
-            [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
-        )
+            # Get the gene index in sorted order
+            gene_idx = selected_idx_sorted[i]
+            # Get the position of this gene in the results_subset
+            subset_pos = subset_positions[gene_idx]
 
-        scribe.viz.plot_histogram_credible_regions_stairs(
-            ax, credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
-        )
+            true_counts = counts[:, gene_idx]
 
-        max_bin_hist = (
-            max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
-        )
-        ax.step(
-            hist_results[1][:max_bin_hist],
-            hist_results[0][:max_bin_hist],
-            where="post",
-            label="data",
-            color="black",
-        )
+            credible_regions = scribe.stats.compute_histogram_credible_regions(
+                results_subset.predictive_samples[:, :, subset_pos],
+                credible_regions=[95, 68, 50],
+            )
 
-        ax.set_xlabel("counts")
-        ax.set_ylabel("frequency")
-        # Compute actual mean expression (mean_counts is actually median, used
-        # for selection)
-        actual_mean_expr = np.mean(counts[:, gene_idx])
-        mean_expr_formatted = f"{actual_mean_expr:.2f}"
-        ax.set_title(
-            f"$\\langle U \\rangle = {mean_expr_formatted}$",
-            fontsize=8,
-        )
+            hist_results = np.histogram(
+                true_counts, bins=credible_regions["bin_edges"], density=True
+            )
+
+            cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
+            max_bin = np.max(
+                [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
+            )
+
+            scribe.viz.plot_histogram_credible_regions_stairs(
+                ax, credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
+            )
+
+            max_bin_hist = (
+                max_bin
+                if len(hist_results[0]) > max_bin
+                else len(hist_results[0])
+            )
+            ax.step(
+                hist_results[1][:max_bin_hist],
+                hist_results[0][:max_bin_hist],
+                where="post",
+                label="data",
+                color="black",
+            )
+
+            ax.set_xlabel("counts")
+            ax.set_ylabel("frequency")
+            # Compute actual mean expression (mean_counts is actually median, used
+            # for selection)
+            actual_mean_expr = np.mean(counts[:, gene_idx])
+            mean_expr_formatted = f"{actual_mean_expr:.2f}"
+            ax.set_title(
+                f"$\\langle U \\rangle = {mean_expr_formatted}$",
+                fontsize=8,
+            )
+
+            progress.update(task, advance=1)
 
     plt.tight_layout()
     fig.suptitle("Example PPC", y=1.02)
@@ -489,7 +522,9 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
     output_path = os.path.join(figs_dir, fname)
     fig.savefig(output_path, bbox_inches="tight")
-    print(f"Saved PPC plot to {output_path}")
+    console.print(
+        f"[green]✓[/green] [dim]Saved PPC plot to[/dim] [cyan]{output_path}[/cyan]"
+    )
     plt.close(fig)
 
     # Clean up results_subset to free memory (it contains samples for subset of
@@ -505,16 +540,16 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     """Plot UMAP projection of experimental and synthetic data."""
     import pickle
 
-    print("Plotting UMAP projection...")
+    console.print("[dim]Plotting UMAP projection...[/dim]")
 
     umap_opts = viz_cfg.get("umap_opts", {})
 
     try:
         import umap
     except ImportError:
-        print(
-            "❌ ERROR: umap-learn is not installed."
-            " Install it with: pip install umap-learn"
+        console.print(
+            "[bold red]❌ ERROR:[/bold red] [red]umap-learn is not installed.[/red]"
+            " [yellow]Install it with: pip install umap-learn[/yellow]"
         )
         return
 
@@ -561,7 +596,9 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     umap_embedding = None
 
     if cache_path and os.path.exists(cache_path):
-        print(f"Found cached UMAP at: {cache_path}")
+        console.print(
+            f"[dim]Found cached UMAP at:[/dim] [cyan]{cache_path}[/cyan]"
+        )
         try:
             with open(cache_path, "rb") as f:
                 cached = pickle.load(f)
@@ -573,21 +610,27 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
             )
 
             if params_match:
-                print("✅ Cache valid - loading UMAP from cache...")
+                console.print(
+                    "[green]✅[/green] [dim]Cache valid - loading UMAP from cache...[/dim]"
+                )
                 umap_reducer = cached["reducer"]
                 umap_embedding = cached["embedding"]
             else:
-                print("⚠️  Cache parameters mismatch - will re-fit UMAP")
-                print(f"   Cached: {cached_params}")
-                print(f"   Current: {current_params}")
+                console.print(
+                    "[yellow]⚠️[/yellow] [yellow]Cache parameters mismatch - will re-fit UMAP[/yellow]"
+                )
+                console.print(f"[dim]   Cached:[/dim] {cached_params}")
+                console.print(f"[dim]   Current:[/dim] {current_params}")
         except Exception as e:
-            print(f"⚠️  Failed to load cache: {e} - will re-fit UMAP")
+            console.print(
+                f"[yellow]⚠️[/yellow] [yellow]Failed to load cache: {e} - will re-fit UMAP[/yellow]"
+            )
 
     # Fit UMAP if not loaded from cache
     if umap_reducer is None:
-        print(
-            f"Fitting UMAP on experimental data "
-            f"(n_neighbors={n_neighbors}, min_dist={min_dist})..."
+        console.print(
+            f"[dim]Fitting UMAP on experimental data "
+            f"(n_neighbors={n_neighbors}, min_dist={min_dist})...[/dim]"
         )
 
         umap_reducer = umap.UMAP(
@@ -600,7 +643,9 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
 
         # Save to cache if caching is enabled
         if cache_path:
-            print(f"💾 Saving UMAP cache to: {cache_path}")
+            console.print(
+                f"[dim]💾 Saving UMAP cache to:[/dim] [cyan]{cache_path}[/cyan]"
+            )
             try:
                 cache_data = {
                     "reducer": umap_reducer,
@@ -609,11 +654,17 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
                 }
                 with open(cache_path, "wb") as f:
                     pickle.dump(cache_data, f)
-                print("✅ UMAP cache saved successfully")
+                console.print(
+                    "[green]✅[/green] [dim]UMAP cache saved successfully[/dim]"
+                )
             except Exception as e:
-                print(f"⚠️  Failed to save cache: {e}")
+                console.print(
+                    f"[yellow]⚠️[/yellow] [yellow]Failed to save cache: {e}[/yellow]"
+                )
 
-    print("Generating single predictive sample for synthetic dataset...")
+    console.print(
+        "[dim]Generating single predictive sample for synthetic dataset...[/dim]"
+    )
 
     # Get batch_size from config for memory-efficient sampling
     batch_size = umap_opts.get("batch_size", None)
@@ -621,9 +672,13 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     # For UMAP, we need samples for ALL genes (not just the subset used in PPC
     # plots). Use the memory-efficient MAP-based sampling method.
     if results.predictive_samples is None:
-        print("Using MAP estimates for memory-efficient predictive sampling...")
+        console.print(
+            "[dim]Using MAP estimates for memory-efficient predictive sampling...[/dim]"
+        )
         if batch_size is not None:
-            print(f"Using cell_batch_size={batch_size} for cell batching...")
+            console.print(
+                f"[dim]Using cell_batch_size={batch_size} for cell batching...[/dim]"
+            )
 
         # Use the new memory-efficient method that samples using MAP estimates
         # and processes cells in batches to avoid OOM for VCP models
@@ -639,7 +694,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         synthetic_data = predictive_samples[0, :, :]
     else:
         # Use existing predictive samples
-        print("Using existing predictive samples...")
+        console.print("[dim]Using existing predictive samples...[/dim]")
         # Extract single sample: shape should be (n_cells, n_genes)
         # predictive_samples shape is (n_samples, n_cells, n_genes)
         if results.predictive_samples.ndim == 3:
@@ -657,12 +712,12 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         # Other array type - convert to numpy
         synthetic_data = np.array(synthetic_data)
 
-    print("Projecting synthetic data onto UMAP space...")
+    console.print("[dim]Projecting synthetic data onto UMAP space...[/dim]")
 
     # Project synthetic data onto the same UMAP space
     umap_synthetic = umap_reducer.transform(synthetic_data)
 
-    print("Creating overlay plot...")
+    console.print("[dim]Creating overlay plot...[/dim]")
 
     # Create overlay plot
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -708,7 +763,9 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
 
     output_path = os.path.join(figs_dir, fname)
     fig.savefig(output_path, bbox_inches="tight")
-    print(f"Saved UMAP plot to {output_path}")
+    console.print(
+        f"[green]✓[/green] [dim]Saved UMAP plot to[/dim] [cyan]{output_path}[/cyan]"
+    )
     plt.close(fig)
 
 
@@ -740,7 +797,7 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
     from jax import random
     import jax.numpy as jnp
 
-    print("Plotting correlation heatmap...")
+    console.print("[dim]Plotting correlation heatmap...[/dim]")
 
     # Get options from config
     heatmap_opts = viz_cfg.get("heatmap_opts", {})
@@ -756,33 +813,33 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
     else:
         param_name = "r"
 
-    print(
-        f"Using parameter '{param_name}' for correlation "
-        f"(parameterization: {parameterization})"
+    console.print(
+        f"[dim]Using parameter '{param_name}' for correlation "
+        f"(parameterization: {parameterization})[/dim]"
     )
 
     # Generate posterior samples if they don't exist
     if results.posterior_samples is None:
-        print(f"Generating {n_samples} posterior samples...")
+        console.print(f"[dim]Generating {n_samples} posterior samples...[/dim]")
         results.get_posterior_samples(
             rng_key=random.PRNGKey(42),
             n_samples=n_samples,
             store_samples=True,
         )
     else:
-        print("Using existing posterior samples...")
+        console.print("[dim]Using existing posterior samples...[/dim]")
         # Update n_samples to match existing samples
         n_samples = results.posterior_samples[param_name].shape[0]
-        print(f"Found {n_samples} existing samples")
+        console.print(f"[dim]Found {n_samples} existing samples[/dim]")
 
     # Get the posterior samples for the selected parameter
     if param_name not in results.posterior_samples:
-        print(
-            f"❌ ERROR: Parameter '{param_name}' "
-            "not found in posterior samples."
+        console.print(
+            f"[bold red]❌ ERROR:[/bold red] [red]Parameter '{param_name}' "
+            "not found in posterior samples.[/red]"
         )
-        print(
-            f"   Available parameters: "
+        console.print(
+            f"[dim]   Available parameters:[/dim] "
             f"{list(results.posterior_samples.keys())}"
         )
         return
@@ -793,17 +850,21 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
     # (n_samples, n_components, n_genes)
     # For now, take the first component or flatten
     if samples.ndim == 3:
-        print(f"Detected mixture model with {samples.shape[1]} components")
-        print("Using first component for correlation heatmap...")
+        console.print(
+            f"[dim]Detected mixture model with {samples.shape[1]} components[/dim]"
+        )
+        console.print(
+            "[dim]Using first component for correlation heatmap...[/dim]"
+        )
         samples = samples[:, 0, :]
 
-    print(f"Sample shape: {samples.shape}")
+    console.print(f"[dim]Sample shape:[/dim] {samples.shape}")
     n_genes = samples.shape[1]
 
     # Ensure we don't try to plot more genes than available
     n_genes_to_plot = min(n_genes_to_plot, n_genes)
 
-    print("Computing pairwise Pearson correlations...")
+    console.print("[dim]Computing pairwise Pearson correlations...[/dim]")
 
     # Center the data (subtract column means)
     samples_centered = samples - jnp.mean(samples, axis=0, keepdims=True)
@@ -822,13 +883,17 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
         n_samples - 1
     )
 
-    print(f"Correlation matrix shape: {correlation_matrix.shape}")
-    print(
-        f"Correlation range: [{float(jnp.min(correlation_matrix)):.3f}, "
+    console.print(
+        f"[dim]Correlation matrix shape:[/dim] {correlation_matrix.shape}"
+    )
+    console.print(
+        f"[dim]Correlation range:[/dim] [{float(jnp.min(correlation_matrix)):.3f}, "
         f"{float(jnp.max(correlation_matrix)):.3f}]"
     )
 
-    print(f"Selecting top {n_genes_to_plot} genes by correlation variance...")
+    console.print(
+        f"[dim]Selecting top {n_genes_to_plot} genes by correlation variance...[/dim]"
+    )
 
     # Compute variance of each gene's correlation pattern
     correlation_variance = jnp.var(correlation_matrix, axis=1)
@@ -844,13 +909,17 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
         :, top_var_indices
     ]
 
-    print(f"Selected {n_genes_to_plot} genes with highest correlation variance")
-    print(f"Subset correlation matrix shape: {correlation_subset.shape}")
+    console.print(
+        f"[dim]Selected {n_genes_to_plot} genes with highest correlation variance[/dim]"
+    )
+    console.print(
+        f"[dim]Subset correlation matrix shape:[/dim] {correlation_subset.shape}"
+    )
 
     # Convert to numpy for seaborn
     correlation_subset_np = np.array(correlation_subset)
 
-    print("Creating clustered heatmap...")
+    console.print("[dim]Creating clustered heatmap...[/dim]")
 
     # Create clustered heatmap with dendrograms
     fig = sns.clustermap(
@@ -890,7 +959,9 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
 
     output_path = os.path.join(figs_dir, fname)
     fig.savefig(output_path, bbox_inches="tight")
-    print(f"Saved correlation heatmap to {output_path}")
+    console.print(
+        f"[green]✓[/green] [dim]Saved correlation heatmap to[/dim] [cyan]{output_path}[/cyan]"
+    )
     plt.close(fig.fig)
 
 
@@ -1142,48 +1213,101 @@ def _get_component_ppc_samples(
     all_samples = []
     n_batches = (n_cells + cell_batch_size - 1) // cell_batch_size
 
-    for batch_idx in range(n_batches):
-        start = batch_idx * cell_batch_size
-        end = min(start + cell_batch_size, n_cells)
-        batch_size = end - start
-
-        if verbose and n_batches > 1 and batch_idx % 5 == 0:
-            print(f"    Processing cells {start}-{end} of {n_cells}...")
-
-        rng_key, batch_key = random.split(rng_key)
-
-        # Compute effective p for this batch
-        if has_vcp:
-            p_capture_batch = p_capture[start:end]  # (batch_size,)
-            p_capture_reshaped = p_capture_batch[:, None]  # (batch_size, 1)
-            # p_k could be scalar or (n_genes,)
-            p_effective = (
-                p_k * p_capture_reshaped / (1 - p_k * (1 - p_capture_reshaped))
-            )  # (batch_size, n_genes) or (batch_size, 1)
-        else:
-            p_effective = p_k
-
-        # Create base NB distribution
-        nb_dist = dist.NegativeBinomialProbs(r_k, p_effective)
-
-        # Apply zero-inflation if present
-        if has_gate:
-            sample_dist = dist.ZeroInflatedDistribution(nb_dist, gate=gate_k)
-        else:
-            sample_dist = nb_dist
-
-        # Sample counts
-        if has_vcp:
-            # p_effective has shape (batch_size, n_genes), so sample gives
-            # (n_samples, batch_size, n_genes)
-            batch_samples = sample_dist.sample(batch_key, (n_samples,))
-        else:
-            # Need to explicitly request batch dimension
-            batch_samples = sample_dist.sample(
-                batch_key, (n_samples, batch_size)
+    # Use progress bar for batch processing if verbose and multiple batches
+    if verbose and n_batches > 1:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(
+                "[cyan]Processing cell batches...", total=n_batches
             )
 
-        all_samples.append(batch_samples)
+            for batch_idx in range(n_batches):
+                start = batch_idx * cell_batch_size
+                end = min(start + cell_batch_size, n_cells)
+                batch_size = end - start
+
+                rng_key, batch_key = random.split(rng_key)
+
+                # Compute effective p for this batch
+                if has_vcp:
+                    p_capture_batch = p_capture[start:end]  # (batch_size,)
+                    p_capture_reshaped = p_capture_batch[:, None]  # (batch_size, 1)
+                    # p_k could be scalar or (n_genes,)
+                    p_effective = (
+                        p_k * p_capture_reshaped / (1 - p_k * (1 - p_capture_reshaped))
+                    )  # (batch_size, n_genes) or (batch_size, 1)
+                else:
+                    p_effective = p_k
+
+                # Create base NB distribution
+                nb_dist = dist.NegativeBinomialProbs(r_k, p_effective)
+
+                # Apply zero-inflation if present
+                if has_gate:
+                    sample_dist = dist.ZeroInflatedDistribution(nb_dist, gate=gate_k)
+                else:
+                    sample_dist = nb_dist
+
+                # Sample counts
+                if has_vcp:
+                    # p_effective has shape (batch_size, n_genes), so sample gives
+                    # (n_samples, batch_size, n_genes)
+                    batch_samples = sample_dist.sample(batch_key, (n_samples,))
+                else:
+                    # Need to explicitly request batch dimension
+                    batch_samples = sample_dist.sample(
+                        batch_key, (n_samples, batch_size)
+                    )
+
+                all_samples.append(batch_samples)
+                progress.update(task, advance=1)
+    else:
+        # No progress bar for single batch or non-verbose mode
+        for batch_idx in range(n_batches):
+            start = batch_idx * cell_batch_size
+            end = min(start + cell_batch_size, n_cells)
+            batch_size = end - start
+
+            rng_key, batch_key = random.split(rng_key)
+
+            # Compute effective p for this batch
+            if has_vcp:
+                p_capture_batch = p_capture[start:end]  # (batch_size,)
+                p_capture_reshaped = p_capture_batch[:, None]  # (batch_size, 1)
+                # p_k could be scalar or (n_genes,)
+                p_effective = (
+                    p_k * p_capture_reshaped / (1 - p_k * (1 - p_capture_reshaped))
+                )  # (batch_size, n_genes) or (batch_size, 1)
+            else:
+                p_effective = p_k
+
+            # Create base NB distribution
+            nb_dist = dist.NegativeBinomialProbs(r_k, p_effective)
+
+            # Apply zero-inflation if present
+            if has_gate:
+                sample_dist = dist.ZeroInflatedDistribution(nb_dist, gate=gate_k)
+            else:
+                sample_dist = nb_dist
+
+            # Sample counts
+            if has_vcp:
+                # p_effective has shape (batch_size, n_genes), so sample gives
+                # (n_samples, batch_size, n_genes)
+                batch_samples = sample_dist.sample(batch_key, (n_samples,))
+            else:
+                # Need to explicitly request batch dimension
+                batch_samples = sample_dist.sample(
+                    batch_key, (n_samples, batch_size)
+                )
+
+            all_samples.append(batch_samples)
 
     # Concatenate along cell dimension
     samples = jnp.concatenate(all_samples, axis=1)
@@ -1312,7 +1436,9 @@ def _plot_ppc_figure(
 
     output_path = os.path.join(figs_dir, f"{fname}.{output_format}")
     fig.savefig(output_path, bbox_inches="tight")
-    print(f"Saved {title} to {output_path}")
+    console.print(
+        f"[green]✓[/green] [dim]Saved {title} to[/dim] [cyan]{output_path}[/cyan]"
+    )
     plt.close(fig)
 
 
@@ -1462,7 +1588,9 @@ def _plot_ppc_comparison_figure(
 
     output_path = os.path.join(figs_dir, f"{fname}.{output_format}")
     fig.savefig(output_path, bbox_inches="tight")
-    print(f"Saved PPC comparison to {output_path}")
+    console.print(
+        f"[green]✓[/green] [dim]Saved PPC comparison to[/dim] [cyan]{output_path}[/cyan]"
+    )
     plt.close(fig)
 
 
@@ -1492,14 +1620,16 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     viz_cfg : DictConfig
         Visualization configuration
     """
-    print(
-        "Plotting mixture model PPC (genes with highest CV across components)..."
+    console.print(
+        "[dim]Plotting mixture model PPC (genes with highest CV across components)...[/dim]"
     )
 
     # Check if this is a mixture model
     n_components = results.n_components
     if n_components is None or n_components <= 1:
-        print("Not a mixture model, skipping mixture PPC plot...")
+        console.print(
+            "[yellow]Not a mixture model, skipping mixture PPC plot...[/yellow]"
+        )
         return
 
     # Get options from config
@@ -1507,9 +1637,9 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     n_rows = mixture_ppc_opts.get("n_rows", 4)
     n_cols = mixture_ppc_opts.get("n_cols", 4)
     n_samples = mixture_ppc_opts.get("n_samples", 1500)
-    print(
-        f"Selecting high-CV genes from {n_rows} expression bins "
-        f"({n_cols} genes/bin) across {n_components} components..."
+    console.print(
+        f"[dim]Selecting high-CV genes from {n_rows} expression bins "
+        f"({n_cols} genes/bin) across {n_components} components...[/dim]"
     )
 
     # Select genes with highest CV within expression bins
@@ -1519,7 +1649,9 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     top_gene_indices = np.array(top_gene_indices)
     n_genes_to_plot = len(top_gene_indices)
 
-    print(f"Selected {n_genes_to_plot} genes. Top CVs: {np.array(top_cvs[:5])}")
+    console.print(
+        f"[dim]Selected {n_genes_to_plot} genes. Top CVs:[/dim] {np.array(top_cvs[:5])}"
+    )
 
     # Subset results to selected genes for memory efficiency
     results_subset = results[top_gene_indices]
@@ -1537,7 +1669,9 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     rng_key = random.PRNGKey(42)
 
     # --- Plot 1: Combined Mixture PPC ---
-    print(f"\nGenerating mixture PPC samples ({n_samples} samples)...")
+    console.print(
+        f"[dim]Generating mixture PPC samples ({n_samples} samples)...[/dim]"
+    )
     rng_key, subkey = random.split(rng_key)
     mixture_samples = results_subset.get_map_ppc_samples(
         rng_key=subkey,
@@ -1571,8 +1705,8 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     all_component_samples = []
 
     for k in range(n_components):
-        print(
-            f"\nGenerating Component {k+1} PPC samples ({n_samples} samples)..."
+        console.print(
+            f"[dim]Generating Component {k+1} PPC samples ({n_samples} samples)...[/dim]"
         )
         rng_key, subkey = random.split(rng_key)
 
@@ -1607,7 +1741,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         del component_samples  # Free JAX array
 
     # --- Plot 3: Combined Comparison Plot ---
-    print("\nGenerating combined comparison plot...")
+    console.print("[dim]Generating combined comparison plot...[/dim]")
     _plot_ppc_comparison_figure(
         mixture_samples=mixture_samples_np,
         component_samples_list=all_component_samples,
@@ -1624,7 +1758,9 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # Clean up
     del mixture_samples_np, all_component_samples
 
-    print(f"\nGenerated {2 + n_components} mixture PPC plots")
+    console.print(
+        f"[green]✓[/green] [dim]Generated {2 + n_components} mixture PPC plots[/dim]"
+    )
 
     # Clean up
     del results_subset
