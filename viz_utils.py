@@ -85,10 +85,33 @@ def _get_config_values(cfg):
         # to 'svi'
         method = cfg.inference.method if hasattr(cfg, "inference") else "svi"
 
-    # Attempt to extract model type from cfg.model.type if present, otherwise
-    # default to 'default' getattr returns the value of 'type' in cfg.model if
-    # it exists, else 'default'
-    model_type = getattr(cfg, "model", {}).get("type", "default")
+    # Attempt to extract model type from cfg
+    # Handle both old format (cfg.model.type) and new format (cfg.model as string)
+    model_attr = getattr(cfg, "model", None)
+    if model_attr is None:
+        # Model not set - derive from feature flags if available
+        zero_inflation = (
+            cfg.get("zero_inflation", False) if hasattr(cfg, "get") else False
+        )
+        variable_capture = (
+            cfg.get("variable_capture", False) if hasattr(cfg, "get") else False
+        )
+        if zero_inflation and variable_capture:
+            model_type = "zinbvcp"
+        elif zero_inflation:
+            model_type = "zinb"
+        elif variable_capture:
+            model_type = "nbvcp"
+        else:
+            model_type = "nbdm"
+    elif isinstance(model_attr, str):
+        # New format: model is a string directly
+        model_type = model_attr
+    elif hasattr(model_attr, "get"):
+        # Old format: model is a dict-like with 'type' key
+        model_type = model_attr.get("type", "default")
+    else:
+        model_type = "default"
 
     # Return all extracted values in a dictionary for easy access
     return {
