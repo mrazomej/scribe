@@ -511,6 +511,15 @@ class EarlyStoppingConfig(BaseModel):
         gt=0,
         description="Window size for loss smoothing (moving average)",
     )
+    checkpoint_every: int = Field(
+        2500,
+        gt=0,
+        description=(
+            "How often to save checkpoints (in steps). Checkpoints are only saved "
+            "when an improvement is detected AND at least checkpoint_every steps "
+            "have passed since the last checkpoint. Set to 1 to save on every improvement."
+        ),
+    )
     restore_best: bool = Field(
         True,
         description="Restore best parameters when early stopping triggers",

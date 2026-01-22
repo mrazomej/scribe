@@ -161,6 +161,9 @@ def _run_with_early_stopping(
     # Track best state in memory
     best_state = None
     best_step = start_step if resumed else 0
+    last_checkpoint_step = (
+        start_step if resumed else -early_stopping.checkpoint_every
+    )
     early_stopped = False
 
     # Calculate remaining steps
@@ -268,8 +271,14 @@ def _run_with_early_stopping(
                     best_step = step
                     patience_counter = 0
 
-                    # Save checkpoint if checkpoint_dir is set
-                    if checkpoint_dir:
+                    # Save checkpoint if checkpoint_dir is set and enough steps
+                    # have passed since the last checkpoint
+                    should_checkpoint = (
+                        checkpoint_dir
+                        and (step - last_checkpoint_step)
+                        >= early_stopping.checkpoint_every
+                    )
+                    if should_checkpoint:
                         params = svi.get_params(svi_state)
                         save_svi_checkpoint(
                             checkpoint_dir=checkpoint_dir,
@@ -279,6 +288,7 @@ def _run_with_early_stopping(
                             losses=losses,
                             patience_counter=patience_counter,
                         )
+                        last_checkpoint_step = step
                 else:
                     # No improvement - only count towards patience after warmup
                     if step >= early_stopping.warmup:

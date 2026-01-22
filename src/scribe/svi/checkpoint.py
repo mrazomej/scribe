@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import orbax.checkpoint as ocp
 
-# Suppress verbose Orbax/absl INFO logs (they clutter the output)
-logging.getLogger("absl").setLevel(logging.WARNING)
+# Suppress verbose Orbax/absl logs (INFO and WARNING clutter the output)
+logging.getLogger("absl").setLevel(logging.ERROR)
 
 # ==============================================================================
 # CheckpointMetadata class
