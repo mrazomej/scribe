@@ -31,18 +31,19 @@ early_stopping:
   # Higher values = more tolerance for temporary loss increases
   patience: 500
   
-  # Minimum improvement to qualify as progress
-  # Improvements smaller than this are ignored
-  # Default is 1.0 (suitable for ELBO values ~10^6-10^7)
-  min_delta: 1.0
+  # Minimum relative improvement (as percentage) to qualify as progress
+  # Computed as: 100 * (best_loss - smoothed_loss) / best_loss
+  # Default 0.01 means 0.01% improvement required
+  # This scales automatically with loss magnitude (dataset size)
+  min_delta_pct: 0.01
   
   # How often to check for convergence (in steps)
   # Lower = more responsive but slightly more overhead
-  check_every: 10
+  check_every: 100
   
   # Window size for computing smoothed (moving average) loss
   # Larger windows reduce noise but respond slower
-  smoothing_window: 50
+  smoothing_window: 100
   
   # Restore parameters from best checkpoint when stopping
   # If false, uses parameters from the final step
