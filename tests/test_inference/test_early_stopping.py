@@ -561,6 +561,69 @@ class TestCheckpointUtilities:
         assert result is None
 
 
+class TestCheckpointPathSanitization:
+    """Test checkpoint path sanitization for special characters."""
+
+    def test_sanitize_removes_brackets(self):
+        """Test that brackets are removed from checkpoint paths."""
+        from scribe.svi.checkpoint import _sanitize_checkpoint_path
+
+        # Brackets should be removed (not replaced with underscores)
+        path = "/path/to/mixture_params=[mu,phi]/checkpoints"
+        sanitized = _sanitize_checkpoint_path(path)
+
+        assert "[" not in sanitized
+        assert "]" not in sanitized
+        assert "mixture_params=mu,phi" in sanitized
+
+    def test_sanitize_preserves_normal_paths(self):
+        """Test that paths without brackets are unchanged."""
+        from scribe.svi.checkpoint import _sanitize_checkpoint_path
+
+        path = "/path/to/normal/checkpoints"
+        sanitized = _sanitize_checkpoint_path(path)
+
+        assert sanitized == path
+
+    def test_save_and_load_with_brackets_in_path(self, tmp_path):
+        """Test that checkpointing works with brackets in the path."""
+        from scribe.svi import (
+            save_svi_checkpoint,
+            load_svi_checkpoint,
+            checkpoint_exists,
+        )
+
+        # Path with brackets (like Hydra generates for mixture_params=[mu,phi])
+        checkpoint_dir = str(tmp_path / "mixture_params=[mu,phi]" / "checkpoints")
+
+        sample_params = {
+            "p_loc": jnp.array([0.5, 0.6, 0.7]),
+            "r_loc": jnp.array([1.0, 2.0, 3.0]),
+        }
+
+        # Save should work
+        save_svi_checkpoint(
+            checkpoint_dir=checkpoint_dir,
+            params=sample_params,
+            step=100,
+            best_loss=70.0,
+            losses=[100.0, 80.0, 70.0],
+            patience_counter=10,
+        )
+
+        # Checkpoint should exist (using same path with brackets)
+        assert checkpoint_exists(checkpoint_dir) is True
+
+        # Load should work
+        result = load_svi_checkpoint(checkpoint_dir)
+        assert result is not None
+
+        restored_params, metadata, losses = result
+        assert metadata.step == 100
+        assert metadata.best_loss == 70.0
+        assert set(restored_params.keys()) == set(sample_params.keys())
+
+
 class TestCheckpointMetadata:
     """Test CheckpointMetadata dataclass."""
 
