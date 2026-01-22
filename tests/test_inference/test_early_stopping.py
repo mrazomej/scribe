@@ -461,11 +461,12 @@ class TestCheckpointUtilities:
             checkpoint_exists,
         )
 
-        # Save checkpoint
+        # Save checkpoint - now uses optim_state parameter
+        # For testing, we pass sample_params as a stand-in for optim_state
         losses = [100.0, 90.0, 80.0, 75.0, 70.0]
         save_svi_checkpoint(
             checkpoint_dir=temp_checkpoint_dir,
-            params=sample_params,
+            optim_state=sample_params,  # Using params dict as stand-in
             step=100,
             best_loss=70.0,
             losses=losses,
@@ -475,11 +476,13 @@ class TestCheckpointUtilities:
         # Verify checkpoint exists
         assert checkpoint_exists(temp_checkpoint_dir) is True
 
-        # Load checkpoint
-        result = load_svi_checkpoint(temp_checkpoint_dir)
+        # Load checkpoint with target structure for proper restoration
+        result = load_svi_checkpoint(
+            temp_checkpoint_dir, target_optim_state=sample_params
+        )
         assert result is not None
 
-        restored_params, metadata, restored_losses = result
+        restored_optim_state, metadata, restored_losses = result
 
         # Verify metadata
         assert metadata.step == 100
@@ -490,8 +493,8 @@ class TestCheckpointUtilities:
         # Verify losses
         assert restored_losses == losses
 
-        # Verify params structure (keys should match)
-        assert set(restored_params.keys()) == set(sample_params.keys())
+        # Verify optim_state structure (keys should match)
+        assert set(restored_optim_state.keys()) == set(sample_params.keys())
 
     def test_save_overwrites_existing_checkpoint(
         self, temp_checkpoint_dir, sample_params
@@ -502,7 +505,7 @@ class TestCheckpointUtilities:
         # Save first checkpoint
         save_svi_checkpoint(
             checkpoint_dir=temp_checkpoint_dir,
-            params=sample_params,
+            optim_state=sample_params,
             step=50,
             best_loss=100.0,
             losses=[100.0],
@@ -512,7 +515,7 @@ class TestCheckpointUtilities:
         # Save second checkpoint (should overwrite)
         save_svi_checkpoint(
             checkpoint_dir=temp_checkpoint_dir,
-            params=sample_params,
+            optim_state=sample_params,
             step=100,
             best_loss=70.0,
             losses=[100.0, 80.0, 70.0],
@@ -520,7 +523,9 @@ class TestCheckpointUtilities:
         )
 
         # Load and verify it's the second checkpoint
-        result = load_svi_checkpoint(temp_checkpoint_dir)
+        result = load_svi_checkpoint(
+            temp_checkpoint_dir, target_optim_state=sample_params
+        )
         assert result is not None
 
         _, metadata, losses = result
@@ -539,7 +544,7 @@ class TestCheckpointUtilities:
         # Save checkpoint
         save_svi_checkpoint(
             checkpoint_dir=temp_checkpoint_dir,
-            params=sample_params,
+            optim_state=sample_params,
             step=100,
             best_loss=70.0,
             losses=[70.0],
@@ -559,6 +564,229 @@ class TestCheckpointUtilities:
 
         result = load_svi_checkpoint(temp_checkpoint_dir)
         assert result is None
+
+
+class TestRealSVICheckpointWorkflow:
+    """Integration tests for checkpoint save/restore with real SVI objects.
+
+    These tests verify the actual workflow of saving and restoring optimizer
+    state, ensuring that training can properly resume after checkpoint restore.
+    This is critical because the optimizer state contains complex nested
+    structures (tuples, namedtuples, OptimizerState) that must be preserved.
+    """
+
+    @pytest.fixture
+    def simple_model_and_guide(self):
+        """Create a simple model and guide for testing."""
+        import numpyro
+        import numpyro.distributions as dist
+
+        def model(data=None):
+            mu = numpyro.sample("mu", dist.Normal(0, 10))
+            sigma = numpyro.sample("sigma", dist.HalfNormal(5))
+            with numpyro.plate("data", len(data) if data is not None else 10):
+                numpyro.sample("obs", dist.Normal(mu, sigma), obs=data)
+
+        def guide(data=None):
+            mu_loc = numpyro.param("mu_loc", 0.0)
+            mu_scale = numpyro.param(
+                "mu_scale", 1.0, constraint=dist.constraints.positive
+            )
+            sigma_loc = numpyro.param("sigma_loc", 1.0)
+            sigma_scale = numpyro.param(
+                "sigma_scale", 0.5, constraint=dist.constraints.positive
+            )
+            numpyro.sample("mu", dist.Normal(mu_loc, mu_scale))
+            numpyro.sample("sigma", dist.LogNormal(sigma_loc, sigma_scale))
+
+        return model, guide
+
+    @pytest.fixture
+    def sample_data(self):
+        """Create sample data for the model."""
+        return jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    def test_save_and_restore_real_optim_state(
+        self, tmp_path, simple_model_and_guide, sample_data
+    ):
+        """Test that real SVI optimizer state can be saved and restored."""
+        from numpyro.infer import SVI, Trace_ELBO
+        from numpyro.infer.svi import SVIState
+        from numpyro.optim import Adam
+        from jax import random
+        from scribe.svi import save_svi_checkpoint, load_svi_checkpoint
+
+        model, guide = simple_model_and_guide
+        checkpoint_dir = str(tmp_path / "checkpoints")
+
+        # Create SVI and run a few steps
+        optimizer = Adam(0.01)
+        svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+        rng_key = random.PRNGKey(42)
+        svi_state = svi.init(rng_key, data=sample_data)
+
+        # Run 10 steps
+        for _ in range(10):
+            svi_state, loss = svi.update(svi_state, data=sample_data)
+
+        # Get params before saving
+        params_before = svi.get_params(svi_state)
+
+        # Save checkpoint
+        save_svi_checkpoint(
+            checkpoint_dir=checkpoint_dir,
+            optim_state=svi_state.optim_state,
+            step=10,
+            best_loss=float(loss),
+            losses=[float(loss)],
+            patience_counter=0,
+        )
+
+        # Create fresh SVI state for target structure
+        fresh_state = svi.init(random.PRNGKey(0), data=sample_data)
+
+        # Load checkpoint
+        result = load_svi_checkpoint(
+            checkpoint_dir, target_optim_state=fresh_state.optim_state
+        )
+        assert result is not None
+
+        restored_optim_state, metadata, losses = result
+        assert metadata.step == 10
+
+        # Create restored SVIState
+        restored_state = SVIState(
+            restored_optim_state, fresh_state.mutable_state, random.PRNGKey(99)
+        )
+
+        # Verify params match
+        params_after = svi.get_params(restored_state)
+        for key in params_before:
+            assert jnp.allclose(
+                params_before[key], params_after[key]
+            ), f"Mismatch in {key}"
+
+    def test_training_can_continue_after_restore(
+        self, tmp_path, simple_model_and_guide, sample_data
+    ):
+        """Test that SVI training can continue after checkpoint restore."""
+        from numpyro.infer import SVI, Trace_ELBO
+        from numpyro.infer.svi import SVIState
+        from numpyro.optim import Adam
+        from jax import random
+        from scribe.svi import save_svi_checkpoint, load_svi_checkpoint
+
+        model, guide = simple_model_and_guide
+        checkpoint_dir = str(tmp_path / "checkpoints")
+
+        # Create SVI and run a few steps
+        optimizer = Adam(0.01)
+        svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+        rng_key = random.PRNGKey(42)
+        svi_state = svi.init(rng_key, data=sample_data)
+
+        # Run 5 steps
+        losses_phase1 = []
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, data=sample_data)
+            losses_phase1.append(float(loss))
+
+        # Save checkpoint
+        save_svi_checkpoint(
+            checkpoint_dir=checkpoint_dir,
+            optim_state=svi_state.optim_state,
+            step=5,
+            best_loss=min(losses_phase1),
+            losses=losses_phase1,
+            patience_counter=0,
+        )
+
+        # Create fresh SVI for restoration
+        fresh_state = svi.init(random.PRNGKey(0), data=sample_data)
+
+        # Load checkpoint
+        result = load_svi_checkpoint(
+            checkpoint_dir, target_optim_state=fresh_state.optim_state
+        )
+        restored_optim_state, metadata, _ = result
+
+        # Create restored SVIState
+        restored_state = SVIState(
+            restored_optim_state, fresh_state.mutable_state, random.PRNGKey(99)
+        )
+
+        # Continue training for 5 more steps - this should NOT raise an error
+        losses_phase2 = []
+        for _ in range(5):
+            restored_state, loss = svi.update(restored_state, data=sample_data)
+            losses_phase2.append(float(loss))
+
+        # Verify training continued (losses should be finite and reasonable)
+        assert all(
+            jnp.isfinite(l) for l in losses_phase2
+        ), "Training produced non-finite losses after restore"
+
+        # Verify we can still get params
+        final_params = svi.get_params(restored_state)
+        assert "mu_loc" in final_params
+        assert "sigma_loc" in final_params
+
+    def test_stable_update_works_after_restore(
+        self, tmp_path, simple_model_and_guide, sample_data
+    ):
+        """Test that stable_update (used in early stopping) works after restore."""
+        from numpyro.infer import SVI, Trace_ELBO
+        from numpyro.infer.svi import SVIState
+        from numpyro.optim import Adam
+        from jax import random
+        from scribe.svi import save_svi_checkpoint, load_svi_checkpoint
+
+        model, guide = simple_model_and_guide
+        checkpoint_dir = str(tmp_path / "checkpoints")
+
+        # Create SVI
+        optimizer = Adam(0.01)
+        svi = SVI(model, guide, optimizer, loss=Trace_ELBO())
+        rng_key = random.PRNGKey(42)
+        svi_state = svi.init(rng_key, data=sample_data)
+
+        # Run a few steps with stable_update
+        for _ in range(5):
+            svi_state, loss = svi.stable_update(svi_state, data=sample_data)
+
+        # Save checkpoint
+        save_svi_checkpoint(
+            checkpoint_dir=checkpoint_dir,
+            optim_state=svi_state.optim_state,
+            step=5,
+            best_loss=float(loss),
+            losses=[float(loss)],
+            patience_counter=0,
+        )
+
+        # Load and restore
+        fresh_state = svi.init(random.PRNGKey(0), data=sample_data)
+        result = load_svi_checkpoint(
+            checkpoint_dir, target_optim_state=fresh_state.optim_state
+        )
+        restored_optim_state, _, _ = result
+        restored_state = SVIState(
+            restored_optim_state, fresh_state.mutable_state, random.PRNGKey(99)
+        )
+
+        # This is the critical test - stable_update must work after restore
+        # This is what failed before the fix
+        try:
+            restored_state, loss = svi.stable_update(
+                restored_state, data=sample_data
+            )
+            assert jnp.isfinite(loss), "Loss is not finite after stable_update"
+        except ValueError as e:
+            pytest.fail(
+                f"stable_update failed after checkpoint restore: {e}. "
+                "This indicates the optimizer state structure was not "
+                "properly preserved during save/load."
+            )
 
 
 class TestCheckpointPathSanitization:
@@ -596,7 +824,7 @@ class TestCheckpointPathSanitization:
         # Path with brackets (like Hydra generates for mixture_params=[mu,phi])
         checkpoint_dir = str(tmp_path / "mixture_params=[mu,phi]" / "checkpoints")
 
-        sample_params = {
+        sample_optim_state = {
             "p_loc": jnp.array([0.5, 0.6, 0.7]),
             "r_loc": jnp.array([1.0, 2.0, 3.0]),
         }
@@ -604,7 +832,7 @@ class TestCheckpointPathSanitization:
         # Save should work
         save_svi_checkpoint(
             checkpoint_dir=checkpoint_dir,
-            params=sample_params,
+            optim_state=sample_optim_state,
             step=100,
             best_loss=70.0,
             losses=[100.0, 80.0, 70.0],
@@ -615,13 +843,15 @@ class TestCheckpointPathSanitization:
         assert checkpoint_exists(checkpoint_dir) is True
 
         # Load should work
-        result = load_svi_checkpoint(checkpoint_dir)
+        result = load_svi_checkpoint(
+            checkpoint_dir, target_optim_state=sample_optim_state
+        )
         assert result is not None
 
-        restored_params, metadata, losses = result
+        restored_optim_state, metadata, losses = result
         assert metadata.step == 100
         assert metadata.best_loss == 70.0
-        assert set(restored_params.keys()) == set(sample_params.keys())
+        assert set(restored_optim_state.keys()) == set(sample_optim_state.keys())
 
 
 class TestCheckpointMetadata:

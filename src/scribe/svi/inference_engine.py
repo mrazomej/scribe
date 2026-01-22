@@ -123,30 +123,31 @@ def _run_with_early_stopping(
     patience_counter = 0
     resumed = False
 
+    # Always initialize fresh state first (needed for target structure)
+    svi_state = svi.init(rng_key, **model_args)
+
     if (
         checkpoint_dir
         and early_stopping.resume
         and checkpoint_exists(checkpoint_dir)
     ):
-        # Restore from checkpoint
-        checkpoint_data = load_svi_checkpoint(checkpoint_dir)
+        # Restore from checkpoint - pass target structure for proper restoration
+        checkpoint_data = load_svi_checkpoint(
+            checkpoint_dir, target_optim_state=svi_state.optim_state
+        )
         if checkpoint_data is not None:
-            restored_params, metadata, restored_losses = checkpoint_data
+            restored_optim_state, metadata, restored_losses = checkpoint_data
             start_step = metadata.step + 1
             best_loss = metadata.best_loss
             losses = restored_losses
             patience_counter = metadata.patience_counter
             resumed = True
 
-            # Initialize SVI state with restored params
-            svi_state = svi.init(rng_key, **model_args)
-            # Replace params in state with restored params
-            # Note: We need to reconstruct the state with restored params
-            # The SVI state is a named tuple, so we update the opt_state
+            # Create SVIState with restored optimizer state
             from numpyro.infer.svi import SVIState
 
             svi_state = SVIState(
-                restored_params, svi_state.optim_state, rng_key
+                restored_optim_state, svi_state.mutable_state, rng_key
             )
 
             if progress:
@@ -154,9 +155,6 @@ def _run_with_early_stopping(
                     f"[bold cyan]Resumed from checkpoint at step {start_step}"
                     f"[/bold cyan] (best_loss: {best_loss:.4f})"
                 )
-    else:
-        # Fresh start
-        svi_state = svi.init(rng_key, **model_args)
 
     # Track best state in memory
     best_state = None
@@ -291,10 +289,9 @@ def _run_with_early_stopping(
                         >= early_stopping.checkpoint_every
                     )
                     if should_checkpoint:
-                        params = svi.get_params(svi_state)
                         save_svi_checkpoint(
                             checkpoint_dir=checkpoint_dir,
-                            params=params,
+                            optim_state=svi_state.optim_state,
                             step=step,
                             best_loss=best_loss,
                             losses=losses,
