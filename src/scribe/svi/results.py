@@ -1170,8 +1170,32 @@ class ScribeSVIResults:
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
+        counts: Optional[jnp.ndarray] = None,
     ) -> Dict:
-        """Sample parameters from the variational posterior distribution."""
+        """Sample parameters from the variational posterior distribution.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, optional
+            JAX random number generator key (default: PRNGKey(42))
+        n_samples : int, optional
+            Number of posterior samples to generate (default: 100)
+        batch_size : Optional[int], optional
+            Batch size for memory-efficient sampling (default: None)
+        store_samples : bool, optional
+            Whether to store samples in self.posterior_samples (default: True)
+        counts : Optional[jnp.ndarray], optional
+            Observed count matrix of shape (n_cells, n_genes). Required when
+            using amortized capture probability (e.g., with
+            amortization.capture.enabled=true). Should be the same data used
+            during inference. For non-amortized models, this can be None.
+            Default: None.
+
+        Returns
+        -------
+        Dict
+            Dictionary containing samples from the variational posterior
+        """
         # Get the guide function
         model, guide = self._model_and_guide()
 
@@ -1199,6 +1223,7 @@ class ScribeSVIResults:
             model_args,
             rng_key=rng_key,
             n_samples=n_samples,
+            counts=counts,
         )
 
         # Store samples if requested
@@ -1263,8 +1288,35 @@ class ScribeSVIResults:
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
+        counts: Optional[jnp.ndarray] = None,
     ) -> Dict:
-        """Generate posterior predictive check samples."""
+        """Generate posterior predictive check samples.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, optional
+            JAX random number generator key (default: PRNGKey(42))
+        n_samples : int, optional
+            Number of posterior samples to generate (default: 100)
+        batch_size : Optional[int], optional
+            Batch size for generating samples (default: None)
+        store_samples : bool, optional
+            Whether to store samples in self.posterior_samples and
+            self.predictive_samples (default: True)
+        counts : Optional[jnp.ndarray], optional
+            Observed count matrix of shape (n_cells, n_genes). Required when
+            using amortized capture probability (e.g., with
+            amortization.capture.enabled=true). Should be the same data used
+            during inference. For non-amortized models, this can be None.
+            Default: None.
+
+        Returns
+        -------
+        Dict
+            Dictionary containing:
+            - 'parameter_samples': Samples from the variational posterior
+            - 'predictive_samples': Samples from the predictive distribution
+        """
         # Check if we need to resample parameters
         need_params = self.posterior_samples is None
 
@@ -1276,6 +1328,7 @@ class ScribeSVIResults:
                 n_samples=n_samples,
                 batch_size=batch_size,
                 store_samples=store_samples,
+                counts=counts,
             )
 
         # Generate predictive samples using existing parameters

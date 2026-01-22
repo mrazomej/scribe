@@ -9,7 +9,6 @@ from typing import Dict, Optional, Union, Callable, List
 from numpyro.infer import SVI
 from numpyro.handlers import block
 
-
 # ------------------------------------------------------------------------------
 # Posterior predictive samples
 # ------------------------------------------------------------------------------
@@ -23,6 +22,7 @@ def sample_variational_posterior(
     rng_key: random.PRNGKey = random.PRNGKey(42),
     n_samples: int = 100,
     return_sites: Optional[Union[str, List[str]]] = None,
+    counts: Optional[jnp.ndarray] = None,
 ) -> Dict:
     """
     Sample parameters from the variational posterior distribution.
@@ -45,12 +45,21 @@ def sample_variational_posterior(
         Number of posterior samples to generate (default: 100)
     return_sites : Optional[Union[str, List[str]]], optional
         Sites to return from the model. If None, returns all sites.
+    counts : Optional[jnp.ndarray], optional
+        Observed count matrix of shape (n_cells, n_genes). Required when using
+        amortized capture probability (e.g., with
+        amortization.capture.enabled=true). For non-amortized models, this can
+        be None. Default: None.
 
     Returns
     -------
     Dict
         Dictionary containing samples from the variational posterior
     """
+    # Add counts to model_args if provided (needed for amortized guides)
+    if counts is not None:
+        model_args = {**model_args, "counts": counts}
+
     # Create predictive object for posterior parameter samples
     predictive_param = Predictive(guide, params=params, num_samples=n_samples)
 
@@ -133,6 +142,7 @@ def generate_ppc_samples(
     rng_key: random.PRNGKey,
     n_samples: int = 100,
     batch_size: Optional[int] = None,
+    counts: Optional[jnp.ndarray] = None,
 ) -> Dict:
     """
     Generate posterior predictive check samples.
@@ -155,6 +165,10 @@ def generate_ppc_samples(
         Number of posterior samples to generate (default: 100)
     batch_size : int, optional
         Batch size for generating samples. If None, uses full dataset.
+    counts : Optional[jnp.ndarray], optional
+        Observed count matrix of shape (n_cells, n_genes). Required when using
+        amortized capture probability (e.g., with amortization.capture.enabled=true).
+        For non-amortized models, this can be None. Default: None.
 
     Returns
     -------
@@ -168,7 +182,7 @@ def generate_ppc_samples(
 
     # Sample from variational posterior
     posterior_param_samples = sample_variational_posterior(
-        guide, params, model, model_args, key_params, n_samples
+        guide, params, model, model_args, key_params, n_samples, counts=counts
     )
 
     # Generate predictive samples

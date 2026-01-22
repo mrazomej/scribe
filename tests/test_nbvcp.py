@@ -553,6 +553,133 @@ def test_predictive_sampling(nbvcp_results, rng_key):
 
 
 # ------------------------------------------------------------------------------
+# Amortized Capture PPC Tests
+# ------------------------------------------------------------------------------
+
+
+def test_ppc_with_amortized_capture(small_dataset, rng_key):
+    """Test PPC with amortized capture probability requires counts."""
+    from scribe.inference import run_scribe
+    from scribe.inference.preset_builder import build_config_from_preset
+    from scribe.models.config import InferenceConfig, SVIConfig
+
+    counts, _ = small_dataset
+    n_cells, n_genes = counts.shape
+
+    # Build model config with amortized capture
+    # Use "odds_ratio" parameterization (equivalent to mean_odds in preset
+    # builder)
+    model_config = build_config_from_preset(
+        model="nbvcp",
+        parameterization="odds_ratio",
+        inference_method="svi",
+        unconstrained=False,
+        guide_rank=None,
+        amortize_capture=True,
+        capture_hidden_dims=[32, 16],
+    )
+
+    # Create inference config
+    svi_config = SVIConfig(
+        n_steps=100, batch_size=5
+    )  # Small number for testing
+    inference_config = InferenceConfig.from_svi(svi_config)
+
+    # Run inference
+    results = run_scribe(
+        counts=counts,
+        model_config=model_config,
+        inference_config=inference_config,
+        seed=42,
+    )
+
+    # Test PPC with counts (should work)
+    ppc_result = results.get_ppc_samples(
+        rng_key=rng_key,
+        n_samples=5,
+        counts=counts,  # Required for amortized capture
+    )
+
+    assert "parameter_samples" in ppc_result
+    assert "predictive_samples" in ppc_result
+    assert ppc_result["predictive_samples"].shape[-1] == n_genes
+    assert jnp.all(ppc_result["predictive_samples"] >= 0)
+
+
+def test_ppc_without_counts_raises_error(small_dataset, rng_key):
+    """Test that PPC without counts raises error for amortized capture."""
+    from scribe.inference import run_scribe
+    from scribe.inference.preset_builder import build_config_from_preset
+    from scribe.models.config import InferenceConfig, SVIConfig
+
+    counts, _ = small_dataset
+
+    # Build model config with amortized capture
+    # Use "odds_ratio" parameterization (equivalent to mean_odds in preset
+    # builder)
+    model_config = build_config_from_preset(
+        model="nbvcp",
+        parameterization="odds_ratio",
+        inference_method="svi",
+        unconstrained=False,
+        guide_rank=None,
+        amortize_capture=True,
+        capture_hidden_dims=[32, 16],
+    )
+
+    # Create inference config
+    svi_config = SVIConfig(
+        n_steps=100, batch_size=5
+    )  # Small number for testing
+    inference_config = InferenceConfig.from_svi(svi_config)
+
+    # Run inference
+    results = run_scribe(
+        counts=counts,
+        model_config=model_config,
+        inference_config=inference_config,
+        seed=42,
+    )
+
+    # Test PPC without counts (should raise ValueError)
+    with pytest.raises(
+        ValueError, match="Amortized guide requires counts data"
+    ):
+        results.get_ppc_samples(
+            rng_key=rng_key,
+            n_samples=5,
+            # counts not provided - should raise error
+        )
+
+
+def test_ppc_without_amortization_works_without_counts(
+    nbvcp_results, small_dataset, rng_key
+):
+    """Test that PPC without amortization works without counts."""
+    # Only test SVI (MCMC doesn't use get_ppc_samples the same way)
+    from scribe.svi.results import ScribeSVIResults
+
+    if not isinstance(nbvcp_results, ScribeSVIResults):
+        pytest.skip("MCMC results don't use get_ppc_samples the same way")
+
+    # For SVI, generate posterior samples first
+    nbvcp_results.get_posterior_samples(
+        rng_key=rng_key, n_samples=3, store_samples=True
+    )
+
+    # PPC without counts should work for non-amortized models
+    ppc_result = nbvcp_results.get_ppc_samples(
+        rng_key=rng_key,
+        n_samples=3,
+        # counts not provided - should work for non-amortized
+    )
+
+    assert "parameter_samples" in ppc_result
+    assert "predictive_samples" in ppc_result
+    assert ppc_result["predictive_samples"].shape[-1] == nbvcp_results.n_genes
+
+
+# ------------------------------------------------------------------------------
 
 
 def test_get_map(nbvcp_results, parameterization, unconstrained, guide_rank):
