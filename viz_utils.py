@@ -418,7 +418,9 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     console.print(
         f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
     )
-    results_subset.get_ppc_samples(n_samples=n_samples)
+    # Pass full counts matrix (not subsetted) for amortized capture probability
+    # The amortizer needs total UMI count per cell, which is computed across all genes
+    results_subset.get_ppc_samples(n_samples=n_samples, counts=counts)
 
     # Create mapping from gene index to position in subset
     # The subset preserves the original gene order (sorted by index), not the
@@ -682,6 +684,8 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
 
         # Use the new memory-efficient method that samples using MAP estimates
         # and processes cells in batches to avoid OOM for VCP models
+        # Pass full counts matrix for amortized capture probability
+        # The amortizer needs total UMI count per cell, which is computed across all genes
         predictive_samples = results.get_map_ppc_samples(
             rng_key=random.PRNGKey(42),
             n_samples=1,
@@ -689,6 +693,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
             use_mean=True,
             store_samples=True,
             verbose=True,
+            counts=counts,
         )
         # Extract single sample: shape is (1, n_cells, n_genes) -> (n_cells, n_genes)
         synthetic_data = predictive_samples[0, :, :]
@@ -772,7 +777,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
 # ------------------------------------------------------------------------------
 
 
-def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
+def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
     """
     Plot clustered correlation heatmap of gene parameters from posterior
     samples.
@@ -787,6 +792,9 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
     ----------
     results : ScribeSVIResults
         Results object containing model parameters and posterior samples
+    counts : array-like
+        Observed count matrix (n_cells, n_genes). Required for amortized capture
+        probability when generating posterior samples.
     figs_dir : str
         Directory to save the figure
     cfg : DictConfig
@@ -823,10 +831,13 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
     # Generate posterior samples if they don't exist
     if results.posterior_samples is None:
         console.print(f"[dim]Generating {n_samples} posterior samples...[/dim]")
+        # Pass full counts matrix for amortized capture probability
+        # The amortizer needs total UMI count per cell, which is computed across all genes
         results.get_posterior_samples(
             rng_key=random.PRNGKey(42),
             n_samples=n_samples,
             store_samples=True,
+            counts=counts,
         )
     else:
         console.print("[dim]Using existing posterior samples...[/dim]")
@@ -999,8 +1010,10 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
     import jax.numpy as jnp
 
     # Get MAP estimates
+    # Pass full counts matrix for amortized capture probability
+    # The amortizer needs total UMI count per cell, which is computed across all genes
     map_estimates = results.get_map(
-        use_mean=True, canonical=True, verbose=False
+        use_mean=True, canonical=True, verbose=False, counts=counts
     )
 
     # Determine which parameter to use based on parameterization
@@ -1149,6 +1162,7 @@ def _get_component_ppc_samples(
     rng_key,
     cell_batch_size=500,
     verbose=True,
+    counts=None,
 ):
     """
     Generate PPC samples for a specific mixture component.
@@ -1170,6 +1184,9 @@ def _get_component_ppc_samples(
         Batch size for cell processing
     verbose : bool, default=True
         Print progress messages
+    counts : array-like, optional
+        Full count matrix (n_cells, n_genes). Required for amortized capture
+        probability. Should be the full counts matrix, not subsetted.
 
     Returns
     -------
@@ -1180,8 +1197,10 @@ def _get_component_ppc_samples(
     import numpyro.distributions as dist
 
     # Get MAP estimates
+    # Pass full counts matrix for amortized capture probability
+    # The amortizer needs total UMI count per cell, which is computed across all genes
     map_estimates = results.get_map(
-        use_mean=True, canonical=True, verbose=False
+        use_mean=True, canonical=True, verbose=False, counts=counts
     )
 
     # Extract component-specific parameters
@@ -1691,12 +1710,15 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         f"[dim]Generating mixture PPC samples ({n_samples} samples)...[/dim]"
     )
     rng_key, subkey = random.split(rng_key)
+    # Pass full counts matrix (not subsetted) for amortized capture probability
+    # The amortizer needs total UMI count per cell, which is computed across all genes
     mixture_samples = results_subset.get_map_ppc_samples(
         rng_key=subkey,
         n_samples=n_samples,
         cell_batch_size=500,
         store_samples=False,
         verbose=True,
+        counts=counts,
     )
 
     # Store mixture samples for comparison plot
@@ -1728,6 +1750,8 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         )
         rng_key, subkey = random.split(rng_key)
 
+        # Pass full counts matrix (not subsetted) for amortized capture probability
+        # The amortizer needs total UMI count per cell, which is computed across all genes
         component_samples = _get_component_ppc_samples(
             results_subset,
             component_idx=k,
@@ -1735,6 +1759,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
             rng_key=subkey,
             cell_batch_size=500,
             verbose=True,
+            counts=counts,
         )
 
         component_samples_np = np.array(component_samples)

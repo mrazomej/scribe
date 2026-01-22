@@ -174,9 +174,7 @@ def main() -> None:
     config_file = os.path.join(model_dir, ".hydra", "config.yaml")
 
     if not os.path.exists(results_file):
-        console.print(
-            "[bold red]ERROR: Results file not found![/bold red]"
-        )
+        console.print("[bold red]ERROR: Results file not found![/bold red]")
         console.print(f"[red]   Missing:[/red] [cyan]{results_file}[/cyan]")
         console.print(
             "[yellow]Make sure you've run inference first and the directory "
@@ -185,9 +183,7 @@ def main() -> None:
         return
 
     if not os.path.exists(config_file):
-        console.print(
-            "[bold red]ERROR: Config file not found![/bold red]"
-        )
+        console.print("[bold red]ERROR: Config file not found![/bold red]")
         console.print(f"[red]   Missing:[/red] [cyan]{config_file}[/cyan]")
         console.print(
             "[yellow]The .hydra/config.yaml file is required to load the "
@@ -208,17 +204,21 @@ def main() -> None:
         )
     )
 
-    console.print(
-        f"[dim]Loading config from:[/dim] [cyan]{config_file}[/cyan]"
-    )
+    console.print(f"[dim]Loading config from:[/dim] [cyan]{config_file}[/cyan]")
     orig_cfg = OmegaConf.load(config_file)
     console.print("[green]Configuration loaded![/green]")
 
     # Display key config info
     console.print(f"[dim]  Data:[/dim] {orig_cfg.data.get('name', 'unknown')}")
-    console.print(f"[dim]  Model:[/dim] {orig_cfg.get('model', 'derived from flags')}")
-    console.print(f"[dim]  Parameterization:[/dim] {orig_cfg.get('parameterization', 'unknown')}")
-    console.print(f"[dim]  Inference:[/dim] {orig_cfg.inference.get('method', 'unknown')}")
+    console.print(
+        f"[dim]  Model:[/dim] {orig_cfg.get('model', 'derived from flags')}"
+    )
+    console.print(
+        f"[dim]  Parameterization:[/dim] {orig_cfg.get('parameterization', 'unknown')}"
+    )
+    console.print(
+        f"[dim]  Inference:[/dim] {orig_cfg.inference.get('method', 'unknown')}"
+    )
 
     # ==========================================================================
     # Load Results
@@ -269,9 +269,7 @@ def main() -> None:
     console.print(f"[dim]Loading data from:[/dim] [cyan]{data_path}[/cyan]")
 
     if not os.path.exists(data_path):
-        console.print(
-            "[bold red]ERROR: Data file not found![/bold red]"
-        )
+        console.print("[bold red]ERROR: Data file not found![/bold red]")
         console.print(f"[red]   Missing:[/red] [cyan]{data_path}[/cyan]")
         console.print(
             "[yellow]The data file from the original config could not be found. "
@@ -370,7 +368,9 @@ def main() -> None:
             console.print(f"[red]  Failed to generate ECDF plot: {e}[/red]")
 
     if viz_cfg.ppc:
-        console.print("[dim]Generating posterior predictive check plots...[/dim]")
+        console.print(
+            "[dim]Generating posterior predictive check plots...[/dim]"
+        )
         try:
             plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
             plots_generated.append("PPC")
@@ -390,14 +390,19 @@ def main() -> None:
     if viz_cfg.heatmap:
         console.print("[dim]Generating correlation heatmap...[/dim]")
         try:
-            plot_correlation_heatmap(results, figs_dir, orig_cfg, viz_cfg)
+            plot_correlation_heatmap(
+                results, counts, figs_dir, orig_cfg, viz_cfg
+            )
             plots_generated.append("heatmap")
             console.print("[green]  Heatmap saved[/green]")
         except Exception as e:
             console.print(f"[red]  Failed to generate heatmap: {e}[/red]")
 
     # Check for mixture model before generating mixture PPC
-    is_mixture = orig_cfg.get("n_components") is not None and orig_cfg.get("n_components", 1) > 1
+    is_mixture = (
+        orig_cfg.get("n_components") is not None
+        and orig_cfg.get("n_components", 1) > 1
+    )
     if viz_cfg.mixture_ppc:
         if is_mixture:
             console.print("[dim]Generating mixture model PPC...[/dim]")
@@ -406,7 +411,9 @@ def main() -> None:
                 plots_generated.append("mixture PPC")
                 console.print("[green]  Mixture PPC saved[/green]")
             except Exception as e:
-                console.print(f"[red]  Failed to generate mixture PPC: {e}[/red]")
+                console.print(
+                    f"[red]  Failed to generate mixture PPC: {e}[/red]"
+                )
         else:
             console.print(
                 "[yellow]  Skipping mixture PPC (not a mixture model)[/yellow]"
