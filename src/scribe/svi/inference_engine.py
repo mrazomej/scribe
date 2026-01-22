@@ -21,6 +21,7 @@ from rich.progress import (
     TimeRemainingColumn,
     MofNCompleteColumn,
 )
+from rich import print as rich_print
 from ..models.model_registry import get_model_and_guide
 from ..models.config import ModelConfig, EarlyStoppingConfig
 from .checkpoint import (
@@ -151,7 +152,7 @@ def _run_with_early_stopping(
             )
 
             if progress:
-                print(
+                rich_print(
                     f"[bold cyan]Resumed from checkpoint at step {start_step}"
                     f"[/bold cyan] (best_loss: {best_loss:.4f})"
                 )
