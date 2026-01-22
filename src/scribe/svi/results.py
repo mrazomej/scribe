@@ -153,6 +153,8 @@ class ScribeSVIResults:
         self,
         backend: str = "numpyro",
         split: bool = False,
+        counts: Optional[jnp.ndarray] = None,
+        params: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> Dict[str, Any]:
         """
         Get the variational distributions for all parameters.
@@ -171,6 +173,14 @@ class ScribeSVIResults:
         split : bool, default=False
             If True, returns lists of individual distributions for
             multidimensional parameters instead of batch distributions.
+        counts : Optional[jnp.ndarray], optional
+            Observed count matrix of shape (n_cells, n_genes). Required when
+            using amortized capture probability. For non-amortized models, this
+            can be None. Default: None.
+        params : Optional[Dict[str, jnp.ndarray]], optional
+            Optional params dictionary to use instead of self.params. Used
+            internally when amortized parameters need to be computed. Default:
+            None (uses self.params).
 
         Returns
         -------
@@ -185,11 +195,14 @@ class ScribeSVIResults:
         if backend not in ["scipy", "numpyro"]:
             raise ValueError(f"Invalid backend: {backend}")
 
+        # Use provided params or self.params
+        params_to_use = params if params is not None else self.params
+
         # Use the new composable builder system for posterior extraction
         from ..models.builders import get_posterior_distributions
 
         distributions = get_posterior_distributions(
-            self.params, self.model_config, split=split
+            params_to_use, self.model_config, split=split
         )
 
         if backend == "scipy":
@@ -223,6 +236,7 @@ class ScribeSVIResults:
         use_mean: bool = False,
         canonical: bool = True,
         verbose: bool = True,
+        counts: Optional[jnp.ndarray] = None,
     ) -> Dict[str, jnp.ndarray]:
         """
         Get the maximum a posteriori (MAP) estimates from the variational
@@ -237,14 +251,112 @@ class ScribeSVIResults:
             for linked, odds_ratio, and unconstrained parameterizations
         verbose : bool, default=True
             If True, prints a warning if NaNs were replaced with means
+        counts : Optional[jnp.ndarray], optional
+            Observed count matrix of shape (n_cells, n_genes). Required when
+            using amortized capture probability (e.g., with
+            amortization.capture.enabled=true). Should be the same data used
+            during inference. For non-amortized models, this can be None.
+            Default: None.
 
         Returns
         -------
         Dict[str, jnp.ndarray]
             Dictionary of MAP estimates for each parameter
         """
+        # For amortized capture, we need to compute variational parameters
+        # by running the amortizer with counts, then add them to params
+        params = self.params
+
+        # Check if amortized capture is enabled
+        guide_families = self.model_config.guide_families
+        has_amortized_capture = False
+        if (
+            guide_families is not None
+            and self.model_config.uses_variable_capture
+        ):
+            amort_config = getattr(guide_families, "capture_amortization", None)
+            has_amortized_capture = amort_config is not None and getattr(
+                amort_config, "enabled", False
+            )
+
+        # Error handling: if amortized capture is enabled, counts are required
+        if has_amortized_capture and counts is None:
+            raise ValueError(
+                "counts parameter is required when using amortized capture "
+                "probability (amortization.capture.enabled=true). "
+                "Please provide the observed count matrix of shape "
+                "(n_cells, n_genes) that was used during inference."
+            )
+
+        if counts is not None and self.model_config.uses_variable_capture:
+            # Check if amortized capture is enabled (already checked above)
+            if has_amortized_capture:
+                # Amortized capture is enabled - need to compute variational
+                # parameters by running the guide with counts and extracting
+                # the distribution parameters from the trace
+                # We use a custom handler to capture the distribution parameters
+                import numpyro.handlers
+
+                # Run guide with trace to extract distribution parameters
+                _, guide = self._model_and_guide()
+                if guide is not None:
+                    dummy_key = random.PRNGKey(0)
+                    with numpyro.handlers.seed(rng_seed=dummy_key):
+                        with numpyro.handlers.trace() as tr:
+                            guide(
+                                n_cells=self.n_cells,
+                                n_genes=self.n_genes,
+                                model_config=self.model_config,
+                                counts=counts,
+                                batch_size=None,
+                            )
+
+                    # Extract distribution parameters from trace
+                    # The trace contains the distribution objects in the 'fn' field
+                    from ..models.parameterizations import PARAMETERIZATIONS
+
+                    param_strategy = PARAMETERIZATIONS[
+                        self.model_config.parameterization
+                    ]
+                    capture_param_name = param_strategy.transform_model_param(
+                        "p_capture"
+                    )
+
+                    # Look for the capture parameter in the trace
+                    if capture_param_name in tr:
+                        dist_obj = tr[capture_param_name].get("fn")
+                        if dist_obj is not None:
+                            # Extract parameters based on distribution type
+                            unconstrained = self.model_config.unconstrained
+                            if unconstrained:
+                                # TransformedDistribution with Normal base
+                                if hasattr(dist_obj, "base_dist"):
+                                    base = dist_obj.base_dist
+                                    if hasattr(base, "loc") and hasattr(
+                                        base, "scale"
+                                    ):
+                                        loc_key = f"{capture_param_name}_loc"
+                                        scale_key = (
+                                            f"{capture_param_name}_scale"
+                                        )
+                                        params = {**params}
+                                        params[loc_key] = base.loc
+                                        params[scale_key] = base.scale
+                            else:
+                                # BetaPrime distribution
+                                if hasattr(
+                                    dist_obj, "concentration1"
+                                ) and hasattr(dist_obj, "concentration0"):
+                                    alpha_key = f"{capture_param_name}_alpha"
+                                    beta_key = f"{capture_param_name}_beta"
+                                    params = {**params}
+                                    params[alpha_key] = dist_obj.concentration1
+                                    params[beta_key] = dist_obj.concentration0
+
         # Get distributions with NumPyro backend
-        distributions = self.get_distributions(backend="numpyro")
+        distributions = self.get_distributions(
+            backend="numpyro", counts=counts, params=params
+        )
         # Get estimate of map
         map_estimates = {}
         for param, dist_obj in distributions.items():
@@ -1355,6 +1467,7 @@ class ScribeSVIResults:
         use_mean: bool = True,
         store_samples: bool = True,
         verbose: bool = True,
+        counts: Optional[jnp.ndarray] = None,
     ) -> jnp.ndarray:
         """
         Generate predictive samples using MAP parameter estimates with cell
@@ -1381,6 +1494,12 @@ class ScribeSVIResults:
             If True, stores the samples in self.predictive_samples
         verbose : bool, default=True
             If True, prints progress messages
+        counts : Optional[jnp.ndarray], optional
+            Observed count matrix of shape (n_cells, n_genes). Required when
+            using amortized capture probability (e.g., with
+            amortization.capture.enabled=true). Should be the same data used
+            during inference. For non-amortized models, this can be None.
+            Default: None.
 
         Returns
         -------
@@ -1406,7 +1525,7 @@ class ScribeSVIResults:
 
         # Get MAP estimates with canonical parameters
         map_estimates = self.get_map(
-            use_mean=use_mean, canonical=True, verbose=False
+            use_mean=use_mean, canonical=True, verbose=False, counts=counts
         )
 
         # Extract common parameters
