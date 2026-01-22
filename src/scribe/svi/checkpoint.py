@@ -138,25 +138,24 @@ def checkpoint_exists(checkpoint_dir: str) -> bool:
 
 def save_svi_checkpoint(
     checkpoint_dir: str,
-    params: Dict[str, Any],
+    optim_state: Any,
     step: int,
     best_loss: float,
     losses: List[float],
     patience_counter: int = 0,
 ) -> None:
-    """Save SVI parameters and training state to checkpoint directory.
+    """Save SVI optimizer state and training metadata to checkpoint directory.
 
-    This saves:
-    - Variational parameters (using Orbax)
-    - Training metadata (step, best_loss, etc.)
-    - Loss history
+    This saves the full optimizer state (not just params) to enable proper
+    resumption of training with optimizer momentum, etc.
 
     Parameters
     ----------
     checkpoint_dir : str
         Directory to save checkpoint to.
-    params : Dict[str, Any]
-        Variational parameters from SVI (svi.get_params(state)).
+    optim_state : Any
+        Full optimizer state from svi_state.optim_state. This includes
+        the step count, optimizer internal state (momentum, etc.), and params.
     step : int
         Current training step.
     best_loss : float
@@ -171,7 +170,7 @@ def save_svi_checkpoint(
     The checkpoint directory structure:
     ```
     checkpoint_dir/
-      best/           # Orbax checkpoint of params
+      best/           # Orbax checkpoint of optim_state
       metadata.json   # Training metadata
       losses.npy      # Loss history as numpy array
     ```
@@ -185,7 +184,7 @@ def save_svi_checkpoint(
     # Create directory if needed (using sanitized path)
     os.makedirs(sanitized_dir, exist_ok=True)
 
-    # Save parameters using Orbax
+    # Save optimizer state using Orbax
     # Use synchronous checkpointer to ensure save completes before returning
     checkpointer = ocp.StandardCheckpointer()
 
@@ -196,7 +195,7 @@ def save_svi_checkpoint(
         shutil.rmtree(checkpoint_path)
 
     try:
-        checkpointer.save(checkpoint_path, params)
+        checkpointer.save(checkpoint_path, optim_state)
         # Wait for async save to complete
         checkpointer.wait_until_finished()
     finally:
@@ -243,21 +242,27 @@ def save_svi_checkpoint(
 
 def load_svi_checkpoint(
     checkpoint_dir: str,
-) -> Optional[Tuple[Dict[str, Any], CheckpointMetadata, List[float]]]:
-    """Load SVI parameters and training state from checkpoint.
+    target_optim_state: Optional[Any] = None,
+) -> Optional[Tuple[Any, CheckpointMetadata, List[float]]]:
+    """Load SVI optimizer state and training metadata from checkpoint.
 
     Parameters
     ----------
     checkpoint_dir : str
         Directory containing the checkpoint.
+    target_optim_state : Any, optional
+        Target optimizer state structure for proper restoration. This should
+        be obtained from a fresh svi.init() call. If provided, the restored
+        state will have the correct structure (tuples, namedtuples, etc.).
+        If None, the structure may not be preserved correctly.
 
     Returns
     -------
-    Optional[Tuple[Dict[str, Any], CheckpointMetadata, List[float]]]
-        Tuple of (params, metadata, losses) if checkpoint exists,
+    Optional[Tuple[Any, CheckpointMetadata, List[float]]]
+        Tuple of (optim_state, metadata, losses) if checkpoint exists,
         None otherwise.
 
-        - params: Variational parameters dictionary
+        - optim_state: Full optimizer state (use with SVIState)
         - metadata: CheckpointMetadata with step, best_loss, etc.
         - losses: Loss history as list of floats
     """
@@ -291,13 +296,14 @@ def load_svi_checkpoint(
             "inference.early_stopping.resume=false"
         )
 
-    # Load parameters using Orbax
+    # Load optimizer state using Orbax
     checkpointer = ocp.StandardCheckpointer()
 
-    # We need to restore without a target structure
-    # Use abstract restore to get the structure
+    # Restore with target structure to preserve tuples, namedtuples, etc.
     try:
-        params = checkpointer.restore(checkpoint_path)
+        optim_state = checkpointer.restore(
+            checkpoint_path, target=target_optim_state
+        )
     finally:
         checkpointer.close()
 
@@ -308,7 +314,7 @@ def load_svi_checkpoint(
     # Load losses
     losses = np.load(losses_path).tolist()
 
-    return params, metadata, losses
+    return optim_state, metadata, losses
 
 
 # ------------------------------------------------------------------------------
