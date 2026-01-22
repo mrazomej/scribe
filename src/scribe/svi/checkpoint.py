@@ -69,9 +69,25 @@ class CheckpointMetadata:
 # ------------------------------------------------------------------------------
 
 
+def _sanitize_checkpoint_path(path: str) -> str:
+    """Sanitize checkpoint path to avoid Orbax OCDBT glob pattern issues.
+
+    Orbax's OCDBT format interprets brackets [] as glob patterns, which breaks
+    checkpointing when paths contain characters like [mu,phi] from Hydra
+    overrides.
+
+    This function replaces problematic characters with safe alternatives.
+    """
+    # Replace brackets which are interpreted as glob patterns
+    sanitized = path.replace("[", "").replace("]", "")
+    return sanitized
+
+
 def _get_checkpoint_path(checkpoint_dir: str) -> Path:
     """Get the path to the checkpoint subdirectory."""
-    return Path(checkpoint_dir) / "best"
+    # Sanitize the path to avoid Orbax OCDBT issues with special characters
+    sanitized_dir = _sanitize_checkpoint_path(checkpoint_dir)
+    return Path(sanitized_dir) / "best"
 
 
 # ------------------------------------------------------------------------------
@@ -79,7 +95,8 @@ def _get_checkpoint_path(checkpoint_dir: str) -> Path:
 
 def _get_metadata_path(checkpoint_dir: str) -> Path:
     """Get the path to the metadata JSON file."""
-    return Path(checkpoint_dir) / "metadata.json"
+    sanitized_dir = _sanitize_checkpoint_path(checkpoint_dir)
+    return Path(sanitized_dir) / "metadata.json"
 
 
 # ------------------------------------------------------------------------------
@@ -87,7 +104,8 @@ def _get_metadata_path(checkpoint_dir: str) -> Path:
 
 def _get_losses_path(checkpoint_dir: str) -> Path:
     """Get the path to the losses numpy file."""
-    return Path(checkpoint_dir) / "losses.npy"
+    sanitized_dir = _sanitize_checkpoint_path(checkpoint_dir)
+    return Path(sanitized_dir) / "losses.npy"
 
 
 # ------------------------------------------------------------------------------
@@ -158,12 +176,14 @@ def save_svi_checkpoint(
       losses.npy      # Loss history as numpy array
     ```
     """
+    # Sanitize checkpoint directory to avoid Orbax OCDBT issues with brackets
+    sanitized_dir = _sanitize_checkpoint_path(checkpoint_dir)
     checkpoint_path = _get_checkpoint_path(checkpoint_dir)
     metadata_path = _get_metadata_path(checkpoint_dir)
     losses_path = _get_losses_path(checkpoint_dir)
 
-    # Create directory if needed
-    os.makedirs(checkpoint_dir, exist_ok=True)
+    # Create directory if needed (using sanitized path)
+    os.makedirs(sanitized_dir, exist_ok=True)
 
     # Save parameters using Orbax
     # Use synchronous checkpointer to ensure save completes before returning
@@ -175,9 +195,34 @@ def save_svi_checkpoint(
 
         shutil.rmtree(checkpoint_path)
 
-    checkpointer.save(checkpoint_path, params)
-    # Wait for async save to complete
-    checkpointer.wait_until_finished()
+    try:
+        checkpointer.save(checkpoint_path, params)
+        # Wait for async save to complete
+        checkpointer.wait_until_finished()
+    finally:
+        # Explicitly close the checkpointer to ensure all resources are released
+        # and all async operations are fully completed
+        checkpointer.close()
+
+    # Verify checkpoint was saved correctly by checking for required files
+    # OCDBT format has manifest.ocdbt either at the checkpoint root OR
+    # inside ocdbt.process_0/ (when path contains special characters like brackets)
+    manifest_at_root = (checkpoint_path / "manifest.ocdbt").exists()
+    manifest_in_ocdbt = (
+        checkpoint_path / "ocdbt.process_0" / "manifest.ocdbt"
+    ).exists()
+    metadata_exists = (checkpoint_path / "_METADATA").exists()
+
+    if not metadata_exists:
+        raise RuntimeError(
+            f"Checkpoint save incomplete: missing _METADATA at {checkpoint_path}. "
+            "This may indicate a disk I/O issue or interrupted save."
+        )
+    if not (manifest_at_root or manifest_in_ocdbt):
+        raise RuntimeError(
+            f"Checkpoint save incomplete: missing manifest.ocdbt at {checkpoint_path}. "
+            "This may indicate a disk I/O issue or interrupted save."
+        )
 
     # Save metadata as JSON
     metadata = CheckpointMetadata(
@@ -223,12 +268,38 @@ def load_svi_checkpoint(
     metadata_path = _get_metadata_path(checkpoint_dir)
     losses_path = _get_losses_path(checkpoint_dir)
 
+    # Verify checkpoint integrity before attempting to load
+    # OCDBT format has manifest.ocdbt either at the checkpoint root OR
+    # inside ocdbt.process_0/ (when path contains special characters like brackets)
+    manifest_at_root = (checkpoint_path / "manifest.ocdbt").exists()
+    manifest_in_ocdbt = (
+        checkpoint_path / "ocdbt.process_0" / "manifest.ocdbt"
+    ).exists()
+    metadata_exists = (checkpoint_path / "_METADATA").exists()
+
+    if not metadata_exists or not (manifest_at_root or manifest_in_ocdbt):
+        missing = []
+        if not metadata_exists:
+            missing.append("_METADATA")
+        if not (manifest_at_root or manifest_in_ocdbt):
+            missing.append("manifest.ocdbt")
+        raise RuntimeError(
+            f"Checkpoint at {checkpoint_path} appears corrupted or incomplete. "
+            f"Missing required files: {missing}. "
+            "This may have occurred due to an interrupted save or disk issue. "
+            "To start fresh, either delete the checkpoint directory or run with "
+            "inference.early_stopping.resume=false"
+        )
+
     # Load parameters using Orbax
     checkpointer = ocp.StandardCheckpointer()
 
     # We need to restore without a target structure
     # Use abstract restore to get the structure
-    params = checkpointer.restore(checkpoint_path)
+    try:
+        params = checkpointer.restore(checkpoint_path)
+    finally:
+        checkpointer.close()
 
     # Load metadata
     with open(metadata_path, "r") as f:
