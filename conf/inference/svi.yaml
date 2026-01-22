@@ -55,6 +55,11 @@ early_stopping:
   # Number of steps to average for smoothed loss calculation
   smoothing_window: 100
   
+  # How often to save checkpoints (in steps)
+  # Checkpoints are only saved when improvement is detected AND
+  # at least this many steps have passed since the last checkpoint
+  checkpoint_every: 2500
+  
   # Restore parameters from best checkpoint when stopping
   # If false, uses parameters from the final step
   restore_best: true
