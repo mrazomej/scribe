@@ -925,3 +925,180 @@ class TestAmortizationIntegration:
                 model="zinb",
                 amortize_capture=True,
             )
+
+
+# ==============================================================================
+# Test Mixture Parameter Validation
+# ==============================================================================
+
+
+class TestMixtureParamsValidation:
+    """Test validation of mixture_params against parameterization."""
+
+    def test_invalid_mixture_param_raises_error(self):
+        """Test that invalid mixture_params raise ValueError with helpful message."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .as_mixture(2, ["r"])  # 'r' is derived in mean_odds, not sampled
+            .build()
+        )
+        with pytest.raises(ValueError, match="Invalid mixture_params"):
+            create_model(config)
+
+    def test_error_message_lists_valid_params(self):
+        """Test error message includes list of valid parameters."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .as_mixture(2, ["invalid_param"])
+            .build()
+        )
+        with pytest.raises(ValueError, match=r"Core \(mean_odds\): \['phi', 'mu'\]"):
+            create_model(config)
+
+    def test_error_message_mentions_derived_params(self):
+        """Test error message explains derived parameters cannot be mixture-specific."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .as_mixture(2, ["r"])
+            .build()
+        )
+        with pytest.raises(ValueError, match="Derived parameters"):
+            create_model(config)
+
+    def test_valid_core_params_canonical(self):
+        """Test valid core params for canonical parameterization."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("canonical")
+            .as_mixture(2, ["p", "r"])
+            .build()
+        )
+        # Should not raise
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
+
+    def test_valid_core_params_mean_prob(self):
+        """Test valid core params for mean_prob parameterization."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_prob")
+            .as_mixture(2, ["p", "mu"])
+            .build()
+        )
+        # Should not raise
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
+
+    def test_valid_core_params_mean_odds(self):
+        """Test valid core params for mean_odds parameterization."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .as_mixture(2, ["phi", "mu"])
+            .build()
+        )
+        # Should not raise
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
+
+    def test_valid_model_specific_param_gate(self):
+        """Test gate is valid mixture param for zinb models."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinb")
+            .with_parameterization("canonical")
+            .as_mixture(2, ["r", "gate"])
+            .build()
+        )
+        # Should not raise
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
+
+    def test_valid_model_specific_param_capture(self):
+        """Test p_capture is valid mixture param for nbvcp models."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("canonical")
+            .as_mixture(2, ["r", "p_capture"])
+            .build()
+        )
+        # Should not raise
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
+
+    def test_transformed_capture_param_mean_odds(self):
+        """Test phi_capture is valid for mean_odds parameterization."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .as_mixture(2, ["mu", "phi_capture"])
+            .build()
+        )
+        # Should not raise
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
+
+    def test_error_shows_model_specific_params(self):
+        """Test error message includes model-specific params for VCP models."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("canonical")
+            .as_mixture(2, ["invalid"])
+            .build()
+        )
+        with pytest.raises(ValueError, match=r"Model-specific \(nbvcp\)"):
+            create_model(config)
+
+    def test_invalid_param_for_wrong_parameterization(self):
+        """Test that params valid in one parameterization fail in another."""
+        # 'phi' is valid in mean_odds but not in canonical
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("canonical")
+            .as_mixture(2, ["phi"])  # phi is not in canonical
+            .build()
+        )
+        with pytest.raises(ValueError, match="Invalid mixture_params"):
+            create_model(config)
+
+    @pytest.mark.parametrize(
+        "model_type,parameterization,valid_params",
+        [
+            ("nbdm", "canonical", ["p", "r"]),
+            ("nbdm", "mean_prob", ["p", "mu"]),
+            ("nbdm", "mean_odds", ["phi", "mu"]),
+            ("zinb", "canonical", ["p", "r", "gate"]),
+            ("zinb", "mean_odds", ["phi", "mu", "gate"]),
+            ("nbvcp", "canonical", ["p", "r", "p_capture"]),
+            ("nbvcp", "mean_odds", ["phi", "mu", "phi_capture"]),
+            ("zinbvcp", "canonical", ["p", "r", "gate", "p_capture"]),
+            ("zinbvcp", "mean_odds", ["phi", "mu", "gate", "phi_capture"]),
+        ],
+    )
+    def test_all_valid_params_combinations(
+        self, model_type, parameterization, valid_params
+    ):
+        """Test that all valid param combinations work for each model/parameterization."""
+        config = (
+            ModelConfigBuilder()
+            .for_model(model_type)
+            .with_parameterization(parameterization)
+            .as_mixture(2, valid_params)
+            .build()
+        )
+        # Should not raise
+        model, guide = create_model(config, validate=False)
+        assert callable(model)
