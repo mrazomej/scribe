@@ -286,17 +286,22 @@ def plot_loss(results, figs_dir, cfg, viz_cfg):
     """Plot and save the ELBO loss history."""
     print("Plotting loss history...")
 
-    # Initialize figure
-    fig, ax = plt.subplots(figsize=(3.5, 3))
-    # Plot loss history
-    ax.plot(results.loss_history)
+    # Initialize figure with two subplots side by side
+    fig, (ax_log, ax_linear) = plt.subplots(1, 2, figsize=(7.0, 3))
 
-    # Set labels
-    ax.set_xlabel("step")
-    ax.set_ylabel("ELBO loss")
+    # Plot loss history on both subplots
+    ax_log.plot(results.loss_history)
+    ax_linear.plot(results.loss_history)
 
-    # Set y-axis to log scale
-    ax.set_yscale("log")
+    # Set labels for both subplots
+    ax_log.set_xlabel("step")
+    ax_log.set_ylabel("ELBO loss")
+    ax_linear.set_xlabel("step")
+    ax_linear.set_ylabel("ELBO loss")
+
+    # Set y-axis scales: log scale for left, linear for right
+    ax_log.set_yscale("log")
+    # ax_linear uses linear scale by default
 
     # Get output format
     output_format = viz_cfg.get("format", "png")
@@ -304,7 +309,8 @@ def plot_loss(results, figs_dir, cfg, viz_cfg):
     # Construct filename from original config
     config_vals = _get_config_values(cfg)
     fname = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['method']}_"
+        f"{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
         f"{config_vals['n_steps']}steps_loss.{output_format}"
