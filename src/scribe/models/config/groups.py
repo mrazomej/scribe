@@ -385,11 +385,13 @@ class EarlyStoppingConfig(BaseModel):
     patience : int, default=500
         Number of steps without improvement before stopping. The counter resets
         each time an improvement is detected.
-    min_delta : float, default=1.0
-        Minimum change in smoothed loss to qualify as an improvement.
-        Improvements smaller than this are ignored. The default of 1.0 is
-        suitable for typical ELBO values (order 10^6-10^7). Adjust based on
-        your loss scale.
+    min_delta_pct : float, default=0.01
+        Minimum relative improvement (as percentage) in smoothed loss to qualify
+        as progress. Computed as `100 * (best_loss - smoothed_loss) /
+        best_loss`. The default of 0.01 means 0.01% improvement is required.
+        This works across different dataset sizes since it scales with loss
+        magnitude. For example, if the loss is 1,000,000, an improvement of at
+        least 100 is required to exceed the 0.01% threshold.
     check_every : int, default=10
         How often (in steps) to check for convergence. Checking every step adds
         overhead; checking less frequently may miss the optimal stop point.
@@ -415,10 +417,10 @@ class EarlyStoppingConfig(BaseModel):
     >>> # Default configuration (no checkpointing)
     >>> config = EarlyStoppingConfig()
 
-    >>> # More aggressive early stopping (for large-scale ELBO)
+    >>> # More aggressive early stopping
     >>> config = EarlyStoppingConfig(
     ...     patience=200,
-    ...     min_delta=100,  # Higher threshold for large ELBO values
+    ...     min_delta_pct=0.1,  # 0.1% improvement required
     ...     check_every=5,
     ... )
 
@@ -439,10 +441,11 @@ class EarlyStoppingConfig(BaseModel):
 
     The early stopping algorithm:
         1. Every `check_every` steps, compute the smoothed loss
-        2. If `best_loss - smoothed_loss > min_delta`, update best_loss and
+        2. Compute relative improvement: `(best_loss - smoothed_loss) / best_loss`
+        3. If relative improvement > `min_delta_pct`, update best_loss and
            reset patience counter
-        3. Otherwise, increment patience counter by `check_every`
-        4. If patience counter >= `patience`, stop training and optionally
+        4. Otherwise, increment patience counter by `check_every`
+        5. If patience counter >= `patience`, stop training and optionally
            restore best parameters
 
     See Also
@@ -458,10 +461,14 @@ class EarlyStoppingConfig(BaseModel):
         gt=0,
         description="Steps without improvement before stopping",
     )
-    min_delta: float = Field(
-        1.0,
+    min_delta_pct: float = Field(
+        0.01,
         ge=0,
-        description="Minimum change to qualify as improvement",
+        description=(
+            "Minimum relative improvement (as percentage) to qualify as progress. "
+            "Default 0.01 means 0.01% improvement required. "
+            "Scales automatically with loss magnitude."
+        ),
     )
     check_every: int = Field(
         10,
