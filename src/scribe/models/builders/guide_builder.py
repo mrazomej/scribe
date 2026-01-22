@@ -703,6 +703,191 @@ def setup_cell_specific_guide(
 
 
 # ------------------------------------------------------------------------------
+# BetaPrime Distribution Amortized Guide
+# ------------------------------------------------------------------------------
+
+
+@dispatch(BetaPrimeSpec, AmortizedGuide, dict, object)
+def setup_cell_specific_guide(
+    spec: BetaPrimeSpec,
+    guide: AmortizedGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    counts: Optional[jnp.ndarray] = None,
+    batch_idx: Optional[jnp.ndarray] = None,
+    **kwargs,
+) -> jnp.ndarray:
+    """Amortized guide for cell-specific BetaPrime parameter (e.g., phi_capture).
+
+    Uses an amortizer network to predict variational parameters from
+    sufficient statistics of the data.
+
+    Parameters
+    ----------
+    spec : BetaPrimeSpec
+        Parameter specification.
+    guide : AmortizedGuide
+        Amortized guide with attached amortizer network.
+    dims : Dict[str, int]
+        Dimensions.
+    model_config : ModelConfig
+        Model configuration.
+    counts : jnp.ndarray
+        Count data (used to compute sufficient statistics).
+    batch_idx : Optional[jnp.ndarray]
+        Indices for mini-batch. Amortizer processes batched data directly.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled parameter value.
+
+    Raises
+    ------
+    ValueError
+        If counts is None (required for amortization).
+    """
+    if counts is None:
+        raise ValueError("Amortized guide requires counts data")
+
+    # Get data for current batch (amortizer handles per-cell computation)
+    data = counts if batch_idx is None else counts[batch_idx]
+
+    # Amortizer predicts variational params from sufficient statistics
+    var_params = guide.amortizer(data)
+    alpha = jnp.exp(var_params["log_alpha"])
+    beta = jnp.exp(var_params["log_beta"])
+
+    return numpyro.sample(spec.name, BetaPrime(alpha, beta))
+
+
+# ------------------------------------------------------------------------------
+# SigmoidNormal Distribution Amortized Guide
+# ------------------------------------------------------------------------------
+
+
+@dispatch(SigmoidNormalSpec, AmortizedGuide, dict, object)
+def setup_cell_specific_guide(
+    spec: SigmoidNormalSpec,
+    guide: AmortizedGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    counts: Optional[jnp.ndarray] = None,
+    batch_idx: Optional[jnp.ndarray] = None,
+    **kwargs,
+) -> jnp.ndarray:
+    """Amortized guide for cell-specific SigmoidNormal parameter (e.g., p_capture).
+
+    Uses an amortizer network to predict variational parameters from
+    sufficient statistics of the data. Samples from Normal, then applies
+    sigmoid transform to constrain to [0, 1].
+
+    Parameters
+    ----------
+    spec : SigmoidNormalSpec
+        Parameter specification.
+    guide : AmortizedGuide
+        Amortized guide with attached amortizer network.
+    dims : Dict[str, int]
+        Dimensions.
+    model_config : ModelConfig
+        Model configuration.
+    counts : jnp.ndarray
+        Count data (used to compute sufficient statistics).
+    batch_idx : Optional[jnp.ndarray]
+        Indices for mini-batch. Amortizer processes batched data directly.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled parameter value in constrained space [0, 1].
+
+    Raises
+    ------
+    ValueError
+        If counts is None (required for amortization).
+    """
+    if counts is None:
+        raise ValueError("Amortized guide requires counts data")
+
+    # Get data for current batch (amortizer handles per-cell computation)
+    data = counts if batch_idx is None else counts[batch_idx]
+
+    # Amortizer predicts variational params from sufficient statistics
+    var_params = guide.amortizer(data)
+    loc = var_params["loc"]
+    scale = jnp.exp(var_params["log_scale"])
+
+    # Create base Normal distribution and apply sigmoid transform
+    base_dist = dist.Normal(loc, scale)
+    transformed_dist = dist.TransformedDistribution(base_dist, spec.transform)
+    return numpyro.sample(spec.constrained_name, transformed_dist)
+
+
+# ------------------------------------------------------------------------------
+# ExpNormal Distribution Amortized Guide
+# ------------------------------------------------------------------------------
+
+
+@dispatch(ExpNormalSpec, AmortizedGuide, dict, object)
+def setup_cell_specific_guide(
+    spec: ExpNormalSpec,
+    guide: AmortizedGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    counts: Optional[jnp.ndarray] = None,
+    batch_idx: Optional[jnp.ndarray] = None,
+    **kwargs,
+) -> jnp.ndarray:
+    """Amortized guide for cell-specific ExpNormal parameter (e.g., phi_capture).
+
+    Uses an amortizer network to predict variational parameters from
+    sufficient statistics of the data. Samples from Normal, then applies
+    exp transform to constrain to [0, +∞).
+
+    Parameters
+    ----------
+    spec : ExpNormalSpec
+        Parameter specification.
+    guide : AmortizedGuide
+        Amortized guide with attached amortizer network.
+    dims : Dict[str, int]
+        Dimensions.
+    model_config : ModelConfig
+        Model configuration.
+    counts : jnp.ndarray
+        Count data (used to compute sufficient statistics).
+    batch_idx : Optional[jnp.ndarray]
+        Indices for mini-batch. Amortizer processes batched data directly.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled parameter value in constrained space [0, +∞).
+
+    Raises
+    ------
+    ValueError
+        If counts is None (required for amortization).
+    """
+    if counts is None:
+        raise ValueError("Amortized guide requires counts data")
+
+    # Get data for current batch (amortizer handles per-cell computation)
+    data = counts if batch_idx is None else counts[batch_idx]
+
+    # Amortizer predicts variational params from sufficient statistics
+    var_params = guide.amortizer(data)
+    loc = var_params["loc"]
+    scale = jnp.exp(var_params["log_scale"])
+
+    # Create base Normal distribution and apply exp transform
+    base_dist = dist.Normal(loc, scale)
+    transformed_dist = dist.TransformedDistribution(base_dist, spec.transform)
+    return numpyro.sample(spec.constrained_name, transformed_dist)
+
+
+# ------------------------------------------------------------------------------
 # Normal with Transform Distribution MeanField Guide (Cell-Specific)
 # ------------------------------------------------------------------------------
 
