@@ -13,13 +13,13 @@ Typical usage:
     $ python visualize.py outputs/5050mix/svi/variable_capture=true
 
     # Disable specific plots
-    $ python visualize.py outputs/myrun --no-ecdf --no-ppc
+    $ python visualize.py outputs/myrun --no-ecdf
 
     # Enable optional plots
-    $ python visualize.py outputs/myrun --umap --heatmap
+    $ python visualize.py outputs/myrun --ppc --umap --heatmap
 
     # Custom PPC settings (5x5 grid with 2000 samples)
-    $ python visualize.py outputs/myrun --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
+    $ python visualize.py outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
 """
 
 import argparse
@@ -60,13 +60,13 @@ Examples:
     python visualize.py outputs/5050mix/svi/variable_capture=true
 
     # Disable specific plots
-    python visualize.py outputs/myrun --no-ecdf --no-ppc
+    python visualize.py outputs/myrun --no-ecdf
 
     # Enable optional plots
-    python visualize.py outputs/myrun --umap --heatmap
+    python visualize.py outputs/myrun --ppc --umap --heatmap
 
     # Custom PPC settings (5x5 grid)
-    python visualize.py outputs/myrun --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
+    python visualize.py outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
         """,
     )
 
@@ -87,13 +87,13 @@ Examples:
         action="store_true",
         help="Disable ECDF plot",
     )
-    parser.add_argument(
-        "--no-ppc",
-        action="store_true",
-        help="Disable posterior predictive check plots",
-    )
 
     # Optional plots (disabled by default)
+    parser.add_argument(
+        "--ppc",
+        action="store_true",
+        help="Enable posterior predictive check plots",
+    )
     parser.add_argument(
         "--umap",
         action="store_true",
@@ -306,7 +306,7 @@ def main() -> None:
         {
             "loss": not args.no_loss,
             "ecdf": not args.no_ecdf,
-            "ppc": not args.no_ppc,
+            "ppc": args.ppc,
             "umap": args.umap,
             "heatmap": args.heatmap,
             "mixture_ppc": args.mixture_ppc,
