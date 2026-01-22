@@ -86,7 +86,9 @@ output_dir: null
 # --- Hydra settings ---
 hydra:
   run:
-    dir: outputs/${data.name}/${inference.method}/${oc.select:output_dir,${hydra:job.override_dirname}}
+    # Use output_dir if explicitly set by user, otherwise auto-generate from overrides
+    # Note: We use 'model' in path to keep runs organized by model type
+    dir: outputs/${data.name}/${model}/${inference.method}/${hydra:job.override_dirname}
   job:
     name: ${data.name}_${inference.method}
     config:

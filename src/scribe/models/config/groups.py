@@ -385,16 +385,24 @@ class EarlyStoppingConfig(BaseModel):
     patience : int, default=500
         Number of steps without improvement before stopping. The counter resets
         each time an improvement is detected.
-    min_delta_pct : float, default=0.01
+    min_delta : float, default=100.0
+        Minimum absolute improvement in smoothed loss to qualify as progress.
+        Used when `min_delta_pct` is not specified. The default of 100.0 works
+        for typical ELBO values.
+    min_delta_pct : float, optional
         Minimum relative improvement (as percentage) in smoothed loss to qualify
         as progress. Computed as `100 * (best_loss - smoothed_loss) /
-        best_loss`. The default of 0.01 means 0.01% improvement is required.
-        This works across different dataset sizes since it scales with loss
-        magnitude. For example, if the loss is 1,000,000, an improvement of at
-        least 100 is required to exceed the 0.01% threshold.
+        best_loss`. If specified, takes precedence over `min_delta`. For example,
+        0.01 means 0.01% improvement is required. This scales automatically with
+        loss magnitude.
     check_every : int, default=10
         How often (in steps) to check for convergence. Checking every step adds
         overhead; checking less frequently may miss the optimal stop point.
+    warmup : int, default=5000
+        Number of warmup steps before early stopping is activated. During
+        warmup, loss is tracked but stopping criteria are not evaluated. This
+        allows the model to stabilize before we start checking for convergence.
+        Set to 0 to disable warmup.
     smoothing_window : int, default=50
         Window size for computing the smoothed (moving average) loss. Larger
         windows reduce noise but respond slower to changes.
@@ -417,11 +425,17 @@ class EarlyStoppingConfig(BaseModel):
     >>> # Default configuration (no checkpointing)
     >>> config = EarlyStoppingConfig()
 
-    >>> # More aggressive early stopping
+    >>> # Using percentage-based threshold
     >>> config = EarlyStoppingConfig(
     ...     patience=200,
-    ...     min_delta_pct=0.1,  # 0.1% improvement required
+    ...     min_delta_pct=0.01,  # 0.01% improvement required
     ...     check_every=5,
+    ... )
+
+    >>> # Using absolute threshold (default)
+    >>> config = EarlyStoppingConfig(
+    ...     patience=200,
+    ...     min_delta=50.0,  # 50 absolute improvement required
     ... )
 
     >>> # Disable early stopping
@@ -461,19 +475,36 @@ class EarlyStoppingConfig(BaseModel):
         gt=0,
         description="Steps without improvement before stopping",
     )
-    min_delta_pct: float = Field(
-        0.01,
+    min_delta: float = Field(
+        100.0,
+        ge=0,
+        description=(
+            "Minimum absolute improvement in loss to qualify as progress. "
+            "Used when min_delta_pct is not specified."
+        ),
+    )
+    min_delta_pct: Optional[float] = Field(
+        None,
         ge=0,
         description=(
             "Minimum relative improvement (as percentage) to qualify as progress. "
-            "Default 0.01 means 0.01% improvement required. "
-            "Scales automatically with loss magnitude."
+            "If specified, takes precedence over min_delta. "
+            "E.g., 0.01 means 0.01% improvement required."
         ),
     )
     check_every: int = Field(
         10,
         gt=0,
         description="Check convergence every N steps",
+    )
+    warmup: int = Field(
+        5000,
+        ge=0,
+        description=(
+            "Number of warmup steps before early stopping is activated. "
+            "During warmup, loss is tracked but stopping criteria are not evaluated. "
+            "Set to 0 to disable warmup."
+        ),
     )
     smoothing_window: int = Field(
         50,

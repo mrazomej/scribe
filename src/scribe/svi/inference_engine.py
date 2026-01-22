@@ -220,40 +220,47 @@ def _run_with_early_stopping(
             # Perform update step (JIT compiled)
             svi_state, loss = jit_body_fn(svi_state)
 
-            # Only extract loss when needed (reduces GPU sync overhead)
-            should_check = (
-                early_stopping.enabled
-                and step % early_stopping.check_every == 0
-            )
+            # Store loss every step (like NumPyro's svi.run)
+            loss_val = float(loss)
+            losses.append(loss_val)
+
+            # Update progress bar periodically
             should_display = step % loss_display_interval == 0
-
-            if should_check or should_display:
-                loss_val = float(loss)
-                if should_check:
-                    losses.append(loss_val)
-
-            # Update progress bar
             if should_display:
                 pbar.update(task, advance=1, loss=loss_val)
             else:
                 pbar.update(task, advance=1)
 
-            # Early stopping check (only if enabled and we have enough data)
-            if should_check and len(losses) >= early_stopping.smoothing_window:
+            # Check for improvement every check_every steps (for checkpointing)
+            # This happens even during warmup - we still track best loss and save
+            should_check_improvement = (
+                early_stopping.enabled
+                and step % early_stopping.check_every == 0
+                and len(losses) >= early_stopping.smoothing_window
+            )
+            if should_check_improvement:
                 # Compute smoothed loss (moving average)
                 window_start = max(
                     0, len(losses) - early_stopping.smoothing_window
                 )
                 smoothed_loss = np.mean(losses[window_start:])
 
-                # Compute relative improvement over best (as percentage)
-                # positive = improving, negative = getting worse
-                improvement_pct = (
-                    100.0 * (best_loss - smoothed_loss) / (best_loss + eps)
-                )
+                # Compute improvement (absolute difference)
+                improvement = best_loss - smoothed_loss
 
-                # Check for improvement using relative threshold (both in %)
-                if improvement_pct > early_stopping.min_delta_pct:
+                # Check for improvement using either relative (%) or absolute
+                # threshold min_delta_pct takes precedence if specified
+                if early_stopping.min_delta_pct is not None:
+                    # Use relative (percentage) threshold
+                    improvement_pct = 100.0 * improvement / (best_loss + eps)
+                    is_improvement = (
+                        improvement_pct > early_stopping.min_delta_pct
+                    )
+                else:
+                    # Use absolute threshold
+                    is_improvement = improvement > early_stopping.min_delta
+
+                if is_improvement:
                     # Improvement detected
                     best_loss = smoothed_loss
                     if early_stopping.restore_best:
@@ -273,11 +280,15 @@ def _run_with_early_stopping(
                             patience_counter=patience_counter,
                         )
                 else:
-                    # No improvement
-                    patience_counter += early_stopping.check_every
+                    # No improvement - only count towards patience after warmup
+                    if step >= early_stopping.warmup:
+                        patience_counter += early_stopping.check_every
 
-                # Check if patience exceeded
-                if patience_counter >= early_stopping.patience:
+                # Check if patience exceeded (only after warmup)
+                if (
+                    step >= early_stopping.warmup
+                    and patience_counter >= early_stopping.patience
+                ):
                     early_stopped = True
                     pbar.console.print(
                         f"[bold green]Early stopping triggered at step "
