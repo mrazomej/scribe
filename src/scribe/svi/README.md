@@ -222,7 +222,43 @@ ppc_samples = results.get_ppc_samples(
     n_samples=100,
     seed=42
 )
+
+# For models with amortized capture probability, pass observed counts
+# (required when using amortization.capture.enabled=true)
+ppc_samples = results.get_ppc_samples(
+    n_samples=100,
+    seed=42,
+    counts=observed_counts  # Shape: (n_cells, n_genes)
+)
 ```
+
+**Amortized Capture Probability and PPC:**
+
+When using amortized capture probability (enabled via
+`amortization.capture.enabled=true`), the guide function uses a neural network
+that takes total UMI counts as input to predict capture probabilities. During
+posterior predictive checks (PPC), you must provide the observed counts so the
+amortizer can compute the necessary sufficient statistics.
+
+```python
+# For models with amortized capture, counts are required for PPC
+ppc_samples = results.get_ppc_samples(
+    rng_key=rng_key,
+    n_samples=100,
+    counts=observed_counts  # Required for amortized capture
+)
+
+# For non-amortized models, counts can be omitted
+ppc_samples = results.get_ppc_samples(
+    rng_key=rng_key,
+    n_samples=100
+    # counts parameter not needed
+)
+```
+
+**Note:** The `counts` parameter should be the same observed data used during
+inference. For non-amortized models (standard VCP models or non-VCP models), the
+`counts` parameter is optional and can be omitted.
 
 **Model Evaluation:**
 ```python

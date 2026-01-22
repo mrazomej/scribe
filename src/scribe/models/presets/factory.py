@@ -557,7 +557,14 @@ def _has_amortized_guide(guide_families: Optional[GuideFamilyConfig]) -> bool:
 
     from ..components.guide_families import AmortizedGuide
 
-    # Check all configured guide families
+    # Check for capture_amortization config (creates AmortizedGuide for capture
+    # params)
+    if hasattr(guide_families, "capture_amortization"):
+        amort_config = getattr(guide_families, "capture_amortization", None)
+        if amort_config is not None and getattr(amort_config, "enabled", False):
+            return True
+
+    # Check all configured guide families for direct AmortizedGuide instances
     # Access model_fields from the class, not the instance
     for field in GuideFamilyConfig.model_fields:
         value = getattr(guide_families, field, None)
