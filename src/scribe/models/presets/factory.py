@@ -44,7 +44,6 @@ from .registry import (
     build_extra_param_spec,
 )
 
-
 # ==============================================================================
 # Model/Guide Validation
 # ==============================================================================
@@ -245,12 +244,22 @@ def create_model(
         )
 
     # ==========================================================================
-    # Step 2: Resolve guide families
+    # Step 2: Validate mixture_params if provided
+    # ==========================================================================
+    if model_config.mixture_params is not None:
+        _validate_mixture_params(
+            mixture_params=model_config.mixture_params,
+            param_strategy=param_strategy,
+            base_model=base_model,
+        )
+
+    # ==========================================================================
+    # Step 3: Resolve guide families
     # ==========================================================================
     guide_families = model_config.guide_families or GuideFamilyConfig()
 
     # ==========================================================================
-    # Step 3: Build core parameter specs from parameterization strategy
+    # Step 4: Build core parameter specs from parameterization strategy
     # ==========================================================================
     param_specs = param_strategy.build_param_specs(
         unconstrained=model_config.unconstrained,
@@ -260,7 +269,7 @@ def create_model(
     )
 
     # ==========================================================================
-    # Step 4: Add model-specific extra parameters
+    # Step 5: Add model-specific extra parameters
     # ==========================================================================
     extra_param_names = MODEL_EXTRA_PARAMS[base_model]
     for param_name in extra_param_names:
@@ -275,7 +284,7 @@ def create_model(
         param_specs.append(extra_spec)
 
     # ==========================================================================
-    # Step 5: Apply user-provided prior/guide overrides
+    # Step 6: Apply user-provided prior/guide overrides
     # ==========================================================================
     # Merge priors from model_config.param_specs with explicit priors argument
     merged_priors = _extract_priors_from_param_specs(model_config.param_specs)
@@ -294,12 +303,12 @@ def create_model(
         )
 
     # ==========================================================================
-    # Step 6: Get derived parameters from parameterization strategy
+    # Step 7: Get derived parameters from parameterization strategy
     # ==========================================================================
     derived_params = param_strategy.build_derived_params()
 
     # ==========================================================================
-    # Step 7: Build model using ModelBuilder
+    # Step 8: Build model using ModelBuilder
     # ==========================================================================
     model_builder = ModelBuilder()
     for spec in param_specs:
@@ -322,12 +331,12 @@ def create_model(
     model = model_builder.build()
 
     # ==========================================================================
-    # Step 8: Build guide using GuideBuilder
+    # Step 9: Build guide using GuideBuilder
     # ==========================================================================
     guide = GuideBuilder().from_specs(param_specs).build()
 
     # ==========================================================================
-    # Step 9: Validate model/guide compatibility (optional)
+    # Step 10: Validate model/guide compatibility (optional)
     # ==========================================================================
     if validate:
         # Only validate guide for SVI/VAE - MCMC doesn't use a guide
@@ -467,6 +476,71 @@ def _extract_guides_from_param_specs(
     for spec in param_specs:
         if hasattr(spec, "guide") and spec.guide is not None:
             guides[spec.name] = spec.guide
+
+
+# ------------------------------------------------------------------------------
+
+
+def _validate_mixture_params(
+    mixture_params: List[str],
+    param_strategy,
+    base_model: str,
+) -> None:
+    """Validate that mixture_params contains only valid parameter names.
+
+    Parameters
+    ----------
+    mixture_params : List[str]
+        User-provided list of parameters to make mixture-specific.
+    param_strategy : Parameterization
+        The parameterization strategy being used.
+    base_model : str
+        The base model type (nbdm, zinb, nbvcp, zinbvcp).
+
+    Raises
+    ------
+    ValueError
+        If mixture_params contains invalid parameter names.
+    """
+    # Get valid parameters from parameterization's core parameters
+    valid_params = set(param_strategy.core_parameters)
+
+    # Add model-specific extra parameters (transformed for this parameterization)
+    extra_params = MODEL_EXTRA_PARAMS.get(base_model, [])
+    for param in extra_params:
+        # Transform param name (e.g., p_capture -> phi_capture for mean_odds)
+        transformed = param_strategy.transform_model_param(param)
+        valid_params.add(transformed)
+        # Also accept the original name as an alias
+        valid_params.add(param)
+
+    # Check for invalid parameters
+    invalid_params = set(mixture_params) - valid_params
+
+    if invalid_params:
+        # Build helpful error message
+        param_name = param_strategy.name
+        core_params = param_strategy.core_parameters
+        extra_info = ""
+
+        if extra_params:
+            transformed_extras = [
+                param_strategy.transform_model_param(p) for p in extra_params
+            ]
+            extra_info = (
+                f"\n  Model-specific ({base_model}): {transformed_extras}"
+            )
+
+        raise ValueError(
+            f"Invalid mixture_params for '{param_name}' "
+            f"parameterization: {sorted(invalid_params)}\n"
+            f"Valid parameters are:\n"
+            f"  Core ({param_name}): {core_params}{extra_info}\n"
+            f"\n"
+            f"Note: Derived parameters (like 'r' in mean_odds) "
+            f"cannot be mixture-specific since they are computed from other "
+            f"parameters, not sampled directly."
+        )
 
 
 # ------------------------------------------------------------------------------
