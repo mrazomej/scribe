@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 import numpy as np
 import jax.numpy as jnp
-from jax import random
+from jax import random, jit
 import numpyro
 from numpyro.infer import SVI, TraceMeanField_ELBO
 from rich.progress import (
@@ -196,25 +196,49 @@ def _run_with_early_stopping(
             loss=losses[-1] if losses else 0.0,
         )
 
-        for step in range(start_step, n_steps):
-            # Perform update step
+        # Only extract loss every check_every steps to avoid GPU sync overhead
+        # This is the key optimization: float(loss) forces device-to-host sync
+        loss_val = 0.0  # Last known loss for display
+        loss_display_interval = max(1, n_steps // 20)
+
+        # JIT compile the update function (critical for GPU performance!)
+        # This matches how NumPyro's svi.run() works internally
+        # 1. Define the update function (distinguishing between stable and
+        #    unstable updates)
+        def body_fn(svi_state):
             if stable_update:
-                svi_state, loss = svi.stable_update(svi_state, **model_args)
+                return svi.stable_update(svi_state, **model_args)
             else:
-                svi_state, loss = svi.update(svi_state, **model_args)
+                return svi.update(svi_state, **model_args)
 
-            loss_val = float(loss)
-            losses.append(loss_val)
+        # 2. JIT compile the update function
+        jit_body_fn = jit(body_fn)
 
-            # Update progress bar
-            pbar.update(task, advance=1, loss=loss_val)
+        # 3. Run the update loop
+        for step in range(start_step, n_steps):
+            # Perform update step (JIT compiled)
+            svi_state, loss = jit_body_fn(svi_state)
 
-            # Early stopping check (only if enabled and we have enough data)
-            if (
+            # Only extract loss when needed (reduces GPU sync overhead)
+            should_check = (
                 early_stopping.enabled
                 and step % early_stopping.check_every == 0
-                and len(losses) >= early_stopping.smoothing_window
-            ):
+            )
+            should_display = step % loss_display_interval == 0
+
+            if should_check or should_display:
+                loss_val = float(loss)
+                if should_check:
+                    losses.append(loss_val)
+
+            # Update progress bar
+            if should_display:
+                pbar.update(task, advance=1, loss=loss_val)
+            else:
+                pbar.update(task, advance=1)
+
+            # Early stopping check (only if enabled and we have enough data)
+            if should_check and len(losses) >= early_stopping.smoothing_window:
                 # Compute smoothed loss (moving average)
                 window_start = max(
                     0, len(losses) - early_stopping.smoothing_window
