@@ -2,7 +2,7 @@
 
 # --- Defaults ---
 defaults:
-  - data: singer
+  - data: ???  # Required: user must specify which dataset to use.
   - inference: svi
   - optional model: null  # Power users can use model=zinb, model=nbvcp, etc.
   - viz: default
