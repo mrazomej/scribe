@@ -4,7 +4,7 @@
 defaults:
   - data: singer
   - inference: svi
-  - model: nbdm
+  - optional model: null  # Power users can use model=zinb, model=nbvcp, etc.
   - viz: default
   - amortization@amortization.capture: null  # Optional: use 'capture' for amortized capture
   - _self_
@@ -12,15 +12,24 @@ defaults:
 # --- Data Loading ---
 # path is now in conf/data
 
+# --- Model Features ---
+# These flags determine the model type automatically:
+#   zero_inflation=false, variable_capture=false → nbdm (base model)
+#   zero_inflation=true,  variable_capture=false → zinb (zero-inflated)
+#   zero_inflation=false, variable_capture=true  → nbvcp (variable capture)
+#   zero_inflation=true,  variable_capture=true  → zinbvcp (both)
+zero_inflation: false    # Add zero-inflation gate (for excess zeros)
+variable_capture: false  # Add cell-specific capture probability
+
 # --- Model Configuration ---
-# Model type can be overridden via: model=zinb, model=nbvcp, etc.
-# Or set options directly below:
+# Power users can override the model directly: model=zinb, model=nbvcp, etc.
+# This takes precedence over the feature flags above.
 
 # Parameterization scheme
 # - "canonical" (or "standard"): Sample p ~ Beta, r ~ LogNormal directly
 # - "linked" (or "mean_prob"): Sample p ~ Beta, mu ~ LogNormal, derive r
 # - "odds_ratio" (or "mean_odds"): Sample phi ~ BetaPrime, mu ~ LogNormal
-parameterization: canonical
+parameterization: mean_odds
 
 # Use unconstrained parameterization (Normal + transform)
 unconstrained: false
@@ -69,12 +78,17 @@ seed: 42
 cells_axis: 0
 layer: null
 
+# --- Output Configuration ---
+# Optional custom output subdirectory (inside data directory)
+# If set, overrides the auto-generated directory name from config overrides
+output_dir: null
+
 # --- Hydra settings ---
 hydra:
   run:
-    dir: outputs/${data.name}/${model}/${inference.method}/${hydra:job.override_dirname}
+    dir: outputs/${data.name}/${inference.method}/${oc.select:output_dir,${hydra:job.override_dirname}}
   job:
-    name: ${data.name}_${model}_${inference.method}
+    name: ${data.name}_${inference.method}
     config:
       override_dirname:
         exclude_keys:
@@ -92,3 +106,4 @@ hydra:
           - viz.umap_opts
           - viz.heatmap_opts
           - viz.mixture_ppc_opts
+          - output_dir
