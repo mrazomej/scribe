@@ -36,6 +36,8 @@ Examples
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
+import jax.numpy as jnp
+
 from ..builders.parameter_specs import (
     BetaSpec,
     BetaPrimeSpec,
@@ -345,7 +347,7 @@ class MeanProbParameterization(Parameterization):
 
     def build_derived_params(self) -> List[DerivedParam]:
         """Build derived parameter: r = mu * (1 - p) / p."""
-        return [DerivedParam("r", lambda p, mu: mu * (1 - p) / p, ["p", "mu"])]
+        return [DerivedParam("r", _compute_r_from_mu_p, ["p", "mu"])]
 
 
 # ------------------------------------------------------------------------------
@@ -453,7 +455,7 @@ class MeanOddsParameterization(Parameterization):
     def build_derived_params(self) -> List[DerivedParam]:
         """Build derived parameters: p = 1/(1+phi), r = mu*phi."""
         return [
-            DerivedParam("r", lambda phi, mu: mu * phi, ["phi", "mu"]),
+            DerivedParam("r", _compute_r_from_mu_phi, ["phi", "mu"]),
             DerivedParam("p", lambda phi: 1.0 / (1.0 + phi), ["phi"]),
         ]
 
@@ -464,6 +466,93 @@ class MeanOddsParameterization(Parameterization):
         if param_name == "p_capture":
             return "phi_capture"
         return param_name
+
+
+# ==============================================================================
+# Helper Functions for Derived Parameters
+# ==============================================================================
+
+
+def _broadcast_scalar_for_mixture(
+    scalar_param: jnp.ndarray, gene_param: jnp.ndarray
+) -> jnp.ndarray:
+    """
+    Expand a scalar mixture parameter for broadcasting with gene-specific
+    params.
+
+    When a parameter is mixture-specific but not gene-specific (shape:
+    n_components,) and needs to broadcast with a parameter that is both
+    mixture-specific and gene-specific (shape: n_components, n_genes), we need
+    to expand the scalar parameter to (n_components, 1) for proper broadcasting.
+
+    Parameters
+    ----------
+    scalar_param : jnp.ndarray
+        Parameter that may need expansion. Shape can be:
+        - () for scalar (non-mixture)
+        - (n_components,) for mixture-specific, non-gene-specific
+    gene_param : jnp.ndarray
+        Gene-specific parameter. Shape can be:
+        - (n_genes,) for gene-specific (non-mixture)
+        - (n_components, n_genes) for mixture-specific and gene-specific
+
+    Returns
+    -------
+    jnp.ndarray
+        The scalar_param, possibly expanded to (n_components, 1) for broadcasting.
+    """
+    if (
+        scalar_param.ndim == 1
+        and gene_param.ndim == 2
+        and scalar_param.shape[0] == gene_param.shape[0]
+    ):
+        # Expand from (n_components,) to (n_components, 1) for broadcasting
+        return scalar_param[:, None]
+    return scalar_param
+
+
+# ------------------------------------------------------------------------------
+
+
+def _compute_r_from_mu_phi(phi: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
+    """Compute r = mu * phi with proper broadcasting for mixture models.
+
+    Parameters
+    ----------
+    phi : jnp.ndarray
+        Odds ratio parameter.
+    mu : jnp.ndarray
+        Mean parameter.
+
+    Returns
+    -------
+    jnp.ndarray
+        Dispersion parameter r = mu * phi.
+    """
+    phi = _broadcast_scalar_for_mixture(phi, mu)
+    return mu * phi
+
+
+# ------------------------------------------------------------------------------
+
+
+def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
+    """Compute r = mu * (1 - p) / p with proper broadcasting for mixture models.
+
+    Parameters
+    ----------
+    p : jnp.ndarray
+        Success probability parameter.
+    mu : jnp.ndarray
+        Mean parameter.
+
+    Returns
+    -------
+    jnp.ndarray
+        Dispersion parameter r = mu * (1 - p) / p.
+    """
+    p = _broadcast_scalar_for_mixture(p, mu)
+    return mu * (1 - p) / p
 
 
 # ==============================================================================
@@ -493,4 +582,8 @@ __all__ = [
     "MeanProbParameterization",
     "MeanOddsParameterization",
     "PARAMETERIZATIONS",
+    # Helper functions for derived parameter broadcasting
+    "_broadcast_scalar_for_mixture",
+    "_compute_r_from_mu_phi",
+    "_compute_r_from_mu_p",
 ]
