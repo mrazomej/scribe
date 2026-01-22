@@ -808,7 +808,9 @@ def plot_correlation_heatmap(results, figs_dir, cfg, viz_cfg):
 
     # Determine which parameter to use based on parameterization
     parameterization = results.model_config.parameterization
-    if parameterization in ["linked", "odds_ratio"]:
+    # (standard, canonical) = r
+    # (linked, mean_prob, odds_ratio, mean_odds) = mu
+    if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
         param_name = "mu"
     else:
         param_name = "r"
@@ -1003,7 +1005,9 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
 
     # Determine which parameter to use based on parameterization
     parameterization = results.model_config.parameterization
-    if parameterization in ["linked", "odds_ratio"]:
+    # (standard, canonical) = r
+    # (linked, mean_prob, odds_ratio, mean_odds) = mu
+    if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
         param_name = "mu"
     else:
         param_name = "r"
