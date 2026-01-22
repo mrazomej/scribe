@@ -91,21 +91,36 @@ console = Console()
 warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
 warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 
+# ==============================================================================
+# Custom Hydra Resolvers
+# ==============================================================================
+
+# Register custom Hydra resolver to sanitize directory names
+# This removes brackets [] which cause issues with Orbax checkpoint library
+OmegaConf.register_new_resolver(
+    "sanitize_dirname",
+    lambda x: x.replace("[", "").replace("]", "") if isinstance(x, str) else x,
+    replace=True,
+)
+
+# ------------------------------------------------------------------------------
+
 
 def _resolve_model_type(cfg: DictConfig) -> str:
     """Resolve the model type from config.
 
     The model type is determined by one of two methods:
 
-    1. **Feature flags (recommended)**: Use `zero_inflation` and `variable_capture`
-       boolean flags to automatically derive the model type:
+    1. **Feature flags (recommended)**: Use `zero_inflation` and
+       `variable_capture` boolean flags to automatically derive the model type:
        - zero_inflation=false, variable_capture=false → nbdm
        - zero_inflation=true,  variable_capture=false → zinb
        - zero_inflation=false, variable_capture=true  → nbvcp
        - zero_inflation=true,  variable_capture=true  → zinbvcp
 
-    2. **Direct model specification (power users)**: Set `model=nbdm|zinb|nbvcp|zinbvcp`
-       directly. This takes precedence over the feature flags.
+    2. **Direct model specification (power users)**: Set
+       `model=nbdm|zinb|nbvcp|zinbvcp` directly. This takes precedence over the
+       feature flags.
 
     Returns the appropriate model type string.
     """
@@ -129,6 +144,9 @@ def _resolve_model_type(cfg: DictConfig) -> str:
         return "nbdm"
 
 
+# ------------------------------------------------------------------------------
+
+
 def _build_priors_dict(priors_cfg):
     """Convert OmegaConf priors config to dict, filtering out None values."""
     if priors_cfg is None:
@@ -140,6 +158,11 @@ def _build_priors_dict(priors_cfg):
         for k, v in priors.items()
         if v is not None
     } or None
+
+
+# ==============================================================================
+# Main Function
+# ==============================================================================
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
@@ -198,6 +221,8 @@ def main(cfg: DictConfig) -> None:
 
     hydra_cfg = HydraConfig.get()
     output_dir = hydra_cfg.runtime.output_dir
+    # Note: output_dir is already sanitized by the sanitize_dirname resolver
+    # in config.yaml, so brackets are removed before Hydra creates the directory
 
     if "early_stopping" in inference_cfg and inference_cfg["early_stopping"]:
         checkpoint_dir = os.path.join(output_dir, "checkpoints")
