@@ -6,6 +6,7 @@ enabling resumable training and persistence of best parameters.
 """
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import orbax.checkpoint as ocp
+
+# Suppress verbose Orbax/absl INFO logs (they clutter the output)
+logging.getLogger("absl").setLevel(logging.WARNING)
 
 # ==============================================================================
 # CheckpointMetadata class
