@@ -177,7 +177,7 @@ def _run_with_early_stopping(
             best_loss=best_loss,
         )
 
-    # Progress bar setup with relative improvement display
+    # Progress bar setup
     progress_ctx = Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
@@ -185,7 +185,6 @@ def _run_with_early_stopping(
         MofNCompleteColumn(),
         TimeRemainingColumn(),
         TextColumn("loss: {task.fields[loss]:.4e}"),
-        TextColumn("Δ: {task.fields[delta_pct]:.4f}%"),
         disable=not progress,
     )
 
@@ -195,13 +194,11 @@ def _run_with_early_stopping(
             total=n_steps,
             completed=start_step,
             loss=losses[-1] if losses else 0.0,
-            delta_pct=0.0,
         )
 
         # Only extract loss every check_every steps to avoid GPU sync overhead
         # This is the key optimization: float(loss) forces device-to-host sync
         loss_val = 0.0  # Last known loss for display
-        delta_pct = 0.0  # Relative improvement percentage for display
         loss_display_interval = max(1, n_steps // 20)
         eps = 1e-8  # Small constant to avoid division by zero
 
@@ -237,7 +234,7 @@ def _run_with_early_stopping(
 
             # Update progress bar
             if should_display:
-                pbar.update(task, advance=1, loss=loss_val, delta_pct=delta_pct)
+                pbar.update(task, advance=1, loss=loss_val)
             else:
                 pbar.update(task, advance=1)
 
@@ -249,12 +246,14 @@ def _run_with_early_stopping(
                 )
                 smoothed_loss = np.mean(losses[window_start:])
 
-                # Compute relative improvement (as percentage, e.g., 0.5 = 0.5%)
+                # Compute relative improvement over best (as percentage)
                 # positive = improving, negative = getting worse
-                delta_pct = 100.0 * (best_loss - smoothed_loss) / (best_loss + eps)
+                improvement_pct = (
+                    100.0 * (best_loss - smoothed_loss) / (best_loss + eps)
+                )
 
                 # Check for improvement using relative threshold (both in %)
-                if delta_pct > early_stopping.min_delta_pct:
+                if improvement_pct > early_stopping.min_delta_pct:
                     # Improvement detected
                     best_loss = smoothed_loss
                     if early_stopping.restore_best:
