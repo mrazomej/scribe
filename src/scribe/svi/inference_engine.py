@@ -180,29 +180,29 @@ def _run_with_early_stopping(
             best_loss=best_loss,
         )
 
-    # Progress bar setup
+    # Progress bar setup - matches NumPyro's format showing loss range
     progress_ctx = Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
         MofNCompleteColumn(),
         TimeRemainingColumn(),
-        TextColumn("loss: {task.fields[loss]:.4e}"),
+        TextColumn("{task.fields[loss_info]}"),
         disable=not progress,
     )
 
     with progress_ctx as pbar:
+        # Track initial loss for display (like NumPyro)
+        init_loss = losses[0] if losses else 0.0
+        loss_display_interval = max(1, n_steps // 20)
+
         task = pbar.add_task(
             "SVI optimization" + (" (resumed)" if resumed else ""),
             total=n_steps,
             completed=start_step,
-            loss=losses[-1] if losses else 0.0,
+            loss_info=f"init loss: {init_loss:.4e}",
         )
 
-        # Only extract loss every check_every steps to avoid GPU sync overhead
-        # This is the key optimization: float(loss) forces device-to-host sync
-        loss_val = 0.0  # Last known loss for display
-        loss_display_interval = max(1, n_steps // 20)
         eps = 1e-8  # Small constant to avoid division by zero
 
         # JIT compile the update function (critical for GPU performance!)
@@ -227,10 +227,22 @@ def _run_with_early_stopping(
             loss_val = float(loss)
             losses.append(loss_val)
 
-            # Update progress bar periodically
+            # Track initial loss on first step
+            if step == start_step:
+                init_loss = loss_val
+
+            # Update progress bar periodically with avg loss over recent batch
+            # Format matches NumPyro: "init loss: X, avg. loss [start-end]: X"
             should_display = step % loss_display_interval == 0
             if should_display:
-                pbar.update(task, advance=1, loss=loss_val)
+                batch_start = max(0, len(losses) - loss_display_interval)
+                batch_end = len(losses)
+                avg_loss = np.mean(losses[batch_start:batch_end])
+                loss_info = (
+                    f"init loss: {init_loss:.4e}, "
+                    f"avg. loss [{batch_start + 1}-{batch_end}]: {avg_loss:.4e}"
+                )
+                pbar.update(task, advance=1, loss_info=loss_info)
             else:
                 pbar.update(task, advance=1)
 
