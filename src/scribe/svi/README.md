@@ -303,6 +303,138 @@ cell_subset = results[:500, :]  # First 500 cells
 - Preservation of cell and gene metadata
 - Support for unstructured annotations
 
+#### Mixin Architecture
+
+The `ScribeSVIResults` class is implemented using a mixin-based architecture to
+improve maintainability and code organization. The class inherits from 9
+specialized mixins, each handling a specific domain of functionality. This
+design allows for better code organization, easier maintenance, and clearer
+separation of concerns.
+
+**Architecture Overview:**
+
+```
+ScribeSVIResults
+├── CoreResultsMixin          # Basic initialization
+├── ModelHelpersMixin         # Model/guide access
+├── ParameterExtractionMixin  # Parameter extraction
+├── GeneSubsettingMixin       # Gene-based indexing
+├── ComponentMixin            # Mixture component operations
+├── SamplingMixin              # Posterior/predictive sampling
+├── LikelihoodMixin            # Log-likelihood computation
+├── MixtureAnalysisMixin       # Mixture model analysis
+└── NormalizationMixin         # Count normalization
+```
+
+**Mixin Details:**
+
+1. **CoreResultsMixin** (`_core.py`)
+   - Purpose: Basic initialization and construction
+   - Methods:
+     - `__post_init__()`: Validates model configuration and sets n_components
+     - `from_anndata()`: Classmethod to create results from AnnData objects
+   - Dependencies: None (base functionality)
+
+2. **ModelHelpersMixin** (`_model_helpers.py`)
+   - Purpose: Internal helpers for model/guide access
+   - Methods:
+     - `_model_and_guide()`: Returns model and guide functions
+     - `_parameterization()`: Returns parameterization type string
+     - `_unconstrained()`: Returns whether parameterization is unconstrained
+     - `_log_likelihood_fn()`: Returns log-likelihood function for model type
+   - Dependencies: None (simple accessors)
+
+3. **ParameterExtractionMixin** (`_parameter_extraction.py`)
+   - Purpose: Extract parameters from variational distributions
+   - Methods:
+     - `get_distributions()`: Get posterior distributions (NumPyro or SciPy)
+     - `get_map()`: Get maximum a posteriori (MAP) estimates
+     - `_compute_canonical_parameters()`: Convert to canonical (p, r) form
+     - `_convert_to_canonical()`: Deprecated conversion method
+   - Dependencies: Uses `ModelHelpersMixin` methods
+
+4. **GeneSubsettingMixin** (`_gene_subsetting.py`)
+   - Purpose: Subset results by gene indices
+   - Methods:
+     - `__getitem__()`: Enable indexing `results[:, genes]`
+     - `_subset_params()`: Subset parameter dictionary by genes
+     - `_subset_posterior_samples()`: Subset posterior samples by genes
+     - `_subset_predictive_samples()`: Subset predictive samples by genes
+     - `_create_subset()`: Create new instance with gene subset
+     - `_subset_gene_params()`: Static helper for gene parameter subsetting
+   - Dependencies: None (self-contained)
+
+5. **ComponentMixin** (`_component.py`)
+   - Purpose: Mixture model component operations
+   - Methods:
+     - `get_component()`: Extract single component view
+     - `_subset_params_by_component()`: Subset params by component index
+     - `_subset_posterior_samples_by_component()`: Subset samples by component
+     - `_create_component_subset()`: Create component-specific instance
+   - Dependencies: Uses `GeneSubsettingMixin` for subsetting logic
+
+6. **SamplingMixin** (`_sampling.py`)
+   - Purpose: Posterior and predictive sampling
+   - Methods:
+     - `get_posterior_samples()`: Sample from variational posterior
+     - `get_predictive_samples()`: Generate predictive samples
+     - `get_ppc_samples()`: Posterior predictive check samples
+     - `get_map_ppc_samples()`: MAP-based predictive samples with batching
+     - `_sample_standard_model()`: Helper for standard (non-mixture) models
+     - `_sample_mixture_model()`: Helper for mixture models
+   - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
+
+7. **LikelihoodMixin** (`_likelihood.py`)
+   - Purpose: Log-likelihood computations
+   - Methods:
+     - `log_likelihood()`: Compute using posterior samples
+     - `log_likelihood_map()`: Compute using MAP estimates
+   - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
+
+8. **MixtureAnalysisMixin** (`_mixture_analysis.py`)
+   - Purpose: Mixture model analysis methods
+   - Methods:
+     - `mixture_component_entropy()`: Entropy of component assignments
+     - `assignment_entropy_map()`: MAP-based assignment entropy
+     - `cell_type_probabilities()`: Component probabilities from samples
+     - `cell_type_probabilities_map()`: Component probabilities from MAP
+   - Dependencies: Uses `LikelihoodMixin`
+
+9. **NormalizationMixin** (`_normalization.py`)
+   - Purpose: Count normalization methods
+   - Methods:
+     - `normalize_counts()`: Dirichlet-based normalization
+     - `fit_logistic_normal()`: Logistic-Normal distribution fitting
+   - Dependencies: Uses `ParameterExtractionMixin` (for canonical conversion)
+
+**Benefits of Mixin Architecture:**
+
+- **Maintainability**: Each mixin is focused on a single responsibility (~200-500 lines)
+- **Readability**: Easier to find and understand specific functionality
+- **Testability**: Can test mixin functionality in isolation if needed
+- **Extensibility**: Easy to add new functionality by creating new mixins
+- **No Breaking Changes**: Public API remains identical - all methods accessible on `ScribeSVIResults`
+
+**File Organization:**
+
+```
+src/scribe/svi/
+├── results.py              # Main class (composed of mixins, ~108 lines)
+├── _core.py                # CoreResultsMixin
+├── _parameter_extraction.py # ParameterExtractionMixin
+├── _gene_subsetting.py     # GeneSubsettingMixin
+├── _component.py           # ComponentMixin
+├── _model_helpers.py       # ModelHelpersMixin
+├── _sampling.py            # SamplingMixin
+├── _likelihood.py          # LikelihoodMixin
+├── _mixture_analysis.py    # MixtureAnalysisMixin
+└── _normalization.py       # NormalizationMixin
+```
+
+**Note:** Mixin files use the `_` prefix to indicate they are internal
+implementation details. Users should interact with `ScribeSVIResults` directly;
+the mixin structure is transparent to the public API.
+
 ### SVIResultsFactory (`results_factory.py`)
 
 Factory class for creating and packaging SVI results:
