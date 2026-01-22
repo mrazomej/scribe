@@ -298,15 +298,18 @@ class ScribeVAEResults(ScribeSVIResults):
 
         if unconstrained:
             # For unconstrained variants, import the _unconstrained modules
-            if self.model_config.parameterization == "standard":
+            if self.model_config.parameterization in ("standard", "canonical"):
                 from ..models.vae_standard_unconstrained import (
                     get_posterior_distributions as get_dist_fn,
                 )
-            elif self.model_config.parameterization == "linked":
+            elif self.model_config.parameterization in ("linked", "mean_prob"):
                 from ..models.vae_linked_unconstrained import (
                     get_posterior_distributions as get_dist_fn,
                 )
-            elif self.model_config.parameterization == "odds_ratio":
+            elif self.model_config.parameterization in (
+                "odds_ratio",
+                "mean_odds",
+            ):
                 from ..models.vae_odds_ratio_unconstrained import (
                     get_posterior_distributions as get_dist_fn,
                 )
@@ -316,15 +319,18 @@ class ScribeVAEResults(ScribeSVIResults):
                 )
         else:
             # For constrained variants, import the regular modules
-            if self.model_config.parameterization == "standard":
+            if self.model_config.parameterization in ("standard", "canonical"):
                 from ..models.vae_standard import (
                     get_posterior_distributions as get_dist_fn,
                 )
-            elif self.model_config.parameterization == "linked":
+            elif self.model_config.parameterization in ("linked", "mean_prob"):
                 from ..models.vae_linked import (
                     get_posterior_distributions as get_dist_fn,
                 )
-            elif self.model_config.parameterization == "odds_ratio":
+            elif self.model_config.parameterization in (
+                "odds_ratio",
+                "mean_odds",
+            ):
                 from ..models.vae_odds_ratio import (
                     get_posterior_distributions as get_dist_fn,
                 )
@@ -543,7 +549,10 @@ class ScribeVAEResults(ScribeSVIResults):
                         loc = param1.squeeze(-1)
                         scale = jnp.exp(param2.squeeze(-1))
 
-                        if self.model_config.parameterization == "odds_ratio":
+                        if self.model_config.parameterization in (
+                            "odds_ratio",
+                            "mean_odds",
+                        ):
                             # Sample from Normal distribution
                             phi_capture_unconstrained = dist.Normal(
                                 loc, scale
@@ -702,23 +711,29 @@ class ScribeVAEResults(ScribeSVIResults):
 
         # Store decoded samples with right keys
         if getattr(self.model_config, "unconstrained", False):
-            if self.model_config.parameterization == "standard":
+            if self.model_config.parameterization in ("standard", "canonical"):
                 posterior_samples["r_unconstrained"] = decoded_samples
                 posterior_samples["r"] = jnp.exp(decoded_samples)
-            elif self.model_config.parameterization == "linked":
+            elif self.model_config.parameterization in ("linked", "mean_prob"):
                 posterior_samples["mu_unconstrained"] = decoded_samples
                 posterior_samples["mu"] = jnp.exp(decoded_samples)
-            elif self.model_config.parameterization == "odds_ratio":
+            elif self.model_config.parameterization in (
+                "odds_ratio",
+                "mean_odds",
+            ):
                 posterior_samples["mu_unconstrained"] = decoded_samples
                 posterior_samples["mu"] = jnp.exp(decoded_samples)
         else:
-            if self.model_config.parameterization == "standard":
+            if self.model_config.parameterization in ("standard", "canonical"):
                 posterior_samples["log_r"] = decoded_samples
                 posterior_samples["r"] = jnp.exp(decoded_samples)
-            elif self.model_config.parameterization == "linked":
+            elif self.model_config.parameterization in ("linked", "mean_prob"):
                 posterior_samples["log_mu"] = decoded_samples
                 posterior_samples["mu"] = jnp.exp(decoded_samples)
-            elif self.model_config.parameterization == "odds_ratio":
+            elif self.model_config.parameterization in (
+                "odds_ratio",
+                "mean_odds",
+            ):
                 posterior_samples["log_mu"] = decoded_samples
                 posterior_samples["mu"] = jnp.exp(decoded_samples)
 
@@ -841,7 +856,7 @@ class ScribeVAEResults(ScribeSVIResults):
         # Store decoded samples with right keys
         if getattr(self.model_config, "unconstrained", False):
             # Handle unconstrained parameterization
-            if self.model_config.parameterization == "standard":
+            if self.model_config.parameterization in ("standard", "canonical"):
                 # Get the log-transformed r values
                 posterior_samples["r_unconstrained"] = decoded_samples
                 # Get the r values
@@ -850,7 +865,7 @@ class ScribeVAEResults(ScribeSVIResults):
                 posterior_samples["p_unconstrained"] = posterior_samples[
                     "p_unconstrained"
                 ][:, None]
-            elif self.model_config.parameterization == "linked":
+            elif self.model_config.parameterization in ("linked", "mean_prob"):
                 # Get the log-transformed mu values
                 posterior_samples["mu_unconstrained"] = decoded_samples
                 # Get the mu values
@@ -859,7 +874,10 @@ class ScribeVAEResults(ScribeSVIResults):
                 posterior_samples["p_unconstrained"] = posterior_samples[
                     "p_unconstrained"
                 ][:, None]
-            elif self.model_config.parameterization == "odds_ratio":
+            elif self.model_config.parameterization in (
+                "odds_ratio",
+                "mean_odds",
+            ):
                 # Get the log-transformed mu values
                 posterior_samples["mu_unconstrained"] = decoded_samples
                 # Get the mu values
@@ -870,21 +888,24 @@ class ScribeVAEResults(ScribeSVIResults):
                 ][:, None]
         else:
             # Handle constrained parameterization
-            if self.model_config.parameterization == "standard":
+            if self.model_config.parameterization in ("standard", "canonical"):
                 # Get the log-transformed r values
                 posterior_samples["log_r"] = decoded_samples
                 # Get the r values
                 posterior_samples["r"] = jnp.exp(decoded_samples)
                 # Make p samples compatible in shape with r samples
                 posterior_samples["p"] = posterior_samples["p"][:, None]
-            elif self.model_config.parameterization == "linked":
+            elif self.model_config.parameterization in ("linked", "mean_prob"):
                 # Get the log-transformed mu values
                 posterior_samples["log_mu"] = decoded_samples
                 # Get the mu values
                 posterior_samples["mu"] = jnp.exp(decoded_samples)
                 # Make p samples compatible in shape with r samples
                 posterior_samples["p"] = posterior_samples["p"][:, None]
-            elif self.model_config.parameterization == "odds_ratio":
+            elif self.model_config.parameterization in (
+                "odds_ratio",
+                "mean_odds",
+            ):
                 # Get the log-transformed mu values
                 posterior_samples["log_mu"] = decoded_samples
                 # Get the mu values

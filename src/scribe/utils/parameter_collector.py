@@ -205,13 +205,13 @@ class ParameterCollector:
             }
 
             # Add parameterization-specific unconstrained priors
-            if parameterization == "linked":
+            if parameterization in ("linked", "mean_prob"):
                 mapped_priors.update(
                     {
                         "mu_unconstrained_prior": user_priors.get("mu_prior"),
                     }
                 )
-            elif parameterization == "odds_ratio":
+            elif parameterization in ("odds_ratio", "mean_odds"):
                 mapped_priors.update(
                     {
                         "phi_unconstrained_prior": user_priors.get("phi_prior"),

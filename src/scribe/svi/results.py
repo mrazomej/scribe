@@ -371,8 +371,8 @@ class ScribeSVIResults:
         parameterization = self.model_config.parameterization
         unconstrained = self.model_config.unconstrained
 
-        # Handle linked parameterization
-        if parameterization == "linked":
+        # Handle linked / mean_prob parameterization
+        if parameterization in ("linked", "mean_prob"):
             if "mu" in estimates and "p" in estimates and "r" not in estimates:
                 if verbose:
                     print(
@@ -392,8 +392,8 @@ class ScribeSVIResults:
 
                 estimates["r"] = estimates["mu"] * (1 - p_reshaped) / p_reshaped
 
-        # Handle odds_ratio parameterization
-        elif parameterization == "odds_ratio":
+        # Handle odds_ratio / mean_odds parameterization
+        elif parameterization in ("odds_ratio", "mean_odds"):
             # Convert phi to p if needed
             if "phi" in estimates and "p" not in estimates:
                 if verbose:
