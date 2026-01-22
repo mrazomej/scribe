@@ -52,13 +52,22 @@ Detailed script explanation:
 
 Typical usage:
 
-    $ python infer.py data=<your_data_config> model=nbdm inference=svi
+    # Basic model (default: mean_odds parameterization)
+    $ python infer.py data=<your_data_config>
 
-    # With model options
-    $ python infer.py data=singer model=zinb parameterization=linked n_components=3
+    # Enable model features with intuitive flags
+    $ python infer.py data=singer variable_capture=true
+    $ python infer.py data=singer zero_inflation=true
+    $ python infer.py data=singer zero_inflation=true variable_capture=true
+
+    # Custom output directory
+    $ python infer.py data=singer variable_capture=true output_dir=my_experiment
+
+    # Power users can still use model names directly
+    $ python infer.py data=singer model=zinbvcp
 
     # Override inference parameters
-    $ python infer.py data=singer model=nbdm inference.n_steps=100000 inference.batch_size=512
+    $ python infer.py data=singer inference.n_steps=100000 inference.batch_size=512
 
 This command will launch SCRIBE's probabilistic inference engine using your
 chosen configuration, automatically manage outputs, and save a binary results
@@ -83,51 +92,41 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
 warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 
 
-def _handle_deprecated_flags(cfg: DictConfig) -> str:
-    """Handle deprecated boolean flags and convert to model type.
+def _resolve_model_type(cfg: DictConfig) -> str:
+    """Resolve the model type from config.
 
-    Deprecated flags: zero_inflated, variable_capture, mixture_model
+    The model type is determined by one of two methods:
+
+    1. **Feature flags (recommended)**: Use `zero_inflation` and `variable_capture`
+       boolean flags to automatically derive the model type:
+       - zero_inflation=false, variable_capture=false → nbdm
+       - zero_inflation=true,  variable_capture=false → zinb
+       - zero_inflation=false, variable_capture=true  → nbvcp
+       - zero_inflation=true,  variable_capture=true  → zinbvcp
+
+    2. **Direct model specification (power users)**: Set `model=nbdm|zinb|nbvcp|zinbvcp`
+       directly. This takes precedence over the feature flags.
 
     Returns the appropriate model type string.
     """
-    # Check for deprecated flags
-    has_deprecated = any(
-        [
-            "zero_inflated" in cfg,
-            "variable_capture" in cfg,
-            "mixture_model" in cfg,
-        ]
-    )
+    # Check if model is explicitly set (power user override)
+    # Since defaults use `optional model: null`, a non-null model means explicit override
+    explicit_model = cfg.get("model", None)
+    if explicit_model is not None:
+        return explicit_model
 
-    if has_deprecated:
-        warnings.warn(
-            "The 'zero_inflated', 'variable_capture', and 'mixture_model' flags are deprecated. "
-            "Please use 'model' parameter instead:\n"
-            "  - model=nbdm (basic)\n"
-            "  - model=zinb (zero-inflated)\n"
-            "  - model=nbvcp (variable capture)\n"
-            "  - model=zinbvcp (zero-inflated + variable capture)\n"
-            "  - n_components=N for mixture models\n"
-            "These flags will be removed in a future version.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+    # Derive model from feature flags
+    zero_inflation = cfg.get("zero_inflation", False)
+    variable_capture = cfg.get("variable_capture", False)
 
-        # Convert deprecated flags to model type
-        zero_inflated = cfg.get("zero_inflated", False)
-        variable_capture = cfg.get("variable_capture", False)
-
-        if zero_inflated and variable_capture:
-            return "zinbvcp"
-        elif zero_inflated:
-            return "zinb"
-        elif variable_capture:
-            return "nbvcp"
-        else:
-            return "nbdm"
-
-    # Return the model from config, or default to nbdm
-    return cfg.get("model", "nbdm")
+    if zero_inflation and variable_capture:
+        return "zinbvcp"
+    elif zero_inflation:
+        return "zinb"
+    elif variable_capture:
+        return "nbvcp"
+    else:
+        return "nbdm"
 
 
 def _build_priors_dict(priors_cfg):
@@ -211,7 +210,7 @@ def main(cfg: DictConfig) -> None:
     priors = _build_priors_dict(cfg.get("priors"))
 
     # Handle deprecated flags (zero_inflated, variable_capture, mixture_model)
-    model_type = _handle_deprecated_flags(cfg)
+    model_type = _resolve_model_type(cfg)
 
     # Handle deprecated n_components from mixture_model flag
     n_components = cfg.get("n_components")
