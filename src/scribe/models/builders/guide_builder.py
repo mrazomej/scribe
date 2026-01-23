@@ -33,7 +33,7 @@ scribe.models.builders.parameter_specs : Parameter specification classes.
 scribe.models.components.guide_families : Guide family markers.
 """
 
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import jax
 import jax.numpy as jnp
@@ -657,6 +657,7 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
+    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific Beta parameter (e.g., p_capture).
@@ -678,6 +679,8 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
+    amortizer_module : Optional[Any]
+        Pre-registered amortizer module. If None, will register it.
 
     Returns
     -------
@@ -692,8 +695,10 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Register the amortizer with NumPyro so its parameters are optimized
-    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Use pre-registered module if provided, otherwise register it
+    # (should only happen if called outside the normal guide builder flow)
+    if amortizer_module is None:
+        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
@@ -719,6 +724,7 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
+    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific BetaPrime parameter (e.g., phi_capture).
@@ -740,6 +746,8 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
+    amortizer_module : Optional[Any]
+        Pre-registered amortizer module. If None, will register it.
 
     Returns
     -------
@@ -754,8 +762,10 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Register the amortizer with NumPyro so its parameters are optimized
-    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Use pre-registered module if provided, otherwise register it
+    # (should only happen if called outside the normal guide builder flow)
+    if amortizer_module is None:
+        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
@@ -781,6 +791,7 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
+    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific SigmoidNormal parameter (e.g., p_capture).
@@ -803,6 +814,8 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
+    amortizer_module : Optional[Any]
+        Pre-registered amortizer module. If None, will register it.
 
     Returns
     -------
@@ -817,8 +830,10 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Register the amortizer with NumPyro so its parameters are optimized
-    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Use pre-registered module if provided, otherwise register it
+    # (should only happen if called outside the normal guide builder flow)
+    if amortizer_module is None:
+        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
@@ -847,6 +862,7 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
+    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific ExpNormal parameter (e.g., phi_capture).
@@ -869,6 +885,8 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
+    amortizer_module : Optional[Any]
+        Pre-registered amortizer module. If None, will register it.
 
     Returns
     -------
@@ -883,8 +901,10 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Register the amortizer with NumPyro so its parameters are optimized
-    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Use pre-registered module if provided, otherwise register it
+    # (should only happen if called outside the normal guide builder flow)
+    if amortizer_module is None:
+        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
@@ -1211,9 +1231,21 @@ class GuideBuilder:
             # ================================================================
             # 3. Setup guides for CELL-SPECIFIC parameters (inside cell plate)
             #    Handle batch indexing for non-amortized guides
+            #    Register amortizer modules ONCE before the plate loop
             # ================================================================
             cell_specs = [s for s in specs if s.is_cell_specific]
             if cell_specs:
+                # Register amortizer modules once before the plate loop
+                # This prevents re-registration on every cell iteration
+                amortizer_modules = {}
+                for spec in cell_specs:
+                    guide_family = spec.guide_family or MeanFieldGuide()
+                    if isinstance(guide_family, AmortizedGuide):
+                        module_name = f"{spec.name}_amortizer"
+                        amortizer_modules[spec.name] = nnx_module(
+                            module_name, guide_family.amortizer
+                        )
+
                 if batch_size is None:
                     # Full sampling
                     with numpyro.plate("cells", n_cells):
@@ -1226,6 +1258,9 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=None,
+                                amortizer_module=amortizer_modules.get(
+                                    spec.name
+                                ),
                             )
                 else:
                     # Batch sampling
@@ -1241,6 +1276,9 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=idx,
+                                amortizer_module=amortizer_modules.get(
+                                    spec.name
+                                ),
                             )
 
         return guide
