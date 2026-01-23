@@ -25,7 +25,7 @@ class NormalizationMixin:
 
     def normalize_counts(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples_dirichlet: int = 1,
         fit_distribution: bool = False,
         store_samples: bool = True,
@@ -54,8 +54,9 @@ class NormalizationMixin:
 
         Parameters
         ----------
-        rng_key : random.PRNGKey, default=random.PRNGKey(42)
-            JAX random number generator key
+        rng_key : random.PRNGKey, optional
+            JAX random number generator key. Defaults to random.PRNGKey(42) if
+            None
         n_samples_dirichlet : int, default=1000
             Number of samples to draw from each Dirichlet distribution
         fit_distribution : bool, default=True
@@ -144,6 +145,10 @@ class NormalizationMixin:
         # Convert to canonical form to ensure r parameter is available
         self._convert_to_canonical()
 
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
         # Use the shared normalization function
         return normalize_counts_from_posterior(
             posterior_samples=self.posterior_samples,
@@ -162,7 +167,7 @@ class NormalizationMixin:
 
     def fit_logistic_normal(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples_dirichlet: int = 1,
         rank: Optional[int] = None,
         distribution_type: str = "softmax",
@@ -328,6 +333,10 @@ class NormalizationMixin:
         from ..core.normalization_logistic import (
             fit_logistic_normal_from_posterior,
         )
+
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
 
         # Use the shared fitting function with distribution class
         return fit_logistic_normal_from_posterior(

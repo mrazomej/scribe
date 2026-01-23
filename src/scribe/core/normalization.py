@@ -18,7 +18,7 @@ from ..utils import numpyro_to_scipy
 def normalize_counts_from_posterior(
     posterior_samples: Dict[str, jnp.ndarray],
     n_components: Optional[int] = None,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    rng_key: Optional[random.PRNGKey] = None,
     n_samples_dirichlet: int = 1,
     fit_distribution: bool = True,
     store_samples: bool = False,
@@ -41,8 +41,8 @@ def normalize_counts_from_posterior(
         Dictionary containing posterior samples, must include 'r' parameter
     n_components : Optional[int], default=None
         Number of mixture components. If None, assumes non-mixture model.
-    rng_key : random.PRNGKey, default=random.PRNGKey(42)
-        JAX random number generator key
+    rng_key : random.PRNGKey, optional
+        JAX random number generator key. Defaults to random.PRNGKey(42) if None
     n_samples_dirichlet : int, default=1000
         Number of samples to draw from each Dirichlet distribution
     fit_distribution : bool, default=True
@@ -100,6 +100,10 @@ def normalize_counts_from_posterior(
     ValueError
         If 'r' parameter is not found in posterior_samples
     """
+    # Create default RNG key if not provided (lazy initialization)
+    if rng_key is None:
+        rng_key = random.PRNGKey(42)
+
     # Validate inputs
     if "r" not in posterior_samples:
         raise ValueError(

@@ -19,7 +19,7 @@ def sample_variational_posterior(
     params: Dict,
     model: Callable,
     model_args: Dict,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    rng_key: Optional[random.PRNGKey] = None,
     n_samples: int = 100,
     return_sites: Optional[Union[str, List[str]]] = None,
     counts: Optional[jnp.ndarray] = None,
@@ -56,6 +56,10 @@ def sample_variational_posterior(
     Dict
         Dictionary containing samples from the variational posterior
     """
+    # Create default RNG key if not provided (lazy initialization)
+    if rng_key is None:
+        rng_key = random.PRNGKey(42)
+
     # Add counts to model_args if provided (needed for amortized guides)
     if counts is not None:
         model_args = {**model_args, "counts": counts}

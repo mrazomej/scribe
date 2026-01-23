@@ -640,7 +640,7 @@ class ScribeVAEResults(ScribeSVIResults):
 
     def get_posterior_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 100,
         store_samples: bool = True,
         canonical: bool = False,
@@ -752,7 +752,7 @@ class ScribeVAEResults(ScribeSVIResults):
     def get_posterior_samples_conditioned_on_data(
         self,
         counts: jnp.ndarray,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
@@ -927,7 +927,7 @@ class ScribeVAEResults(ScribeSVIResults):
 
     def get_predictive_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
@@ -943,6 +943,10 @@ class ScribeVAEResults(ScribeSVIResults):
             "decoder": self.vae_model.decoder,
             "decoupled_prior": self.vae_model.decoupled_prior,
         }
+
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
 
         # Check if posterior samples exist
         if self.posterior_samples is None:
