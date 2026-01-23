@@ -356,11 +356,15 @@ class ScribeMCMCSubset:
 
     def get_ppc_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+        
         predictive_samples = _generate_ppc_samples(
             self.get_posterior_samples(canonical=True),
             self.model_type,
@@ -380,12 +384,16 @@ class ScribeMCMCSubset:
 
     def get_prior_predictive_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
         """Generate prior predictive samples using the model."""
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+        
         # Generate prior predictive samples
         prior_predictive_samples = _generate_prior_predictive_samples(
             self.model_type,
@@ -407,7 +415,7 @@ class ScribeMCMCSubset:
 
     def normalize_counts(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples_dirichlet: int = 1,
         fit_distribution: bool = False,
         store_samples: bool = True,
@@ -417,6 +425,10 @@ class ScribeMCMCSubset:
         verbose: bool = True,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """Normalize counts using posterior samples of the r parameter."""
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+        
         # Get canonical samples
         posterior_samples = self.get_posterior_samples(canonical=True)
 
@@ -1013,7 +1025,7 @@ class ScribeMCMCResults(MCMC):
 
     def get_ppc_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
@@ -1028,7 +1040,7 @@ class ScribeMCMCResults(MCMC):
         Parameters
         ----------
         rng_key : random.PRNGKey, optional
-            JAX random number generator key (default: PRNGKey(42))
+            JAX random number generator key. Defaults to random.PRNGKey(42) if None
         batch_size : int, optional
             Batch size for generating samples. If None, uses full dataset.
         store_samples : bool, optional
@@ -1040,6 +1052,10 @@ class ScribeMCMCResults(MCMC):
         jnp.ndarray
             Array of posterior predictive samples
         """
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+        
         # Generate predictive samples
         predictive_samples = _generate_ppc_samples(
             self.get_samples(canonical=True),
@@ -1063,7 +1079,7 @@ class ScribeMCMCResults(MCMC):
 
     def normalize_counts(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples_dirichlet: int = 1000,
         fit_distribution: bool = True,
         store_samples: bool = False,
@@ -1090,8 +1106,8 @@ class ScribeMCMCResults(MCMC):
 
         Parameters
         ----------
-        rng_key : random.PRNGKey, default=random.PRNGKey(42)
-            JAX random number generator key
+        rng_key : random.PRNGKey, optional
+            JAX random number generator key. Defaults to random.PRNGKey(42) if None
         n_samples_dirichlet : int, default=1000
             Number of samples to draw from each Dirichlet distribution
         fit_distribution : bool, default=True
@@ -1170,6 +1186,10 @@ class ScribeMCMCResults(MCMC):
         >>> print(normalized['mean_probabilities'].shape)  # (n_components, n_genes)
         >>> print(len(normalized['distributions']))  # n_components
         """
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+        
         # Get canonical samples using the new method
         posterior_samples = self.get_samples(canonical=True)
 
@@ -1193,7 +1213,7 @@ class ScribeMCMCResults(MCMC):
 
     def get_prior_predictive_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
@@ -1223,6 +1243,10 @@ class ScribeMCMCResults(MCMC):
         jnp.ndarray
             Array of prior predictive samples
         """
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+        
         # Generate prior predictive samples
         prior_predictive_samples = _generate_prior_predictive_samples(
             self.model_type,
@@ -1832,10 +1856,14 @@ def _generate_ppc_samples(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    rng_key: Optional[random.PRNGKey] = None,
     batch_size: Optional[int] = None,
 ) -> jnp.ndarray:
     """Generate predictive samples using posterior parameter samples."""
+    # Create default RNG key if not provided (lazy initialization)
+    if rng_key is None:
+        rng_key = random.PRNGKey(42)
+    
     # Get the model function
     model = _get_model_fn(model_config)
 
@@ -1866,11 +1894,15 @@ def _generate_prior_predictive_samples(
     n_cells: int,
     n_genes: int,
     model_config: ModelConfig,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    rng_key: Optional[random.PRNGKey] = None,
     n_samples: int = 100,
     batch_size: Optional[int] = None,
 ) -> jnp.ndarray:
     """Generate prior predictive samples using the model."""
+    # Create default RNG key if not provided (lazy initialization)
+    if rng_key is None:
+        rng_key = random.PRNGKey(42)
+    
     # Get the model function
     model = _get_model_fn(model_config)
 

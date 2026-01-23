@@ -324,7 +324,7 @@ def compute_waic(
     counts: jnp.ndarray,
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    rng_key: Optional[random.PRNGKey] = None,
     cells_axis: int = 0,
     ignore_nans: bool = False,
     weights: Optional[jnp.ndarray] = None,
@@ -348,8 +348,8 @@ def compute_waic(
     batch_size : Optional[int], default=None
         Size of mini-batches used for likelihood computation to manage memory
         usage. If None, uses full dataset.
-    rng_key : random.PRNGKey, default=random.PRNGKey(42)
-        JAX random key for reproducibility when generating posterior samples
+    rng_key : random.PRNGKey, optional
+        JAX random key for reproducibility. Defaults to random.PRNGKey(42) if None
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
@@ -413,7 +413,7 @@ def compute_waic_by_gene(
     counts: jnp.ndarray,
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    rng_key: Optional[random.PRNGKey] = None,
     cells_axis: int = 0,
     ignore_nans: bool = False,
     weights: Optional[jnp.ndarray] = None,
@@ -438,8 +438,8 @@ def compute_waic_by_gene(
         Number of posterior samples to use for WAIC computation
     batch_size : Optional[int], default=None
         Size of mini-batches for computation. If None, uses full dataset
-    rng_key : random.PRNGKey, default=random.PRNGKey(42)
-        Random number generator key for reproducibility
+    rng_key : random.PRNGKey, optional
+        Random number generator key. Defaults to random.PRNGKey(42) if None
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows, 1 means
         cells are columns
@@ -469,6 +469,10 @@ def compute_waic_by_gene(
             waic_2 : array
                 WAIC computed using p_waic_2 penalty for each gene
     """
+    # Create default RNG key if not provided (lazy initialization)
+    if rng_key is None:
+        rng_key = random.PRNGKey(42)
+    
     # Get posterior samples if not already present
     if results.posterior_samples is None:
         results.get_posterior_samples(rng_key, n_samples)
@@ -540,7 +544,7 @@ def compare_models(
     counts: Union[np.ndarray, jnp.ndarray],
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
-    rng_key: random.PRNGKey = random.PRNGKey(0),
+    rng_key: Optional[random.PRNGKey] = None,
     cells_axis: int = 0,
     ignore_nans: bool = False,
     weights: Optional[jnp.ndarray] = None,
@@ -560,8 +564,8 @@ def compare_models(
         Number of posterior samples for WAIC computation
     batch_size : Optional[int], default=None
         Size of mini-batches for likelihood computation. If None, uses full dataset.
-    rng_key : random.PRNGKey, default=random.PRNGKey(0)
-        Random key for reproducibility
+    rng_key : random.PRNGKey, optional
+        Random key for reproducibility. Defaults to random.PRNGKey(0) if None
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns
@@ -588,6 +592,10 @@ def compare_models(
             - WAIC weights for both versions
             - Log pointwise predictive density (lppd)
     """
+    # Create default RNG key if not provided (lazy initialization)
+    if rng_key is None:
+        rng_key = random.PRNGKey(0)
+    
     # If cells_axis is 1, transpose counts
     if cells_axis == 1:
         counts = counts.T
@@ -653,7 +661,7 @@ def compare_models_by_gene(
     counts: Union[np.ndarray, jnp.ndarray],
     n_samples: int = 1000,
     batch_size: Optional[int] = None,
-    rng_key: random.PRNGKey = random.PRNGKey(0),
+    rng_key: Optional[random.PRNGKey] = None,
     cells_axis: int = 0,
     ignore_nans: bool = False,
     weights: Optional[jnp.ndarray] = None,
@@ -673,8 +681,8 @@ def compare_models_by_gene(
         Number of posterior samples for WAIC computation
     batch_size : Optional[int], default=None
         Size of mini-batches for likelihood computation. If None, uses full dataset.
-    rng_key : random.PRNGKey, default=random.PRNGKey(0)
-        Random key for reproducibility
+    rng_key : random.PRNGKey, optional
+        Random key for reproducibility. Defaults to random.PRNGKey(0) if None
     cells_axis : int, default=0
         Axis along which cells are arranged. 0 means cells are rows (default),
         1 means cells are columns

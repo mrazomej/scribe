@@ -1,6 +1,6 @@
 """Dirichlet distribution fitting and sampling functions."""
 
-from typing import Union
+from typing import Union, Optional
 from functools import partial
 
 import numpy as np
@@ -19,7 +19,7 @@ from numpyro.distributions import Dirichlet
 def sample_dirichlet_from_parameters(
     parameter_samples: Union[np.ndarray, jnp.ndarray],
     n_samples_dirichlet: int = 1,
-    rng_key: random.PRNGKey = random.PRNGKey(42),
+    rng_key: Optional[random.PRNGKey] = None,
 ) -> jnp.ndarray:
     """
     Samples from a Dirichlet distribution given an array of parameter samples.
@@ -31,8 +31,8 @@ def sample_dirichlet_from_parameters(
         to use as concentration parameters for Dirichlet distributions
     n_samples_dirichlet : int, optional
         Number of samples to draw from each Dirichlet distribution (default: 1)
-    rng_key : random.PRNGKey
-        JAX random number generator key. Defaults to random.PRNGKey(42)
+    rng_key : random.PRNGKey, optional
+        JAX random number generator key. Defaults to random.PRNGKey(42) if None
 
     Returns
     -------
@@ -42,6 +42,11 @@ def sample_dirichlet_from_parameters(
         If n_samples_dirichlet>1:
             Array of shape (n_samples, n_variables, n_samples_dirichlet)
     """
+    # Create default RNG key if not provided (lazy initialization to avoid
+    # triggering JAX backend initialization at import time)
+    if rng_key is None:
+        rng_key = random.PRNGKey(42)
+    
     # Get dimensions
     n_samples, n_variables = parameter_samples.shape
 

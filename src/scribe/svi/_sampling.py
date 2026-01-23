@@ -29,7 +29,7 @@ class SamplingMixin:
 
     def get_posterior_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
@@ -59,6 +59,10 @@ class SamplingMixin:
         Dict
             Dictionary containing samples from the variational posterior
         """
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
         # Get the guide function
         model, guide = self._model_and_guide()
 
@@ -99,7 +103,7 @@ class SamplingMixin:
 
     def get_predictive_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
     ) -> jnp.ndarray:
@@ -128,6 +132,10 @@ class SamplingMixin:
                 "No posterior samples found. Call get_posterior_samples() first."
             )
 
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
         # Generate predictive samples
         predictive_samples = generate_predictive_samples(
             model,
@@ -147,7 +155,7 @@ class SamplingMixin:
 
     def get_ppc_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 100,
         batch_size: Optional[int] = None,
         store_samples: bool = True,
@@ -180,6 +188,10 @@ class SamplingMixin:
             - 'parameter_samples': Samples from the variational posterior
             - 'predictive_samples': Samples from the predictive distribution
         """
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
         # Check if we need to resample parameters
         need_params = self.posterior_samples is None
 
@@ -212,7 +224,7 @@ class SamplingMixin:
 
     def get_map_ppc_samples(
         self,
-        rng_key: random.PRNGKey = random.PRNGKey(42),
+        rng_key: Optional[random.PRNGKey] = None,
         n_samples: int = 1,
         cell_batch_size: Optional[int] = None,
         use_mean: bool = True,
@@ -269,6 +281,10 @@ class SamplingMixin:
         - nbvcp, zinbvcp: Models with variable capture probability
         - *_mix variants: Mixture models
         """
+        # Create default RNG key if not provided (lazy initialization)
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
         if verbose:
             print("Getting MAP estimates...")
 
