@@ -125,6 +125,53 @@ Array([[4.094345], [2.772589]], dtype=float32)
 
 
 # ------------------------------------------------------------------------------
+# Activation Function Mapping
+# ------------------------------------------------------------------------------
+
+
+def _get_activation_fn(activation: str) -> Callable:
+    """Map activation function name to JAX activation function.
+
+    Parameters
+    ----------
+    activation : str
+        Name of activation function (e.g., "relu", "gelu", "leaky_relu").
+
+    Returns
+    -------
+    Callable
+        JAX activation function.
+
+    Raises
+    ------
+    ValueError
+        If activation name is not supported.
+    """
+    ACTIVATION_MAP = {
+        "relu": jax.nn.relu,
+        "gelu": jax.nn.gelu,
+        "silu": jax.nn.silu,
+        "swish": jax.nn.silu,  # swish is an alias for silu
+        "tanh": jnp.tanh,
+        "sigmoid": jax.nn.sigmoid,
+        "elu": jax.nn.elu,
+        "leaky_relu": jax.nn.leaky_relu,
+        "softplus": jax.nn.softplus,
+        "celu": jax.nn.celu,
+        "selu": jax.nn.selu,
+    }
+
+    activation_lower = activation.lower()
+    if activation_lower not in ACTIVATION_MAP:
+        raise ValueError(
+            f"Unknown activation '{activation}'. "
+            f"Valid options: {list(ACTIVATION_MAP.keys())}"
+        )
+
+    return ACTIVATION_MAP[activation_lower]
+
+
+# ------------------------------------------------------------------------------
 # Amortizer Base Class
 # ------------------------------------------------------------------------------
 
@@ -140,7 +187,7 @@ class Amortizer(nnx.Module):
     ------------
     The network has the following structure:
 
-        sufficient_statistic → [Linear → ReLU] × n_layers → output_heads
+        sufficient_statistic → [Linear → activation] × n_layers → output_heads
 
     Each output head is a separate linear layer producing one variational
     parameter per data point.
@@ -160,6 +207,10 @@ class Amortizer(nnx.Module):
         output_params. E.g., {"alpha": jnp.exp} to ensure positivity.
     input_dim : int, optional
         Dimension of the sufficient statistic. Default is 1 (scalar).
+    activation : str, optional
+        Activation function for hidden layers. Default is "relu".
+        Supported: "relu", "gelu", "silu", "swish", "tanh", "sigmoid",
+        "elu", "leaky_relu", "softplus", "celu", "selu".
     rngs : nnx.Rngs, optional
         Random number generators for initialization. If None, creates
         a default RNG.
@@ -176,6 +227,10 @@ class Amortizer(nnx.Module):
         Transforms for each output.
     input_dim : int
         Input dimension (stored for serialization).
+    activation : str
+        Activation function name (stored for serialization).
+    activation_fn : Callable
+        The actual activation function to use in forward pass.
     layers : List[nnx.Linear]
         Hidden layers of the MLP.
     output_heads : Dict[str, nnx.Linear]
@@ -213,6 +268,7 @@ class Amortizer(nnx.Module):
         output_params: List[str],
         output_transforms: Optional[Dict[str, Callable]] = None,
         input_dim: int = 1,
+        activation: str = "relu",
         rngs: Optional[nnx.Rngs] = None,
     ):
         """Initialize the amortizer network.
@@ -229,6 +285,10 @@ class Amortizer(nnx.Module):
             Output transforms per parameter.
         input_dim : int, optional
             Input dimension (default 1 for scalar statistics).
+        activation : str, optional
+            Activation function for hidden layers (default "relu").
+            Supported: "relu", "gelu", "silu", "swish", "tanh", "sigmoid",
+            "elu", "leaky_relu", "softplus", "celu", "selu".
         rngs : nnx.Rngs, optional
             Random number generators.
         """
@@ -244,10 +304,14 @@ class Amortizer(nnx.Module):
         self.output_params = output_params
         self.output_transforms = output_transforms or {}
         self.input_dim = input_dim
+        self.activation = activation
+
+        # Get the actual activation function
+        self.activation_fn = _get_activation_fn(activation)
 
         # ====================================================================
         # Build MLP hidden layers
-        # Architecture: input → [Linear → ReLU] × n → output_heads
+        # Architecture: input → [Linear → activation] × n → output_heads
         # ====================================================================
         self.layers = []
         in_dim = input_dim
@@ -295,10 +359,10 @@ class Amortizer(nnx.Module):
         h = self.sufficient_statistic.compute(data)
 
         # ====================================================================
-        # Forward through hidden layers with ReLU activation
+        # Forward through hidden layers with activation function
         # ====================================================================
         for layer in self.layers:
-            h = jax.nn.relu(layer(h))
+            h = self.activation_fn(layer(h))
 
         # ====================================================================
         # Compute outputs from each head and apply optional transforms

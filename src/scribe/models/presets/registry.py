@@ -592,6 +592,7 @@ def create_capture_amortizer(
         output_params=output_params,
         output_transforms=output_transforms,
         input_dim=1,  # Scalar sufficient statistic (total count)
+        activation=activation,
     )
 
 

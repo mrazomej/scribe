@@ -10,6 +10,7 @@ This module tests:
 """
 
 import pytest
+import jax
 import jax.numpy as jnp
 from jax import random
 import numpyro
@@ -1080,3 +1081,73 @@ class TestAmortizer:
         # log1p(sum) for each row
         expected = jnp.log1p(jnp.array([[60], [15]]))
         assert jnp.allclose(result, expected)
+
+    def test_activation_function_mapping(self):
+        """Test _get_activation_fn maps activation names to JAX functions."""
+        from scribe.models.components.amortizers import _get_activation_fn
+
+        # Test all supported activations
+        activations = [
+            "relu",
+            "gelu",
+            "silu",
+            "swish",  # alias for silu
+            "tanh",
+            "sigmoid",
+            "elu",
+            "leaky_relu",
+            "softplus",
+            "celu",
+            "selu",
+        ]
+
+        for act in activations:
+            fn = _get_activation_fn(act)
+            assert callable(fn)
+            # Test that it works on a simple array
+            x = jnp.array([-1.0, 0.0, 1.0])
+            result = fn(x)
+            assert result.shape == x.shape
+
+        # Test that swish maps to silu
+        assert _get_activation_fn("swish") == _get_activation_fn("silu")
+
+        # Test invalid activation raises error
+        with pytest.raises(ValueError, match="Unknown activation"):
+            _get_activation_fn("invalid_activation")
+
+    def test_amortizer_with_custom_activation(self):
+        """Test Amortizer accepts and uses custom activation function."""
+        # Test with different activations
+        activations = ["relu", "gelu", "leaky_relu", "silu", "tanh"]
+
+        for activation in activations:
+            amortizer = Amortizer(
+                sufficient_statistic=TOTAL_COUNT,
+                hidden_dims=[32, 16],
+                output_params=["log_alpha", "log_beta"],
+                activation=activation,
+            )
+
+            assert amortizer.activation == activation
+            assert callable(amortizer.activation_fn)
+
+            # Test forward pass works
+            counts = jnp.ones((10, 50))
+            outputs = amortizer(counts)
+
+            assert "log_alpha" in outputs
+            assert "log_beta" in outputs
+            assert outputs["log_alpha"].shape == (10,)
+            assert outputs["log_beta"].shape == (10,)
+
+    def test_amortizer_default_activation(self):
+        """Test Amortizer defaults to relu if activation not specified."""
+        amortizer = Amortizer(
+            sufficient_statistic=TOTAL_COUNT,
+            hidden_dims=[32, 16],
+            output_params=["log_alpha", "log_beta"],
+        )
+
+        assert amortizer.activation == "relu"
+        assert amortizer.activation_fn == jax.nn.relu
