@@ -5,6 +5,8 @@ correct model and guide functions for all model types and configurations.
 """
 
 import pytest
+import jax
+import jax.numpy as jnp
 from jax import random
 
 from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
@@ -846,6 +848,41 @@ class TestAmortizeCaptureFactory:
         assert "loc" in amortizer.output_params
         assert "log_scale" in amortizer.output_params
         assert amortizer.hidden_dims == [128, 64]
+
+    def test_custom_activation(self):
+        """Test create_capture_amortizer with custom activation function."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        # Test with different activations
+        activations = ["relu", "gelu", "leaky_relu", "silu", "tanh", "elu"]
+
+        for activation in activations:
+            amortizer = create_capture_amortizer(
+                hidden_dims=[64, 32],
+                activation=activation,
+                unconstrained=False,
+            )
+
+            assert amortizer.activation == activation
+            assert callable(amortizer.activation_fn)
+
+            # Test forward pass works
+            counts = jnp.ones((10, 100))
+            outputs = amortizer(counts)
+
+            assert "log_alpha" in outputs
+            assert "log_beta" in outputs
+            assert outputs["log_alpha"].shape == (10,)
+            assert outputs["log_beta"].shape == (10,)
+
+    def test_default_activation(self):
+        """Test create_capture_amortizer defaults to relu."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        amortizer = create_capture_amortizer(unconstrained=False)
+
+        assert amortizer.activation == "relu"
+        assert amortizer.activation_fn == jax.nn.relu
 
 
 # ==============================================================================
