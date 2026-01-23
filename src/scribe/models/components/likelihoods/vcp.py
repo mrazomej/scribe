@@ -194,10 +194,19 @@ class NBWithVCPLikelihood(Likelihood):
             if batch_size is not None and counts is not None:
                 obs = counts[idx]
 
-            # Sample capture parameter
-            capture_value = self._sample_capture_param(
-                use_phi_capture, capture_prior_params
-            )
+            # Check if capture parameter is already in param_values (from posterior_samples)
+            # This happens when generating PPC samples with Predictive
+            if target_name in param_values:
+                # Use value from posterior_samples (for PPC)
+                capture_value = param_values[target_name]
+                # Handle batch indexing if needed
+                if batch_size is not None and idx is not None:
+                    capture_value = capture_value[idx]
+            else:
+                # Sample from prior (for prior predictive checks or when not in param_values)
+                capture_value = self._sample_capture_param(
+                    use_phi_capture, capture_prior_params
+                )
 
             if use_phi_capture:
                 # Mean-odds parameterization
@@ -430,10 +439,19 @@ class ZINBWithVCPLikelihood(Likelihood):
             if batch_size is not None and counts is not None:
                 obs = counts[idx]
 
-            # Sample capture parameter
-            capture_value = self._sample_capture_param(
-                use_phi_capture, capture_prior_params
-            )
+            # Check if capture parameter is already in param_values (from posterior_samples)
+            # This happens when generating PPC samples with Predictive
+            if target_name in param_values:
+                # Use value from posterior_samples (for PPC)
+                capture_value = param_values[target_name]
+                # Handle batch indexing if needed
+                if batch_size is not None and idx is not None:
+                    capture_value = capture_value[idx]
+            else:
+                # Sample from prior (for prior predictive checks or when not in param_values)
+                capture_value = self._sample_capture_param(
+                    use_phi_capture, capture_prior_params
+                )
 
             if use_phi_capture:
                 # Mean-odds parameterization
