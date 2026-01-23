@@ -654,6 +654,96 @@ class TestSVIIntegration:
 
         assert jnp.isfinite(loss)
 
+    def test_amortizer_parameters_registered(
+        self, model_config, small_counts, rng_key
+    ):
+        """Test that amortizer parameters are registered with NumPyro and optimized."""
+        from scribe.models.components import (
+            Amortizer,
+            AmortizedGuide,
+            TOTAL_COUNT,
+        )
+        from scribe.models.config import GuideFamilyConfig
+        from numpyro.infer import SVI, Trace_ELBO
+        from numpyro.optim import Adam
+
+        # Create amortizer for p_capture
+        amortizer = Amortizer(
+            sufficient_statistic=TOTAL_COUNT,
+            hidden_dims=[32, 16],
+            output_params=["log_alpha", "log_beta"],
+        )
+        model, guide = create_model_from_params(
+            model="nbvcp",
+            guide_families=GuideFamilyConfig(
+                p_capture=AmortizedGuide(amortizer=amortizer)
+            ),
+        )
+
+        optimizer = Adam(1e-2)
+        svi = SVI(model, guide, optimizer, Trace_ELBO())
+
+        # Initialize SVI
+        svi_state = svi.init(
+            rng_key,
+            n_cells=small_counts.shape[0],
+            n_genes=small_counts.shape[1],
+            model_config=model_config,
+            counts=small_counts,
+        )
+
+        # Get initial parameters
+        params = svi.get_params(svi_state)
+
+        # Check that amortizer parameters are registered
+        # The module name should be "p_capture_amortizer" based on our implementation
+        # NumPyro's nnx_module stores parameters as "module_name$params"
+        amortizer_param_key = "p_capture_amortizer$params"
+        
+        assert (
+            amortizer_param_key in params
+        ), f"Amortizer parameters should be registered with NumPyro. Found params: {list(params.keys())[:10]}"
+
+        # Verify the parameters have the expected structure
+        # The amortizer has Linear layers, so the params should be a nested structure
+        amortizer_params = params[amortizer_param_key]
+        
+        # The params should be a dict/pytree containing the amortizer's parameters
+        # We can check that it's not empty and has some structure
+        import jax.tree_util as jtu
+        param_leaves = jtu.tree_leaves(amortizer_params)
+        assert len(param_leaves) > 0, "Amortizer params should contain parameter arrays"
+
+        # Run a few optimization steps
+        # Store initial amortizer params for comparison
+        import jax.tree_util as jtu
+        initial_amortizer_params = jtu.tree_map(lambda x: x.copy(), amortizer_params)
+
+        for _ in range(5):
+            svi_state, loss = svi.update(
+                svi_state,
+                n_cells=small_counts.shape[0],
+                n_genes=small_counts.shape[1],
+                model_config=model_config,
+                counts=small_counts,
+            )
+
+        # Get updated parameters
+        updated_params = svi.get_params(svi_state)
+        updated_amortizer_params = updated_params[amortizer_param_key]
+
+        # Verify parameters have changed (they were optimized)
+        # Compare the pytrees
+        def params_differ(x, y):
+            return not jnp.allclose(x, y)
+        
+        differences = jtu.tree_map(params_differ, initial_amortizer_params, updated_amortizer_params)
+        params_changed = any(jtu.tree_leaves(differences))
+        
+        assert (
+            params_changed
+        ), "Amortizer parameters should change during optimization"
+
 
 # ==============================================================================
 # Test Mixture Models

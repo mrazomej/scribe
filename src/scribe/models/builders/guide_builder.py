@@ -40,6 +40,7 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 from multipledispatch import dispatch
+from numpyro.contrib.module import nnx_module
 from numpyro.distributions import constraints
 
 from .parameter_specs import (
@@ -691,11 +692,14 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
+    # Register the amortizer with NumPyro so its parameters are optimized
+    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
     # Amortizer predicts variational params from sufficient statistics
-    var_params = guide.amortizer(data)
+    var_params = amortizer_module(data)
     alpha = jnp.exp(var_params["log_alpha"])
     beta = jnp.exp(var_params["log_beta"])
 
@@ -750,11 +754,14 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
+    # Register the amortizer with NumPyro so its parameters are optimized
+    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
     # Amortizer predicts variational params from sufficient statistics
-    var_params = guide.amortizer(data)
+    var_params = amortizer_module(data)
     alpha = jnp.exp(var_params["log_alpha"])
     beta = jnp.exp(var_params["log_beta"])
 
@@ -810,11 +817,14 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
+    # Register the amortizer with NumPyro so its parameters are optimized
+    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
     # Amortizer predicts variational params from sufficient statistics
-    var_params = guide.amortizer(data)
+    var_params = amortizer_module(data)
     loc = var_params["loc"]
     scale = jnp.exp(var_params["log_scale"])
 
@@ -873,11 +883,14 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
+    # Register the amortizer with NumPyro so its parameters are optimized
+    amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
     # Amortizer predicts variational params from sufficient statistics
-    var_params = guide.amortizer(data)
+    var_params = amortizer_module(data)
     loc = var_params["loc"]
     scale = jnp.exp(var_params["log_scale"])
 
