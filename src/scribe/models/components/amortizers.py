@@ -313,19 +313,21 @@ class Amortizer(nnx.Module):
         # Build MLP hidden layers
         # Architecture: input → [Linear → activation] × n → output_heads
         # ====================================================================
-        self.layers = []
+        layers_list = []
         in_dim = input_dim
         for h_dim in hidden_dims:
-            self.layers.append(nnx.Linear(in_dim, h_dim, rngs=rngs))
+            layers_list.append(nnx.Linear(in_dim, h_dim, rngs=rngs))
             in_dim = h_dim
+        self.layers = nnx.List(layers_list)
 
         # ====================================================================
         # Build output heads (one per variational parameter)
         # Each head produces a scalar per data point
         # ====================================================================
-        self.output_heads = {
+        output_heads_dict = {
             name: nnx.Linear(in_dim, 1, rngs=rngs) for name in output_params
         }
+        self.output_heads = nnx.Dict(output_heads_dict)
 
     # --------------------------------------------------------------------------
 
