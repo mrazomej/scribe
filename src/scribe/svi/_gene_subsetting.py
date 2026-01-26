@@ -54,6 +54,12 @@ class GeneSubsettingMixin:
         original_n_genes = self.n_genes
 
         for key, value in params.items():
+            # Skip nested dicts (e.g., Flax module params from flax_module)
+            # These have keys like "amortizer$params" and contain nested dicts
+            if not hasattr(value, "shape"):
+                new_params[key] = value
+                continue
+
             # Find the axis that corresponds to the number of genes.
             # This is safer than assuming the position of the gene axis.
             try:
@@ -85,6 +91,12 @@ class GeneSubsettingMixin:
         original_n_genes = self.n_genes
 
         for key, value in samples.items():
+            # Skip nested dicts (e.g., Flax module params from flax_module)
+            # These have keys like "amortizer$params" and contain nested dicts
+            if not hasattr(value, "ndim"):
+                new_samples[key] = value
+                continue
+
             # The gene dimension is typically the last one in the posterior
             # sample arrays. We check if the last dimension's size matches the
             # original number of genes.
