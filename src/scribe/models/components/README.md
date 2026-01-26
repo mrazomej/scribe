@@ -128,18 +128,90 @@ BetaSpec(
 
 ### Performance Considerations
 
-The amortizer forward pass is optimized for JIT compilation:
-- Uses ordered iteration over output parameters for fixed control flow
-- Pre-computed lists eliminate dict lookups and conditionals in the forward pass
-- Regular functions instead of lambdas for better JIT tracing
-- Compatible with `jax.jit` and NumPyro's JIT compilation
+The amortizer is implemented as a Flax Linen module, which provides optimal JIT
+performance:
 
-For best performance:
-- Use fixed-size output parameter lists (typically 2: `["log_alpha",
-  "log_beta"]` or `["loc", "log_scale"]`)
-- Avoid dynamically changing `output_params` between calls
-- The internal structure uses `nnx.List` and `nnx.Dict` for Flax 0.12.0+
-  compatibility
+- **Pure functional design**: Linen modules use `nn_module.apply({"params": params}, ...)`
+  which is a pure function that doesn't cause retracing
+- **No Python-side mutations**: Unlike NNX modules, Linen modules don't require
+  `nnx.merge` operations that can trigger retracing
+- **Efficient JIT compilation**: NumPyro's `flax_module` automatically handles
+  parameter registration and JIT compilation
+- **Stable performance**: No progressive slowdown during long SVI runs
+
+**Usage in NumPyro:**
+
+The guide builder automatically uses `flax_module` to register amortizers. You
+don't need to do anything special:
+
+```python
+from scribe.models.components import Amortizer, AmortizedGuide, TOTAL_COUNT
+from scribe.models.config import GuideFamilyConfig
+
+# Create amortizer (Linen module)
+amortizer = Amortizer(
+    sufficient_statistic=TOTAL_COUNT,
+    hidden_dims=[64, 32],
+    output_params=["log_alpha", "log_beta"],
+)
+
+# Use in guide config - flax_module is used automatically
+guide_config = GuideFamilyConfig(
+    p_capture=AmortizedGuide(amortizer=amortizer)
+)
+```
+
+**Manual usage (advanced):**
+
+If you need to use amortizers directly in NumPyro models:
+
+```python
+from numpyro.contrib.module import flax_module
+import numpyro
+
+# Register Linen module with NumPyro (JIT-safe, no retracing)
+module_name = "p_capture_amortizer"
+# Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
+net = flax_module(module_name, amortizer, input_shape=(amortizer.input_dim,))
+
+# Use inside plate (JIT-safe)
+with numpyro.plate("cells", n_cells):
+    var_params = net(data)
+```
+
+**Why Linen instead of NNX?**
+
+Flax Linen modules are designed for functional programming and JIT compilation:
+- `flax_module` calls `nn_module.apply({"params": params}, ...)` which is pure
+- No Python-side object creation or mutations inside traced contexts
+- Avoids retracing issues that can cause progressive slowdown
+- Matches NumPyro's recommended pattern for neural network integration
+
+**Troubleshooting performance issues:**
+
+If you experience slowdowns during SVI:
+
+1. **Check JAX compilation logs:**
+   ```bash
+   JAX_LOG_COMPILES=1 python your_script.py
+   ```
+   Look for repeated compilations after the first few steps - this indicates
+   retracing. With Linen, you should see only initial compilation.
+
+2. **Verify parameter stability:**
+   - Parameter shapes/dtypes should remain stable during training
+   - If shapes change, recompilation is expected (but should be rare)
+
+3. **Common causes of retracing:**
+   - Parameter shapes changing during training (unusual)
+   - Data-dependent shapes passed to jitted functions
+   - Calling `flax_module` inside plates (should never happen - register outside)
+
+**Important notes:**
+
+- The amortizer is a stateless Linen module (no BatchNorm or other mutable state)
+- Parameters are automatically registered by `flax_module` when first called
+- The module is initialized lazily on first use
 
 ## Adding New Components
 

@@ -56,7 +56,7 @@ from typing import Callable, Dict, List, Optional
 
 import jax
 import jax.numpy as jnp
-from flax import nnx
+from flax import linen as nn
 
 # ------------------------------------------------------------------------------
 # Sufficient Statistic Base Class
@@ -220,7 +220,7 @@ def _get_activation_fn(activation: str) -> Callable:
 # ------------------------------------------------------------------------------
 
 
-class Amortizer(nnx.Module):
+class Amortizer(nn.Module):
     """General amortization network for variational inference.
 
     Maps sufficient statistics to variational parameters using a multi-layer
@@ -255,9 +255,6 @@ class Amortizer(nnx.Module):
         Activation function for hidden layers. Default is "relu".
         Supported: "relu", "gelu", "silu", "swish", "tanh", "sigmoid",
         "elu", "leaky_relu", "softplus", "celu", "selu".
-    rngs : nnx.Rngs, optional
-        Random number generators for initialization. If None, creates
-        a default RNG.
 
     Attributes
     ----------
@@ -273,12 +270,6 @@ class Amortizer(nnx.Module):
         Input dimension (stored for serialization).
     activation : str
         Activation function name (stored for serialization).
-    activation_fn : Callable
-        The actual activation function to use in forward pass.
-    layers : List[nnx.Linear]
-        Hidden layers of the MLP.
-    output_heads : Dict[str, nnx.Linear]
-        Output heads for each variational parameter.
 
     Examples
     --------
@@ -288,108 +279,46 @@ class Amortizer(nnx.Module):
     ...     hidden_dims=[64, 32],
     ...     output_params=["log_alpha", "log_beta"],
     ... )
-    >>> # Forward pass
-    >>> counts = jnp.ones((100, 2000))  # 100 cells, 2000 genes
-    >>> var_params = amortizer(counts)
-    >>> var_params["log_alpha"].shape
-    (100,)
+    >>> # Forward pass (requires initialization via flax_module in NumPyro)
+    >>> # In NumPyro: net = flax_module("amortizer", amortizer, input_shape=(1,))
+    >>> # Then: var_params = net(counts)
 
     Notes
     -----
-    The network weights are registered as Flax NNX parameters and will be
-    included in the optimization when training with NumPyro/SVI.
+    This is a Flax Linen module. The network weights are registered as Flax
+    parameters and will be included in the optimization when training with
+    NumPyro/SVI via `flax_module`.
 
     See Also
     --------
     SufficientStatistic : Input feature computation.
     scribe.models.components.guide_families.AmortizedGuide : Uses amortizers.
+    numpyro.contrib.module.flax_module : Register Linen modules with NumPyro.
     """
 
-    def __init__(
-        self,
-        sufficient_statistic: SufficientStatistic,
-        hidden_dims: List[int],
-        output_params: List[str],
-        output_transforms: Optional[Dict[str, Callable]] = None,
-        input_dim: int = 1,
-        activation: str = "relu",
-        rngs: Optional[nnx.Rngs] = None,
-    ):
-        """Initialize the amortizer network.
+    # Linen modules use class attributes for configuration
+    sufficient_statistic: SufficientStatistic
+    hidden_dims: List[int]
+    output_params: List[str]
+    output_transforms: Optional[Dict[str, Callable]] = None
+    input_dim: int = 1
+    activation: str = "relu"
 
-        Parameters
-        ----------
-        sufficient_statistic : SufficientStatistic
-            Defines input feature computation.
-        hidden_dims : List[int]
-            Hidden layer dimensions.
-        output_params : List[str]
-            Names of output variational parameters.
-        output_transforms : Dict[str, Callable], optional
-            Output transforms per parameter.
-        input_dim : int, optional
-            Input dimension (default 1 for scalar statistics).
-        activation : str, optional
-            Activation function for hidden layers (default "relu").
-            Supported: "relu", "gelu", "silu", "swish", "tanh", "sigmoid",
-            "elu", "leaky_relu", "softplus", "celu", "selu".
-        rngs : nnx.Rngs, optional
-            Random number generators.
+    def setup(self):
+        """Setup method to pre-compute transforms.
+        
+        This is called once during module initialization to set up
+        non-parameter attributes that are used in the forward pass.
         """
-        # Use default RNG if none provided
-        if rngs is None:
-            rngs = nnx.Rngs(0)
-
-        # ====================================================================
-        # Store configuration for serialization/reconstruction
-        # ====================================================================
-        self.sufficient_statistic = sufficient_statistic
-        self.hidden_dims = hidden_dims
-        self.output_params = output_params
-        self.output_transforms = output_transforms or {}
-        self.input_dim = input_dim
-        self.activation = activation
-
-        # Get the actual activation function
-        self.activation_fn = _get_activation_fn(activation)
-
-        # ====================================================================
-        # Build MLP hidden layers
-        # Architecture: input → [Linear → activation] × n → output_heads
-        # ====================================================================
-        layers_list = []
-        in_dim = input_dim
-        for h_dim in hidden_dims:
-            layers_list.append(nnx.Linear(in_dim, h_dim, rngs=rngs))
-            in_dim = h_dim
-        self.layers = nnx.List(layers_list)
-
-        # ====================================================================
-        # Build output heads (one per variational parameter)
-        # Each head produces a scalar per data point
-        # ====================================================================
-        output_heads_dict = {
-            name: nnx.Linear(in_dim, 1, rngs=rngs) for name in output_params
-        }
-        self.output_heads = nnx.Dict(output_heads_dict)
-
-        # ====================================================================
-        # Pre-compute output processing pipeline for JIT optimization
-        # Store heads and transforms in parallel lists to eliminate dict
-        # lookups and conditionals in the forward pass
-        # ====================================================================
-        self._output_heads_list = nnx.List([
-            self.output_heads[name] for name in output_params
-        ])
         # Pre-compute transform functions (identity if no transform specified)
         # Use regular function instead of lambda for JIT compatibility
+        transforms = self.output_transforms or {}
         self._output_transforms_list = [
-            self.output_transforms.get(name, _identity_transform)  # Identity if no transform
-            for name in output_params
+            transforms.get(name, _identity_transform)
+            for name in self.output_params
         ]
 
-    # --------------------------------------------------------------------------
-
+    @nn.compact
     def __call__(self, data: jnp.ndarray) -> Dict[str, jnp.ndarray]:
         """Forward pass: compute variational parameters from data.
 
@@ -421,23 +350,30 @@ class Amortizer(nnx.Module):
 
         # ====================================================================
         # Forward through hidden layers with activation function
+        # Linen pattern: define layers inline within @nn.compact
         # ====================================================================
-        for layer in self.layers:
-            h = self.activation_fn(layer(h))
+        activation_fn = _get_activation_fn(self.activation)
+        in_dim = self.input_dim
+        for i, h_dim in enumerate(self.hidden_dims):
+            h = nn.Dense(features=h_dim, name=f"hidden_{i}")(h)
+            h = activation_fn(h)
+            in_dim = h_dim
 
         # ====================================================================
         # Compute outputs from each head and apply optional transforms
         # Squeeze the last dimension since output heads produce (..., 1)
-        # NOTE: Use pre-computed lists to eliminate dict lookups and conditionals
+        # NOTE: Use pre-computed transform list to eliminate dict lookups
         # for maximum JIT compilation performance. Iteration order is fixed
         # based on self.output_params for consistent control flow.
         # ====================================================================
         outputs = {}
         for i, name in enumerate(self.output_params):
-            head = self._output_heads_list[i]
+            # Create output head with unique name for each parameter
+            out = nn.Dense(features=1, name=f"{name}_head")(h)
+            out = out.squeeze(-1)
+            # Apply transform (pre-computed in setup)
             transform_fn = self._output_transforms_list[i]
-            out = transform_fn(head(h).squeeze(-1))
-            outputs[name] = out
+            outputs[name] = transform_fn(out)
 
         return outputs
 

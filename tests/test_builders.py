@@ -697,7 +697,7 @@ class TestSVIIntegration:
 
         # Check that amortizer parameters are registered
         # The module name should be "p_capture_amortizer" based on our implementation
-        # NumPyro's nnx_module stores parameters as "module_name$params"
+        # NumPyro's flax_module stores parameters as "module_name$params"
         amortizer_param_key = "p_capture_amortizer$params"
         
         assert (
@@ -1154,9 +1154,12 @@ class TestAmortizer:
             output_params=["log_alpha", "log_beta"],
         )
 
-        # Test forward pass
+        # Test forward pass (Linen modules need initialization)
         counts = jnp.ones((10, 50))
-        outputs = amortizer(counts)
+        # Initialize with dummy input to get params
+        rng_key = random.PRNGKey(0)
+        params = amortizer.init(rng_key, counts)
+        outputs = amortizer.apply(params, counts)
 
         assert "log_alpha" in outputs
         assert "log_beta" in outputs
@@ -1220,11 +1223,15 @@ class TestAmortizer:
             )
 
             assert amortizer.activation == activation
-            assert callable(amortizer.activation_fn)
+            # In Linen, activation_fn is computed in __call__, so we test it works
+            from scribe.models.components.amortizers import _get_activation_fn
+            assert callable(_get_activation_fn(activation))
 
-            # Test forward pass works
+            # Test forward pass works (Linen modules need initialization)
             counts = jnp.ones((10, 50))
-            outputs = amortizer(counts)
+            rng_key = random.PRNGKey(0)
+            params = amortizer.init(rng_key, counts)
+            outputs = amortizer.apply(params, counts)
 
             assert "log_alpha" in outputs
             assert "log_beta" in outputs
@@ -1240,7 +1247,9 @@ class TestAmortizer:
         )
 
         assert amortizer.activation == "relu"
-        assert amortizer.activation_fn == jax.nn.relu
+        # In Linen, activation_fn is computed in __call__, so we test it works
+        from scribe.models.components.amortizers import _get_activation_fn
+        assert _get_activation_fn(amortizer.activation) == jax.nn.relu
 
     def test_amortizer_output_order(self):
         """Test that amortizer outputs maintain consistent order."""
@@ -1251,7 +1260,10 @@ class TestAmortizer:
         )
 
         counts = jnp.ones((10, 50))
-        outputs = amortizer(counts)
+        # Linen modules need initialization
+        rng_key = random.PRNGKey(0)
+        params = amortizer.init(rng_key, counts)
+        outputs = amortizer.apply(params, counts)
 
         # Verify output keys match output_params order
         assert list(outputs.keys()) == amortizer.output_params
@@ -1268,13 +1280,17 @@ class TestAmortizer:
             output_params=["log_alpha", "log_beta"],
         )
 
-        @jax.jit
-        def jitted_forward(amortizer_module, data):
-            return amortizer_module(data)
-
+        # Initialize to get params
         counts = jnp.ones((10, 50))
+        rng_key = random.PRNGKey(0)
+        params = amortizer.init(rng_key, counts)
+
+        @jax.jit
+        def jitted_forward(params, data):
+            return amortizer.apply(params, data)
+
         # This should compile without errors
-        outputs = jitted_forward(amortizer, counts)
+        outputs = jitted_forward(params, counts)
 
         assert "log_alpha" in outputs
         assert "log_beta" in outputs
