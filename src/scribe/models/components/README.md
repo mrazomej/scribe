@@ -126,6 +126,21 @@ BetaSpec(
 | Constrained      | `log_alpha`, `log_beta` | Beta(α, β) or BetaPrime(α, β)  |
 | Unconstrained    | `loc`, `log_scale`      | Normal(loc, scale) → transform |
 
+### Performance Considerations
+
+The amortizer forward pass is optimized for JIT compilation:
+- Uses ordered iteration over output parameters for fixed control flow
+- Pre-computed lists eliminate dict lookups and conditionals in the forward pass
+- Regular functions instead of lambdas for better JIT tracing
+- Compatible with `jax.jit` and NumPyro's JIT compilation
+
+For best performance:
+- Use fixed-size output parameter lists (typically 2: `["log_alpha",
+  "log_beta"]` or `["loc", "log_scale"]`)
+- Avoid dynamically changing `output_params` between calls
+- The internal structure uses `nnx.List` and `nnx.Dict` for Flax 0.12.0+
+  compatibility
+
 ## Adding New Components
 
 ### New Likelihood
