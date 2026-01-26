@@ -113,6 +113,32 @@ specs = [
 ]
 ```
 
+## Performance Considerations
+
+### Amortized Guides
+
+The guide builder automatically uses `flax_module` to register amortized guides,
+which provides optimal JIT performance. Amortizers are implemented as Flax Linen
+modules, which use pure functional application (`nn_module.apply`) that doesn't
+cause retracing.
+
+**Key optimizations:**
+
+- Linen modules are registered automatically when using `AmortizedGuide`
+- Parameters are registered once via `flax_module` (outside the plate)
+- Pure functional application inside the plate (JIT-safe, no mutations)
+- Works seamlessly with mini-batching (`batch_size` parameter)
+
+**Performance benefits:**
+
+- Faster JIT compilation and execution
+- No retracing or progressive slowdown during long SVI runs
+- No memory accumulation from repeated mutations
+- Correct behavior under JIT compilation
+- Compatible with all SVI optimizers
+
+For more details, see the [Amortizers documentation](../components/README.md#performance-considerations).
+
 ## Multiple Dispatch
 
 The builders use multiple dispatch to route to the correct implementation:

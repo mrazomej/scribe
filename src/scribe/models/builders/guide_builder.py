@@ -40,7 +40,7 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 from multipledispatch import dispatch
-from numpyro.contrib.module import nnx_module
+from numpyro.contrib.module import flax_module
 from numpyro.distributions import constraints
 
 from .parameter_specs import (
@@ -127,9 +127,7 @@ def setup_guide(
 
     if shape == ():
         return numpyro.sample(spec.name, dist.Beta(alpha, beta))
-    return numpyro.sample(
-        spec.name, dist.Beta(alpha, beta).to_event(len(shape))
-    )
+    return numpyro.sample(spec.name, dist.Beta(alpha, beta).to_event(len(shape)))
 
 
 # ------------------------------------------------------------------------------
@@ -185,9 +183,7 @@ def setup_guide(
     if shape == ():
         return numpyro.sample(spec.name, BetaPrime(alpha, beta))
     # Sample from BetaPrime distribution for non-scalar parameters
-    return numpyro.sample(
-        spec.name, BetaPrime(alpha, beta).to_event(len(shape))
-    )
+    return numpyro.sample(spec.name, BetaPrime(alpha, beta).to_event(len(shape)))
 
 
 # ------------------------------------------------------------------------------
@@ -239,9 +235,7 @@ def setup_guide(
         constraint=constraints.positive,
     )
 
-    return numpyro.sample(
-        spec.name, dist.LogNormal(loc, scale).to_event(len(shape))
-    )
+    return numpyro.sample(spec.name, dist.LogNormal(loc, scale).to_event(len(shape)))
 
 
 # ------------------------------------------------------------------------------
@@ -345,9 +339,7 @@ def setup_guide(
     jnp.ndarray
         Sampled parameter value from low-rank variational distribution.
     """
-    resolved_shape = resolve_shape(
-        spec.shape_dims, dims, is_mixture=spec.is_mixture
-    )
+    resolved_shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
     k = guide.rank
 
     # For mixture models, resolved_shape is (n_components, n_genes)
@@ -358,9 +350,7 @@ def setup_guide(
         n_genes = resolved_shape[1] if len(resolved_shape) > 1 else 1
 
         # Variational parameters with shape (n_components, n_genes)
-        loc = numpyro.param(
-            f"log_{spec.name}_loc", jnp.zeros((n_components, n_genes))
-        )
+        loc = numpyro.param(f"log_{spec.name}_loc", jnp.zeros((n_components, n_genes)))
         W = numpyro.param(
             f"log_{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k))
         )
@@ -387,9 +377,7 @@ def setup_guide(
         # Low-rank MVN parameters in log-space
         loc = numpyro.param(f"log_{spec.name}_loc", jnp.zeros(G))
         W = numpyro.param(f"log_{spec.name}_W", 0.01 * jnp.ones((G, k)))
-        raw_diag = numpyro.param(
-            f"log_{spec.name}_raw_diag", -3.0 * jnp.ones(G)
-        )
+        raw_diag = numpyro.param(f"log_{spec.name}_raw_diag", -3.0 * jnp.ones(G))
 
         # Ensure diagonal is positive
         D = jax.nn.softplus(raw_diag) + 1e-4
@@ -457,9 +445,7 @@ def setup_guide(
         >>> setup_guide(spec, guide, {"n_genes": 100}, model_config)
         # Samples "r" from TransformedDistribution(LowRankMultivariateNormal, ExpTransform)
     """
-    resolved_shape = resolve_shape(
-        spec.shape_dims, dims, is_mixture=spec.is_mixture
-    )
+    resolved_shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
     k = guide.rank
 
     # For mixture models, resolved_shape is (n_components, n_genes)
@@ -472,12 +458,8 @@ def setup_guide(
         # Variational parameters with shape (n_components, n_genes)
         # Use base parameter name for variational parameters (matching
         # mean-field pattern)
-        loc = numpyro.param(
-            f"{spec.name}_loc", jnp.zeros((n_components, n_genes))
-        )
-        W = numpyro.param(
-            f"{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k))
-        )
+        loc = numpyro.param(f"{spec.name}_loc", jnp.zeros((n_components, n_genes)))
+        W = numpyro.param(f"{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k)))
         raw_diag = numpyro.param(
             f"{spec.name}_raw_diag", -3.0 * jnp.ones((n_components, n_genes))
         )
@@ -492,9 +474,9 @@ def setup_guide(
         # Wrap with transform - handles Jacobian automatically
         # Use to_event(1) to convert batch dimension to event, resulting in
         # event_shape=(n_components, n_genes) to match model's event_dims=2
-        transformed_dist = dist.TransformedDistribution(
-            base, spec.transform
-        ).to_event(1)
+        transformed_dist = dist.TransformedDistribution(base, spec.transform).to_event(
+            1
+        )
     else:
         # Non-mixture: shape is (n_genes,)
         G = resolved_shape[0] if resolved_shape else 1
@@ -576,9 +558,7 @@ def setup_cell_specific_guide(
         return numpyro.sample(spec.name, dist.Beta(alpha, beta))
     else:
         # Batch sampling: index into parameters for this mini-batch
-        return numpyro.sample(
-            spec.name, dist.Beta(alpha[batch_idx], beta[batch_idx])
-        )
+        return numpyro.sample(spec.name, dist.Beta(alpha[batch_idx], beta[batch_idx]))
 
 
 # ------------------------------------------------------------------------------
@@ -639,9 +619,7 @@ def setup_cell_specific_guide(
         return numpyro.sample(spec.name, BetaPrime(alpha, beta))
     else:
         # Batch sampling: index into parameters for this mini-batch
-        return numpyro.sample(
-            spec.name, BetaPrime(alpha[batch_idx], beta[batch_idx])
-        )
+        return numpyro.sample(spec.name, BetaPrime(alpha[batch_idx], beta[batch_idx]))
 
 
 # ------------------------------------------------------------------------------
@@ -657,7 +635,6 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
-    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific Beta parameter (e.g., p_capture).
@@ -679,8 +656,6 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
-    amortizer_module : Optional[Any]
-        Pre-registered amortizer module. If None, will register it.
 
     Returns
     -------
@@ -695,16 +670,18 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Use pre-registered module if provided, otherwise register it
-    # (should only happen if called outside the normal guide builder flow)
-    if amortizer_module is None:
-        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Register Linen module with NumPyro (JIT-safe, no retracing)
+    module_name = f"{spec.name}_amortizer"
+    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
+    net = flax_module(
+        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
+    )
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Amortizer predicts variational params from sufficient statistics
-    var_params = amortizer_module(data)
+    # Call the amortizer network (pure function, JIT-safe)
+    var_params = net(data)
     alpha = jnp.exp(var_params["log_alpha"])
     beta = jnp.exp(var_params["log_beta"])
 
@@ -724,7 +701,6 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
-    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific BetaPrime parameter (e.g., phi_capture).
@@ -746,8 +722,6 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
-    amortizer_module : Optional[Any]
-        Pre-registered amortizer module. If None, will register it.
 
     Returns
     -------
@@ -762,16 +736,18 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Use pre-registered module if provided, otherwise register it
-    # (should only happen if called outside the normal guide builder flow)
-    if amortizer_module is None:
-        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Register Linen module with NumPyro (JIT-safe, no retracing)
+    module_name = f"{spec.name}_amortizer"
+    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
+    net = flax_module(
+        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
+    )
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Amortizer predicts variational params from sufficient statistics
-    var_params = amortizer_module(data)
+    # Call the amortizer network (pure function, JIT-safe)
+    var_params = net(data)
     alpha = jnp.exp(var_params["log_alpha"])
     beta = jnp.exp(var_params["log_beta"])
 
@@ -791,7 +767,6 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
-    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific SigmoidNormal parameter (e.g., p_capture).
@@ -814,8 +789,6 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
-    amortizer_module : Optional[Any]
-        Pre-registered amortizer module. If None, will register it.
 
     Returns
     -------
@@ -830,16 +803,18 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Use pre-registered module if provided, otherwise register it
-    # (should only happen if called outside the normal guide builder flow)
-    if amortizer_module is None:
-        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Register Linen module with NumPyro (JIT-safe, no retracing)
+    module_name = f"{spec.name}_amortizer"
+    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
+    net = flax_module(
+        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
+    )
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Amortizer predicts variational params from sufficient statistics
-    var_params = amortizer_module(data)
+    # Call the amortizer network (pure function, JIT-safe)
+    var_params = net(data)
     loc = var_params["loc"]
     scale = jnp.exp(var_params["log_scale"])
 
@@ -862,7 +837,6 @@ def setup_cell_specific_guide(
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray] = None,
     batch_idx: Optional[jnp.ndarray] = None,
-    amortizer_module: Optional[Any] = None,
     **kwargs,
 ) -> jnp.ndarray:
     """Amortized guide for cell-specific ExpNormal parameter (e.g., phi_capture).
@@ -885,8 +859,9 @@ def setup_cell_specific_guide(
         Count data (used to compute sufficient statistics).
     batch_idx : Optional[jnp.ndarray]
         Indices for mini-batch. Amortizer processes batched data directly.
-    amortizer_module : Optional[Any]
-        Pre-registered amortizer module. If None, will register it.
+    amortizer_pure_apply : Optional[Callable]
+        Pure apply function for the amortizer (JIT-safe). If None, will create it.
+        Prefer using the pre-created pure apply from guide builder.
 
     Returns
     -------
@@ -901,16 +876,18 @@ def setup_cell_specific_guide(
     if counts is None:
         raise ValueError("Amortized guide requires counts data")
 
-    # Use pre-registered module if provided, otherwise register it
-    # (should only happen if called outside the normal guide builder flow)
-    if amortizer_module is None:
-        amortizer_module = nnx_module(f"{spec.name}_amortizer", guide.amortizer)
+    # Register Linen module with NumPyro (JIT-safe, no retracing)
+    module_name = f"{spec.name}_amortizer"
+    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
+    net = flax_module(
+        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
+    )
 
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Amortizer predicts variational params from sufficient statistics
-    var_params = amortizer_module(data)
+    # Call the amortizer network (pure function, JIT-safe)
+    var_params = net(data)
     loc = var_params["loc"]
     scale = jnp.exp(var_params["log_scale"])
 
@@ -1162,10 +1139,7 @@ class GuideBuilder:
             # Setup dimensions dict
             # ================================================================
             dims = {"n_cells": n_cells, "n_genes": n_genes}
-            if (
-                hasattr(model_config, "n_components")
-                and model_config.n_components
-            ):
+            if hasattr(model_config, "n_components") and model_config.n_components:
                 dims["n_components"] = model_config.n_components
 
             # ================================================================
@@ -1235,16 +1209,9 @@ class GuideBuilder:
             # ================================================================
             cell_specs = [s for s in specs if s.is_cell_specific]
             if cell_specs:
-                # Register amortizer modules once before the plate loop
-                # This prevents re-registration on every cell iteration
-                amortizer_modules = {}
-                for spec in cell_specs:
-                    guide_family = spec.guide_family or MeanFieldGuide()
-                    if isinstance(guide_family, AmortizedGuide):
-                        module_name = f"{spec.name}_amortizer"
-                        amortizer_modules[spec.name] = nnx_module(
-                            module_name, guide_family.amortizer
-                        )
+                # Linen modules are registered automatically when flax_module is called
+                # No need to pre-register - flax_module handles parameter registration
+                # and is JIT-safe (no retracing issues)
 
                 if batch_size is None:
                     # Full sampling
@@ -1258,9 +1225,6 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=None,
-                                amortizer_module=amortizer_modules.get(
-                                    spec.name
-                                ),
                             )
                 else:
                     # Batch sampling
@@ -1276,9 +1240,6 @@ class GuideBuilder:
                                 model_config,
                                 counts=counts,
                                 batch_idx=idx,
-                                amortizer_module=amortizer_modules.get(
-                                    spec.name
-                                ),
                             )
 
         return guide
