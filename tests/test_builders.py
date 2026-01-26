@@ -1241,3 +1241,42 @@ class TestAmortizer:
 
         assert amortizer.activation == "relu"
         assert amortizer.activation_fn == jax.nn.relu
+
+    def test_amortizer_output_order(self):
+        """Test that amortizer outputs maintain consistent order."""
+        amortizer = Amortizer(
+            sufficient_statistic=TOTAL_COUNT,
+            hidden_dims=[32, 16],
+            output_params=["log_alpha", "log_beta"],
+        )
+
+        counts = jnp.ones((10, 50))
+        outputs = amortizer(counts)
+
+        # Verify output keys match output_params order
+        assert list(outputs.keys()) == amortizer.output_params
+        assert "log_alpha" in outputs
+        assert "log_beta" in outputs
+        assert outputs["log_alpha"].shape == (10,)
+        assert outputs["log_beta"].shape == (10,)
+
+    def test_amortizer_jit_compilation(self):
+        """Test that amortizer can be JIT compiled."""
+        amortizer = Amortizer(
+            sufficient_statistic=TOTAL_COUNT,
+            hidden_dims=[32, 16],
+            output_params=["log_alpha", "log_beta"],
+        )
+
+        @jax.jit
+        def jitted_forward(amortizer_module, data):
+            return amortizer_module(data)
+
+        counts = jnp.ones((10, 50))
+        # This should compile without errors
+        outputs = jitted_forward(amortizer, counts)
+
+        assert "log_alpha" in outputs
+        assert "log_beta" in outputs
+        assert outputs["log_alpha"].shape == (10,)
+        assert outputs["log_beta"].shape == (10,)

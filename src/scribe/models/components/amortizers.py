@@ -104,9 +104,29 @@ class SufficientStatistic:
 # Built-in Sufficient Statistics
 # ==============================================================================
 
+
+def _compute_total_count(counts: jnp.ndarray) -> jnp.ndarray:
+    """Compute log1p of total UMI count per cell.
+    
+    This is a regular function (not a lambda) for better JIT compilation
+    performance and tracing compatibility.
+    
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        Count data of shape (..., n_genes).
+        
+    Returns
+    -------
+    jnp.ndarray
+        Log-transformed total counts of shape (..., 1).
+    """
+    return jnp.log1p(counts.sum(axis=-1, keepdims=True))
+
+
 TOTAL_COUNT = SufficientStatistic(
     name="total_count",
-    compute=lambda counts: jnp.log1p(counts.sum(axis=-1, keepdims=True)),
+    compute=_compute_total_count,
 )
 """Total UMI count per cell (log-transformed).
 
@@ -122,6 +142,30 @@ Examples
 >>> TOTAL_COUNT.compute(counts)
 Array([[4.094345], [2.772589]], dtype=float32)
 """
+
+
+# ------------------------------------------------------------------------------
+# Identity Function for Transforms
+# ------------------------------------------------------------------------------
+
+
+def _identity_transform(x: jnp.ndarray) -> jnp.ndarray:
+    """Identity function for output transforms when no transform is specified.
+    
+    This is a regular function (not a lambda) for better JIT compilation
+    performance and tracing compatibility.
+    
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array.
+        
+    Returns
+    -------
+    jnp.ndarray
+        Same array (identity transform).
+    """
+    return x
 
 
 # ------------------------------------------------------------------------------
@@ -329,6 +373,21 @@ class Amortizer(nnx.Module):
         }
         self.output_heads = nnx.Dict(output_heads_dict)
 
+        # ====================================================================
+        # Pre-compute output processing pipeline for JIT optimization
+        # Store heads and transforms in parallel lists to eliminate dict
+        # lookups and conditionals in the forward pass
+        # ====================================================================
+        self._output_heads_list = nnx.List([
+            self.output_heads[name] for name in output_params
+        ])
+        # Pre-compute transform functions (identity if no transform specified)
+        # Use regular function instead of lambda for JIT compatibility
+        self._output_transforms_list = [
+            self.output_transforms.get(name, _identity_transform)  # Identity if no transform
+            for name in output_params
+        ]
+
     # --------------------------------------------------------------------------
 
     def __call__(self, data: jnp.ndarray) -> Dict[str, jnp.ndarray]:
@@ -369,13 +428,15 @@ class Amortizer(nnx.Module):
         # ====================================================================
         # Compute outputs from each head and apply optional transforms
         # Squeeze the last dimension since output heads produce (..., 1)
+        # NOTE: Use pre-computed lists to eliminate dict lookups and conditionals
+        # for maximum JIT compilation performance. Iteration order is fixed
+        # based on self.output_params for consistent control flow.
         # ====================================================================
         outputs = {}
-        for name, head in self.output_heads.items():
-            out = head(h).squeeze(-1)
-            # Apply output transform if specified
-            if name in self.output_transforms:
-                out = self.output_transforms[name](out)
+        for i, name in enumerate(self.output_params):
+            head = self._output_heads_list[i]
+            transform_fn = self._output_transforms_list[i]
+            out = transform_fn(head(h).squeeze(-1))
             outputs[name] = out
 
         return outputs
