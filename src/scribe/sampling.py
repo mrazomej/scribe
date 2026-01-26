@@ -117,12 +117,25 @@ def generate_predictive_samples(
     jnp.ndarray
         Array of predictive samples
     """
+    # Find the first array value to get num_samples
+    # Skip nested dicts from flax_module parameters (e.g., "amortizer$params")
+    num_samples = None
+    for value in posterior_samples.values():
+        if hasattr(value, "shape"):
+            num_samples = value.shape[0]
+            break
+
+    if num_samples is None:
+        raise ValueError(
+            "Could not determine num_samples from posterior_samples. "
+            "No array values found (all values are nested dicts?)."
+        )
+
     # Create predictive object for generating new data
     predictive = Predictive(
         model,
         posterior_samples,
-        # Take the number of samples from the first parameter
-        num_samples=next(iter(posterior_samples.values())).shape[0],
+        num_samples=num_samples,
         # Include deterministic parameters in the predictive distribution
         exclude_deterministic=False,
     )
