@@ -6,12 +6,42 @@ import os
 import jax
 import numpy as np
 from contextlib import contextmanager
+from pathlib import Path
 
 import numpyro.distributions as dist
 import scipy.stats as stats
 
 # Import custom distributions
 from ..stats import BetaPrime
+
+# ------------------------------------------------------------------------------
+# Configure JAX compilation cache to avoid recompilation
+# This can be overridden by setting JAX_COMPILATION_CACHE_DIR environment variable
+# before importing jax. For maximum effectiveness, set the environment variable
+# before importing any JAX-related modules.
+# ------------------------------------------------------------------------------
+
+# Set default cache directory if not already set via environment variable
+if "JAX_COMPILATION_CACHE_DIR" not in os.environ:
+    # Use a cache directory in the user's home directory
+    cache_dir = Path.home() / ".cache" / "jax"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        jax.config.update("jax_compilation_cache_dir", str(cache_dir))
+        # Cache all compilations (not just those taking >1 second)
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
+    except Exception:
+        # If config update fails (e.g., older JAX version), silently continue
+        pass
+else:
+    # If environment variable is set, ensure the directory exists
+    cache_dir = Path(os.environ["JAX_COMPILATION_CACHE_DIR"])
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        # Still update config to ensure caching is enabled
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------------------
 
