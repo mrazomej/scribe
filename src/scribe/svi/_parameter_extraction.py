@@ -24,6 +24,87 @@ class ParameterExtractionMixin:
     """Mixin providing parameter extraction methods."""
 
     # --------------------------------------------------------------------------
+    # Helper methods for amortizer validation
+    # --------------------------------------------------------------------------
+
+    def _uses_amortized_capture(self) -> bool:
+        """Check if this model uses amortized capture probability."""
+        guide_families = self.model_config.guide_families
+        if guide_families is None or not self.model_config.uses_variable_capture:
+            return False
+        amort_config = getattr(guide_families, "capture_amortization", None)
+        return amort_config is not None and getattr(amort_config, "enabled", False)
+
+    def _validate_counts_for_amortizer(
+        self, counts, context: str = "sampling"
+    ) -> None:
+        """Validate that counts have the correct shape for amortized capture.
+
+        When using amortized capture probability, the amortizer computes sufficient
+        statistics (e.g., total UMI count) by summing across ALL genes. If genes
+        have been subset from the results, the counts must still have the original
+        number of genes to ensure the amortizer receives the correct statistics.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Count matrix to validate.
+        context : str
+            Description of the operation for error messages.
+
+        Raises
+        ------
+        ValueError
+            If counts shape doesn't match expected dimensions.
+        """
+        if counts is None:
+            return
+
+        # Get the expected gene count for amortizer input
+        original_n_genes = getattr(self, "_original_n_genes", None) or self.n_genes
+
+        # Check counts shape
+        if counts.ndim != 2:
+            raise ValueError(
+                f"counts must be a 2D array of shape (n_cells, n_genes), "
+                f"got shape {counts.shape}"
+            )
+
+        n_cells_counts, n_genes_counts = counts.shape
+
+        # Check cell dimension
+        if n_cells_counts != self.n_cells:
+            raise ValueError(
+                f"counts has {n_cells_counts} cells but model was trained with "
+                f"{self.n_cells} cells. The counts matrix must have the same "
+                f"number of cells as used during training."
+            )
+
+        # Check gene dimension - this is the critical check for amortizers
+        if n_genes_counts != original_n_genes:
+            # Determine if this is a gene-subset scenario
+            is_subset = (
+                getattr(self, "_original_n_genes", None) is not None
+                and self.n_genes < original_n_genes
+            )
+
+            if is_subset:
+                raise ValueError(
+                    f"counts has {n_genes_counts} genes but the amortizer requires "
+                    f"{original_n_genes} genes (the original training data shape). "
+                    f"This results object has been subset to {self.n_genes} genes, "
+                    f"but the amortizer computes sufficient statistics (e.g., total "
+                    f"UMI count) by summing across ALL genes. You must pass the "
+                    f"original full-gene count matrix for {context}, not a gene-subset."
+                )
+            else:
+                raise ValueError(
+                    f"counts has {n_genes_counts} genes but model was trained with "
+                    f"{original_n_genes} genes. The counts matrix must have the same "
+                    f"dimensions as used during training for {context}."
+                )
+
+    # --------------------------------------------------------------------------
     # Get distributions using configs
     # --------------------------------------------------------------------------
 
@@ -133,9 +214,14 @@ class ParameterExtractionMixin:
         counts : Optional[jnp.ndarray], optional
             Observed count matrix of shape (n_cells, n_genes). Required when
             using amortized capture probability (e.g., with
-            amortization.capture.enabled=true). Should be the same data used
-            during inference. For non-amortized models, this can be None.
-            Default: None.
+            amortization.capture.enabled=true).
+
+            IMPORTANT: When using amortized capture with gene-subset results,
+            you must pass the ORIGINAL full-gene count matrix, not a gene-subset.
+            The amortizer computes sufficient statistics (e.g., total UMI count)
+            by summing across ALL genes, so it requires the full data.
+
+            For non-amortized models, this can be None. Default: None.
 
         Returns
         -------
@@ -147,16 +233,7 @@ class ParameterExtractionMixin:
         params = self.params
 
         # Check if amortized capture is enabled
-        guide_families = self.model_config.guide_families
-        has_amortized_capture = False
-        if (
-            guide_families is not None
-            and self.model_config.uses_variable_capture
-        ):
-            amort_config = getattr(guide_families, "capture_amortization", None)
-            has_amortized_capture = amort_config is not None and getattr(
-                amort_config, "enabled", False
-            )
+        has_amortized_capture = self._uses_amortized_capture()
 
         # Error handling: if amortized capture is enabled, counts are required
         if has_amortized_capture and counts is None:
@@ -166,6 +243,10 @@ class ParameterExtractionMixin:
                 "Please provide the observed count matrix of shape "
                 "(n_cells, n_genes) that was used during inference."
             )
+
+        # Validate counts shape for amortizer (checks original gene count)
+        if has_amortized_capture and counts is not None:
+            self._validate_counts_for_amortizer(counts, context="MAP estimation")
 
         if counts is not None and self.model_config.uses_variable_capture:
             # Check if amortized capture is enabled (already checked above)
