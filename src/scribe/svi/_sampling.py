@@ -50,15 +50,31 @@ class SamplingMixin:
         counts : Optional[jnp.ndarray], optional
             Observed count matrix of shape (n_cells, n_genes). Required when
             using amortized capture probability (e.g., with
-            amortization.capture.enabled=true). Should be the same data used
-            during inference. For non-amortized models, this can be None.
-            Default: None.
+            amortization.capture.enabled=true).
+
+            IMPORTANT: When using amortized capture with gene-subset results,
+            you must pass the ORIGINAL full-gene count matrix, not a gene-subset.
+            The amortizer computes sufficient statistics (e.g., total UMI count)
+            by summing across ALL genes, so it requires the full data.
+
+            For non-amortized models, this can be None. Default: None.
 
         Returns
         -------
         Dict
             Dictionary containing samples from the variational posterior
         """
+        # Validate counts for amortized capture (checks original gene count)
+        # This uses methods from ParameterExtractionMixin (inherited by ScribeSVIResults)
+        if self._uses_amortized_capture():
+            if counts is None:
+                raise ValueError(
+                    "counts parameter is required when using amortized capture "
+                    "probability. Please provide the observed count matrix of shape "
+                    "(n_cells, n_genes) that was used during inference."
+                )
+            self._validate_counts_for_amortizer(counts, context="posterior sampling")
+
         # Create default RNG key if not provided (lazy initialization)
         if rng_key is None:
             rng_key = random.PRNGKey(42)
@@ -177,9 +193,14 @@ class SamplingMixin:
         counts : Optional[jnp.ndarray], optional
             Observed count matrix of shape (n_cells, n_genes). Required when
             using amortized capture probability (e.g., with
-            amortization.capture.enabled=true). Should be the same data used
-            during inference. For non-amortized models, this can be None.
-            Default: None.
+            amortization.capture.enabled=true).
+
+            IMPORTANT: When using amortized capture with gene-subset results,
+            you must pass the ORIGINAL full-gene count matrix, not a gene-subset.
+            The amortizer computes sufficient statistics (e.g., total UMI count)
+            by summing across ALL genes, so it requires the full data.
+
+            For non-amortized models, this can be None. Default: None.
 
         Returns
         -------
@@ -188,6 +209,16 @@ class SamplingMixin:
             - 'parameter_samples': Samples from the variational posterior
             - 'predictive_samples': Samples from the predictive distribution
         """
+        # Validate counts for amortized capture (checks original gene count)
+        if self._uses_amortized_capture():
+            if counts is None:
+                raise ValueError(
+                    "counts parameter is required when using amortized capture "
+                    "probability. Please provide the observed count matrix of shape "
+                    "(n_cells, n_genes) that was used during inference."
+                )
+            self._validate_counts_for_amortizer(counts, context="PPC sampling")
+
         # Create default RNG key if not provided (lazy initialization)
         if rng_key is None:
             rng_key = random.PRNGKey(42)
@@ -260,9 +291,14 @@ class SamplingMixin:
         counts : Optional[jnp.ndarray], optional
             Observed count matrix of shape (n_cells, n_genes). Required when
             using amortized capture probability (e.g., with
-            amortization.capture.enabled=true). Should be the same data used
-            during inference. For non-amortized models, this can be None.
-            Default: None.
+            amortization.capture.enabled=true).
+
+            IMPORTANT: When using amortized capture with gene-subset results,
+            you must pass the ORIGINAL full-gene count matrix, not a gene-subset.
+            The amortizer computes sufficient statistics (e.g., total UMI count)
+            by summing across ALL genes, so it requires the full data.
+
+            For non-amortized models, this can be None. Default: None.
 
         Returns
         -------

@@ -193,7 +193,17 @@ class GeneSubsettingMixin:
         new_posterior_samples: Optional[Dict],
         new_predictive_samples: Optional[jnp.ndarray],
     ) -> "ScribeSVIResults":
-        """Create a new instance with a subset of genes."""
+        """Create a new instance with a subset of genes.
+
+        Note: When using amortized capture probability, the amortizer computes
+        sufficient statistics (e.g., total UMI count) by summing across ALL genes.
+        Therefore, we track the original gene count (_original_n_genes) so that
+        sampling methods can validate that counts have the correct shape.
+        """
+        # Track the original gene count for amortizer validation.
+        # If this is already a subset, preserve the original; otherwise use current.
+        original_n_genes = getattr(self, "_original_n_genes", None) or self.n_genes
+
         return type(self)(
             params=new_params,
             loss_history=self.loss_history,
@@ -210,4 +220,5 @@ class GeneSubsettingMixin:
             posterior_samples=new_posterior_samples,
             predictive_samples=new_predictive_samples,
             n_components=self.n_components,
+            _original_n_genes=original_n_genes,
         )
