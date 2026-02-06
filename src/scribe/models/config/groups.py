@@ -23,7 +23,7 @@ blocks used to create full model configurations in SCRIBE.
 """
 
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 import jax.numpy as jnp
 from .enums import VAEPriorType, VAEMaskType, VAEActivation, InferenceMethod
 
@@ -235,6 +235,34 @@ class AmortizationConfig(BaseModel):
         "log1p",
         description="Transformation for input data (log1p, log, sqrt, identity)",
     )
+    output_transform: str = Field(
+        "softplus",
+        description=(
+            "Transform for positive output parameters in constrained mode. "
+            "'softplus' (default): softplus(x) + 0.5, bounded away from zero "
+            "and grows linearly for large inputs. "
+            "'exp': exponential transform (original behavior, can produce "
+            "extreme values)."
+        ),
+    )
+    output_clamp_min: Optional[float] = Field(
+        0.1,
+        ge=0,
+        description=(
+            "Minimum clamp for positive output parameters (alpha, beta) in "
+            "constrained mode. Prevents BetaPrime/Beta with extreme shape "
+            "parameters. Set to None to disable. Default: 0.1."
+        ),
+    )
+    output_clamp_max: Optional[float] = Field(
+        50.0,
+        gt=0,
+        description=(
+            "Maximum clamp for positive output parameters (alpha, beta) in "
+            "constrained mode. Prevents extreme concentration. "
+            "Set to None to disable. Default: 50.0."
+        ),
+    )
 
     # --------------------------------------------------------------------------
 
@@ -286,6 +314,35 @@ class AmortizationConfig(BaseModel):
                 f"Valid options: {valid_transforms}"
             )
         return v.lower()
+
+    # --------------------------------------------------------------------------
+
+    @field_validator("output_transform")
+    @classmethod
+    def validate_output_transform(cls, v: str) -> str:
+        """Validate output transform is supported."""
+        valid = {"exp", "softplus"}
+        if v.lower() not in valid:
+            raise ValueError(
+                f"Unknown output_transform '{v}'. Valid options: {valid}"
+            )
+        return v.lower()
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_clamp_range(self) -> "AmortizationConfig":
+        """Validate that clamp_min < clamp_max when both are set."""
+        if (
+            self.output_clamp_min is not None
+            and self.output_clamp_max is not None
+            and self.output_clamp_min >= self.output_clamp_max
+        ):
+            raise ValueError(
+                f"output_clamp_min ({self.output_clamp_min}) must be less "
+                f"than output_clamp_max ({self.output_clamp_max})"
+            )
+        return self
 
     # --------------------------------------------------------------------------
 

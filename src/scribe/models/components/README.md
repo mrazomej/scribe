@@ -78,6 +78,8 @@ from scribe.models.presets import create_capture_amortizer
 from scribe.models.components import AmortizedGuide
 
 # Automatically handles constrained vs unconstrained output parameters
+# In constrained mode, output_transform ("softplus" or "exp") and
+# output_clamp_min / output_clamp_max control positive output stability.
 amortizer = create_capture_amortizer(
     hidden_dims=[64, 32],
     activation="leaky_relu",

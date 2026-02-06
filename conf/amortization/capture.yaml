@@ -7,8 +7,8 @@
 #   python infer.py model=nbvcp amortization=capture
 #   python infer.py +amortization=capture
 #
-# The MLP architecture:
-#   log(1 + total_counts) → [Linear → ReLU] × 2 → (log_alpha, log_beta) → exp → (α, β)
+# The MLP architecture (constrained mode):
+#   log(1 + total_counts) → [Linear → act] × 2 → output_heads → transform → (α, β)
 #
 # Output: Beta(α, β) prior/posterior for p_capture, or BetaPrime(α, β) for phi_capture
 
@@ -24,3 +24,14 @@ hidden_dims: [64, 32]
 # Activation function for hidden layers
 # Options: relu, gelu, silu, tanh, sigmoid, elu, leaky_relu, softplus
 activation: leaky_relu
+
+# Transform for positive output parameters (alpha, beta) in constrained mode.
+# "softplus": softplus(x) + 0.5 — numerically stable, grows linearly (default)
+# "exp": exponential — original behavior, can produce extreme values
+output_transform: softplus
+
+# Clamp range for positive outputs in constrained mode.
+# Prevents extreme BetaPrime/Beta shape parameters that cause NaN.
+# Set to null to disable either bound.
+output_clamp_min: 0.1
+output_clamp_max: 50.0

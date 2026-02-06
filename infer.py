@@ -253,6 +253,9 @@ def main(cfg: DictConfig) -> None:
     amortize_capture = False
     capture_hidden_dims = None
     capture_activation = "leaky_relu"
+    capture_output_transform = "softplus"
+    capture_clamp_min = 0.1
+    capture_clamp_max = 50.0
 
     amort_cfg = cfg.get("amortization", {})
     if amort_cfg:
@@ -261,6 +264,11 @@ def main(cfg: DictConfig) -> None:
             amortize_capture = True
             capture_hidden_dims = capture_cfg.get("hidden_dims")
             capture_activation = capture_cfg.get("activation", "leaky_relu")
+            capture_output_transform = capture_cfg.get(
+                "output_transform", "softplus"
+            )
+            capture_clamp_min = capture_cfg.get("output_clamp_min", 0.1)
+            capture_clamp_max = capture_cfg.get("output_clamp_max", 50.0)
 
     # Build kwargs for scribe.fit()
     kwargs = {
@@ -276,6 +284,9 @@ def main(cfg: DictConfig) -> None:
         "amortize_capture": amortize_capture,
         "capture_hidden_dims": capture_hidden_dims,
         "capture_activation": capture_activation,
+        "capture_output_transform": capture_output_transform,
+        "capture_clamp_min": capture_clamp_min,
+        "capture_clamp_max": capture_clamp_max,
         # Inference configuration
         "inference_method": inference_method,
         # Data configuration
