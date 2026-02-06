@@ -70,6 +70,9 @@ amortization:
     enabled: false       # Enable amortized capture probability inference
     hidden_dims: [64, 32]  # MLP hidden layer dimensions
     activation: leaky_relu     # Activation: relu, gelu, silu, tanh, etc.
+    output_transform: softplus  # Transform for constrained outputs: softplus or exp
+    output_clamp_min: 0.1       # Min clamp for alpha/beta (null to disable)
+    output_clamp_max: 50.0      # Max clamp for alpha/beta (null to disable)
 
 # --- General Settings ---
 seed: 42

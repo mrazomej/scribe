@@ -120,6 +120,7 @@ amortizer = create_capture_amortizer(
     hidden_dims=[64, 32],
     activation="leaky_relu",
     unconstrained=False,  # Outputs (alpha, beta) for Beta distribution
+    output_transform="softplus",  # or "exp"; optional clamps: output_clamp_min, output_clamp_max
 )
 model, guide = create_model_from_params(
     model="nbvcp",
@@ -143,6 +144,9 @@ model, guide = create_model_from_params(
             enabled=True,
             hidden_dims=[64, 32],
             activation="leaky_relu",
+            output_transform="softplus",
+            output_clamp_min=0.1,
+            output_clamp_max=50.0,
         ),
     ),
 )
@@ -160,6 +164,9 @@ results = scribe.fit(
     amortize_capture=True,
     capture_hidden_dims=[64, 32],
     capture_activation="leaky_relu",
+    capture_output_transform="softplus",
+    capture_clamp_min=0.1,
+    capture_clamp_max=50.0,
 )
 ```
 

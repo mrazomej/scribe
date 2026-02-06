@@ -61,6 +61,9 @@ def build_config_from_preset(
     amortize_capture: bool = False,
     capture_hidden_dims: Optional[List[int]] = None,
     capture_activation: str = "leaky_relu",
+    capture_output_transform: str = "softplus",
+    capture_clamp_min: Optional[float] = 0.1,
+    capture_clamp_max: Optional[float] = 50.0,
 ) -> ModelConfig:
     """Build ModelConfig from simple preset parameters.
 
@@ -108,6 +111,15 @@ def build_config_from_preset(
     capture_activation : str, default="leaky_relu"
         Activation function for the capture amortizer MLP.
         Only used if amortize_capture=True.
+    capture_output_transform : str, default="softplus"
+        Transform for positive output parameters in constrained mode.
+        "softplus" (default) or "exp". Only used if amortize_capture=True.
+    capture_clamp_min : float or None, default=0.1
+        Minimum clamp for amortizer positive outputs. Only used if
+        amortize_capture=True and unconstrained=False.
+    capture_clamp_max : float or None, default=50.0
+        Maximum clamp for amortizer positive outputs. Only used if
+        amortize_capture=True and unconstrained=False.
 
     Returns
     -------
@@ -196,6 +208,9 @@ def build_config_from_preset(
             enabled=True,
             hidden_dims=capture_hidden_dims or [64, 32],
             activation=capture_activation,
+            output_transform=capture_output_transform,
+            output_clamp_min=capture_clamp_min,
+            output_clamp_max=capture_clamp_max,
         )
 
     guide_families = (

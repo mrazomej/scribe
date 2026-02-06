@@ -33,7 +33,7 @@ early_stopping:
   
   # Minimum absolute improvement in loss to qualify as progress
   # Used when min_delta_pct is not specified
-  min_delta: 10.0
+  min_delta: 1.0
   
   # Minimum relative improvement (as percentage) to qualify as progress
   # If specified, takes precedence over min_delta

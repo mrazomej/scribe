@@ -76,12 +76,18 @@ class BetaPrime(Distribution):
         # φ = X / Y with X ~ Gamma(β, 1), Y ~ Gamma(α, 1)
         x = Gamma(self._a_std, 1.0).sample(key1, sample_shape)
         y = Gamma(self._b_std, 1.0).sample(key2, sample_shape)
+        # Clamp to prevent 0/0 = NaN when shape params are very small
+        # (Gamma with tiny shape can underflow to exactly 0.0 in float32)
+        x = jnp.clip(x, 1e-30)
+        y = jnp.clip(y, 1e-30)
         return x / y
 
     @validate_sample
     def log_prob(self, value):
         # log f(φ; α, β) = (β-1) log φ - (α+β) log(1+φ) - log B(β, α)
-        log_num = (self.beta - 1) * jnp.log(value) - (
+        # Clamp value to prevent log(0) = -inf when samples are near zero
+        safe_value = jnp.clip(value, 1e-30)
+        log_num = (self.beta - 1) * jnp.log(safe_value) - (
             self.alpha + self.beta
         ) * jnp.log1p(value)
         log_den = (

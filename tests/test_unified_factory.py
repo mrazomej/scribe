@@ -681,6 +681,9 @@ class TestAmortizationConfig:
         assert config.hidden_dims == [64, 32]
         assert config.activation == "relu"
         assert config.input_transformation == "log1p"
+        assert config.output_transform == "softplus"
+        assert config.output_clamp_min == 0.1
+        assert config.output_clamp_max == 50.0
 
     def test_custom_values(self):
         """Test AmortizationConfig with custom values."""
@@ -691,11 +694,17 @@ class TestAmortizationConfig:
             hidden_dims=[128, 64, 32],
             activation="gelu",
             input_transformation="sqrt",
+            output_transform="exp",
+            output_clamp_min=0.5,
+            output_clamp_max=100.0,
         )
         assert config.enabled is True
         assert config.hidden_dims == [128, 64, 32]
         assert config.activation == "gelu"
         assert config.input_transformation == "sqrt"
+        assert config.output_transform == "exp"
+        assert config.output_clamp_min == 0.5
+        assert config.output_clamp_max == 100.0
 
     def test_hidden_dims_validation_empty(self):
         """Test that empty hidden_dims raises error."""
@@ -732,6 +741,40 @@ class TestAmortizationConfig:
         with pytest.raises(ValueError, match="Unknown transformation"):
             AmortizationConfig(input_transformation="invalid")
 
+    def test_output_transform_validation(self):
+        """Test that invalid output_transform raises error."""
+        from scribe.models.config import AmortizationConfig
+
+        with pytest.raises(ValueError, match="Unknown output_transform"):
+            AmortizationConfig(output_transform="invalid")
+
+    def test_output_transform_case_insensitive(self):
+        """Test that output_transform is case-insensitive."""
+        from scribe.models.config import AmortizationConfig
+
+        config = AmortizationConfig(output_transform="SOFTPLUS")
+        assert config.output_transform == "softplus"
+
+    def test_clamp_range_validation(self):
+        """Test that clamp_min >= clamp_max raises error."""
+        from scribe.models.config import AmortizationConfig
+
+        with pytest.raises(ValueError, match="must be less than"):
+            AmortizationConfig(output_clamp_min=50.0, output_clamp_max=10.0)
+
+        with pytest.raises(ValueError, match="must be less than"):
+            AmortizationConfig(output_clamp_min=10.0, output_clamp_max=10.0)
+
+    def test_clamp_none_disables(self):
+        """Test that None clamp values are accepted."""
+        from scribe.models.config import AmortizationConfig
+
+        config = AmortizationConfig(
+            output_clamp_min=None, output_clamp_max=None
+        )
+        assert config.output_clamp_min is None
+        assert config.output_clamp_max is None
+
     def test_serialization_roundtrip(self):
         """Test AmortizationConfig YAML serialization roundtrip."""
         from scribe.models.config import AmortizationConfig
@@ -741,6 +784,9 @@ class TestAmortizationConfig:
             hidden_dims=[128, 64],
             activation="silu",
             input_transformation="log",
+            output_transform="exp",
+            output_clamp_min=0.5,
+            output_clamp_max=100.0,
         )
         yaml_str = original.to_yaml()
         loaded = AmortizationConfig.from_yaml(yaml_str)
@@ -749,6 +795,9 @@ class TestAmortizationConfig:
         assert loaded.hidden_dims == original.hidden_dims
         assert loaded.activation == original.activation
         assert loaded.input_transformation == original.input_transformation
+        assert loaded.output_transform == original.output_transform
+        assert loaded.output_clamp_min == original.output_clamp_min
+        assert loaded.output_clamp_max == original.output_clamp_max
 
 
 class TestGuideFamilyConfigWithAmortization:
@@ -805,7 +854,13 @@ class TestAmortizeCaptureFactory:
 
         amortizer = create_capture_amortizer(hidden_dims=[128, 64, 32])
         assert amortizer.hidden_dims == [128, 64, 32]
-        assert len(amortizer.layers) == 3
+
+        # Verify forward pass works with custom dims via Flax init/apply
+        counts = jnp.ones((10, 100))
+        params = amortizer.init(jax.random.PRNGKey(0), counts)
+        outputs = amortizer.apply(params, counts)
+        assert "log_alpha" in outputs
+        assert outputs["log_alpha"].shape == (10,)
 
     def test_invalid_input_transformation(self):
         """Test that invalid input transformation raises error."""
@@ -849,6 +904,33 @@ class TestAmortizeCaptureFactory:
         assert "log_scale" in amortizer.output_params
         assert amortizer.hidden_dims == [128, 64]
 
+    def test_from_config_with_output_transform_and_clamp(self):
+        """Test create_capture_amortizer_from_config forwards output_transform and clamps."""
+        from scribe.models.config import AmortizationConfig
+        from scribe.models.presets.registry import (
+            create_capture_amortizer_from_config,
+        )
+
+        config = AmortizationConfig(
+            enabled=True,
+            hidden_dims=[64, 32],
+            output_transform="softplus",
+            output_clamp_min=0.2,
+            output_clamp_max=25.0,
+        )
+        amortizer = create_capture_amortizer_from_config(
+            config, unconstrained=False
+        )
+
+        counts = jnp.ones((10, 50))
+        params = amortizer.init(jax.random.PRNGKey(0), counts)
+        outputs = amortizer.apply(params, counts)
+
+        assert jnp.all(outputs["log_alpha"] >= 0.2)
+        assert jnp.all(outputs["log_alpha"] <= 25.0)
+        assert jnp.all(outputs["log_beta"] >= 0.2)
+        assert jnp.all(outputs["log_beta"] <= 25.0)
+
     def test_custom_activation(self):
         """Test create_capture_amortizer with custom activation function."""
         from scribe.models.presets.registry import create_capture_amortizer
@@ -864,11 +946,11 @@ class TestAmortizeCaptureFactory:
             )
 
             assert amortizer.activation == activation
-            assert callable(amortizer.activation_fn)
 
-            # Test forward pass works
+            # Test forward pass works via Flax init/apply
             counts = jnp.ones((10, 100))
-            outputs = amortizer(counts)
+            params = amortizer.init(jax.random.PRNGKey(0), counts)
+            outputs = amortizer.apply(params, counts)
 
             assert "log_alpha" in outputs
             assert "log_beta" in outputs
@@ -882,7 +964,75 @@ class TestAmortizeCaptureFactory:
         amortizer = create_capture_amortizer(unconstrained=False)
 
         assert amortizer.activation == "relu"
-        assert amortizer.activation_fn == jax.nn.relu
+
+    def test_softplus_output_transform(self):
+        """Test that softplus output transform produces bounded positive values."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        amortizer = create_capture_amortizer(
+            unconstrained=False,
+            output_transform="softplus",
+            output_clamp_min=0.1,
+            output_clamp_max=50.0,
+        )
+
+        counts = jnp.ones((10, 100))
+        params = amortizer.init(jax.random.PRNGKey(0), counts)
+        outputs = amortizer.apply(params, counts)
+
+        # Output keys should still be log_alpha and log_beta
+        assert "log_alpha" in outputs
+        assert "log_beta" in outputs
+
+        # Values should be within clamp range (softplus+0.5 is always >= 0.5,
+        # and clamped to [0.1, 50.0])
+        assert jnp.all(outputs["log_alpha"] >= 0.1)
+        assert jnp.all(outputs["log_alpha"] <= 50.0)
+        assert jnp.all(outputs["log_beta"] >= 0.1)
+        assert jnp.all(outputs["log_beta"] <= 50.0)
+
+    def test_exp_output_transform_with_clamping(self):
+        """Test that exp output transform with clamping respects bounds."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        amortizer = create_capture_amortizer(
+            unconstrained=False,
+            output_transform="exp",
+            output_clamp_min=0.1,
+            output_clamp_max=50.0,
+        )
+
+        counts = jnp.ones((10, 100))
+        params = amortizer.init(jax.random.PRNGKey(0), counts)
+        outputs = amortizer.apply(params, counts)
+
+        assert jnp.all(outputs["log_alpha"] >= 0.1)
+        assert jnp.all(outputs["log_alpha"] <= 50.0)
+        assert jnp.all(outputs["log_beta"] >= 0.1)
+        assert jnp.all(outputs["log_beta"] <= 50.0)
+
+    def test_invalid_output_transform(self):
+        """Test that invalid output_transform raises error."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        with pytest.raises(ValueError, match="Unknown output_transform"):
+            create_capture_amortizer(
+                unconstrained=False,
+                output_transform="invalid",
+            )
+
+    def test_unconstrained_ignores_output_transform(self):
+        """Test that unconstrained mode ignores output_transform settings."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        amortizer = create_capture_amortizer(
+            unconstrained=True,
+            output_transform="softplus",  # Should be ignored
+            output_clamp_min=0.1,  # Should be ignored
+        )
+
+        assert "loc" in amortizer.output_params
+        assert "log_scale" in amortizer.output_params
 
 
 # ==============================================================================
@@ -946,6 +1096,27 @@ class TestAmortizationIntegration:
         assert config.guide_families.capture_amortization.enabled is True
         assert config.guide_families.capture_amortization.hidden_dims == [64, 32]
         assert config.guide_families.capture_amortization.activation == "gelu"
+        # New fields should have defaults
+        assert config.guide_families.capture_amortization.output_transform == "softplus"
+        assert config.guide_families.capture_amortization.output_clamp_min == 0.1
+        assert config.guide_families.capture_amortization.output_clamp_max == 50.0
+
+    def test_preset_builder_with_amortization_custom_transform(self):
+        """Test build_config_from_preset with custom output transform settings."""
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        config = build_config_from_preset(
+            model="nbvcp",
+            amortize_capture=True,
+            capture_output_transform="exp",
+            capture_clamp_min=0.5,
+            capture_clamp_max=100.0,
+        )
+
+        amort = config.guide_families.capture_amortization
+        assert amort.output_transform == "exp"
+        assert amort.output_clamp_min == 0.5
+        assert amort.output_clamp_max == 100.0
 
     def test_preset_builder_amortization_requires_vcp_model(self):
         """Test that amortize_capture raises error for non-VCP models."""

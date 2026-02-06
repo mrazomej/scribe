@@ -108,6 +108,9 @@ amortization:
     enabled: false       # Enable amortized capture probability
     hidden_dims: [64, 32]  # MLP hidden layer dimensions
     activation: leaky_relu     # Activation: relu, gelu, silu, tanh, etc.
+    output_transform: softplus  # Constrained outputs: softplus (default) or exp
+    output_clamp_min: 0.1       # Min clamp for alpha/beta (null to disable)
+    output_clamp_max: 50.0      # Max clamp for alpha/beta (null to disable)
 ```
 
 ### Example Configurations
@@ -273,7 +276,7 @@ python infer.py model=nbvcp amortization.capture.enabled=true
 # Use the capture preset (pre-configured amortization)
 python infer.py model=nbvcp +amortization=capture
 
-# Custom amortizer architecture
+# Custom amortizer architecture (optional: output_transform, output_clamp_*)
 python infer.py model=nbvcp \
     amortization.capture.enabled=true \
     amortization.capture.hidden_dims=[128,64,32] \
@@ -337,6 +340,9 @@ results = scribe.fit(
     amortize_capture=True,
     capture_hidden_dims=[64, 32],
     capture_activation="leaky_relu",
+    capture_output_transform="softplus",
+    capture_clamp_min=0.1,
+    capture_clamp_max=50.0,
 )
 ```
 

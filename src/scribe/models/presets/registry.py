@@ -258,6 +258,9 @@ def build_capture_spec(
                 else "canonical"
             ),
             unconstrained=unconstrained,
+            output_transform=amort_config.output_transform,
+            output_clamp_min=amort_config.output_clamp_min,
+            output_clamp_max=amort_config.output_clamp_max,
         )
         capture_family = AmortizedGuide(amortizer=amortizer)
     else:
@@ -466,12 +469,50 @@ def apply_prior_guide_overrides(
 # ==============================================================================
 
 
+def _make_softplus_offset_transform(offset, clamp_min, clamp_max):
+    """Create a softplus+offset transform with optional clamping.
+
+    Uses a named function (not lambda) for JIT compatibility.
+    softplus(x) + offset provides a numerically stable positive transform
+    that grows linearly for large inputs (unlike exp which grows explosively).
+    """
+    import jax
+    import jax.numpy as jnp
+
+    def transform(x):
+        val = jax.nn.softplus(x) + offset
+        if clamp_min is not None or clamp_max is not None:
+            val = jnp.clip(val, clamp_min, clamp_max)
+        return val
+
+    return transform
+
+
+def _make_exp_transform(clamp_min, clamp_max):
+    """Create an exp transform with optional clamping.
+
+    Uses a named function (not lambda) for JIT compatibility.
+    """
+    import jax.numpy as jnp
+
+    def transform(x):
+        val = jnp.exp(x)
+        if clamp_min is not None or clamp_max is not None:
+            val = jnp.clip(val, clamp_min, clamp_max)
+        return val
+
+    return transform
+
+
 def create_capture_amortizer(
     hidden_dims: List[int] = None,
     activation: str = "relu",
     input_transformation: str = "log1p",
     parameterization: str = "canonical",
     unconstrained: bool = False,
+    output_transform: str = "softplus",
+    output_clamp_min: Optional[float] = 0.1,
+    output_clamp_max: Optional[float] = 50.0,
 ) -> "Amortizer":
     """Create an amortizer for capture probability (p_capture or phi_capture).
 
@@ -481,7 +522,8 @@ def create_capture_amortizer(
     The output parameters depend on the parameterization:
 
     **Constrained (unconstrained=False)**:
-        - Output: log_alpha, log_beta → exp → alpha, beta
+        - Output: log_alpha, log_beta → transform → alpha, beta
+        - Transform: softplus+offset (default) or exp, with optional clamping
         - Distribution: Beta(α, β) for p_capture, BetaPrime(α, β) for
           phi_capture
 
@@ -507,6 +549,17 @@ def create_capture_amortizer(
         Whether to use unconstrained parameterization (Normal + transform).
         If True, outputs (loc, scale) for Normal. If False, outputs
         (alpha, beta) for Beta/BetaPrime.
+    output_transform : str, default="softplus"
+        Transform for positive output parameters in constrained mode.
+        "softplus": softplus(x) + 0.5 — bounded away from zero, grows
+        linearly. "exp": exponential (original behavior). Only used when
+        unconstrained=False.
+    output_clamp_min : float or None, default=0.1
+        Minimum clamp for positive outputs in constrained mode. Prevents
+        extreme BetaPrime/Beta shape parameters. None disables lower clamp.
+    output_clamp_max : float or None, default=50.0
+        Maximum clamp for positive outputs in constrained mode. None
+        disables upper clamp.
 
     Returns
     -------
@@ -515,10 +568,17 @@ def create_capture_amortizer(
 
     Examples
     --------
-    >>> # Constrained (Beta distribution)
+    >>> # Constrained with softplus (default, numerically stable)
     >>> amortizer = create_capture_amortizer(
     ...     hidden_dims=[128, 64],
     ...     activation="gelu",
+    ... )
+
+    >>> # Constrained with exp (original behavior)
+    >>> amortizer = create_capture_amortizer(
+    ...     output_transform="exp",
+    ...     output_clamp_min=None,
+    ...     output_clamp_max=None,
     ... )
 
     >>> # Unconstrained (Normal + sigmoid)
@@ -571,6 +631,7 @@ def create_capture_amortizer(
     if unconstrained:
         # Unconstrained: Normal(loc, scale) → transform → parameter
         # Output loc directly, output log_scale and exp it
+        # No clamping needed — Normal is numerically robust for any params
         output_params = ["loc", "log_scale"]
         output_transforms = {
             "loc": lambda x: x,  # loc is unbounded
@@ -580,9 +641,27 @@ def create_capture_amortizer(
         # Constrained: Beta(alpha, beta) or BetaPrime(alpha, beta)
         # Both use (alpha, beta) parameterization with alpha, beta > 0
         output_params = ["log_alpha", "log_beta"]
+
+        if output_transform == "softplus":
+            pos_transform = _make_softplus_offset_transform(
+                offset=0.5,
+                clamp_min=output_clamp_min,
+                clamp_max=output_clamp_max,
+            )
+        elif output_transform == "exp":
+            pos_transform = _make_exp_transform(
+                clamp_min=output_clamp_min,
+                clamp_max=output_clamp_max,
+            )
+        else:
+            raise ValueError(
+                f"Unknown output_transform: '{output_transform}'. "
+                f"Valid options: 'exp', 'softplus'"
+            )
+
         output_transforms = {
-            "log_alpha": jnp.exp,  # Ensure alpha > 0
-            "log_beta": jnp.exp,  # Ensure beta > 0
+            "log_alpha": pos_transform,
+            "log_beta": pos_transform,
         }
 
     # Create and return the amortizer
@@ -646,6 +725,9 @@ def create_capture_amortizer_from_config(
         input_transformation=config.input_transformation,
         parameterization=parameterization,
         unconstrained=unconstrained,
+        output_transform=config.output_transform,
+        output_clamp_min=config.output_clamp_min,
+        output_clamp_max=config.output_clamp_max,
     )
 
 

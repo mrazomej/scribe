@@ -103,6 +103,9 @@ def fit(
     amortize_capture: bool = False,
     capture_hidden_dims: Optional[List[int]] = None,
     capture_activation: str = "leaky_relu",
+    capture_output_transform: str = "softplus",
+    capture_clamp_min: Optional[float] = 0.1,
+    capture_clamp_max: Optional[float] = 50.0,
     # Inference options
     inference_method: str = "svi",
     n_steps: int = 50_000,
@@ -190,6 +193,21 @@ def fit(
     capture_activation : str, default="leaky_relu"
         Activation function for the capture amortizer MLP. Options include
         "relu", "gelu", "silu", "tanh", etc. Only used if amortize_capture=True.
+
+    capture_output_transform : str, default="softplus"
+        Transform for positive output parameters in constrained mode.
+        "softplus" (default): softplus(x) + 0.5, numerically stable.
+        "exp": exponential (original behavior, can produce extreme values).
+        Only used if amortize_capture=True and unconstrained=False.
+
+    capture_clamp_min : float or None, default=0.1
+        Minimum clamp for amortizer positive outputs (alpha, beta) in
+        constrained mode. Prevents extreme BetaPrime/Beta shape parameters.
+        Set to None to disable. Only used if amortize_capture=True.
+
+    capture_clamp_max : float or None, default=50.0
+        Maximum clamp for amortizer positive outputs in constrained mode.
+        Set to None to disable. Only used if amortize_capture=True.
 
     inference_method : str, default="svi"
         Inference method to use:
@@ -356,6 +374,9 @@ def fit(
             amortize_capture=amortize_capture,
             capture_hidden_dims=capture_hidden_dims,
             capture_activation=capture_activation,
+            capture_output_transform=capture_output_transform,
+            capture_clamp_min=capture_clamp_min,
+            capture_clamp_max=capture_clamp_max,
         )
 
     # ==========================================================================

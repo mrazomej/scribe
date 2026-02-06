@@ -368,8 +368,14 @@ class Amortizer(nn.Module):
         # ====================================================================
         outputs = {}
         for i, name in enumerate(self.output_params):
-            # Create output head with unique name for each parameter
-            out = nn.Dense(features=1, name=f"{name}_head")(h)
+            # Create output head with unique name for each parameter.
+            # Zero-initialize kernel so initial output is 0 regardless of input,
+            # giving stable starting values (e.g., exp(0)=1 for BetaPrime params).
+            out = nn.Dense(
+                features=1,
+                name=f"{name}_head",
+                kernel_init=nn.initializers.zeros,
+            )(h)
             out = out.squeeze(-1)
             # Apply transform (pre-computed in setup)
             transform_fn = self._output_transforms_list[i]
