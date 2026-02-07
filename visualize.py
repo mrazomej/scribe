@@ -18,6 +18,9 @@ Typical usage:
     # Enable optional plots
     $ python visualize.py outputs/myrun --ppc --umap --heatmap
 
+    # Generate all plots
+    $ python visualize.py outputs/myrun --all
+
     # Custom PPC settings (5x5 grid with 2000 samples)
     $ python visualize.py outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
 """
@@ -65,6 +68,9 @@ Examples:
     # Enable optional plots
     python visualize.py outputs/myrun --ppc --umap --heatmap
 
+    # Generate all plots
+    python visualize.py outputs/myrun --all
+
     # Custom PPC settings (5x5 grid)
     python visualize.py outputs/myrun --ppc --ppc-rows 5 --ppc-cols 5 --ppc-samples 2000
         """,
@@ -108,6 +114,12 @@ Examples:
         "--mixture-ppc",
         action="store_true",
         help="Enable mixture model PPC (for mixture models only)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_plots",
+        help="Enable all plots (loss, ECDF, PPC, UMAP, heatmap, mixture PPC)",
     )
 
     # Plot options
@@ -300,23 +312,42 @@ def main() -> None:
     scribe.viz.matplotlib_style()
 
     # Build viz config from command line arguments
-    viz_cfg = OmegaConf.create(
-        {
-            "loss": not args.no_loss,
-            "ecdf": not args.no_ecdf,
-            "ppc": args.ppc,
-            "umap": args.umap,
-            "heatmap": args.heatmap,
-            "mixture_ppc": args.mixture_ppc,
-            "format": args.format,
-            "ecdf_opts": {"n_genes": args.ecdf_genes},
-            "ppc_opts": {
-                "n_rows": args.ppc_rows,
-                "n_cols": args.ppc_cols,
-                "n_samples": args.ppc_samples,
-            },
-        }
-    )
+    if args.all_plots:
+        viz_cfg = OmegaConf.create(
+            {
+                "loss": True,
+                "ecdf": True,
+                "ppc": True,
+                "umap": True,
+                "heatmap": True,
+                "mixture_ppc": True,
+                "format": args.format,
+                "ecdf_opts": {"n_genes": args.ecdf_genes},
+                "ppc_opts": {
+                    "n_rows": args.ppc_rows,
+                    "n_cols": args.ppc_cols,
+                    "n_samples": args.ppc_samples,
+                },
+            }
+        )
+    else:
+        viz_cfg = OmegaConf.create(
+            {
+                "loss": not args.no_loss,
+                "ecdf": not args.no_ecdf,
+                "ppc": args.ppc,
+                "umap": args.umap,
+                "heatmap": args.heatmap,
+                "mixture_ppc": args.mixture_ppc,
+                "format": args.format,
+                "ecdf_opts": {"n_genes": args.ecdf_genes},
+                "ppc_opts": {
+                    "n_rows": args.ppc_rows,
+                    "n_cols": args.ppc_cols,
+                    "n_samples": args.ppc_samples,
+                },
+            }
+        )
 
     # Display what will be generated
     enabled_plots = []
