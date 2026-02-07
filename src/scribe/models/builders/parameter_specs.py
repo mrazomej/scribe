@@ -408,6 +408,46 @@ class ParamSpec(BaseModel):
             "Subclasses must implement arg_constraints property"
         )
 
+    # --------------------------------------------------------------------------
+    # Amortized guide (optional; only specs that support amortization implement)
+    # --------------------------------------------------------------------------
+
+    def make_amortized_guide_dist(self, var_params: Dict[str, jnp.ndarray]):
+        """
+        Build guide distribution from amortizer output (AmortizedOutput.params).
+
+        Only BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, and ExpNormalSpec
+        support amortization. Others raise NotImplementedError.
+
+        Parameters
+        ----------
+        var_params : Dict[str, jnp.ndarray]
+            Amortizer output params (see AmortizedOutput contract).
+            Constrained: keys "alpha", "beta". Unconstrained: "loc", "log_scale".
+
+        Returns
+        -------
+        Distribution
+            NumPyro distribution to sample from.
+
+        Raises
+        ------
+        NotImplementedError
+            If this spec does not support amortized guides.
+        """
+        raise NotImplementedError(
+            f"Amortized guides are not supported for spec type {type(self).__name__}. "
+            "Supported specs: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, ExpNormalSpec."
+        )
+
+    @property
+    def amortized_guide_sample_site(self) -> str:
+        """Sample site name for amortized guide (e.g. spec.name or constrained_name)."""
+        raise NotImplementedError(
+            f"Amortized guides are not supported for spec type "
+            f"{type(self).__name__}."
+        )
+
 
 # ==============================================================================
 # Constrained Parameter Types (direct sampling from constrained distributions)
@@ -467,6 +507,18 @@ class BetaSpec(ParamSpec):
         """
         # {"concentration1": positive, "concentration0": positive}
         return dist.Beta.arg_constraints
+
+    def make_amortized_guide_dist(self, var_params: Dict[str, jnp.ndarray]):
+        """
+        Build Beta guide from amortizer output (alpha, beta in constrained
+        space).
+        """
+        return dist.Beta(var_params["alpha"], var_params["beta"])
+
+    @property
+    def amortized_guide_sample_site(self) -> str:
+        """Sample site name for amortized guide."""
+        return self.name
 
 
 # ------------------------------------------------------------------------------
@@ -577,6 +629,15 @@ class BetaPrimeSpec(ParamSpec):
             "concentration1": constraints.positive,
             "concentration0": constraints.positive,
         }
+
+    def make_amortized_guide_dist(self, var_params: Dict[str, jnp.ndarray]):
+        """Build BetaPrime guide from amortizer output (alpha, beta in constrained space)."""
+        return BetaPrime(var_params["alpha"], var_params["beta"])
+
+    @property
+    def amortized_guide_sample_site(self) -> str:
+        """Sample site name for amortized guide."""
+        return self.name
 
 
 # ------------------------------------------------------------------------------
@@ -800,6 +861,21 @@ class NormalWithTransformSpec(ParamSpec):
             Constraints matching Normal distribution parameters.
         """
         return dist.Normal.arg_constraints  # {"loc": real, "scale": positive}
+
+    def make_amortized_guide_dist(self, var_params: Dict[str, jnp.ndarray]):
+        """
+        Build Normal+transform guide from amortizer output (loc, log_scale in
+        log-space).
+        """
+        loc = var_params["loc"]
+        scale = jnp.exp(var_params["log_scale"])
+        base_dist = dist.Normal(loc, scale)
+        return dist.TransformedDistribution(base_dist, self.transform)
+
+    @property
+    def amortized_guide_sample_site(self) -> str:
+        """Sample site name for amortized guide (constrained parameter name)."""
+        return self.constrained_name
 
 
 # ------------------------------------------------------------------------------
