@@ -68,3 +68,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["scribe*"]
+
+[tool.black]
+line-length = 80
