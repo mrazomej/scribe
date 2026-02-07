@@ -858,7 +858,8 @@ class TestAmortizeCaptureFactory:
         # Verify forward pass works with custom dims via Flax init/apply
         counts = jnp.ones((10, 100))
         params = amortizer.init(jax.random.PRNGKey(0), counts)
-        outputs = amortizer.apply(params, counts)
+        out = amortizer.apply(params, counts)
+        outputs = out.params
         assert "alpha" in outputs
         assert outputs["alpha"].shape == (10,)
 
@@ -924,7 +925,8 @@ class TestAmortizeCaptureFactory:
 
         counts = jnp.ones((10, 50))
         params = amortizer.init(jax.random.PRNGKey(0), counts)
-        outputs = amortizer.apply(params, counts)
+        out = amortizer.apply(params, counts)
+        outputs = out.params
 
         assert jnp.all(outputs["alpha"] >= 0.2)
         assert jnp.all(outputs["alpha"] <= 25.0)
@@ -950,7 +952,8 @@ class TestAmortizeCaptureFactory:
             # Test forward pass works via Flax init/apply
             counts = jnp.ones((10, 100))
             params = amortizer.init(jax.random.PRNGKey(0), counts)
-            outputs = amortizer.apply(params, counts)
+            out = amortizer.apply(params, counts)
+            outputs = out.params
 
             assert "alpha" in outputs
             assert "beta" in outputs
@@ -978,7 +981,8 @@ class TestAmortizeCaptureFactory:
 
         counts = jnp.ones((10, 100))
         params = amortizer.init(jax.random.PRNGKey(0), counts)
-        outputs = amortizer.apply(params, counts)
+        out = amortizer.apply(params, counts)
+        outputs = out.params
 
         # Output keys should be alpha and beta (already transformed)
         assert "alpha" in outputs
@@ -1004,7 +1008,8 @@ class TestAmortizeCaptureFactory:
 
         counts = jnp.ones((10, 100))
         params = amortizer.init(jax.random.PRNGKey(0), counts)
-        outputs = amortizer.apply(params, counts)
+        out = amortizer.apply(params, counts)
+        outputs = out.params
 
         assert jnp.all(outputs["alpha"] >= 0.1)
         assert jnp.all(outputs["alpha"] <= 50.0)

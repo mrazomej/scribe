@@ -17,6 +17,8 @@ This framework is designed to be general and extensible for:
 
 Classes
 -------
+AmortizedOutput
+    Contract for amortizer return value (keys and value space semantics).
 SufficientStatistic
     Defines computation of sufficient statistics from data.
 Amortizer
@@ -52,10 +54,11 @@ total counts depends only on p_capture, making it a sufficient statistic.
 """
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Literal, Optional
 
 import jax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 from flax import linen as nn
 
 # ------------------------------------------------------------------------------
@@ -107,15 +110,15 @@ class SufficientStatistic:
 
 def _compute_total_count(counts: jnp.ndarray) -> jnp.ndarray:
     """Compute log1p of total UMI count per cell.
-    
+
     This is a regular function (not a lambda) for better JIT compilation
     performance and tracing compatibility.
-    
+
     Parameters
     ----------
     counts : jnp.ndarray
         Count data of shape (..., n_genes).
-        
+
     Returns
     -------
     jnp.ndarray
@@ -151,15 +154,15 @@ Array([[4.094345], [2.772589]], dtype=float32)
 
 def _identity_transform(x: jnp.ndarray) -> jnp.ndarray:
     """Identity function for output transforms when no transform is specified.
-    
+
     This is a regular function (not a lambda) for better JIT compilation
     performance and tracing compatibility.
-    
+
     Parameters
     ----------
     x : jnp.ndarray
         Input array.
-        
+
     Returns
     -------
     jnp.ndarray
@@ -213,6 +216,73 @@ def _get_activation_fn(activation: str) -> Callable:
         )
 
     return ACTIVATION_MAP[activation_lower]
+
+
+# ------------------------------------------------------------------------------
+# Amortizer Output Contract
+# ------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AmortizedOutput:
+    """Contract for amortizer return value: semantics of keys and value space.
+
+    This is the single source of truth for what the amortizer outputs mean.
+    Consumers (e.g. guide_builder) must not re-apply transforms that the
+    amortizer already applied; see parameterization below.
+
+    **Constrained parameterization** (keys ``alpha``, ``beta``):
+        Values are already in **constrained (positive) space**. The amortizer
+        applies output_transforms (e.g. softplus+offset+clamp or exp)
+        internally. Consumers must use the values as-is (e.g. BetaPrime(alpha,
+        beta)) and must **not** apply any positivity transform.
+
+    **Unconstrained parameterization** (keys ``loc``, ``log_scale``):
+        ``loc`` is in **unconstrained space** (real line).
+        ``log_scale`` is in **log-space** (real line).
+        Consumers must apply ``scale = exp(log_scale)`` before using as a
+        scale parameter, then use Normal(loc, scale) and the spec's transform.
+        The amortizer does not apply exp to log_scale.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Map from parameter name to array. Keys and semantics depend on
+        parameterization (see above).
+    parameterization : Literal["constrained", "unconstrained"]
+        How to interpret params. Inferred from output_params when created
+        by Amortizer.__call__.
+    """
+
+    params: Dict[str, jnp.ndarray]
+    parameterization: Literal["constrained", "unconstrained"] = "constrained"
+
+
+# ------------------------------------------------------------------------------
+
+
+def _amortized_output_flatten(out: AmortizedOutput):
+    """Flatten for JAX pytree registration."""
+    return (out.params,), (out.parameterization,)
+
+
+# ------------------------------------------------------------------------------
+
+
+def _amortized_output_unflatten(aux, children):
+    """Unflatten for JAX pytree registration."""
+    (params,) = children
+    (parameterization,) = aux
+    return AmortizedOutput(params=params, parameterization=parameterization)
+
+
+# ------------------------------------------------------------------------------
+
+jtu.register_pytree_node(
+    AmortizedOutput,
+    _amortized_output_flatten,
+    _amortized_output_unflatten,
+)
 
 
 # ------------------------------------------------------------------------------
@@ -281,7 +351,7 @@ class Amortizer(nn.Module):
     ... )
     >>> # Forward pass (requires initialization via flax_module in NumPyro)
     >>> # In NumPyro: net = flax_module("amortizer", amortizer, input_shape=(1,))
-    >>> # Then: var_params = net(counts)
+    >>> # Then: out = net(counts); var_params = out.params
 
     Notes
     -----
@@ -306,7 +376,7 @@ class Amortizer(nn.Module):
 
     def setup(self):
         """Setup method to pre-compute transforms.
-        
+
         This is called once during module initialization to set up
         non-parameter attributes that are used in the forward pass.
         """
@@ -319,8 +389,12 @@ class Amortizer(nn.Module):
         ]
 
     @nn.compact
-    def __call__(self, data: jnp.ndarray) -> Dict[str, jnp.ndarray]:
+    def __call__(self, data: jnp.ndarray) -> AmortizedOutput:
         """Forward pass: compute variational parameters from data.
+
+        Return value satisfies the **Amortizer output contract** (see
+        :class:`AmortizedOutput`): constrained (alpha, beta) vs unconstrained
+        (loc, log_scale) semantics. Use ``.params`` to get the dict of arrays.
 
         Parameters
         ----------
@@ -329,17 +403,19 @@ class Amortizer(nn.Module):
 
         Returns
         -------
-        Dict[str, jnp.ndarray]
-            Dictionary mapping parameter names to their predicted values.
-            Each value has shape (...) matching the batch dimensions of data.
+        AmortizedOutput
+            Contract object; ``.params`` maps parameter names to predicted
+            values. Each value has shape (...) matching the batch dimensions
+            of data. Semantics depend on ``.parameterization`` (see
+            AmortizedOutput docstring).
 
         Examples
         --------
         >>> counts = jnp.ones((100, 2000))
-        >>> var_params = amortizer(counts)
-        >>> var_params.keys()
-        dict_keys(['alpha', 'beta'])
-        >>> var_params["alpha"].shape
+        >>> out = amortizer(counts)
+        >>> list(out.params.keys())
+        ['alpha', 'beta']
+        >>> out.params["alpha"].shape
         (100,)
         """
         # ====================================================================
@@ -381,7 +457,13 @@ class Amortizer(nn.Module):
             transform_fn = self._output_transforms_list[i]
             outputs[name] = transform_fn(out)
 
-        return outputs
+        # Infer parameterization for contract: alpha/beta => constrained
+        parameterization: Literal["constrained", "unconstrained"] = (
+            "constrained" if "alpha" in self.output_params else "unconstrained"
+        )
+        return AmortizedOutput(
+            params=outputs, parameterization=parameterization
+        )
 
 
 # ==============================================================================

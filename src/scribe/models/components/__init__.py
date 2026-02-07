@@ -47,6 +47,7 @@ from .guide_families import (
     GroupedAmortizedGuide,
 )
 from .amortizers import (
+    AmortizedOutput,
     SufficientStatistic,
     TOTAL_COUNT,
     Amortizer,
@@ -66,6 +67,7 @@ __all__ = [
     "AmortizedGuide",
     "GroupedAmortizedGuide",
     # Amortizers
+    "AmortizedOutput",
     "SufficientStatistic",
     "TOTAL_COUNT",
     "Amortizer",
