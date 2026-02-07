@@ -680,10 +680,9 @@ def setup_cell_specific_guide(
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Call the amortizer network (pure function, JIT-safe)
-    # The amortizer's output_transforms already produce positive alpha/beta
-    # values (via softplus+offset or exp, with optional clamping).
-    var_params = net(data)
+    # Contract (AmortizedOutput): alpha, beta are already in constrained
+    # (positive) space; do not apply any positivity transform here.
+    var_params = net(data).params
     alpha = var_params["alpha"]
     beta = var_params["beta"]
 
@@ -748,10 +747,9 @@ def setup_cell_specific_guide(
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Call the amortizer network (pure function, JIT-safe)
-    # The amortizer's output_transforms already produce positive alpha/beta
-    # values (via softplus+offset or exp, with optional clamping).
-    var_params = net(data)
+    # Contract (AmortizedOutput): alpha, beta are already in constrained
+    # (positive) space; do not apply any positivity transform here.
+    var_params = net(data).params
     alpha = var_params["alpha"]
     beta = var_params["beta"]
 
@@ -817,8 +815,9 @@ def setup_cell_specific_guide(
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Call the amortizer network (pure function, JIT-safe)
-    var_params = net(data)
+    # Contract (AmortizedOutput): loc unconstrained, log_scale in log-space;
+    # we apply exp(log_scale) here to get positive scale.
+    var_params = net(data).params
     loc = var_params["loc"]
     scale = jnp.exp(var_params["log_scale"])
 
@@ -890,8 +889,9 @@ def setup_cell_specific_guide(
     # Get data for current batch (amortizer handles per-cell computation)
     data = counts if batch_idx is None else counts[batch_idx]
 
-    # Call the amortizer network (pure function, JIT-safe)
-    var_params = net(data)
+    # Contract (AmortizedOutput): loc unconstrained, log_scale in log-space;
+    # we apply exp(log_scale) here to get positive scale.
+    var_params = net(data).params
     loc = var_params["loc"]
     scale = jnp.exp(var_params["log_scale"])
 

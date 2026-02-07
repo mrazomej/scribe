@@ -6,6 +6,10 @@ This document traces the complete flow of how posterior samples are generated fo
 
 For amortized models, the capture probability (`phi_capture` or `p_capture`) is not learned as separate parameters per cell. Instead, a neural network (amortizer) predicts variational distribution parameters from the data, and we sample from those distributions.
 
+### Amortizer output contract
+
+The amortizer returns an **AmortizedOutput** (see `scribe.models.components.amortizers.AmortizedOutput`): a single source of truth for what output keys mean and whether values are in constrained (positive) space vs log-space. **Constrained** (keys `alpha`, `beta`): values are already positive; the guide must not apply any positivity transform. **Unconstrained** (keys `loc`, `log_scale`): `log_scale` is in log-space; the guide applies `exp(log_scale)` to get the scale. This contract prevents double-transformation bugs.
+
 ## Complete Flow
 
 ### Step 1: User Calls `get_posterior_samples()`
@@ -139,13 +143,14 @@ def setup_cell_specific_guide(
 
 3. **Line 757**: **Amortizer predicts variational parameters**
    ```python
-   var_params = guide.amortizer(data)
+   out = net(data)  # net is flax_module(..., guide.amortizer, ...)
+   var_params = out.params
    ```
    - This is the key step! The amortizer network processes the counts data
-   - Returns a dict like `{"alpha": array, "beta": array}`
+   - Returns an `AmortizedOutput`; `.params` is like `{"alpha": array, "beta": array}` (see Amortizer output contract above)
    - The amortizer's output_transforms (softplus+offset+clamp) ensure positive values
 
-4. **Lines 758-759**: Uses the already-positive parameters directly
+4. **Lines 758-759**: Uses the already-positive parameters directly (contract: do not re-apply positivity transform)
    ```python
    alpha = var_params["alpha"]  # Shape: (n_cells,), already positive
    beta = var_params["beta"]    # Shape: (n_cells,), already positive
@@ -164,11 +169,11 @@ def setup_cell_specific_guide(
 ### Step 5: Amortizer Network Forward Pass
 **Location**: `src/scribe/models/components/amortizers.py:280-315`
 
-When `guide.amortizer(data)` is called:
+When the amortizer (e.g. via `net(data)`) is called:
 
 ```python
-def __call__(self, data: jnp.ndarray) -> Dict[str, jnp.ndarray]:
-    """Forward pass through the amortizer network."""
+def __call__(self, data: jnp.ndarray) -> AmortizedOutput:
+    """Forward pass through the amortizer network. Returns AmortizedOutput; use .params for the dict of arrays."""
 ```
 
 **What happens**:
@@ -257,16 +262,16 @@ User provides:
 
 ↓ setup_cell_specific_guide() for AmortizedGuide
   - data = counts  # (n_cells, n_genes)
-  - var_params = guide.amortizer(data)
+  - out = net(data); var_params = out.params  # AmortizedOutput contract
 
 ↓ amortizer.__call__(data)
   - h = log1p(sum(data, axis=-1))  # (n_cells, 1) - total UMI per cell
   - h = MLP(h)  # (n_cells, 1) → (n_cells, 64) → (n_cells, 32)
   - alpha, beta = output_heads(h) + output_transforms  # each: (n_cells,), positive
-  - return {"alpha": alpha, "beta": beta}
+  - return AmortizedOutput(params={"alpha": alpha, "beta": beta}, parameterization="constrained")
 
 ↓ setup_cell_specific_guide() continues
-  - alpha = var_params["alpha"]  # (n_cells,), already positive
+  - alpha = var_params["alpha"]  # (n_cells,), already positive (contract: no re-transform)
   - beta = var_params["beta"]    # (n_cells,), already positive
   - phi_capture = numpyro.sample("phi_capture", BetaPrime(alpha, beta))
     # Samples (n_cells,) values, one per cell

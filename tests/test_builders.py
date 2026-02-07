@@ -33,6 +33,7 @@ from scribe.models.builders import (
 
 # Import guide families
 from scribe.models.components import (
+    AmortizedOutput,
     MeanFieldGuide,
     LowRankGuide,
     NegativeBinomialLikelihood,
@@ -1173,8 +1174,9 @@ class TestAmortizer:
         # Initialize with dummy input to get params
         rng_key = random.PRNGKey(0)
         params = amortizer.init(rng_key, counts)
-        outputs = amortizer.apply(params, counts)
-
+        out = amortizer.apply(params, counts)
+        assert isinstance(out, AmortizedOutput)
+        outputs = out.params
         assert "alpha" in outputs
         assert "beta" in outputs
         assert outputs["alpha"].shape == (10,)
@@ -1245,8 +1247,9 @@ class TestAmortizer:
             counts = jnp.ones((10, 50))
             rng_key = random.PRNGKey(0)
             params = amortizer.init(rng_key, counts)
-            outputs = amortizer.apply(params, counts)
-
+            out = amortizer.apply(params, counts)
+            assert isinstance(out, AmortizedOutput)
+            outputs = out.params
             assert "alpha" in outputs
             assert "beta" in outputs
             assert outputs["alpha"].shape == (10,)
@@ -1277,8 +1280,9 @@ class TestAmortizer:
         # Linen modules need initialization
         rng_key = random.PRNGKey(0)
         params = amortizer.init(rng_key, counts)
-        outputs = amortizer.apply(params, counts)
-
+        out = amortizer.apply(params, counts)
+        assert isinstance(out, AmortizedOutput)
+        outputs = out.params
         # Verify output keys match output_params order
         assert list(outputs.keys()) == amortizer.output_params
         assert "alpha" in outputs
@@ -1304,9 +1308,44 @@ class TestAmortizer:
             return amortizer.apply(params, data)
 
         # This should compile without errors
-        outputs = jitted_forward(params, counts)
-
+        out = jitted_forward(params, counts)
+        assert isinstance(out, AmortizedOutput)
+        outputs = out.params
         assert "alpha" in outputs
         assert "beta" in outputs
         assert outputs["alpha"].shape == (10,)
         assert outputs["beta"].shape == (10,)
+
+    def test_amortizer_output_contract(self):
+        """Test AmortizedOutput contract: keys, parameterization, and value space."""
+        from scribe.models.presets.registry import create_capture_amortizer
+
+        # Constrained: alpha, beta already in positive space
+        amortizer_constrained = create_capture_amortizer(
+            hidden_dims=[16, 8],
+            output_transform="softplus",
+            output_clamp_min=0.1,
+            output_clamp_max=50.0,
+        )
+        counts = jnp.ones((20, 100))
+        rng_key = random.PRNGKey(0)
+        params = amortizer_constrained.init(rng_key, counts)
+        out = amortizer_constrained.apply(params, counts)
+        assert isinstance(out, AmortizedOutput)
+        assert out.parameterization == "constrained"
+        assert list(out.params.keys()) == ["alpha", "beta"]
+        assert jnp.all(out.params["alpha"] > 0), "alpha must be positive (constrained)"
+        assert jnp.all(out.params["beta"] > 0), "beta must be positive (constrained)"
+
+        # Unconstrained: loc unconstrained, log_scale in log-space; exp(log_scale) > 0
+        amortizer_unconstrained = create_capture_amortizer(
+            hidden_dims=[16, 8],
+            unconstrained=True,
+        )
+        params_u = amortizer_unconstrained.init(rng_key, counts)
+        out_u = amortizer_unconstrained.apply(params_u, counts)
+        assert isinstance(out_u, AmortizedOutput)
+        assert out_u.parameterization == "unconstrained"
+        assert list(out_u.params.keys()) == ["loc", "log_scale"]
+        scale = jnp.exp(out_u.params["log_scale"])
+        assert jnp.all(scale > 0), "exp(log_scale) must be positive"
