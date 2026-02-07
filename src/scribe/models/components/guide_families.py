@@ -194,7 +194,7 @@ class AmortizedGuide(GuideFamily):
     >>> amortizer = Amortizer(
     ...     sufficient_statistic=TOTAL_COUNT,
     ...     hidden_dims=[64, 32],
-    ...     output_params=["log_alpha", "log_beta"],
+    ...     output_params=["alpha", "beta"],
     ... )
     >>> spec = BetaSpec(
     ...     "p_capture", ("n_cells",), (1.0, 1.0),

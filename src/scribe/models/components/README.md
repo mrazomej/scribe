@@ -97,7 +97,7 @@ from scribe.models.components import Amortizer, TOTAL_COUNT, AmortizedGuide
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[64, 32],
-    output_params=["log_alpha", "log_beta"],  # exp() applied to ensure > 0
+    output_params=["alpha", "beta"],  # output_transforms ensure > 0
 )
 
 # For unconstrained p_capture (Normal + sigmoid)
@@ -125,7 +125,7 @@ BetaSpec(
 
 | Parameterization | Output Params           | Distribution                   |
 |------------------|-------------------------|--------------------------------|
-| Constrained      | `log_alpha`, `log_beta` | Beta(α, β) or BetaPrime(α, β)  |
+| Constrained      | `alpha`, `beta`         | Beta(α, β) or BetaPrime(α, β)  |
 | Unconstrained    | `loc`, `log_scale`      | Normal(loc, scale) → transform |
 
 ### Performance Considerations
@@ -154,7 +154,7 @@ from scribe.models.config import GuideFamilyConfig
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[64, 32],
-    output_params=["log_alpha", "log_beta"],
+    output_params=["alpha", "beta"],
 )
 
 # Use in guide config - flax_module is used automatically

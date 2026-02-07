@@ -180,7 +180,7 @@ from scribe.models.components import AmortizedGuide, TOTAL_COUNT, Amortizer
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[64, 32],
-    output_params=["log_alpha", "log_beta"],  # For constrained (Beta)
+    output_params=["alpha", "beta"],           # For constrained (Beta)
     # output_params=["loc", "log_scale"],     # For unconstrained (Normal)
 )
 model, guide = create_model_from_params(
@@ -201,7 +201,7 @@ from scribe.models.components import Amortizer, TOTAL_COUNT, LowRankGuide, Amort
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[128, 64, 32],
-    output_params=["log_alpha", "log_beta"],
+    output_params=["alpha", "beta"],
 )
 
 model, guide = create_model_from_params(

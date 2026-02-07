@@ -59,6 +59,16 @@ from scribe.models.parameterizations import (
 )
 
 # ==============================================================================
+# Helpers
+# ==============================================================================
+
+
+def _pos_transform(x):
+    """Softplus + offset transform ensuring positive output for test amortizers."""
+    return jax.nn.softplus(x) + 0.5
+
+
+# ==============================================================================
 # Fixtures
 # ==============================================================================
 
@@ -435,7 +445,8 @@ class TestPresets:
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
+            output_transforms={"alpha": _pos_transform, "beta": _pos_transform},
         )
         model, guide = create_model_from_params(
             model="nbvcp",
@@ -457,7 +468,8 @@ class TestPresets:
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
+            output_transforms={"alpha": _pos_transform, "beta": _pos_transform},
         )
         model, guide = create_model_from_params(
             model="nbvcp",
@@ -545,7 +557,8 @@ class TestMainAPI:
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
+            output_transforms={"alpha": _pos_transform, "beta": _pos_transform},
         )
         # Build config with amortized guide using ModelConfigBuilder
         from scribe.models.config import ModelConfigBuilder
@@ -671,7 +684,8 @@ class TestSVIIntegration:
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
+            output_transforms={"alpha": _pos_transform, "beta": _pos_transform},
         )
         model, guide = create_model_from_params(
             model="nbvcp",
@@ -1123,7 +1137,7 @@ class TestGuideFamilyConfig:
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
         )
         config = GuideFamilyConfig(
             p=MeanFieldGuide(),
@@ -1151,7 +1165,7 @@ class TestAmortizer:
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
         )
 
         # Test forward pass (Linen modules need initialization)
@@ -1161,10 +1175,10 @@ class TestAmortizer:
         params = amortizer.init(rng_key, counts)
         outputs = amortizer.apply(params, counts)
 
-        assert "log_alpha" in outputs
-        assert "log_beta" in outputs
-        assert outputs["log_alpha"].shape == (10,)
-        assert outputs["log_beta"].shape == (10,)
+        assert "alpha" in outputs
+        assert "beta" in outputs
+        assert outputs["alpha"].shape == (10,)
+        assert outputs["beta"].shape == (10,)
 
     def test_total_count_statistic(self):
         """Test TOTAL_COUNT sufficient statistic."""
@@ -1218,7 +1232,7 @@ class TestAmortizer:
             amortizer = Amortizer(
                 sufficient_statistic=TOTAL_COUNT,
                 hidden_dims=[32, 16],
-                output_params=["log_alpha", "log_beta"],
+                output_params=["alpha", "beta"],
                 activation=activation,
             )
 
@@ -1233,17 +1247,17 @@ class TestAmortizer:
             params = amortizer.init(rng_key, counts)
             outputs = amortizer.apply(params, counts)
 
-            assert "log_alpha" in outputs
-            assert "log_beta" in outputs
-            assert outputs["log_alpha"].shape == (10,)
-            assert outputs["log_beta"].shape == (10,)
+            assert "alpha" in outputs
+            assert "beta" in outputs
+            assert outputs["alpha"].shape == (10,)
+            assert outputs["beta"].shape == (10,)
 
     def test_amortizer_default_activation(self):
         """Test Amortizer defaults to relu if activation not specified."""
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
         )
 
         assert amortizer.activation == "relu"
@@ -1256,7 +1270,7 @@ class TestAmortizer:
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
         )
 
         counts = jnp.ones((10, 50))
@@ -1267,17 +1281,17 @@ class TestAmortizer:
 
         # Verify output keys match output_params order
         assert list(outputs.keys()) == amortizer.output_params
-        assert "log_alpha" in outputs
-        assert "log_beta" in outputs
-        assert outputs["log_alpha"].shape == (10,)
-        assert outputs["log_beta"].shape == (10,)
+        assert "alpha" in outputs
+        assert "beta" in outputs
+        assert outputs["alpha"].shape == (10,)
+        assert outputs["beta"].shape == (10,)
 
     def test_amortizer_jit_compilation(self):
         """Test that amortizer can be JIT compiled."""
         amortizer = Amortizer(
             sufficient_statistic=TOTAL_COUNT,
             hidden_dims=[32, 16],
-            output_params=["log_alpha", "log_beta"],
+            output_params=["alpha", "beta"],
         )
 
         # Initialize to get params
@@ -1292,7 +1306,7 @@ class TestAmortizer:
         # This should compile without errors
         outputs = jitted_forward(params, counts)
 
-        assert "log_alpha" in outputs
-        assert "log_beta" in outputs
-        assert outputs["log_alpha"].shape == (10,)
-        assert outputs["log_beta"].shape == (10,)
+        assert "alpha" in outputs
+        assert "beta" in outputs
+        assert outputs["alpha"].shape == (10,)
+        assert outputs["beta"].shape == (10,)

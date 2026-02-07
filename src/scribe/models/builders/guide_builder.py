@@ -681,9 +681,11 @@ def setup_cell_specific_guide(
     data = counts if batch_idx is None else counts[batch_idx]
 
     # Call the amortizer network (pure function, JIT-safe)
+    # The amortizer's output_transforms already produce positive alpha/beta
+    # values (via softplus+offset or exp, with optional clamping).
     var_params = net(data)
-    alpha = jnp.exp(var_params["log_alpha"])
-    beta = jnp.exp(var_params["log_beta"])
+    alpha = var_params["alpha"]
+    beta = var_params["beta"]
 
     return numpyro.sample(spec.name, dist.Beta(alpha, beta))
 
@@ -747,9 +749,11 @@ def setup_cell_specific_guide(
     data = counts if batch_idx is None else counts[batch_idx]
 
     # Call the amortizer network (pure function, JIT-safe)
+    # The amortizer's output_transforms already produce positive alpha/beta
+    # values (via softplus+offset or exp, with optional clamping).
     var_params = net(data)
-    alpha = jnp.exp(var_params["log_alpha"])
-    beta = jnp.exp(var_params["log_beta"])
+    alpha = var_params["alpha"]
+    beta = var_params["beta"]
 
     return numpyro.sample(spec.name, BetaPrime(alpha, beta))
 

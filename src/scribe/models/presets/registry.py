@@ -522,7 +522,7 @@ def create_capture_amortizer(
     The output parameters depend on the parameterization:
 
     **Constrained (unconstrained=False)**:
-        - Output: log_alpha, log_beta → transform → alpha, beta
+        - Output: alpha, beta (already positive via output transform)
         - Transform: softplus+offset (default) or exp, with optional clamping
         - Distribution: Beta(α, β) for p_capture, BetaPrime(α, β) for
           phi_capture
@@ -630,17 +630,15 @@ def create_capture_amortizer(
     # Determine output parameters based on constrained vs unconstrained
     if unconstrained:
         # Unconstrained: Normal(loc, scale) → transform → parameter
-        # Output loc directly, output log_scale and exp it
+        # Output loc and log_scale as raw values (no amortizer-level transform).
+        # The guide_builder applies exp(log_scale) to get the positive scale.
         # No clamping needed — Normal is numerically robust for any params
         output_params = ["loc", "log_scale"]
-        output_transforms = {
-            "loc": lambda x: x,  # loc is unbounded
-            "log_scale": jnp.exp,  # scale must be > 0
-        }
+        output_transforms = None  # Identity for all outputs
     else:
         # Constrained: Beta(alpha, beta) or BetaPrime(alpha, beta)
         # Both use (alpha, beta) parameterization with alpha, beta > 0
-        output_params = ["log_alpha", "log_beta"]
+        output_params = ["alpha", "beta"]
 
         if output_transform == "softplus":
             pos_transform = _make_softplus_offset_transform(
@@ -660,8 +658,8 @@ def create_capture_amortizer(
             )
 
         output_transforms = {
-            "log_alpha": pos_transform,
-            "log_beta": pos_transform,
+            "alpha": pos_transform,
+            "beta": pos_transform,
         }
 
     # Create and return the amortizer
