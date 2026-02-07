@@ -55,6 +55,7 @@ from .parameter_specs import (
     resolve_shape,
 )
 from scribe.stats.distributions import BetaPrime
+from ..components.amortizers import AmortizedOutput
 from ..components.guide_families import (
     AmortizedGuide,
     GuideFamily,
@@ -623,13 +624,33 @@ def setup_cell_specific_guide(
 
 
 # ------------------------------------------------------------------------------
-# Beta Distribution Amortized Guide
+# Amortized Guide (shared helper + single dispatch)
 # ------------------------------------------------------------------------------
 
 
-@dispatch(BetaSpec, AmortizedGuide, dict, object)
+def _run_amortizer(
+    guide: AmortizedGuide,
+    spec: ParamSpec,
+    counts: Optional[jnp.ndarray],
+    batch_idx: Optional[jnp.ndarray],
+) -> AmortizedOutput:
+    """Run amortizer network and return AmortizedOutput (contract: see AmortizedOutput).
+
+    Validates counts, registers flax_module, gets batch data, calls net(data).
+    """
+    if counts is None:
+        raise ValueError("Amortized guide requires counts data")
+    module_name = f"{spec.name}_amortizer"
+    net = flax_module(
+        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
+    )
+    data = counts if batch_idx is None else counts[batch_idx]
+    return net(data)
+
+
+@dispatch(ParamSpec, AmortizedGuide, dict, object)
 def setup_cell_specific_guide(
-    spec: BetaSpec,
+    spec: ParamSpec,
     guide: AmortizedGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
@@ -637,268 +658,24 @@ def setup_cell_specific_guide(
     batch_idx: Optional[jnp.ndarray] = None,
     **kwargs,
 ) -> jnp.ndarray:
-    """Amortized guide for cell-specific Beta parameter (e.g., p_capture).
+    """Amortized guide for cell-specific parameters (Beta, BetaPrime, SigmoidNormal, ExpNormal).
 
-    Uses an amortizer network to predict variational parameters from
-    sufficient statistics of the data.
+    Uses a shared helper to run the amortizer, then builds the guide distribution
+    via spec.make_amortized_guide_dist(out.params) and samples at
+    spec.amortized_guide_sample_site. Transform logic lives in the specs only.
 
-    Parameters
-    ----------
-    spec : BetaSpec
-        Parameter specification.
-    guide : AmortizedGuide
-        Amortized guide with attached amortizer network.
-    dims : Dict[str, int]
-        Dimensions.
-    model_config : ModelConfig
-        Model configuration.
-    counts : jnp.ndarray
-        Count data (used to compute sufficient statistics).
-    batch_idx : Optional[jnp.ndarray]
-        Indices for mini-batch. Amortizer processes batched data directly.
-
-    Returns
-    -------
-    jnp.ndarray
-        Sampled parameter value.
-
-    Raises
-    ------
-    ValueError
-        If counts is None (required for amortization).
+    Supported specs: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, ExpNormalSpec.
     """
-    if counts is None:
-        raise ValueError("Amortized guide requires counts data")
-
-    # Register Linen module with NumPyro (JIT-safe, no retracing)
-    module_name = f"{spec.name}_amortizer"
-    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
-    net = flax_module(
-        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
-    )
-
-    # Get data for current batch (amortizer handles per-cell computation)
-    data = counts if batch_idx is None else counts[batch_idx]
-
-    # Contract (AmortizedOutput): alpha, beta are already in constrained
-    # (positive) space; do not apply any positivity transform here.
-    var_params = net(data).params
-    alpha = var_params["alpha"]
-    beta = var_params["beta"]
-
-    return numpyro.sample(spec.name, dist.Beta(alpha, beta))
-
-
-# ------------------------------------------------------------------------------
-# BetaPrime Distribution Amortized Guide
-# ------------------------------------------------------------------------------
-
-
-@dispatch(BetaPrimeSpec, AmortizedGuide, dict, object)
-def setup_cell_specific_guide(
-    spec: BetaPrimeSpec,
-    guide: AmortizedGuide,
-    dims: Dict[str, int],
-    model_config: "ModelConfig",
-    counts: Optional[jnp.ndarray] = None,
-    batch_idx: Optional[jnp.ndarray] = None,
-    **kwargs,
-) -> jnp.ndarray:
-    """Amortized guide for cell-specific BetaPrime parameter (e.g., phi_capture).
-
-    Uses an amortizer network to predict variational parameters from
-    sufficient statistics of the data.
-
-    Parameters
-    ----------
-    spec : BetaPrimeSpec
-        Parameter specification.
-    guide : AmortizedGuide
-        Amortized guide with attached amortizer network.
-    dims : Dict[str, int]
-        Dimensions.
-    model_config : ModelConfig
-        Model configuration.
-    counts : jnp.ndarray
-        Count data (used to compute sufficient statistics).
-    batch_idx : Optional[jnp.ndarray]
-        Indices for mini-batch. Amortizer processes batched data directly.
-
-    Returns
-    -------
-    jnp.ndarray
-        Sampled parameter value.
-
-    Raises
-    ------
-    ValueError
-        If counts is None (required for amortization).
-    """
-    if counts is None:
-        raise ValueError("Amortized guide requires counts data")
-
-    # Register Linen module with NumPyro (JIT-safe, no retracing)
-    module_name = f"{spec.name}_amortizer"
-    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
-    net = flax_module(
-        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
-    )
-
-    # Get data for current batch (amortizer handles per-cell computation)
-    data = counts if batch_idx is None else counts[batch_idx]
-
-    # Contract (AmortizedOutput): alpha, beta are already in constrained
-    # (positive) space; do not apply any positivity transform here.
-    var_params = net(data).params
-    alpha = var_params["alpha"]
-    beta = var_params["beta"]
-
-    return numpyro.sample(spec.name, BetaPrime(alpha, beta))
-
-
-# ------------------------------------------------------------------------------
-# SigmoidNormal Distribution Amortized Guide
-# ------------------------------------------------------------------------------
-
-
-@dispatch(SigmoidNormalSpec, AmortizedGuide, dict, object)
-def setup_cell_specific_guide(
-    spec: SigmoidNormalSpec,
-    guide: AmortizedGuide,
-    dims: Dict[str, int],
-    model_config: "ModelConfig",
-    counts: Optional[jnp.ndarray] = None,
-    batch_idx: Optional[jnp.ndarray] = None,
-    **kwargs,
-) -> jnp.ndarray:
-    """Amortized guide for cell-specific SigmoidNormal parameter (e.g., p_capture).
-
-    Uses an amortizer network to predict variational parameters from
-    sufficient statistics of the data. Samples from Normal, then applies
-    sigmoid transform to constrain to [0, 1].
-
-    Parameters
-    ----------
-    spec : SigmoidNormalSpec
-        Parameter specification.
-    guide : AmortizedGuide
-        Amortized guide with attached amortizer network.
-    dims : Dict[str, int]
-        Dimensions.
-    model_config : ModelConfig
-        Model configuration.
-    counts : jnp.ndarray
-        Count data (used to compute sufficient statistics).
-    batch_idx : Optional[jnp.ndarray]
-        Indices for mini-batch. Amortizer processes batched data directly.
-
-    Returns
-    -------
-    jnp.ndarray
-        Sampled parameter value in constrained space [0, 1].
-
-    Raises
-    ------
-    ValueError
-        If counts is None (required for amortization).
-    """
-    if counts is None:
-        raise ValueError("Amortized guide requires counts data")
-
-    # Register Linen module with NumPyro (JIT-safe, no retracing)
-    module_name = f"{spec.name}_amortizer"
-    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
-    net = flax_module(
-        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
-    )
-
-    # Get data for current batch (amortizer handles per-cell computation)
-    data = counts if batch_idx is None else counts[batch_idx]
-
-    # Contract (AmortizedOutput): loc unconstrained, log_scale in log-space;
-    # we apply exp(log_scale) here to get positive scale.
-    var_params = net(data).params
-    loc = var_params["loc"]
-    scale = jnp.exp(var_params["log_scale"])
-
-    # Create base Normal distribution and apply sigmoid transform
-    base_dist = dist.Normal(loc, scale)
-    transformed_dist = dist.TransformedDistribution(base_dist, spec.transform)
-    return numpyro.sample(spec.constrained_name, transformed_dist)
-
-
-# ------------------------------------------------------------------------------
-# ExpNormal Distribution Amortized Guide
-# ------------------------------------------------------------------------------
-
-
-@dispatch(ExpNormalSpec, AmortizedGuide, dict, object)
-def setup_cell_specific_guide(
-    spec: ExpNormalSpec,
-    guide: AmortizedGuide,
-    dims: Dict[str, int],
-    model_config: "ModelConfig",
-    counts: Optional[jnp.ndarray] = None,
-    batch_idx: Optional[jnp.ndarray] = None,
-    **kwargs,
-) -> jnp.ndarray:
-    """Amortized guide for cell-specific ExpNormal parameter (e.g., phi_capture).
-
-    Uses an amortizer network to predict variational parameters from
-    sufficient statistics of the data. Samples from Normal, then applies
-    exp transform to constrain to [0, +∞).
-
-    Parameters
-    ----------
-    spec : ExpNormalSpec
-        Parameter specification.
-    guide : AmortizedGuide
-        Amortized guide with attached amortizer network.
-    dims : Dict[str, int]
-        Dimensions.
-    model_config : ModelConfig
-        Model configuration.
-    counts : jnp.ndarray
-        Count data (used to compute sufficient statistics).
-    batch_idx : Optional[jnp.ndarray]
-        Indices for mini-batch. Amortizer processes batched data directly.
-    amortizer_pure_apply : Optional[Callable]
-        Pure apply function for the amortizer (JIT-safe). If None, will create it.
-        Prefer using the pre-created pure apply from guide builder.
-
-    Returns
-    -------
-    jnp.ndarray
-        Sampled parameter value in constrained space [0, +∞).
-
-    Raises
-    ------
-    ValueError
-        If counts is None (required for amortization).
-    """
-    if counts is None:
-        raise ValueError("Amortized guide requires counts data")
-
-    # Register Linen module with NumPyro (JIT-safe, no retracing)
-    module_name = f"{spec.name}_amortizer"
-    # Input shape is (input_dim,) where input_dim is typically 1 for scalar statistics
-    net = flax_module(
-        module_name, guide.amortizer, input_shape=(guide.amortizer.input_dim,)
-    )
-
-    # Get data for current batch (amortizer handles per-cell computation)
-    data = counts if batch_idx is None else counts[batch_idx]
-
-    # Contract (AmortizedOutput): loc unconstrained, log_scale in log-space;
-    # we apply exp(log_scale) here to get positive scale.
-    var_params = net(data).params
-    loc = var_params["loc"]
-    scale = jnp.exp(var_params["log_scale"])
-
-    # Create base Normal distribution and apply exp transform
-    base_dist = dist.Normal(loc, scale)
-    transformed_dist = dist.TransformedDistribution(base_dist, spec.transform)
-    return numpyro.sample(spec.constrained_name, transformed_dist)
+    out = _run_amortizer(guide, spec, counts, batch_idx)
+    try:
+        guide_dist = spec.make_amortized_guide_dist(out.params)
+        site = spec.amortized_guide_sample_site
+    except NotImplementedError as e:
+        raise ValueError(
+            f"AmortizedGuide is not supported for spec type {type(spec).__name__}. "
+            "Supported: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, ExpNormalSpec."
+        ) from e
+    return numpyro.sample(site, guide_dist)
 
 
 # ------------------------------------------------------------------------------
