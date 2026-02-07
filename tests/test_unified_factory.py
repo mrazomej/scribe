@@ -834,8 +834,8 @@ class TestAmortizeCaptureFactory:
 
         amortizer = create_capture_amortizer(unconstrained=False)
 
-        assert "log_alpha" in amortizer.output_params
-        assert "log_beta" in amortizer.output_params
+        assert "alpha" in amortizer.output_params
+        assert "beta" in amortizer.output_params
         assert "loc" not in amortizer.output_params
 
     def test_unconstrained_output_params(self):
@@ -846,7 +846,7 @@ class TestAmortizeCaptureFactory:
 
         assert "loc" in amortizer.output_params
         assert "log_scale" in amortizer.output_params
-        assert "log_alpha" not in amortizer.output_params
+        assert "alpha" not in amortizer.output_params
 
     def test_custom_hidden_dims(self):
         """Test amortizer with custom hidden dimensions."""
@@ -859,8 +859,8 @@ class TestAmortizeCaptureFactory:
         counts = jnp.ones((10, 100))
         params = amortizer.init(jax.random.PRNGKey(0), counts)
         outputs = amortizer.apply(params, counts)
-        assert "log_alpha" in outputs
-        assert outputs["log_alpha"].shape == (10,)
+        assert "alpha" in outputs
+        assert outputs["alpha"].shape == (10,)
 
     def test_invalid_input_transformation(self):
         """Test that invalid input transformation raises error."""
@@ -883,7 +883,7 @@ class TestAmortizeCaptureFactory:
             config, unconstrained=False
         )
 
-        assert "log_alpha" in amortizer.output_params
+        assert "alpha" in amortizer.output_params
         assert amortizer.hidden_dims == [64, 32]
 
     def test_from_config_unconstrained(self):
@@ -926,10 +926,10 @@ class TestAmortizeCaptureFactory:
         params = amortizer.init(jax.random.PRNGKey(0), counts)
         outputs = amortizer.apply(params, counts)
 
-        assert jnp.all(outputs["log_alpha"] >= 0.2)
-        assert jnp.all(outputs["log_alpha"] <= 25.0)
-        assert jnp.all(outputs["log_beta"] >= 0.2)
-        assert jnp.all(outputs["log_beta"] <= 25.0)
+        assert jnp.all(outputs["alpha"] >= 0.2)
+        assert jnp.all(outputs["alpha"] <= 25.0)
+        assert jnp.all(outputs["beta"] >= 0.2)
+        assert jnp.all(outputs["beta"] <= 25.0)
 
     def test_custom_activation(self):
         """Test create_capture_amortizer with custom activation function."""
@@ -952,10 +952,10 @@ class TestAmortizeCaptureFactory:
             params = amortizer.init(jax.random.PRNGKey(0), counts)
             outputs = amortizer.apply(params, counts)
 
-            assert "log_alpha" in outputs
-            assert "log_beta" in outputs
-            assert outputs["log_alpha"].shape == (10,)
-            assert outputs["log_beta"].shape == (10,)
+            assert "alpha" in outputs
+            assert "beta" in outputs
+            assert outputs["alpha"].shape == (10,)
+            assert outputs["beta"].shape == (10,)
 
     def test_default_activation(self):
         """Test create_capture_amortizer defaults to relu."""
@@ -980,16 +980,16 @@ class TestAmortizeCaptureFactory:
         params = amortizer.init(jax.random.PRNGKey(0), counts)
         outputs = amortizer.apply(params, counts)
 
-        # Output keys should still be log_alpha and log_beta
-        assert "log_alpha" in outputs
-        assert "log_beta" in outputs
+        # Output keys should be alpha and beta (already transformed)
+        assert "alpha" in outputs
+        assert "beta" in outputs
 
         # Values should be within clamp range (softplus+0.5 is always >= 0.5,
         # and clamped to [0.1, 50.0])
-        assert jnp.all(outputs["log_alpha"] >= 0.1)
-        assert jnp.all(outputs["log_alpha"] <= 50.0)
-        assert jnp.all(outputs["log_beta"] >= 0.1)
-        assert jnp.all(outputs["log_beta"] <= 50.0)
+        assert jnp.all(outputs["alpha"] >= 0.1)
+        assert jnp.all(outputs["alpha"] <= 50.0)
+        assert jnp.all(outputs["beta"] >= 0.1)
+        assert jnp.all(outputs["beta"] <= 50.0)
 
     def test_exp_output_transform_with_clamping(self):
         """Test that exp output transform with clamping respects bounds."""
@@ -1006,10 +1006,10 @@ class TestAmortizeCaptureFactory:
         params = amortizer.init(jax.random.PRNGKey(0), counts)
         outputs = amortizer.apply(params, counts)
 
-        assert jnp.all(outputs["log_alpha"] >= 0.1)
-        assert jnp.all(outputs["log_alpha"] <= 50.0)
-        assert jnp.all(outputs["log_beta"] >= 0.1)
-        assert jnp.all(outputs["log_beta"] <= 50.0)
+        assert jnp.all(outputs["alpha"] >= 0.1)
+        assert jnp.all(outputs["alpha"] <= 50.0)
+        assert jnp.all(outputs["beta"] >= 0.1)
+        assert jnp.all(outputs["beta"] <= 50.0)
 
     def test_invalid_output_transform(self):
         """Test that invalid output_transform raises error."""

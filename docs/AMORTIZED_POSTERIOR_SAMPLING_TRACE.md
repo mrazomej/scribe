@@ -142,12 +142,13 @@ def setup_cell_specific_guide(
    var_params = guide.amortizer(data)
    ```
    - This is the key step! The amortizer network processes the counts data
-   - Returns a dict like `{"log_alpha": array, "log_beta": array}`
+   - Returns a dict like `{"alpha": array, "beta": array}`
+   - The amortizer's output_transforms (softplus+offset+clamp) ensure positive values
 
-4. **Lines 758-759**: Transforms to positive parameters
+4. **Lines 758-759**: Uses the already-positive parameters directly
    ```python
-   alpha = jnp.exp(var_params["log_alpha"])  # Shape: (n_cells,)
-   beta = jnp.exp(var_params["log_beta"])    # Shape: (n_cells,)
+   alpha = var_params["alpha"]  # Shape: (n_cells,), already positive
+   beta = var_params["beta"]    # Shape: (n_cells,), already positive
    ```
 
 5. **Line 761**: Samples from the variational distribution
@@ -198,7 +199,7 @@ def __call__(self, data: jnp.ndarray) -> Dict[str, jnp.ndarray]:
    ```
    - `h` shape: `(n_cells, 32)`
    - Each output head: `Linear(32, 1)` → squeeze → shape `(n_cells,)`
-   - Returns: `{"log_alpha": (n_cells,), "log_beta": (n_cells,)}`
+   - Returns: `{"alpha": (n_cells,), "beta": (n_cells,)}`
 
 **Key transformation**:
 ```
@@ -209,10 +210,8 @@ total_umis (n_cells,)
 log1p_total (n_cells, 1)
   ↓ MLP [64, 32]
 hidden (n_cells, 32)
-  ↓ output_heads
-{log_alpha: (n_cells,), log_beta: (n_cells,)}
-  ↓ exp
-{alpha: (n_cells,), beta: (n_cells,)}
+  ↓ output_heads + output_transforms (softplus+offset+clamp)
+{alpha: (n_cells,), beta: (n_cells,)}  — already positive
   ↓ BetaPrime(alpha, beta).sample()
 phi_capture (n_cells,)
 ```
@@ -263,12 +262,12 @@ User provides:
 ↓ amortizer.__call__(data)
   - h = log1p(sum(data, axis=-1))  # (n_cells, 1) - total UMI per cell
   - h = MLP(h)  # (n_cells, 1) → (n_cells, 64) → (n_cells, 32)
-  - log_alpha, log_beta = output_heads(h)  # each: (n_cells,)
-  - return {"log_alpha": log_alpha, "log_beta": log_beta}
+  - alpha, beta = output_heads(h) + output_transforms  # each: (n_cells,), positive
+  - return {"alpha": alpha, "beta": beta}
 
 ↓ setup_cell_specific_guide() continues
-  - alpha = exp(log_alpha)  # (n_cells,)
-  - beta = exp(log_beta)    # (n_cells,)
+  - alpha = var_params["alpha"]  # (n_cells,), already positive
+  - beta = var_params["beta"]    # (n_cells,), already positive
   - phi_capture = numpyro.sample("phi_capture", BetaPrime(alpha, beta))
     # Samples (n_cells,) values, one per cell
 

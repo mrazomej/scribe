@@ -34,7 +34,7 @@ Examples
 >>> amortizer = Amortizer(
 ...     sufficient_statistic=TOTAL_COUNT,
 ...     hidden_dims=[64, 32],
-...     output_params=["log_alpha", "log_beta"],
+...     output_params=["alpha", "beta"],
 ... )
 >>> # Use with AmortizedGuide
 >>> guide_family = AmortizedGuide(amortizer=amortizer)
@@ -245,7 +245,7 @@ class Amortizer(nn.Module):
         with two hidden layers of size 64 and 32.
     output_params : List[str]
         Names of output variational parameters. Each gets its own
-        output head. E.g., ["log_alpha", "log_beta"] for Beta parameters.
+        output head. E.g., ["alpha", "beta"] for Beta parameters.
     output_transforms : Dict[str, Callable], optional
         Optional transforms to apply to each output. Keys should match
         output_params. E.g., {"alpha": jnp.exp} to ensure positivity.
@@ -277,7 +277,7 @@ class Amortizer(nn.Module):
     >>> amortizer = Amortizer(
     ...     sufficient_statistic=TOTAL_COUNT,
     ...     hidden_dims=[64, 32],
-    ...     output_params=["log_alpha", "log_beta"],
+    ...     output_params=["alpha", "beta"],
     ... )
     >>> # Forward pass (requires initialization via flax_module in NumPyro)
     >>> # In NumPyro: net = flax_module("amortizer", amortizer, input_shape=(1,))
@@ -338,8 +338,8 @@ class Amortizer(nn.Module):
         >>> counts = jnp.ones((100, 2000))
         >>> var_params = amortizer(counts)
         >>> var_params.keys()
-        dict_keys(['log_alpha', 'log_beta'])
-        >>> var_params["log_alpha"].shape
+        dict_keys(['alpha', 'beta'])
+        >>> var_params["alpha"].shape
         (100,)
         """
         # ====================================================================

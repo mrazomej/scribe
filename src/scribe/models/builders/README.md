@@ -101,7 +101,7 @@ from scribe.models.components import AmortizedGuide, Amortizer, TOTAL_COUNT
 amortizer = Amortizer(
     sufficient_statistic=TOTAL_COUNT,
     hidden_dims=[64, 32],
-    output_params=["log_alpha", "log_beta"],
+    output_params=["alpha", "beta"],
 )
 
 specs = [
