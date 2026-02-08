@@ -262,14 +262,15 @@ class ParameterExtractionMixin:
                 if guide is not None:
                     dummy_key = random.PRNGKey(0)
                     with numpyro.handlers.seed(rng_seed=dummy_key):
-                        with numpyro.handlers.trace() as tr:
-                            guide(
-                                n_cells=self.n_cells,
-                                n_genes=self.n_genes,
-                                model_config=self.model_config,
-                                counts=counts,
-                                batch_size=None,
-                            )
+                        with numpyro.handlers.substitute(data=params):
+                            with numpyro.handlers.trace() as tr:
+                                guide(
+                                    n_cells=self.n_cells,
+                                    n_genes=self.n_genes,
+                                    model_config=self.model_config,
+                                    counts=counts,
+                                    batch_size=None,
+                                )
 
                     # Extract distribution parameters from trace
                     # The trace contains the distribution objects in the 'fn' field
