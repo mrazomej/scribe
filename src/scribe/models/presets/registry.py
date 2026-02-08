@@ -244,23 +244,16 @@ def build_capture_spec(
     # Check if amortization is enabled for capture probability
     amort_config = guide_families.capture_amortization
     if amort_config is not None and amort_config.enabled:
-        # Create amortizer and use AmortizedGuide
-        # Pass unconstrained flag so amortizer outputs correct parameter types:
-        # - Constrained: (alpha, beta) for Beta/BetaPrime
-        # - Unconstrained: (loc, scale) for Normal + transform
-        amortizer = create_capture_amortizer(
-            hidden_dims=amort_config.hidden_dims,
-            activation=amort_config.activation,
-            input_transformation=amort_config.input_transformation,
-            parameterization=(
-                param_strategy.name
-                if hasattr(param_strategy, "name")
-                else "canonical"
-            ),
+        # Create amortizer from config object (single place unpacks into create_capture_amortizer)
+        param_name = (
+            param_strategy.name
+            if hasattr(param_strategy, "name")
+            else "canonical"
+        )
+        amortizer = create_capture_amortizer_from_config(
+            amort_config,
+            parameterization=param_name,
             unconstrained=unconstrained,
-            output_transform=amort_config.output_transform,
-            output_clamp_min=amort_config.output_clamp_min,
-            output_clamp_max=amort_config.output_clamp_max,
         )
         capture_family = AmortizedGuide(amortizer=amortizer)
     else:

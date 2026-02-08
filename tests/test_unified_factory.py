@@ -1099,12 +1099,22 @@ class TestAmortizationIntegration:
         assert config.guide_families is not None
         assert config.guide_families.capture_amortization is not None
         assert config.guide_families.capture_amortization.enabled is True
-        assert config.guide_families.capture_amortization.hidden_dims == [64, 32]
+        assert config.guide_families.capture_amortization.hidden_dims == [
+            64,
+            32,
+        ]
         assert config.guide_families.capture_amortization.activation == "gelu"
         # New fields should have defaults
-        assert config.guide_families.capture_amortization.output_transform == "softplus"
-        assert config.guide_families.capture_amortization.output_clamp_min == 0.1
-        assert config.guide_families.capture_amortization.output_clamp_max == 50.0
+        assert (
+            config.guide_families.capture_amortization.output_transform
+            == "softplus"
+        )
+        assert (
+            config.guide_families.capture_amortization.output_clamp_min == 0.1
+        )
+        assert (
+            config.guide_families.capture_amortization.output_clamp_max == 50.0
+        )
 
     def test_preset_builder_with_amortization_custom_transform(self):
         """Test build_config_from_preset with custom output transform settings."""
@@ -1139,6 +1149,94 @@ class TestAmortizationIntegration:
                 amortize_capture=True,
             )
 
+    def test_build_config_from_preset_with_capture_amortization_object(self):
+        """Test build_config_from_preset with capture_amortization object (single config)."""
+        from scribe.models.config import AmortizationConfig
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        # Passing capture_amortization object yields same guide_families as six params
+        amort_config = AmortizationConfig(
+            enabled=True,
+            hidden_dims=[32, 16],
+            activation="gelu",
+            output_transform="exp",
+            output_clamp_min=0.5,
+            output_clamp_max=100.0,
+        )
+        config = build_config_from_preset(
+            model="nbvcp",
+            capture_amortization=amort_config,
+        )
+        assert config.guide_families is not None
+        assert config.guide_families.capture_amortization is amort_config
+        assert (
+            config.guide_families.capture_amortization.output_transform == "exp"
+        )
+        assert (
+            config.guide_families.capture_amortization.output_clamp_min == 0.5
+        )
+        assert (
+            config.guide_families.capture_amortization.output_clamp_max == 100.0
+        )
+
+        # capture_amortization (object) for non-VCP raises
+        with pytest.raises(ValueError, match="only valid for VCP models"):
+            build_config_from_preset(
+                model="nbdm",
+                capture_amortization=amort_config,
+            )
+
+    def test_build_config_from_preset_capture_amortization_dict(self):
+        """Test build_config_from_preset with capture_amortization as dict (normalized)."""
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        config = build_config_from_preset(
+            model="nbvcp",
+            capture_amortization={
+                "enabled": True,
+                "hidden_dims": [64, 32],
+                "output_transform": "softplus",
+                "output_clamp_min": 0.1,
+                "output_clamp_max": 50.0,
+            },
+        )
+        assert config.guide_families is not None
+        assert config.guide_families.capture_amortization is not None
+        assert config.guide_families.capture_amortization.enabled is True
+        assert (
+            config.guide_families.capture_amortization.output_transform
+            == "softplus"
+        )
+
+    def test_fit_with_capture_amortization_object(self):
+        """Test scribe.fit() with capture_amortization object (single config flow)."""
+        import scribe
+        from scribe.models.config import AmortizationConfig
+
+        # Minimal run: fit() with capture_amortization=AmortizationConfig(...) runs
+        counts = jnp.ones((20, 30))  # tiny data
+        capture_amortization = AmortizationConfig(
+            enabled=True,
+            hidden_dims=[16, 8],
+            output_transform="softplus",
+        )
+        results = scribe.fit(
+            counts,
+            model="nbvcp",
+            capture_amortization=capture_amortization,
+            n_steps=2,
+        )
+        assert results is not None
+        # Backward compat: fit() with amortize_capture=True and six params still works
+        results2 = scribe.fit(
+            counts,
+            model="nbvcp",
+            amortize_capture=True,
+            capture_output_transform="exp",
+            n_steps=2,
+        )
+        assert results2 is not None
+
 
 # ==============================================================================
 # Test Mixture Parameter Validation
@@ -1169,7 +1267,9 @@ class TestMixtureParamsValidation:
             .as_mixture(2, ["invalid_param"])
             .build()
         )
-        with pytest.raises(ValueError, match=r"Core \(mean_odds\): \['phi', 'mu'\]"):
+        with pytest.raises(
+            ValueError, match=r"Core \(mean_odds\): \['phi', 'mu'\]"
+        ):
             create_model(config)
 
     def test_error_message_mentions_derived_params(self):

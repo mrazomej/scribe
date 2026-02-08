@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from anndata import AnnData
 
 from .models.config import (
+    AmortizationConfig,
     DataConfig,
     EarlyStoppingConfig,
     InferenceConfig,
@@ -106,6 +107,9 @@ def fit(
     capture_output_transform: str = "softplus",
     capture_clamp_min: Optional[float] = 0.1,
     capture_clamp_max: Optional[float] = 50.0,
+    capture_amortization: Optional[
+        Union[AmortizationConfig, Dict[str, Any]]
+    ] = None,
     # Inference options
     inference_method: str = "svi",
     n_steps: int = 50_000,
@@ -208,6 +212,13 @@ def fit(
     capture_clamp_max : float or None, default=50.0
         Maximum clamp for amortizer positive outputs in constrained mode.
         Set to None to disable. Only used if amortize_capture=True.
+
+    capture_amortization : AmortizationConfig or dict, optional
+        Single config object for capture amortization. When provided, it
+        overrides the six individual capture_* parameters above. Can be an
+        AmortizationConfig instance or a dict (converted to AmortizationConfig).
+        When None and amortize_capture=True, an AmortizationConfig is built
+        from the six capture_* parameters (backward compatible).
 
     inference_method : str, default="svi"
         Inference method to use:
@@ -362,6 +373,24 @@ def fit(
     # Step 3: Build or use ModelConfig
     # ==========================================================================
     if model_config is None:
+        # Single config object: prefer capture_amortization; else build from 6
+        # params
+        effective_capture_amortization = None
+        if capture_amortization is not None:
+            effective_capture_amortization = (
+                AmortizationConfig(**capture_amortization)
+                if isinstance(capture_amortization, dict)
+                else capture_amortization
+            )
+        elif amortize_capture:
+            effective_capture_amortization = AmortizationConfig(
+                enabled=True,
+                hidden_dims=capture_hidden_dims or [64, 32],
+                activation=capture_activation,
+                output_transform=capture_output_transform,
+                output_clamp_min=capture_clamp_min,
+                output_clamp_max=capture_clamp_max,
+            )
         model_config = build_config_from_preset(
             model=model.lower(),
             parameterization=parameterization.lower(),
@@ -377,6 +406,7 @@ def fit(
             capture_output_transform=capture_output_transform,
             capture_clamp_min=capture_clamp_min,
             capture_clamp_max=capture_clamp_max,
+            capture_amortization=effective_capture_amortization,
         )
 
     # ==========================================================================

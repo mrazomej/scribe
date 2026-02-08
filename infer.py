@@ -77,6 +77,7 @@ file for further diagnostic or biological interpretation.
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import scribe
+from scribe.models.config import AmortizationConfig
 import pickle
 import os
 import warnings
@@ -249,26 +250,25 @@ def main(cfg: DictConfig) -> None:
             DeprecationWarning,
         )
 
-    # Build amortization kwargs if configured
-    amortize_capture = False
-    capture_hidden_dims = None
-    capture_activation = "leaky_relu"
-    capture_output_transform = "softplus"
-    capture_clamp_min = 0.1
-    capture_clamp_max = 50.0
-
+    # Build capture amortization config once from YAML; pass as single object
+    capture_amortization = None
     amort_cfg = cfg.get("amortization", {})
     if amort_cfg:
         capture_cfg = amort_cfg.get("capture", {})
         if capture_cfg and capture_cfg.get("enabled", False):
-            amortize_capture = True
-            capture_hidden_dims = capture_cfg.get("hidden_dims")
-            capture_activation = capture_cfg.get("activation", "leaky_relu")
-            capture_output_transform = capture_cfg.get(
-                "output_transform", "softplus"
+            capture_amortization = AmortizationConfig(
+                enabled=True,
+                hidden_dims=capture_cfg.get("hidden_dims") or [64, 32],
+                activation=capture_cfg.get("activation") or "leaky_relu",
+                input_transformation=capture_cfg.get(
+                    "input_transformation", "log1p"
+                ),
+                output_transform=capture_cfg.get(
+                    "output_transform", "softplus"
+                ),
+                output_clamp_min=capture_cfg.get("output_clamp_min", 0.1),
+                output_clamp_max=capture_cfg.get("output_clamp_max", 50.0),
             )
-            capture_clamp_min = capture_cfg.get("output_clamp_min", 0.1)
-            capture_clamp_max = capture_cfg.get("output_clamp_max", 50.0)
 
     # Build kwargs for scribe.fit()
     kwargs = {
@@ -280,13 +280,9 @@ def main(cfg: DictConfig) -> None:
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,
         "priors": priors,
-        # Amortization configuration
-        "amortize_capture": amortize_capture,
-        "capture_hidden_dims": capture_hidden_dims,
-        "capture_activation": capture_activation,
-        "capture_output_transform": capture_output_transform,
-        "capture_clamp_min": capture_clamp_min,
-        "capture_clamp_max": capture_clamp_max,
+        # Amortization: single config object (when set, fit() uses it; else uses
+        # individual params)
+        "capture_amortization": capture_amortization,
         # Inference configuration
         "inference_method": inference_method,
         # Data configuration

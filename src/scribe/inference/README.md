@@ -156,8 +156,13 @@ Build ModelConfig from preset parameters.
 - `guide_rank`: Rank for low-rank guide
 - `n_components`: Number of mixture components
 - `priors`: Dictionary of prior parameters
-- `amortize_capture`: Enable amortized capture probability (VCP models only)
-- `capture_hidden_dims`: MLP hidden layer dimensions for amortizer
+- `capture_amortization`: Optional `AmortizationConfig` or dict. When provided,
+  used directly and overrides the six `capture_*` params below (recommended:
+  single object from infer/fit).
+- `amortize_capture`: Enable amortized capture probability (VCP models only).
+  Used when `capture_amortization` is `None`.
+- `capture_hidden_dims`: MLP hidden layer dimensions for amortizer (used when
+  `capture_amortization` is `None`).
 - `capture_activation`: Activation function for amortizer MLP
 - `capture_output_transform`: Transform for constrained outputs (`softplus` or `exp`)
 - `capture_clamp_min`: Min clamp for amortizer alpha/beta (constrained mode; `None` to disable)
@@ -300,24 +305,33 @@ results = run_scribe(
 
 ### Pattern 5: Amortized Inference
 
-For VCP models with large datasets, use amortized capture probability:
+For VCP models with large datasets, use amortized capture probability. Prefer a
+single config object:
 
 ```python
 from scribe.inference.preset_builder import build_config_from_preset
-from scribe.models.config import InferenceConfig, SVIConfig
+from scribe.models.config import AmortizationConfig, InferenceConfig, SVIConfig
 
-# Using preset builder
+# Preferred: single config object
 model_config = build_config_from_preset(
     model="nbvcp",
     parameterization="canonical",
     inference_method="svi",
-    amortize_capture=True,
-    capture_hidden_dims=[128, 64],
-    capture_activation="gelu",
-    capture_output_transform="softplus",
-    capture_clamp_min=0.1,
-    capture_clamp_max=50.0,
+    capture_amortization=AmortizationConfig(
+        enabled=True,
+        hidden_dims=[128, 64],
+        activation="gelu",
+        output_transform="softplus",
+        output_clamp_min=0.1,
+        output_clamp_max=50.0,
+    ),
 )
+
+# Or: six individual params (backward compatible)
+# model_config = build_config_from_preset(
+#     model="nbvcp", parameterization="canonical", inference_method="svi",
+#     amortize_capture=True, capture_hidden_dims=[128, 64], ...
+# )
 
 results = run_scribe(
     counts=adata,

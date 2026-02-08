@@ -32,7 +32,7 @@ scribe.models.presets.factory.create_model : Creates model/guide from config.
 scribe.models.config.ModelConfigBuilder : Builder for ModelConfig objects.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from ..models.config import (
     AmortizationConfig,
@@ -64,6 +64,9 @@ def build_config_from_preset(
     capture_output_transform: str = "softplus",
     capture_clamp_min: Optional[float] = 0.1,
     capture_clamp_max: Optional[float] = 50.0,
+    capture_amortization: Optional[
+        Union[AmortizationConfig, Dict[str, Any]]
+    ] = None,
 ) -> ModelConfig:
     """Build ModelConfig from simple preset parameters.
 
@@ -120,6 +123,13 @@ def build_config_from_preset(
     capture_clamp_max : float or None, default=50.0
         Maximum clamp for amortizer positive outputs. Only used if
         amortize_capture=True and unconstrained=False.
+    capture_amortization : AmortizationConfig or dict, optional
+        Single config object for capture amortization. When provided, it
+        is used directly in guide_families and overrides the six
+        capture_* parameters above. Can be an AmortizationConfig or a dict
+        (converted to AmortizationConfig). When None and amortize_capture=True,
+        an AmortizationConfig is built from the six capture_* parameters
+        (backward compatible).
 
     Returns
     -------
@@ -198,7 +208,19 @@ def build_config_from_preset(
         guide_family_kwargs[gene_param_name] = LowRankGuide(rank=guide_rank)
 
     # Handle amortized inference for capture probability (VCP models only)
-    if amortize_capture:
+    if capture_amortization is not None:
+        if model not in ("nbvcp", "zinbvcp"):
+            raise ValueError(
+                "capture_amortization is only valid for VCP models "
+                f"(nbvcp, zinbvcp), not '{model}'"
+            )
+        effective = (
+            AmortizationConfig(**capture_amortization)
+            if isinstance(capture_amortization, dict)
+            else capture_amortization
+        )
+        guide_family_kwargs["capture_amortization"] = effective
+    elif amortize_capture:
         if model not in ("nbvcp", "zinbvcp"):
             raise ValueError(
                 f"amortize_capture=True is only valid for VCP models "
