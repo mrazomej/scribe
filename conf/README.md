@@ -334,16 +334,22 @@ results = scribe.fit(
 )
 
 # Equivalent to: python infer.py model=nbvcp amortization.capture.enabled=true
+# infer.py builds AmortizationConfig from YAML and passes capture_amortization=...
+from scribe.models.config import AmortizationConfig
+
 results = scribe.fit(
     adata,
     model="nbvcp",
-    amortize_capture=True,
-    capture_hidden_dims=[64, 32],
-    capture_activation="leaky_relu",
-    capture_output_transform="softplus",
-    capture_clamp_min=0.1,
-    capture_clamp_max=50.0,
+    capture_amortization=AmortizationConfig(
+        enabled=True,
+        hidden_dims=[64, 32],
+        activation="leaky_relu",
+        output_transform="softplus",
+        output_clamp_min=0.1,
+        output_clamp_max=50.0,
+    ),
 )
+# Backward compatible: you can still pass amortize_capture=True and the six capture_* params.
 ```
 
 ## Best Practices

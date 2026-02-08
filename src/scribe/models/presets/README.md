@@ -154,10 +154,28 @@ model, guide = create_model_from_params(
 
 **Option 3: Using scribe.fit() directly (simplest)**
 
+You can pass a single config object or the six individual params (backward
+compatible):
+
 ```python
 import scribe
+from scribe.models.config import AmortizationConfig
 
-# Flat kwargs - no manual config construction needed
+# Preferred: single config object (same object flows infer → fit → build_config)
+results = scribe.fit(
+    adata,
+    model="nbvcp",
+    capture_amortization=AmortizationConfig(
+        enabled=True,
+        hidden_dims=[64, 32],
+        activation="leaky_relu",
+        output_transform="softplus",
+        output_clamp_min=0.1,
+        output_clamp_max=50.0,
+    ),
+)
+
+# Or: flat kwargs (backward compatible; ignored when capture_amortization is set)
 results = scribe.fit(
     adata,
     model="nbvcp",
