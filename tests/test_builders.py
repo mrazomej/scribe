@@ -520,7 +520,7 @@ class TestMainAPI:
     def test_all_model_types(self, model_type, model_config, small_counts):
         """Test v2 API supports all model types."""
         config = build_config_from_preset(model=model_type)
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
 
         with numpyro.handlers.seed(rng_seed=0):
             model(
@@ -543,7 +543,7 @@ class TestMainAPI:
             parameterization="linked",
             guide_rank=5,  # This creates LowRankGuide for mu
         )
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
 
         with numpyro.handlers.seed(rng_seed=0):
             guide(
@@ -574,7 +574,7 @@ class TestMainAPI:
             )
             .build()
         )
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
 
         with numpyro.handlers.seed(rng_seed=0):
             guide(

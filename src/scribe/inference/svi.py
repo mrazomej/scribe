@@ -136,16 +136,24 @@ def _run_svi_inference(
     # Run SVI inference
     svi_results = SVIInferenceEngine.run_inference(**inference_kwargs)
 
+    # Use config with param_specs from run result when available (for gene
+    # subsetting)
+    config_for_results = (
+        svi_results.model_config
+        if svi_results.model_config is not None
+        else model_config
+    )
+
     # Compute model_type: add _mix suffix for mixture models
-    model_type = model_config.base_model
-    if model_config.n_components is not None:
-        model_type = f"{model_config.base_model}_mix"
+    model_type = config_for_results.base_model
+    if config_for_results.n_components is not None:
+        model_type = f"{config_for_results.base_model}_mix"
 
     # Package results using the factory
     return SVIResultsFactory.create_results(
         svi_results=svi_results,
         adata=adata,
-        model_config=model_config,
+        model_config=config_for_results,
         count_data=count_data,
         n_cells=n_cells,
         n_genes=n_genes,

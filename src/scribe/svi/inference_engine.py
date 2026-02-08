@@ -64,6 +64,7 @@ class SVIRunResult:
     early_stopped: bool = False
     stopped_at_step: int = 0
     best_loss: float = float("inf")
+    model_config: Optional[ModelConfig] = None
 
 
 # ------------------------------------------------------------------------------
@@ -79,6 +80,7 @@ def _run_with_early_stopping(
     early_stopping: EarlyStoppingConfig,
     stable_update: bool = True,
     progress: bool = True,
+    model_config: Optional[ModelConfig] = None,
 ) -> SVIRunResult:
     """Run SVI with early stopping based on loss convergence.
 
@@ -177,6 +179,7 @@ def _run_with_early_stopping(
             early_stopped=False,
             stopped_at_step=len(losses),
             best_loss=best_loss,
+            model_config=model_config,
         )
 
     # Progress bar setup - matches NumPyro's format showing loss range
@@ -332,6 +335,7 @@ def _run_with_early_stopping(
         early_stopped=early_stopped,
         stopped_at_step=len(losses),
         best_loss=best_loss,
+        model_config=model_config,
     )
 
 
@@ -344,6 +348,7 @@ def _run_standard(
     model_args: Dict[str, Any],
     n_steps: int,
     stable_update: bool = True,
+    model_config: Optional[ModelConfig] = None,
 ) -> SVIRunResult:
     """Run SVI using NumPyro's built-in run method (no early stopping).
 
@@ -383,6 +388,7 @@ def _run_standard(
         best_loss=(
             float(result.losses[-1]) if len(result.losses) > 0 else float("inf")
         ),
+        model_config=model_config,
     )
 
 
@@ -516,7 +522,9 @@ class SVIInferenceEngine:
         SVIRunResult : Container for inference results.
         """
         # Get model and guide functions using the builder-based API
-        model, guide = get_model_and_guide(model_config)
+        model, guide, model_config_for_results = get_model_and_guide(
+            model_config
+        )
 
         # Create SVI instance
         svi = SVI(model, guide, optimizer, loss=loss)
@@ -543,6 +551,7 @@ class SVIInferenceEngine:
                 early_stopping=early_stopping,
                 stable_update=stable_update,
                 progress=progress,
+                model_config=model_config_for_results,
             )
         else:
             return _run_standard(
@@ -551,4 +560,5 @@ class SVIInferenceEngine:
                 model_args=model_args,
                 n_steps=n_steps,
                 stable_update=stable_update,
+                model_config=model_config_for_results,
             )

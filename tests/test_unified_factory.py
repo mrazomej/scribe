@@ -164,7 +164,7 @@ class TestUnifiedFactory:
     def test_create_model_returns_callables(self, model_type):
         """Test that create_model returns callable functions."""
         config = ModelConfigBuilder().for_model(model_type).build()
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
 
         assert callable(model)
         assert callable(guide)
@@ -180,14 +180,14 @@ class TestUnifiedFactory:
             .with_parameterization(parameterization)
             .build()
         )
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
         assert callable(model)
         assert callable(guide)
 
     def test_create_model_unconstrained(self):
         """Test create_model with unconstrained parameterization."""
         config = ModelConfigBuilder().for_model("zinb").unconstrained().build()
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
         assert callable(model)
         assert callable(guide)
 
@@ -199,14 +199,14 @@ class TestUnifiedFactory:
             .as_mixture(n_components=3)
             .build()
         )
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
         assert callable(model)
         assert callable(guide)
 
     def test_create_model_with_priors(self):
         """Test create_model with custom priors."""
         config = ModelConfigBuilder().for_model("nbdm").build()
-        model, guide = create_model(
+        model, guide, _ = create_model(
             config, priors={"p": (2.0, 2.0), "r": (1.0, 0.5)}
         )
         assert callable(model)
@@ -279,7 +279,7 @@ class TestFactoryConfigurations:
     def test_factory_all_models(self, model_type):
         """Test factory creates models for all model types."""
         config = ModelConfigBuilder().for_model(model_type).build()
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
 
         assert callable(model)
         assert callable(guide)
@@ -295,7 +295,7 @@ class TestFactoryConfigurations:
             .with_parameterization(parameterization)
             .build()
         )
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
 
         assert callable(model)
         assert callable(guide)
@@ -310,7 +310,7 @@ class TestFactoryConfigurations:
             .as_mixture(n_components=n_components)
             .build()
         )
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
 
         assert callable(model)
         assert callable(guide)
@@ -318,7 +318,7 @@ class TestFactoryConfigurations:
     def test_factory_unconstrained(self):
         """Test factory handles unconstrained models."""
         config = ModelConfigBuilder().for_model("nbvcp").unconstrained().build()
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
 
         assert callable(model)
         assert callable(guide)
@@ -346,7 +346,7 @@ class TestFactoryConfigurations:
             builder.unconstrained()
 
         config = builder.build()
-        model, guide = create_model(config)
+        model, guide, _ = create_model(config)
 
         assert callable(model)
         assert callable(guide)
@@ -363,7 +363,7 @@ class TestModelConfigIntegration:
     def test_config_with_priors(self):
         """Test that priors are applied."""
         config = ModelConfigBuilder().for_model("nbdm").build()
-        model, guide = create_model(config, priors={"p": (2.0, 2.0)})
+        model, guide, _ = create_model(config, priors={"p": (2.0, 2.0)})
         assert callable(model)
 
     def test_get_prior_overrides_method(self):
@@ -500,7 +500,7 @@ class TestModelGuideValidation:
         )
 
         config = ModelConfigBuilder().for_model("nbdm").build()
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         # Should not raise
         validate_model_guide_compatibility(model, guide, config)
 
@@ -508,7 +508,7 @@ class TestModelGuideValidation:
         """Test that validation can be disabled."""
         config = ModelConfigBuilder().for_model("nbdm").build()
         # Should not raise even with validate=False
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)
         assert callable(guide)
 
@@ -517,7 +517,7 @@ class TestModelGuideValidation:
         for model_type in ["nbdm", "zinb", "nbvcp", "zinbvcp"]:
             config = ModelConfigBuilder().for_model(model_type).build()
             # Should not raise
-            model, guide = create_model(config, validate=True)
+            model, guide, _ = create_model(config, validate=True)
             assert callable(model)
 
 
@@ -1294,7 +1294,7 @@ class TestMixtureParamsValidation:
             .build()
         )
         # Should not raise
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)
 
     def test_valid_core_params_mean_prob(self):
@@ -1307,7 +1307,7 @@ class TestMixtureParamsValidation:
             .build()
         )
         # Should not raise
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)
 
     def test_valid_core_params_mean_odds(self):
@@ -1320,7 +1320,7 @@ class TestMixtureParamsValidation:
             .build()
         )
         # Should not raise
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)
 
     def test_valid_model_specific_param_gate(self):
@@ -1333,7 +1333,7 @@ class TestMixtureParamsValidation:
             .build()
         )
         # Should not raise
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)
 
     def test_valid_model_specific_param_capture(self):
@@ -1346,7 +1346,7 @@ class TestMixtureParamsValidation:
             .build()
         )
         # Should not raise
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)
 
     def test_transformed_capture_param_mean_odds(self):
@@ -1359,7 +1359,7 @@ class TestMixtureParamsValidation:
             .build()
         )
         # Should not raise
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)
 
     def test_error_shows_model_specific_params(self):
@@ -1413,5 +1413,5 @@ class TestMixtureParamsValidation:
             .build()
         )
         # Should not raise
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
         assert callable(model)

@@ -16,6 +16,7 @@ import numpy as np
 from ..sampling import generate_predictive_samples
 from ..models.config import ModelConfig
 from ..core.normalization import normalize_counts_from_posterior
+from ..svi._gene_subsetting import build_gene_axis_by_key
 
 # ------------------------------------------------------------------------------
 # MCMC Subset class (moved to module level)
@@ -108,24 +109,33 @@ class ScribeMCMCSubset:
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
         Create a new posterior samples dictionary for the given index.
+        When model_config.param_specs is set, use metadata-based subsetting;
+        otherwise use last-axis heuristic as fallback.
         """
         if samples is None:
             return None
 
         new_samples = {}
-        # Get the original number of genes before subsetting, which is stored
-        # in the instance variable self.n_genes.
         original_n_genes = self.n_genes
+        gene_axis_by_key = None
+        if getattr(self.model_config, "param_specs", None):
+            gene_axis_by_key = build_gene_axis_by_key(
+                self.model_config.param_specs, samples, original_n_genes
+            )
 
         for key, value in samples.items():
-            # The gene dimension is typically the last one in the posterior sample arrays.
-            # We check if the last dimension's size matches the original number of genes.
+            if not hasattr(value, "ndim"):
+                new_samples[key] = value
+                continue
+            if gene_axis_by_key is not None and key in gene_axis_by_key:
+                gene_axis = gene_axis_by_key[key]
+                slicer = [slice(None)] * value.ndim
+                slicer[gene_axis] = index
+                new_samples[key] = value[tuple(slicer)]
+                continue
             if value.ndim > 0 and value.shape[-1] == original_n_genes:
-                # This is a gene-specific parameter, so we subset it along the last axis.
                 new_samples[key] = value[..., index]
             else:
-                # This is not a gene-specific parameter (e.g., global, cell-specific),
-                # so we keep it as is.
                 new_samples[key] = value
         return new_samples
 
@@ -1353,26 +1363,33 @@ class ScribeMCMCResults(MCMC):
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
         Create a new posterior samples dictionary for the given index.
+        When model_config.param_specs is set, use metadata-based subsetting;
+        otherwise use last-axis heuristic as fallback.
         """
         if samples is None:
             return None
 
         new_samples = {}
-        # Get the original number of genes before subsetting, which is stored
-        # in the instance variable self.n_genes.
         original_n_genes = self.n_genes
+        gene_axis_by_key = None
+        if getattr(self.model_config, "param_specs", None):
+            gene_axis_by_key = build_gene_axis_by_key(
+                self.model_config.param_specs, samples, original_n_genes
+            )
 
         for key, value in samples.items():
-            # The gene dimension is typically the last one in the posterior
-            # sample arrays. We check if the last dimension's size matches the
-            # original number of genes.
+            if not hasattr(value, "ndim"):
+                new_samples[key] = value
+                continue
+            if gene_axis_by_key is not None and key in gene_axis_by_key:
+                gene_axis = gene_axis_by_key[key]
+                slicer = [slice(None)] * value.ndim
+                slicer[gene_axis] = index
+                new_samples[key] = value[tuple(slicer)]
+                continue
             if value.ndim > 0 and value.shape[-1] == original_n_genes:
-                # This is a gene-specific parameter, so we subset it along the
-                # last axis.
                 new_samples[key] = value[..., index]
             else:
-                # This is not a gene-specific parameter (e.g., global,
-                # cell-specific), so we keep it as is.
                 new_samples[key] = value
         return new_samples
 

@@ -424,7 +424,7 @@ def get_model_and_guide(
     model_config: "ModelConfig",
     unconstrained: Optional[bool] = None,
     guide_families: Optional["GuideFamilyConfig"] = None,
-) -> Tuple[Callable, Callable]:
+) -> Tuple[Callable, Callable, "ModelConfig"]:
     """Create model and guide functions using the unified factory.
 
     This is the primary API for getting model/guide functions. It uses the
@@ -457,6 +457,9 @@ def get_model_and_guide(
         NumPyro model function.
     guide : Callable
         NumPyro guide function.
+    model_config_for_results : ModelConfig
+        Config with param_specs set (for use when constructing results).
+        Use this when creating ScribeSVIResults so subsetting has metadata.
 
     Raises
     ------
@@ -471,7 +474,7 @@ def get_model_and_guide(
     >>>
     >>> # Basic NBDM (all mean-field)
     >>> model_config = build_config_from_preset("nbdm")
-    >>> model, guide = get_model_and_guide(model_config)
+    >>> model, guide, model_config_for_results = get_model_and_guide(model_config)
     >>>
     >>> # NBVCP with low-rank for mu and amortized p_capture
     >>> model_config = build_config_from_preset(
@@ -482,7 +485,7 @@ def get_model_and_guide(
     ...         p_capture=AmortizedGuide(amortizer=my_amortizer),
     ...     ),
     ... )
-    >>> model, guide = get_model_and_guide(model_config)
+    >>> model, guide, model_config_for_results = get_model_and_guide(model_config)
 
     See Also
     --------
@@ -508,4 +511,10 @@ def get_model_and_guide(
         effective_config = model_config
 
     # Use the unified factory
-    return create_model(effective_config)
+    model, guide, param_specs = create_model(effective_config)
+    model_config_for_results = (
+        effective_config.model_copy(update={"param_specs": param_specs})
+        if param_specs
+        else effective_config
+    )
+    return model, guide, model_config_for_results

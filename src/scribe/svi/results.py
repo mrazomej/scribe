@@ -106,8 +106,13 @@ class ScribeSVIResults(
     predictive_samples: Optional[Dict] = None
     n_components: Optional[int] = None
 
-    # Internal: tracks original gene count before subsetting (for amortizer validation)
-    # When using amortized capture probability, counts must have shape
-    # (n_cells, _original_n_genes) because the amortizer computes sufficient
-    # statistics (e.g., total UMI count) by summing across ALL genes.
+    # Internal: tracks original gene count before subsetting (for amortizer
+    # validation) When using amortized capture probability, counts must have
+    # shape (n_cells, _original_n_genes) because the amortizer computes
+    # sufficient statistics (e.g., total UMI count) by summing across ALL genes.
     _original_n_genes: Optional[int] = None
+
+    # Internal: gene axis per param key for metadata-based subsetting (when
+    # param_specs set). When present, _subset_params and
+    # _subset_posterior_samples use this instead of heuristics.
+    _gene_axis_by_key: Optional[Dict[str, int]] = None

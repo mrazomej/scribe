@@ -462,39 +462,58 @@ def apply_prior_guide_overrides(
 # ==============================================================================
 
 
-def _make_softplus_offset_transform(offset, clamp_min, clamp_max):
-    """Create a softplus+offset transform with optional clamping.
+class _SoftplusOffsetTransform:
+    """Picklable softplus+offset transform with optional clamping.
 
-    Uses a named function (not lambda) for JIT compatibility.
-    softplus(x) + offset provides a numerically stable positive transform
-    that grows linearly for large inputs (unlike exp which grows explosively).
+    Module-level class (not a nested function) so amortizer output_transforms
+    can be pickled. softplus(x) + offset is numerically stable and grows
+    linearly for large inputs.
     """
-    import jax
-    import jax.numpy as jnp
 
-    def transform(x):
-        val = jax.nn.softplus(x) + offset
-        if clamp_min is not None or clamp_max is not None:
-            val = jnp.clip(val, clamp_min, clamp_max)
+    def __init__(
+        self,
+        offset: float,
+        clamp_min: Optional[float],
+        clamp_max: Optional[float],
+    ):
+        self.offset = offset
+        self.clamp_min = clamp_min
+        self.clamp_max = clamp_max
+
+    def __call__(self, x):
+        import jax
+        import jax.numpy as jnp
+
+        val = jax.nn.softplus(x) + self.offset
+        if self.clamp_min is not None or self.clamp_max is not None:
+            val = jnp.clip(val, self.clamp_min, self.clamp_max)
         return val
 
-    return transform
+
+# ------------------------------------------------------------------------------
 
 
-def _make_exp_transform(clamp_min, clamp_max):
-    """Create an exp transform with optional clamping.
+class _ExpTransform:
+    """Picklable exp transform with optional clamping.
 
-    Uses a named function (not lambda) for JIT compatibility.
+    Module-level class (not a nested function) so amortizer output_transforms
+    can be pickled.
     """
-    import jax.numpy as jnp
 
-    def transform(x):
+    def __init__(self, clamp_min: Optional[float], clamp_max: Optional[float]):
+        self.clamp_min = clamp_min
+        self.clamp_max = clamp_max
+
+    def __call__(self, x):
+        import jax.numpy as jnp
+
         val = jnp.exp(x)
-        if clamp_min is not None or clamp_max is not None:
-            val = jnp.clip(val, clamp_min, clamp_max)
+        if self.clamp_min is not None or self.clamp_max is not None:
+            val = jnp.clip(val, self.clamp_min, self.clamp_max)
         return val
 
-    return transform
+
+# ------------------------------------------------------------------------------
 
 
 def create_capture_amortizer(
@@ -591,22 +610,26 @@ def create_capture_amortizer(
     scribe.models.components.amortizers.Amortizer : The MLP class.
     scribe.models.components.amortizers.TOTAL_COUNT : The sufficient statistic.
     """
-    import jax.numpy as jnp
-
-    from ..components.amortizers import Amortizer, SufficientStatistic
+    from ..components.amortizers import (
+        Amortizer,
+        SufficientStatistic,
+        _compute_total_count,
+        _compute_total_count_identity,
+        _compute_total_count_log,
+        _compute_total_count_sqrt,
+    )
 
     # Default hidden dimensions
     if hidden_dims is None:
         hidden_dims = [64, 32]
 
-    # Create appropriate sufficient statistic based on input transformation
+    # Create appropriate sufficient statistic based on input transformation.
+    # Use module-level functions (not lambdas) so amortizer is picklable.
     INPUT_TRANSFORMS = {
-        "log1p": lambda counts: jnp.log1p(counts.sum(axis=-1, keepdims=True)),
-        "log": lambda counts: jnp.log(
-            counts.sum(axis=-1, keepdims=True) + 1e-8
-        ),
-        "sqrt": lambda counts: jnp.sqrt(counts.sum(axis=-1, keepdims=True)),
-        "identity": lambda counts: counts.sum(axis=-1, keepdims=True),
+        "log1p": _compute_total_count,
+        "log": _compute_total_count_log,
+        "sqrt": _compute_total_count_sqrt,
+        "identity": _compute_total_count_identity,
     }
 
     if input_transformation not in INPUT_TRANSFORMS:
@@ -634,13 +657,13 @@ def create_capture_amortizer(
         output_params = ["alpha", "beta"]
 
         if output_transform == "softplus":
-            pos_transform = _make_softplus_offset_transform(
+            pos_transform = _SoftplusOffsetTransform(
                 offset=0.5,
                 clamp_min=output_clamp_min,
                 clamp_max=output_clamp_max,
             )
         elif output_transform == "exp":
-            pos_transform = _make_exp_transform(
+            pos_transform = _ExpTransform(
                 clamp_min=output_clamp_min,
                 clamp_max=output_clamp_max,
             )
