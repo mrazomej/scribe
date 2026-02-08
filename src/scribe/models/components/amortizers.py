@@ -127,6 +127,42 @@ def _compute_total_count(counts: jnp.ndarray) -> jnp.ndarray:
     return jnp.log1p(counts.sum(axis=-1, keepdims=True))
 
 
+# ------------------------------------------------------------------------------
+
+
+def _compute_total_count_log(counts: jnp.ndarray) -> jnp.ndarray:
+    """
+    Compute log of total UMI count per cell (with small epsilon for stability).
+
+    Module-level function (not lambda) for picklability and JIT compatibility.
+    """
+    return jnp.log(counts.sum(axis=-1, keepdims=True) + 1e-8)
+
+
+# ------------------------------------------------------------------------------
+
+
+def _compute_total_count_sqrt(counts: jnp.ndarray) -> jnp.ndarray:
+    """Compute sqrt of total UMI count per cell.
+
+    Module-level function (not lambda) for picklability and JIT compatibility.
+    """
+    return jnp.sqrt(counts.sum(axis=-1, keepdims=True))
+
+
+# ------------------------------------------------------------------------------
+
+
+def _compute_total_count_identity(counts: jnp.ndarray) -> jnp.ndarray:
+    """Compute total UMI count per cell (no transform).
+
+    Module-level function (not lambda) for picklability and JIT compatibility.
+    """
+    return counts.sum(axis=-1, keepdims=True)
+
+
+# ------------------------------------------------------------------------------
+
 TOTAL_COUNT = SufficientStatistic(
     name="total_count",
     compute=_compute_total_count,

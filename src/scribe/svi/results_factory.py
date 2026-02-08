@@ -7,6 +7,7 @@ This module handles the packaging of SVI results into ScribeSVIResults objects.
 from typing import Optional, Dict, Any
 import jax.numpy as jnp
 from ..svi.results import ScribeSVIResults
+from ..svi._gene_subsetting import build_gene_axis_by_key
 from ..models.config import ModelConfig
 
 
@@ -54,6 +55,14 @@ class SVIResultsFactory:
         ScribeSVIResults
             Packaged results object
         """
+        gene_axis_by_key = None
+        if getattr(model_config, "param_specs", None):
+            gene_axis_by_key = build_gene_axis_by_key(
+                model_config.param_specs,
+                svi_results.params,
+                n_genes,
+            )
+
         if adata is not None:
             results = ScribeSVIResults.from_anndata(
                 adata=adata,
@@ -63,6 +72,7 @@ class SVIResultsFactory:
                 model_config=model_config,
                 n_components=n_components,
                 prior_params=prior_params,
+                _gene_axis_by_key=gene_axis_by_key,
             )
         else:
             results = ScribeSVIResults(
@@ -74,6 +84,7 @@ class SVIResultsFactory:
                 model_config=model_config,
                 n_components=n_components,
                 prior_params=prior_params,
+                _gene_axis_by_key=gene_axis_by_key,
             )
 
         return results

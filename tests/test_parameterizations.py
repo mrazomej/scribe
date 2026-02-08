@@ -253,7 +253,7 @@ class TestMixtureBroadcastingIntegration:
             .as_mixture(2, ["mu", "phi"])
             .build()
         )
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
 
         # Run model in prior predictive mode
         with numpyro.handlers.seed(rng_seed=42):
@@ -284,7 +284,7 @@ class TestMixtureBroadcastingIntegration:
             .as_mixture(2, ["mu", "p"])
             .build()
         )
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
 
         # Run model in prior predictive mode
         with numpyro.handlers.seed(rng_seed=42):
@@ -315,7 +315,7 @@ class TestMixtureBroadcastingIntegration:
             .as_mixture(2, ["mu"])  # Only mu is mixture-specific
             .build()
         )
-        model, guide = create_model(config, validate=False)
+        model, guide, _ = create_model(config, validate=False)
 
         # Run model in prior predictive mode
         with numpyro.handlers.seed(rng_seed=42):

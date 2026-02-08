@@ -57,7 +57,7 @@ class MCMCInferenceEngine:
             Results from MCMC run containing samples and diagnostics
         """
         # Get model function (no guide needed for MCMC)
-        model, _ = get_model_and_guide(model_config, guide_families=None)
+        model, _, _ = get_model_and_guide(model_config, guide_families=None)
 
         # Create NUTS sampler
         nuts_kernel = NUTS(model, **(mcmc_kwargs or {}))

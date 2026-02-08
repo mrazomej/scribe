@@ -5,10 +5,95 @@ This mixin provides methods for subsetting results by gene indices, enabling
 indexing operations like `results[:, genes]`.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Any
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+
+# ==============================================================================
+# Gene metadata helper
+# ==============================================================================
+
+
+def build_gene_axis_by_key(
+    param_specs: List[Any],
+    params: Dict[str, Any],
+    n_genes: int,
+) -> Optional[Dict[str, int]]:
+    """
+    Build a mapping from param key to gene axis index from param_specs and
+    params.
+
+    Used for deterministic gene subsetting when param_specs are available,
+    avoiding ambiguity when multiple axes have the same size (e.g. n_components
+    == n_genes).
+
+    Parameters
+    ----------
+    param_specs : List
+        Parameter specifications (e.g. from model_config.param_specs).
+        Each spec should have name, is_gene_specific, and shape_dims.
+    params : Dict[str, Any]
+        Flat params dict (e.g. svi_results.params).
+    n_genes : int
+        Number of genes (used to validate shape and as fallback for axis
+        detection).
+
+    Returns
+    -------
+    Optional[Dict[str, int]]
+        Map from param key to gene axis index, or None if no gene-specific
+        params were found. Keys not in this map should not be subset along any
+        axis.
+    """
+    if not param_specs:
+        return None
+
+    gene_axis_by_key: Dict[str, int] = {}
+
+    for spec in param_specs:
+        is_gene_spec = getattr(spec, "is_gene_specific", False) or (
+            "n_genes" in getattr(spec, "shape_dims", ())
+        )
+        if not is_gene_spec:
+            continue
+
+        name = getattr(spec, "name", None)
+        if not name:
+            continue
+        shape_dims = getattr(spec, "shape_dims", ())
+
+        for key in params:
+            if "$" in key:
+                continue
+            if (
+                key != name
+                and not key.startswith(name + "_")
+                and not key.startswith("log_" + name + "_")
+            ):
+                continue
+
+            value = params[key]
+            if not hasattr(value, "shape"):
+                continue
+
+            try:
+                if (
+                    shape_dims
+                    and "n_genes" in shape_dims
+                    and len(value.shape) == len(shape_dims)
+                ):
+                    gene_axis = list(shape_dims).index("n_genes")
+                    if value.shape[gene_axis] == n_genes:
+                        gene_axis_by_key[key] = gene_axis
+                else:
+                    gene_axis = value.shape.index(n_genes)
+                    gene_axis_by_key[key] = gene_axis
+            except (ValueError, IndexError):
+                continue
+
+    return gene_axis_by_key if gene_axis_by_key else None
+
 
 # ==============================================================================
 # Gene Subsetting Mixin
@@ -48,10 +133,13 @@ class GeneSubsettingMixin:
     def _subset_params(self, params: Dict, index) -> Dict:
         """
         Create a new parameter dictionary for the given index using a dynamic,
-        shape-based approach.
+        shape-based approach. When _gene_axis_by_key is set (from param_specs),
+        subset only gene-indexed keys along the stored axis; otherwise use
+        shape-based heuristic (first axis matching n_genes) as fallback.
         """
         new_params = {}
         original_n_genes = self.n_genes
+        gene_axis_by_key = getattr(self, "_gene_axis_by_key", None)
 
         for key, value in params.items():
             # Skip nested dicts (e.g., Flax module params from flax_module)
@@ -60,19 +148,20 @@ class GeneSubsettingMixin:
                 new_params[key] = value
                 continue
 
-            # Find the axis that corresponds to the number of genes.
-            # This is safer than assuming the position of the gene axis.
+            if gene_axis_by_key is not None and key in gene_axis_by_key:
+                gene_axis = gene_axis_by_key[key]
+                slicer = [slice(None)] * value.ndim
+                slicer[gene_axis] = index
+                new_params[key] = value[tuple(slicer)]
+                continue
+
+            # Fallback: find the first axis with size original_n_genes
             try:
-                # Find the first occurrence of an axis with size
-                # `original_n_genes`.
                 gene_axis = value.shape.index(original_n_genes)
-                # Build a slicer tuple to index the correct axis.
                 slicer = [slice(None)] * value.ndim
                 slicer[gene_axis] = index
                 new_params[key] = value[tuple(slicer)]
             except ValueError:
-                # This parameter is not gene-specific (no axis matches n_genes),
-                # so we keep it as is.
                 new_params[key] = value
         return new_params
 
@@ -81,32 +170,33 @@ class GeneSubsettingMixin:
     def _subset_posterior_samples(self, samples: Dict, index) -> Dict:
         """
         Create a new posterior samples dictionary for the given index.
+        When _gene_axis_by_key is set, subset only gene-indexed keys along the
+        stored axis; otherwise use last-axis heuristic as fallback.
         """
         if samples is None:
             return None
 
         new_samples = {}
-        # Get the original number of genes before subsetting, which is stored
-        # in the instance variable self.n_genes.
         original_n_genes = self.n_genes
+        gene_axis_by_key = getattr(self, "_gene_axis_by_key", None)
 
         for key, value in samples.items():
             # Skip nested dicts (e.g., Flax module params from flax_module)
-            # These have keys like "amortizer$params" and contain nested dicts
             if not hasattr(value, "ndim"):
                 new_samples[key] = value
                 continue
 
-            # The gene dimension is typically the last one in the posterior
-            # sample arrays. We check if the last dimension's size matches the
-            # original number of genes.
+            if gene_axis_by_key is not None and key in gene_axis_by_key:
+                gene_axis = gene_axis_by_key[key]
+                slicer = [slice(None)] * value.ndim
+                slicer[gene_axis] = index
+                new_samples[key] = value[tuple(slicer)]
+                continue
+
+            # Fallback: gene dimension is typically last
             if value.ndim > 0 and value.shape[-1] == original_n_genes:
-                # This is a gene-specific parameter, so we subset it along the
-                # last axis.
                 new_samples[key] = value[..., index]
             else:
-                # This is not a gene-specific parameter (e.g., global,
-                # cell-specific), so we keep it as is.
                 new_samples[key] = value
         return new_samples
 
@@ -202,7 +292,9 @@ class GeneSubsettingMixin:
         """
         # Track the original gene count for amortizer validation.
         # If this is already a subset, preserve the original; otherwise use current.
-        original_n_genes = getattr(self, "_original_n_genes", None) or self.n_genes
+        original_n_genes = (
+            getattr(self, "_original_n_genes", None) or self.n_genes
+        )
 
         return type(self)(
             params=new_params,
@@ -221,4 +313,5 @@ class GeneSubsettingMixin:
             predictive_samples=new_predictive_samples,
             n_components=self.n_components,
             _original_n_genes=original_n_genes,
+            _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
         )

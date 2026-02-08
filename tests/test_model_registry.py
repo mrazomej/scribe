@@ -73,7 +73,7 @@ class TestGetModelAndGuide:
             parameterization=parameterization,
             inference_method=inference_method,
         )
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
         assert callable(model)
@@ -91,7 +91,7 @@ class TestGetModelAndGuide:
             inference_method="svi",
             n_components=2,  # Create mixture model
         )
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
@@ -107,7 +107,7 @@ class TestGetModelAndGuide:
             inference_method="svi",
             unconstrained=True,
         )
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
@@ -124,7 +124,7 @@ class TestGetModelAndGuide:
             inference_method="svi",
             guide_rank=guide_rank,
         )
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
@@ -254,6 +254,7 @@ class TestErrorHandling:
     def test_nonexistent_model_type(self):
         """Should raise error for non-existent model type."""
         from scribe.models.config import ModelConfigBuilder
+
         config = (
             ModelConfigBuilder()
             .for_model("nonexistent_model")
@@ -272,16 +273,20 @@ class TestBackwardCompatibility:
         """Test that default parameters work as before."""
         # Should default to canonical/svi
         config = build_config_from_preset("nbdm")
-        model, guide = get_model_and_guide(config)
+        model, guide, _ = get_model_and_guide(config)
         assert model is not None
         assert guide is not None
 
     def test_mcmc_and_svi_share_models(self):
         """SVI and MCMC should retrieve the same model/guide functions."""
-        config_svi = build_config_from_preset("nbdm", parameterization="standard", inference_method="svi")
-        config_mcmc = build_config_from_preset("nbdm", parameterization="standard", inference_method="mcmc")
-        model_svi, guide_svi = get_model_and_guide(config_svi)
-        model_mcmc, guide_mcmc = get_model_and_guide(config_mcmc)
+        config_svi = build_config_from_preset(
+            "nbdm", parameterization="standard", inference_method="svi"
+        )
+        config_mcmc = build_config_from_preset(
+            "nbdm", parameterization="standard", inference_method="mcmc"
+        )
+        model_svi, guide_svi, _ = get_model_and_guide(config_svi)
+        model_mcmc, guide_mcmc, _ = get_model_and_guide(config_mcmc)
 
         # They should be the exact same function objects
         assert model_svi is model_mcmc
@@ -289,12 +294,17 @@ class TestBackwardCompatibility:
 
     def test_low_rank_shares_model(self):
         """Low-rank guides should share models with mean-field."""
-        config_mf = build_config_from_preset("nbdm", parameterization="standard", inference_method="svi")
-        model_mf, _ = get_model_and_guide(config_mf)
-        config_lr = build_config_from_preset("nbdm", parameterization="standard", inference_method="svi", guide_rank=5)
-        model_lr, _ = get_model_and_guide(config_lr)
-            "nbdm", "standard", "svi", guide_rank=10
+        config_mf = build_config_from_preset(
+            "nbdm", parameterization="standard", inference_method="svi"
         )
+        model_mf, _, _ = get_model_and_guide(config_mf)
+        config_lr = build_config_from_preset(
+            "nbdm",
+            parameterization="standard",
+            inference_method="svi",
+            guide_rank=5,
+        )
+        model_lr, _, _ = get_model_and_guide(config_lr)
 
         # Should be the same model
         assert model_mf is model_lr

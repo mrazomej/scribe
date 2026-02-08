@@ -24,7 +24,8 @@ class ModelHelpersMixin:
         """Get the model and guide functions based on model type."""
         from ..models.model_registry import get_model_and_guide
 
-        return get_model_and_guide(self.model_config)
+        model, guide, _ = get_model_and_guide(self.model_config)
+        return model, guide
 
     # --------------------------------------------------------------------------
     # Get parameterization

@@ -150,7 +150,7 @@ def create_model(
     priors: Optional[Dict[str, Tuple[float, ...]]] = None,
     guides: Optional[Dict[str, Tuple[float, ...]]] = None,
     validate: bool = True,
-) -> Tuple[Callable, Callable]:
+) -> Tuple[Callable, Callable, List]:
     """Create model and guide functions from a ModelConfig.
 
     This is the unified factory that replaces create_nbdm, create_zinb,
@@ -191,6 +191,9 @@ def create_model(
         model(n_cells, n_genes, model_config, counts=None, batch_size=None)
     guide : Callable
         NumPyro guide function with the same signature.
+    param_specs : List
+        The parameter specifications used to build the model and guide.
+        Callers can attach these to model_config (e.g. for results subsetting).
 
     Raises
     ------
@@ -212,7 +215,7 @@ def create_model(
     ...     .with_parameterization("linked")
     ...     .build()
     ... )
-    >>> model, guide = create_model(config)
+    >>> model, guide, param_specs = create_model(config)
     >>>
     >>> # With custom priors
     >>> model, guide = create_model(
@@ -348,7 +351,7 @@ def create_model(
         if needs_guide and not is_mixture and not has_amortized:
             validate_model_guide_compatibility(model, guide, model_config)
 
-    return model, guide
+    return model, guide, param_specs
 
 
 # ------------------------------------------------------------------------------
@@ -428,9 +431,10 @@ def create_model_from_params(
 
     model_config = builder.build()
 
-    return create_model(
+    model, guide, _ = create_model(
         model_config, priors=priors, guides=guides, validate=validate
     )
+    return model, guide
 
 
 # ==============================================================================

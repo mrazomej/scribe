@@ -129,7 +129,7 @@ class SamplingMixin:
         # For predictive sampling, we need the *constrained* model, which has
         # the 'counts' sample site. The posterior samples from the unconstrained
         # guide can be used with the constrained model.
-        model, _ = get_model_and_guide(
+        model, _, _ = get_model_and_guide(
             self.model_config,
             unconstrained=False,  # Explicitly get the constrained model
             guide_families=None,  # Not relevant for the model (only guide)
