@@ -14,7 +14,7 @@ SplineCoupling
     Rational-quadratic spline coupling layer.
 """
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -130,10 +130,12 @@ class AffineCoupling(nn.Module):
     hidden_dims: List[int]
     mask_parity: int = 0
     activation: str = "relu"
+    context_dim: int = 0
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False
+        self, x: jnp.ndarray, reverse: bool = False,
+        context: Optional[jnp.ndarray] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Apply affine coupling.
 
@@ -143,6 +145,8 @@ class AffineCoupling(nn.Module):
             Input of shape ``(..., features)``.
         reverse : bool
             If True, apply the inverse transform.
+        context : jnp.ndarray, optional
+            Pre-embedded conditioning vector, shape ``(..., context_dim)``.
 
         Returns
         -------
@@ -155,8 +159,10 @@ class AffineCoupling(nn.Module):
         x_masked, x_unmasked = _split_by_mask(x, self.mask_parity)
         n_unmasked = x_unmasked.shape[-1]
 
-        # Conditioner MLP: masked → (shift, log_scale)
+        # Conditioner MLP: masked (+ optional context) → (shift, log_scale)
         h = x_masked
+        if context is not None:
+            h = jnp.concatenate([h, context], axis=-1)
         for i, dim in enumerate(self.hidden_dims):
             h = nn.Dense(dim, name=f"hidden_{i}")(h)
             h = act(h)
@@ -214,20 +220,24 @@ class SplineCoupling(nn.Module):
     hidden_dims: List[int]
     mask_parity: int = 0
     activation: str = "relu"
+    context_dim: int = 0
     n_bins: int = 8
     boundary: float = 3.0
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False
+        self, x: jnp.ndarray, reverse: bool = False,
+        context: Optional[jnp.ndarray] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         act = _get_act(self.activation)
         x_masked, x_unmasked = _split_by_mask(x, self.mask_parity)
         n_unmasked = x_unmasked.shape[-1]
 
-        # Conditioner MLP: masked → raw spline params
+        # Conditioner MLP: masked (+ optional context) → raw spline params
         n_params_per_dim = 3 * self.n_bins + 1
         h = x_masked
+        if context is not None:
+            h = jnp.concatenate([h, context], axis=-1)
         for i, dim in enumerate(self.hidden_dims):
             h = nn.Dense(dim, name=f"hidden_{i}")(h)
             h = act(h)
