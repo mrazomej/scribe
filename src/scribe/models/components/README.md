@@ -6,9 +6,11 @@ Reusable building blocks for constructing probabilistic models.
 
 This directory contains the atomic components used by the builders:
 
-- **likelihoods.py**: Likelihood functions (NB, ZINB, VCP variants)
+- **likelihoods/**: Likelihood functions (NB, ZINB, VCP variants)
 - **guide_families.py**: Variational family implementations (MeanField, LowRank,
-  Amortized)
+  Amortized, GroupedAmortized)
+- **vae_components.py**: Encoder/decoder building blocks for VAE-style models
+- **covariate_embedding.py**: Categorical covariate embedding for conditioning
 - **amortizers.py**: Neural network amortizers for variational parameters
 
 ## Plate Handling
@@ -64,6 +66,135 @@ from scribe.models.builders import BetaSpec, LogNormalSpec
 BetaSpec("p", (), (1.0, 1.0), guide_family=MeanFieldGuide())
 LogNormalSpec("r", ("n_genes",), (0.0, 1.0), guide_family=LowRankGuide(rank=10))
 ```
+
+## Covariate embedding
+
+Categorical covariates (batch, donor, condition, etc.) are embedded and
+concatenated to inputs so encoders, decoders, and flow layers can be
+conditioned on them. Used by VAE components and by the flows module.
+
+| Class               | Description                                      |
+|---------------------|--------------------------------------------------|
+| `CovariateSpec`     | Spec for one covariate: name, num_categories, embedding_dim |
+| `CovariateEmbedding`| Flax module: dict of ID arrays → concatenated embedding vector |
+
+### CovariateSpec
+
+```python
+from scribe.models.components import CovariateSpec
+
+# name must match the key in the covariates dict passed at call time
+spec = CovariateSpec("batch", num_categories=4, embedding_dim=8)
+```
+
+### CovariateEmbedding
+
+```python
+from scribe.models.components import CovariateEmbedding, CovariateSpec
+import jax.numpy as jnp
+
+specs = [
+    CovariateSpec("batch", num_categories=4, embedding_dim=8),
+    CovariateSpec("donor", num_categories=10, embedding_dim=8),
+]
+embedder = CovariateEmbedding(covariate_specs=specs)
+covariates = {"batch": jnp.array([0, 1, 2]), "donor": jnp.array([3, 5, 7])}
+params = embedder.init(jax.random.PRNGKey(0), covariates)
+emb = embedder.apply(params, covariates)  # shape (3, 16)
+```
+
+Covariates are optional: omit `covariate_specs` (and do not pass `covariates`
+at apply time) when not needed.
+
+## VAE encoder/decoder components
+
+Modular encoder and decoder building blocks for VAE-style models. The design
+uses **abstract base classes** and a **template method**: shared preprocessing
+and MLP backbone are in the base; concrete subclasses implement the output head
+via `encode_to_params` (encoder) or `decode_to_output` (decoder).
+
+### Classes
+
+| Class               | Description |
+|---------------------|-------------|
+| `AbstractEncoder`  | Base: input transform → optional standardize → optional covariate concat → MLP → `encode_to_params(h)` |
+| `GaussianEncoder`   | Diagonal-Gaussian posterior: outputs `(loc, log_scale)` |
+| `AbstractDecoder`   | Base: optional covariate concat to z → reversed MLP → `decode_to_output(h)` |
+| `SimpleDecoder`     | Single continuous vector output; optional destandardization |
+
+Registries for lookup by name: `ENCODER_REGISTRY`, `DECODER_REGISTRY` (e.g.
+`ENCODER_REGISTRY["gaussian"]` → `GaussianEncoder`).
+
+### Input transforms and standardization
+
+Encoders support configurable **input transformation** (`input_transformation`):
+`"log1p"`, `"log"`, `"sqrt"`, `"identity"`. Optional **standardization** via
+`standardize_mean` and `standardize_std` (per feature); decoders can apply the
+inverse with the same arrays for reconstruction in original scale.
+
+### Optional covariate conditioning
+
+Pass `covariate_specs: List[CovariateSpec]` to encoder or decoder. At init and
+apply, pass `covariates: Dict[str, jnp.ndarray]` (e.g. `{"batch": ids}`). The
+module embeds and concatenates covariates to the MLP input.
+
+### Example: encoder and decoder
+
+```python
+from scribe.models.components import GaussianEncoder, SimpleDecoder
+import jax.numpy as jnp
+
+input_dim, latent_dim = 2000, 10
+hidden_dims = [256, 128]
+
+encoder = GaussianEncoder(
+    input_dim=input_dim,
+    latent_dim=latent_dim,
+    hidden_dims=hidden_dims,
+    activation="relu",
+    input_transformation="log1p",
+)
+decoder = SimpleDecoder(
+    output_dim=input_dim,
+    latent_dim=latent_dim,
+    hidden_dims=hidden_dims,
+)
+
+# Without covariates
+enc_params = encoder.init(rng, jnp.zeros(input_dim))
+dec_params = decoder.init(rng, jnp.zeros(latent_dim))
+loc, log_scale = encoder.apply(enc_params, counts)
+reconstruction = decoder.apply(dec_params, z)
+```
+
+### Example: with covariates
+
+```python
+from scribe.models.components import GaussianEncoder, SimpleDecoder, CovariateSpec
+
+covariate_specs = [CovariateSpec("batch", num_categories=4, embedding_dim=8)]
+encoder = GaussianEncoder(
+    input_dim=100, latent_dim=10, hidden_dims=[64, 32],
+    covariate_specs=covariate_specs,
+)
+decoder = SimpleDecoder(
+    output_dim=100, latent_dim=10, hidden_dims=[64, 32],
+    covariate_specs=covariate_specs,
+)
+x = jnp.ones((3, 100))
+covs = {"batch": jnp.array([0, 1, 2])}
+enc_params = encoder.init(rng, x, covariates=covs)
+dec_params = decoder.init(rng, jnp.zeros((3, 10)), covariates=covs)
+loc, log_scale = encoder.apply(enc_params, x, covariates=covs)
+out = decoder.apply(dec_params, loc, covariates=covs)
+```
+
+### Adding new encoder/decoder types
+
+Subclass `AbstractEncoder` and implement `encode_to_params(h)` (return
+distribution parameters), or subclass `AbstractDecoder` and implement
+`decode_to_output(h)`. Register in `ENCODER_REGISTRY` or `DECODER_REGISTRY` if
+you want name-based lookup.
 
 ## Amortizers
 
@@ -257,21 +388,24 @@ MY_STATISTIC = SufficientStatistic(
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Model Components                             │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │
-│  │   Likelihoods   │  │  Guide Families │  │   Amortizers    │     │
-│  │                 │  │                 │  │                 │     │
-│  │ NegativeBinomial│  │ MeanFieldGuide  │  │ Sufficient-     │     │
-│  │ ZeroInflatedNB  │  │ LowRankGuide    │  │   Statistic     │     │
-│  │ NBWithVCP       │  │ AmortizedGuide  │  │ Amortizer       │     │
-│  │ ZINBWithVCP     │  │ Grouped...      │  │   Network       │     │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘     │
-│                                                                      │
-│                              ▼                                       │
-│                     Used by Builders                                 │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            Model Components                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────┐ ┌─────────────────┐ ┌──────────────┐ ┌───────────────┐  │
+│  │ Likelihoods  │ │  Guide Families  │ │ Covariate     │ │ VAE Enc/Dec    │  │
+│  │              │ │                  │ │ Embedding     │ │               │  │
+│  │ NegBinomial  │ │ MeanFieldGuide   │ │ CovariateSpec │ │ GaussianEnc   │  │
+│  │ ZINB, VCP    │ │ LowRankGuide     │ │ Covariate     │ │ SimpleDecoder │  │
+│  │              │ │ AmortizedGuide   │ │ Embedding     │ │ AbstractEnc   │  │
+│  │              │ │ GroupedAmortized │ │               │ │ AbstractDec   │  │
+│  └──────────────┘ └─────────────────┘ └──────────────┘ └───────────────┘  │
+│                                                                             │
+│  ┌─────────────────┐                                                       │
+│  │   Amortizers     │   SufficientStatistic, Amortizer, TOTAL_COUNT         │
+│  └─────────────────┘                                                       │
+│                              ▼                                              │
+│                     Used by Builders                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```

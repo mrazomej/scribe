@@ -52,6 +52,18 @@ from .amortizers import (
     TOTAL_COUNT,
     Amortizer,
 )
+from .covariate_embedding import (
+    CovariateSpec,
+    CovariateEmbedding,
+)
+from .vae_components import (
+    AbstractEncoder,
+    GaussianEncoder,
+    AbstractDecoder,
+    SimpleDecoder,
+    ENCODER_REGISTRY,
+    DECODER_REGISTRY,
+)
 
 __all__ = [
     # Likelihoods
@@ -71,4 +83,14 @@ __all__ = [
     "SufficientStatistic",
     "TOTAL_COUNT",
     "Amortizer",
+    # Covariate embedding
+    "CovariateSpec",
+    "CovariateEmbedding",
+    # VAE components
+    "AbstractEncoder",
+    "GaussianEncoder",
+    "AbstractDecoder",
+    "SimpleDecoder",
+    "ENCODER_REGISTRY",
+    "DECODER_REGISTRY",
 ]
