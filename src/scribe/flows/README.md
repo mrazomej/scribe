@@ -67,6 +67,27 @@ z, log_det = flow.apply(params, jnp.ones(10))
 x_recovered, neg_log_det = flow.apply(params, z, reverse=True)
 ```
 
+### Optional covariate conditioning
+
+`FlowChain` accepts optional `covariate_specs: List[CovariateSpec]`. When
+provided, pass a `covariates` dict at init and apply; the chain embeds
+covariates and passes them as context to every layer.
+
+```python
+from scribe.flows import FlowChain
+from scribe.models.components import CovariateSpec
+
+specs = [CovariateSpec("batch", num_categories=4, embedding_dim=8)]
+chain = FlowChain(
+    features=10, num_layers=4, flow_type="affine_coupling",
+    hidden_dims=[64, 64], covariate_specs=specs,
+)
+x = jnp.ones((3, 10))
+covs = {"batch": jnp.array([0, 1, 2])}
+params = chain.init(rng, x, covariates=covs)
+z, log_det = chain.apply(params, x, covariates=covs)
+```
+
 ### As a NumPyro Distribution (Learned Prior)
 
 ```python
