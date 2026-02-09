@@ -33,7 +33,7 @@ Kingma et al., "Improving Variational Inference with Inverse Autoregressive
     Flow", NeurIPS 2016.
 """
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -75,6 +75,7 @@ def _create_masks(
     hidden_dims: List[int],
     n_outputs_per_dim: int = 2,
     seed: int = 0,
+    context_dim: int = 0,
 ) -> List[jnp.ndarray]:
     """Create binary masks for MADE.
 
@@ -132,6 +133,13 @@ def _create_masks(
             ).astype(jnp.float32)
         masks.append(mask)
 
+    # Extend first mask for context dimensions (visible to all hidden units)
+    if context_dim > 0:
+        context_cols = jnp.ones(
+            (masks[0].shape[0], context_dim), dtype=jnp.float32
+        )
+        masks[0] = jnp.concatenate([masks[0], context_cols], axis=1)
+
     return masks
 
 
@@ -163,15 +171,20 @@ class MADE(nn.Module):
     features: int
     hidden_dims: List[int]
     activation: str = "relu"
+    context_dim: int = 0
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def __call__(
+        self, x: jnp.ndarray, context: Optional[jnp.ndarray] = None,
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Forward pass through masked network.
 
         Parameters
         ----------
         x : jnp.ndarray
             Input of shape ``(..., features)``.
+        context : jnp.ndarray, optional
+            Pre-embedded conditioning vector, shape ``(..., context_dim)``.
 
         Returns
         -------
@@ -181,14 +194,18 @@ class MADE(nn.Module):
             Log-scale parameters, shape ``(..., features)``.
         """
         masks = _create_masks(
-            self.features, self.hidden_dims, n_outputs_per_dim=2
+            self.features, self.hidden_dims, n_outputs_per_dim=2,
+            context_dim=self.context_dim,
         )
         act = _get_act(self.activation)
 
-        # Build layer dimensions: input → hidden_0 → ... → hidden_n → output
-        dims = [self.features] + list(self.hidden_dims) + [2 * self.features]
+        # Build layer dimensions: input (+ context) → hidden → output
+        input_dim = self.features + self.context_dim
+        dims = [input_dim] + list(self.hidden_dims) + [2 * self.features]
 
         h = x
+        if context is not None and self.context_dim > 0:
+            h = jnp.concatenate([x, context], axis=-1)
         for i, (in_dim, out_dim, mask) in enumerate(
             zip(dims[:-1], dims[1:], masks)
         ):
@@ -239,15 +256,19 @@ class MAF(nn.Module):
         Hidden layer sizes for the MADE conditioner.
     activation : str
         Activation function.
+    context_dim : int
+        Dimensionality of optional context conditioning vector.
     """
 
     features: int
     hidden_dims: List[int]
     activation: str = "relu"
+    context_dim: int = 0
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False
+        self, x: jnp.ndarray, reverse: bool = False,
+        context: Optional[jnp.ndarray] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Apply MAF transform.
 
@@ -257,6 +278,8 @@ class MAF(nn.Module):
             Input of shape ``(..., features)``.
         reverse : bool
             If True, apply the inverse (sequential, slow for MAF).
+        context : jnp.ndarray, optional
+            Pre-embedded conditioning vector, shape ``(..., context_dim)``.
 
         Returns
         -------
@@ -269,12 +292,13 @@ class MAF(nn.Module):
             features=self.features,
             hidden_dims=self.hidden_dims,
             activation=self.activation,
+            context_dim=self.context_dim,
             name="made",
         )
 
         if not reverse:
             # Forward: x → z (parallel, one MADE call)
-            shift, log_scale = made(x)
+            shift, log_scale = made(x, context=context)
             log_scale = jnp.clip(log_scale, -5.0, 5.0)
             z = (x - shift) * jnp.exp(-log_scale)
             log_det = -jnp.sum(log_scale, axis=-1)
@@ -284,13 +308,13 @@ class MAF(nn.Module):
             z = x  # input is z when reverse=True
             x_out = jnp.zeros_like(z)
             for d in range(self.features):
-                shift, log_scale = made(x_out)
+                shift, log_scale = made(x_out, context=context)
                 log_scale = jnp.clip(log_scale, -5.0, 5.0)
                 x_out = x_out.at[..., d].set(
                     z[..., d] * jnp.exp(log_scale[..., d]) + shift[..., d]
                 )
             # Compute log_det with final parameters
-            shift, log_scale = made(x_out)
+            shift, log_scale = made(x_out, context=context)
             log_scale = jnp.clip(log_scale, -5.0, 5.0)
             log_det = jnp.sum(log_scale, axis=-1)
             return x_out, log_det
@@ -318,15 +342,19 @@ class IAF(nn.Module):
         Hidden layer sizes for the MADE conditioner.
     activation : str
         Activation function.
+    context_dim : int
+        Dimensionality of optional context conditioning vector.
     """
 
     features: int
     hidden_dims: List[int]
     activation: str = "relu"
+    context_dim: int = 0
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False
+        self, x: jnp.ndarray, reverse: bool = False,
+        context: Optional[jnp.ndarray] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Apply IAF transform.
 
@@ -336,6 +364,8 @@ class IAF(nn.Module):
             Input of shape ``(..., features)``.
         reverse : bool
             If True, apply the inverse (parallel, fast for IAF).
+        context : jnp.ndarray, optional
+            Pre-embedded conditioning vector, shape ``(..., context_dim)``.
 
         Returns
         -------
@@ -348,6 +378,7 @@ class IAF(nn.Module):
             features=self.features,
             hidden_dims=self.hidden_dims,
             activation=self.activation,
+            context_dim=self.context_dim,
             name="made",
         )
 
@@ -355,20 +386,20 @@ class IAF(nn.Module):
             # Forward: x → z (sequential, D MADE calls)
             z = jnp.zeros_like(x)
             for d in range(self.features):
-                shift, log_scale = made(z)
+                shift, log_scale = made(z, context=context)
                 log_scale = jnp.clip(log_scale, -5.0, 5.0)
                 z = z.at[..., d].set(
                     (x[..., d] - shift[..., d]) * jnp.exp(-log_scale[..., d])
                 )
             # Compute log_det with final parameters
-            shift, log_scale = made(z)
+            shift, log_scale = made(z, context=context)
             log_scale = jnp.clip(log_scale, -5.0, 5.0)
             log_det = -jnp.sum(log_scale, axis=-1)
             return z, log_det
         else:
             # Inverse: z → x (parallel, one MADE call)
             z = x  # input is z when reverse=True
-            shift, log_scale = made(z)
+            shift, log_scale = made(z, context=context)
             log_scale = jnp.clip(log_scale, -5.0, 5.0)
             x_out = z * jnp.exp(log_scale) + shift
             log_det = jnp.sum(log_scale, axis=-1)

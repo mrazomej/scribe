@@ -26,15 +26,24 @@ FlowChain
 """
 
 # Type hints for layer config and return types.
-from typing import Callable, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 # JAX arrays and Flax Linen for module definition.
 import jax.numpy as jnp
 from flax import linen as nn
 
+from scribe.models.components.covariate_embedding import CovariateEmbedding, CovariateSpec
+
 # ---------------------------------------------------------------------------
 # Flow layer registry: flow_type -> factory(chain, layer_idx) -> nn.Module
 # ---------------------------------------------------------------------------
+
+
+def _context_dim_from(chain) -> int:
+    """Compute context dimensionality from chain's covariate specs."""
+    if chain.covariate_specs:
+        return sum(s.embedding_dim for s in chain.covariate_specs)
+    return 0
 
 
 def _make_affine_coupling(chain, layer_idx: int) -> nn.Module:
@@ -45,6 +54,7 @@ def _make_affine_coupling(chain, layer_idx: int) -> nn.Module:
         hidden_dims=list(chain.hidden_dims),
         mask_parity=layer_idx % 2,
         activation=chain.activation,
+        context_dim=_context_dim_from(chain),
         name=f"layer_{layer_idx}",
     )
 
@@ -57,6 +67,7 @@ def _make_spline_coupling(chain, layer_idx: int) -> nn.Module:
         hidden_dims=list(chain.hidden_dims),
         mask_parity=layer_idx % 2,
         activation=chain.activation,
+        context_dim=_context_dim_from(chain),
         n_bins=chain.n_bins,
         name=f"layer_{layer_idx}",
     )
@@ -69,6 +80,7 @@ def _make_maf(chain, layer_idx: int) -> nn.Module:
         features=chain.features,
         hidden_dims=list(chain.hidden_dims),
         activation=chain.activation,
+        context_dim=_context_dim_from(chain),
         name=f"layer_{layer_idx}",
     )
 
@@ -80,6 +92,7 @@ def _make_iaf(chain, layer_idx: int) -> nn.Module:
         features=chain.features,
         hidden_dims=list(chain.hidden_dims),
         activation=chain.activation,
+        context_dim=_context_dim_from(chain),
         name=f"layer_{layer_idx}",
     )
 
@@ -121,6 +134,8 @@ class FlowChain(nn.Module):
         Activation function for conditioner networks.
     n_bins : int
         Number of bins for spline flows (ignored for affine flows).
+    covariate_specs : list of CovariateSpec, optional
+        Categorical covariates to embed and pass as context to each layer.
 
     Examples
     --------
@@ -143,6 +158,10 @@ class FlowChain(nn.Module):
     # Number of bins for spline coupling (only used when flow_type is
     # spline_coupling).
     n_bins: int = 8
+    # Optional covariate specs for conditioning; when provided, a shared
+    # CovariateEmbedding is created and its output is passed as context
+    # to each flow layer.
+    covariate_specs: Optional[List[CovariateSpec]] = None
 
     def setup(self):
         """Create the stack of flow layers with alternating masks."""
@@ -153,11 +172,16 @@ class FlowChain(nn.Module):
                 f"Choose from: {list(FLOW_REGISTRY)}"
             )
         self.layers = [factory(self, i) for i in range(self.num_layers)]
+        if self.covariate_specs:
+            self.cov_embed = CovariateEmbedding(
+                covariate_specs=self.covariate_specs,
+            )
 
     # --------------------------------------------------------------------------
 
     def __call__(
-        self, x: jnp.ndarray, reverse: bool = False
+        self, x: jnp.ndarray, reverse: bool = False,
+        covariates: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Apply the flow chain.
 
@@ -167,6 +191,9 @@ class FlowChain(nn.Module):
             Input tensor of shape ``(..., features)``.
         reverse : bool
             If True, apply layers in reverse order with ``reverse=True``.
+        covariates : dict, optional
+            Maps covariate name → integer ID array, shape ``(...)``.
+            Only used when ``covariate_specs`` was provided.
 
         Returns
         -------
@@ -175,6 +202,11 @@ class FlowChain(nn.Module):
         log_det : jnp.ndarray
             Total log-determinant Jacobian, shape ``(...)``.
         """
+        # Embed covariates into a context vector (shared across all layers)
+        context = None
+        if covariates is not None and self.covariate_specs:
+            context = self.cov_embed(covariates)
+
         # Start with zero log-det; same batch/event shape as input (no feature
         # dim).
         total_log_det = jnp.zeros(x.shape[:-1])
@@ -184,7 +216,7 @@ class FlowChain(nn.Module):
         for layer in layers:
             # Each layer returns updated x and its log|det(J)|; chain rule sums
             # log-dets.
-            x, log_det = layer(x, reverse=reverse)
+            x, log_det = layer(x, reverse=reverse, context=context)
             total_log_det = total_log_det + log_det
         # Final transformed tensor and total log-determinant (for density
         # computation).
