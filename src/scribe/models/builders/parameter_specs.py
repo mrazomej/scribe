@@ -31,6 +31,10 @@ ExpNormalSpec
     Normal + exp transform (support: (0, ∞)).
 SoftplusNormalSpec
     Normal + softplus transform (support: (0, ∞)).
+LatentSpec
+    Base class for latent variable specs (VAE z); params → guide distribution.
+GaussianLatentSpec
+    Diagonal-Gaussian latent (loc, log_scale from encoder).
 
 Functions
 ---------
@@ -209,8 +213,8 @@ class ParamSpec(BaseModel):
     Parameters
     ----------
     name : str
-        Name of the parameter (e.g., "p", "r", "mu", "phi", "gate", "p_capture").
-        This is used as the sample site name in NumPyro.
+        Name of the parameter (e.g., "p", "r", "mu", "phi", "gate",
+        "p_capture"). This is used as the sample site name in NumPyro.
     shape_dims : Tuple[str, ...]
         Symbolic shape dimensions. Options:
         - () : scalar parameter
@@ -220,10 +224,11 @@ class ParamSpec(BaseModel):
         Default distribution parameters (distribution-specific).
         E.g., (1.0, 1.0) for Beta(alpha, beta).
     prior : Tuple[float, float], optional
-        Prior hyperparameters for this parameter. Validated based on distribution type.
-        If None, uses default_params.
+        Prior hyperparameters for this parameter. Validated based on
+        distribution type. If None, uses default_params.
     guide : Tuple[float, float], optional
-        Guide hyperparameters for this parameter. Validated based on distribution type.
+        Guide hyperparameters for this parameter. Validated based on
+        distribution type.
         If None, uses default_params.
     unconstrained : bool, default=False
         Whether this uses unconstrained parameterization (Normal + transform).
@@ -311,7 +316,9 @@ class ParamSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_hyperparameters(self) -> "ParamSpec":
-        """Validate prior and guide hyperparameters based on distribution type."""
+        """
+        Validate prior and guide hyperparameters based on distribution type.
+        """
         # Get distribution type from subclass
         dist_type = self._get_distribution_type()
 
@@ -369,7 +376,8 @@ class ParamSpec(BaseModel):
     @property
     def support(self) -> constraints.Constraint:
         """
-        Return the constraint on this parameter's support (valid sampled values).
+        Return the constraint on this parameter's support (valid sampled
+        values).
 
         Matches NumPyro's Distribution.support attribute.
 
@@ -422,8 +430,8 @@ class ParamSpec(BaseModel):
         Parameters
         ----------
         var_params : Dict[str, jnp.ndarray]
-            Amortizer output params (see AmortizedOutput contract).
-            Constrained: keys "alpha", "beta". Unconstrained: "loc", "log_scale".
+            Amortizer output params (see AmortizedOutput contract). Constrained:
+            keys "alpha", "beta". Unconstrained: "loc", "log_scale".
 
         Returns
         -------
@@ -442,7 +450,10 @@ class ParamSpec(BaseModel):
 
     @property
     def amortized_guide_sample_site(self) -> str:
-        """Sample site name for amortized guide (e.g. spec.name or constrained_name)."""
+        """
+        Sample site name for amortized guide (e.g. spec.name or
+        constrained_name).
+        """
         raise NotImplementedError(
             f"Amortized guides are not supported for spec type "
             f"{type(self).__name__}."
@@ -624,14 +635,19 @@ class BetaPrimeSpec(ParamSpec):
 
     @property
     def arg_constraints(self) -> Dict[str, constraints.Constraint]:
-        """Return constraints on alpha and beta parameters (must be positive)."""
+        """
+        Return constraints on alpha and beta parameters (must be positive).
+        """
         return {
             "concentration1": constraints.positive,
             "concentration0": constraints.positive,
         }
 
     def make_amortized_guide_dist(self, var_params: Dict[str, jnp.ndarray]):
-        """Build BetaPrime guide from amortizer output (alpha, beta in constrained space)."""
+        """
+        Build BetaPrime guide from amortizer output (alpha, beta in constrained
+        space).
+        """
         return BetaPrime(var_params["alpha"], var_params["beta"])
 
     @property
@@ -708,7 +724,9 @@ class DirichletSpec(ParamSpec):
 
     @model_validator(mode="after")
     def validate_dirichlet_hyperparameters(self) -> "DirichletSpec":
-        """Validate Dirichlet hyperparameters (variable length, all positive)."""
+        """
+        Validate Dirichlet hyperparameters (variable length, all positive).
+        """
         if self.prior is not None:
             if len(self.prior) < 2:
                 raise ValueError(
@@ -992,6 +1010,97 @@ class SoftplusNormalSpec(NormalWithTransformSpec):
     transform: Transform = Field(
         default_factory=lambda: dist.transforms.SoftplusTransform()
     )
+
+
+# ==============================================================================
+# LatentSpec — guide distribution for VAE latent z
+# ==============================================================================
+
+
+class LatentSpec(BaseModel):
+    """Base class for latent variable specifications (VAE z).
+
+    Encapsulates the mapping from encoder output (params dict) to the NumPyro
+    guide distribution for the latent z, mirroring
+    ParamSpec.make_amortized_guide_dist. Subclasses implement make_guide_dist
+    for concrete latent families (e.g. Gaussian).
+
+    Parameters
+    ----------
+    sample_site : str
+        NumPyro sample site name for the latent (e.g. "z").
+
+    See Also
+    --------
+    GaussianLatentSpec : Diagonal-Gaussian latent (loc, log_scale from encoder).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    sample_site: str = Field(
+        default="z", description="NumPyro sample site name for z"
+    )
+
+    def make_guide_dist(
+        self, var_params: Dict[str, jnp.ndarray]
+    ) -> dist.Distribution:
+        """Build guide distribution from encoder output (var_params).
+
+        Subclasses must implement this. var_params is a dict assembled by the
+        guide builder from encoder output (e.g. {"loc": ..., "log_scale": ...}).
+
+        Parameters
+        ----------
+        var_params : Dict[str, jnp.ndarray]
+            Encoder output as a dict; keys depend on the latent family.
+
+        Returns
+        -------
+        dist.Distribution
+            NumPyro distribution to use for numpyro.sample(sample_site, dist).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement make_guide_dist()"
+        )
+
+
+# ------------------------------------------------------------------------------
+# Gaussian Latent Specification
+# ------------------------------------------------------------------------------
+
+
+class GaussianLatentSpec(LatentSpec):
+    """Diagonal-Gaussian latent posterior (encoder outputs loc, log_scale).
+
+    Encoder is assumed to output log-variance (same as legacy VAE), so
+    scale = exp(0.5 * log_scale) for the Normal distribution.
+
+    Parameters
+    ----------
+    latent_dim : int
+        Dimensionality of the latent space.
+    sample_site : str
+        NumPyro sample site name (default "z").
+    """
+
+    latent_dim: int = Field(..., description="Dimensionality of the latent z")
+    sample_site: str = Field(
+        default="z", description="NumPyro sample site name for z"
+    )
+
+    def make_guide_dist(
+        self, var_params: Dict[str, jnp.ndarray]
+    ) -> dist.Distribution:
+        """Build Normal(loc, scale).to_event(1) from encoder output.
+
+        var_params must have keys "loc" and "log_scale". log_scale is
+        interpreted as log-variance (legacy convention): scale = exp(0.5 *
+        log_scale).
+        """
+        loc = var_params["loc"]
+        log_scale = var_params["log_scale"]
+        scale = jnp.exp(0.5 * log_scale)
+        return dist.Normal(loc, scale).to_event(1)
 
 
 # ==============================================================================

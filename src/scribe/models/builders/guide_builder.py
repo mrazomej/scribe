@@ -58,6 +58,7 @@ from scribe.stats.distributions import BetaPrime
 from ..components.amortizers import AmortizedOutput
 from ..components.guide_families import (
     AmortizedGuide,
+    GroupedAmortizedGuide,
     GuideFamily,
     LowRankGuide,
     MeanFieldGuide,
@@ -128,7 +129,9 @@ def setup_guide(
 
     if shape == ():
         return numpyro.sample(spec.name, dist.Beta(alpha, beta))
-    return numpyro.sample(spec.name, dist.Beta(alpha, beta).to_event(len(shape)))
+    return numpyro.sample(
+        spec.name, dist.Beta(alpha, beta).to_event(len(shape))
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -184,7 +187,9 @@ def setup_guide(
     if shape == ():
         return numpyro.sample(spec.name, BetaPrime(alpha, beta))
     # Sample from BetaPrime distribution for non-scalar parameters
-    return numpyro.sample(spec.name, BetaPrime(alpha, beta).to_event(len(shape)))
+    return numpyro.sample(
+        spec.name, BetaPrime(alpha, beta).to_event(len(shape))
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -236,7 +241,9 @@ def setup_guide(
         constraint=constraints.positive,
     )
 
-    return numpyro.sample(spec.name, dist.LogNormal(loc, scale).to_event(len(shape)))
+    return numpyro.sample(
+        spec.name, dist.LogNormal(loc, scale).to_event(len(shape))
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -340,7 +347,9 @@ def setup_guide(
     jnp.ndarray
         Sampled parameter value from low-rank variational distribution.
     """
-    resolved_shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    resolved_shape = resolve_shape(
+        spec.shape_dims, dims, is_mixture=spec.is_mixture
+    )
     k = guide.rank
 
     # For mixture models, resolved_shape is (n_components, n_genes)
@@ -351,7 +360,9 @@ def setup_guide(
         n_genes = resolved_shape[1] if len(resolved_shape) > 1 else 1
 
         # Variational parameters with shape (n_components, n_genes)
-        loc = numpyro.param(f"log_{spec.name}_loc", jnp.zeros((n_components, n_genes)))
+        loc = numpyro.param(
+            f"log_{spec.name}_loc", jnp.zeros((n_components, n_genes))
+        )
         W = numpyro.param(
             f"log_{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k))
         )
@@ -378,7 +389,9 @@ def setup_guide(
         # Low-rank MVN parameters in log-space
         loc = numpyro.param(f"log_{spec.name}_loc", jnp.zeros(G))
         W = numpyro.param(f"log_{spec.name}_W", 0.01 * jnp.ones((G, k)))
-        raw_diag = numpyro.param(f"log_{spec.name}_raw_diag", -3.0 * jnp.ones(G))
+        raw_diag = numpyro.param(
+            f"log_{spec.name}_raw_diag", -3.0 * jnp.ones(G)
+        )
 
         # Ensure diagonal is positive
         D = jax.nn.softplus(raw_diag) + 1e-4
@@ -446,7 +459,9 @@ def setup_guide(
         >>> setup_guide(spec, guide, {"n_genes": 100}, model_config)
         # Samples "r" from TransformedDistribution(LowRankMultivariateNormal, ExpTransform)
     """
-    resolved_shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    resolved_shape = resolve_shape(
+        spec.shape_dims, dims, is_mixture=spec.is_mixture
+    )
     k = guide.rank
 
     # For mixture models, resolved_shape is (n_components, n_genes)
@@ -459,8 +474,12 @@ def setup_guide(
         # Variational parameters with shape (n_components, n_genes)
         # Use base parameter name for variational parameters (matching
         # mean-field pattern)
-        loc = numpyro.param(f"{spec.name}_loc", jnp.zeros((n_components, n_genes)))
-        W = numpyro.param(f"{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k)))
+        loc = numpyro.param(
+            f"{spec.name}_loc", jnp.zeros((n_components, n_genes))
+        )
+        W = numpyro.param(
+            f"{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k))
+        )
         raw_diag = numpyro.param(
             f"{spec.name}_raw_diag", -3.0 * jnp.ones((n_components, n_genes))
         )
@@ -475,9 +494,9 @@ def setup_guide(
         # Wrap with transform - handles Jacobian automatically
         # Use to_event(1) to convert batch dimension to event, resulting in
         # event_shape=(n_components, n_genes) to match model's event_dims=2
-        transformed_dist = dist.TransformedDistribution(base, spec.transform).to_event(
-            1
-        )
+        transformed_dist = dist.TransformedDistribution(
+            base, spec.transform
+        ).to_event(1)
     else:
         # Non-mixture: shape is (n_genes,)
         G = resolved_shape[0] if resolved_shape else 1
@@ -559,7 +578,9 @@ def setup_cell_specific_guide(
         return numpyro.sample(spec.name, dist.Beta(alpha, beta))
     else:
         # Batch sampling: index into parameters for this mini-batch
-        return numpyro.sample(spec.name, dist.Beta(alpha[batch_idx], beta[batch_idx]))
+        return numpyro.sample(
+            spec.name, dist.Beta(alpha[batch_idx], beta[batch_idx])
+        )
 
 
 # ------------------------------------------------------------------------------
@@ -620,7 +641,9 @@ def setup_cell_specific_guide(
         return numpyro.sample(spec.name, BetaPrime(alpha, beta))
     else:
         # Batch sampling: index into parameters for this mini-batch
-        return numpyro.sample(spec.name, BetaPrime(alpha[batch_idx], beta[batch_idx]))
+        return numpyro.sample(
+            spec.name, BetaPrime(alpha[batch_idx], beta[batch_idx])
+        )
 
 
 # ------------------------------------------------------------------------------
@@ -634,7 +657,9 @@ def _run_amortizer(
     counts: Optional[jnp.ndarray],
     batch_idx: Optional[jnp.ndarray],
 ) -> AmortizedOutput:
-    """Run amortizer network and return AmortizedOutput (contract: see AmortizedOutput).
+    """
+    Run amortizer network and return AmortizedOutput (contract: see
+    AmortizedOutput).
 
     Validates counts, registers flax_module, gets batch data, calls net(data).
     """
@@ -648,6 +673,44 @@ def _run_amortizer(
     return net(data)
 
 
+# ------------------------------------------------------------------------------
+
+
+def _setup_grouped_amortized_latent(
+    guide: GroupedAmortizedGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    counts: Optional[jnp.ndarray],
+    batch_idx: Optional[jnp.ndarray],
+) -> jnp.ndarray:
+    """Run VAE encoder, build guide dist from latent_spec, sample z.
+
+    Used when guide has encoder and latent_spec set. Encoder is registered
+    as flax_module and run on counts (or batch); latent_spec.make_guide_dist
+    turns encoder output into the guide distribution for z.
+    """
+    if counts is None:
+        raise ValueError("GroupedAmortizedGuide with encoder requires counts")
+    if guide.encoder is None or guide.latent_spec is None:
+        raise ValueError(
+            "GroupedAmortizedGuide VAE path requires encoder and latent_spec"
+        )
+    n_genes = dims["n_genes"]
+    net = flax_module(
+        "vae_encoder",
+        guide.encoder,
+        input_shape=(n_genes,),
+    )
+    data = counts if batch_idx is None else counts[batch_idx]
+    loc, log_scale = net(data)
+    var_params = {"loc": loc, "log_scale": log_scale}
+    guide_dist = guide.latent_spec.make_guide_dist(var_params)
+    return numpyro.sample(guide.latent_spec.sample_site, guide_dist)
+
+
+# ------------------------------------------------------------------------------
+
+
 @dispatch(ParamSpec, AmortizedGuide, dict, object)
 def setup_cell_specific_guide(
     spec: ParamSpec,
@@ -658,10 +721,12 @@ def setup_cell_specific_guide(
     batch_idx: Optional[jnp.ndarray] = None,
     **kwargs,
 ) -> jnp.ndarray:
-    """Amortized guide for cell-specific parameters (Beta, BetaPrime, SigmoidNormal, ExpNormal).
+    """
+    Amortized guide for cell-specific parameters (Beta, BetaPrime,
+    SigmoidNormal, ExpNormal).
 
-    Uses a shared helper to run the amortizer, then builds the guide distribution
-    via spec.make_amortized_guide_dist(out.params) and samples at
+    Uses a shared helper to run the amortizer, then builds the guide
+    distribution via spec.make_amortized_guide_dist(out.params) and samples at
     spec.amortized_guide_sample_site. Transform logic lives in the specs only.
 
     Supported specs: BetaSpec, BetaPrimeSpec, SigmoidNormalSpec, ExpNormalSpec.
@@ -694,8 +759,8 @@ def setup_cell_specific_guide(
 ) -> jnp.ndarray:
     """MeanField guide for cell-specific unconstrained parameters.
 
-    Works for SigmoidNormalSpec (Beta -> [0,1]), ExpNormalSpec (BetaPrime -> [0,+inf)),
-    and other NormalWithTransformSpec subclasses.
+    Works for SigmoidNormalSpec (Beta -> [0,1]), ExpNormalSpec (BetaPrime ->
+    [0,+inf)), and other NormalWithTransformSpec subclasses.
 
     Parameters
     ----------
@@ -920,7 +985,10 @@ class GuideBuilder:
             # Setup dimensions dict
             # ================================================================
             dims = {"n_cells": n_cells, "n_genes": n_genes}
-            if hasattr(model_config, "n_components") and model_config.n_components:
+            if (
+                hasattr(model_config, "n_components")
+                and model_config.n_components
+            ):
                 dims["n_components"] = model_config.n_components
 
             # ================================================================
@@ -987,8 +1055,21 @@ class GuideBuilder:
             # 3. Setup guides for CELL-SPECIFIC parameters (inside cell plate)
             #    Handle batch indexing for non-amortized guides
             #    Register amortizer modules ONCE before the plate loop
+            #    If any spec uses GroupedAmortizedGuide with encoder+latent_spec,
+            #    run the VAE latent block once (encoder -> latent_spec -> sample z)
             # ================================================================
             cell_specs = [s for s in specs if s.is_cell_specific]
+            grouped_guide = None
+            for s in cell_specs:
+                gf = s.guide_family
+                if (
+                    isinstance(gf, GroupedAmortizedGuide)
+                    and gf.encoder is not None
+                    and gf.latent_spec is not None
+                ):
+                    grouped_guide = gf
+                    break
+
             if cell_specs:
                 # Linen modules are registered automatically when flax_module is called
                 # No need to pre-register - flax_module handles parameter registration
@@ -997,8 +1078,18 @@ class GuideBuilder:
                 if batch_size is None:
                     # Full sampling
                     with numpyro.plate("cells", n_cells):
+                        if grouped_guide is not None:
+                            _setup_grouped_amortized_latent(
+                                grouped_guide,
+                                dims,
+                                model_config,
+                                counts=counts,
+                                batch_idx=None,
+                            )
                         for spec in cell_specs:
                             guide_family = spec.guide_family or MeanFieldGuide()
+                            if spec.guide_family is grouped_guide:
+                                continue  # z already sampled; decoder/params later
                             setup_cell_specific_guide(
                                 spec,
                                 guide_family,
@@ -1012,8 +1103,18 @@ class GuideBuilder:
                     with numpyro.plate(
                         "cells", n_cells, subsample_size=batch_size
                     ) as idx:
+                        if grouped_guide is not None:
+                            _setup_grouped_amortized_latent(
+                                grouped_guide,
+                                dims,
+                                model_config,
+                                counts=counts,
+                                batch_idx=idx,
+                            )
                         for spec in cell_specs:
                             guide_family = spec.guide_family or MeanFieldGuide()
+                            if spec.guide_family is grouped_guide:
+                                continue  # z already sampled; decoder/params later
                             setup_cell_specific_guide(
                                 spec,
                                 guide_family,

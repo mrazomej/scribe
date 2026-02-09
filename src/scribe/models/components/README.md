@@ -54,7 +54,7 @@ approximation to use:
 | `MeanFieldGuide`        | Factorized variational family   | Default, fast     |
 | `LowRankGuide(rank)`    | Low-rank MVN covariance         | Gene correlations |
 | `AmortizedGuide(net)`   | Neural network amortization     | High-dim params   |
-| `GroupedAmortizedGuide` | Joint amortization (future VAE) | Multiple params   |
+| `GroupedAmortizedGuide` | VAE: encoder + latent_spec + decoder | Joint latent z + params |
 
 ### Example
 
@@ -124,6 +124,12 @@ via `encode_to_params` (encoder) or `decode_to_output` (decoder).
 
 Registries for lookup by name: `ENCODER_REGISTRY`, `DECODER_REGISTRY` (e.g.
 `ENCODER_REGISTRY["gaussian"]` → `GaussianEncoder`).
+
+When used with **GroupedAmortizedGuide**, the guide builder (see
+[builders README](../builders/README.md)) wires encoder output to a
+**LatentSpec** (e.g. `GaussianLatentSpec`): encoder → `var_params` →
+`latent_spec.make_guide_dist(var_params)` → `sample(site, guide_dist)` for the
+latent z.
 
 ### Input transforms and standardization
 

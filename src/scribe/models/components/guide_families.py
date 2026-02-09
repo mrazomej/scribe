@@ -39,7 +39,7 @@ scribe.models.components.amortizers : Amortizer implementations.
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 if TYPE_CHECKING:
     from .amortizers import Amortizer
@@ -218,44 +218,37 @@ class AmortizedGuide(GuideFamily):
 @dataclass
 class GroupedAmortizedGuide(GuideFamily):
     """
-    Marker for joint amortization of multiple parameters.
+    Marker for joint amortization of multiple parameters (VAE path).
 
-    This guide family allows a single amortizer network to predict
-    variational parameters for multiple model parameters simultaneously.
-    This is useful for VAE-style models where an encoder network
-    predicts all latent variable parameters.
+    When encoder, decoder, and latent_spec are set, this drives the VAE guide:
+    encoder maps counts to latent params; latent_spec.make_guide_dist(params)
+    builds the guide distribution for z; decoder maps z to parameter outputs.
+    When only amortizer is set, uses a single shared amortizer (legacy).
 
     Parameters
     ----------
-    amortizer : Amortizer, optional
-        The shared amortizer network.
+    encoder : optional
+        VAE encoder (e.g. GaussianEncoder). Maps (counts, covariates?) to
+        (loc, log_scale) or similar. Used with decoder and latent_spec.
+    decoder : optional
+        VAE decoder (e.g. SimpleDecoder). Maps z to parameter dict.
+    latent_spec : optional
+        LatentSpec (e.g. GaussianLatentSpec). make_guide_dist(encoder_output)
+        returns the guide distribution for z.
     param_names : List[str]
-        Names of parameters that share this amortizer.
-        The amortizer's output_params should include variational
-        parameters for all of these.
-
-    Examples
-    --------
-    >>> # Future: VAE-style joint amortization
-    >>> encoder = Amortizer(
-    ...     sufficient_statistic=GENE_EXPRESSION,
-    ...     hidden_dims=[256, 128],
-    ...     output_params=["r_loc", "r_scale", "p_capture_alpha", "p_capture_beta"],
-    ... )
-    >>> guide_family = GroupedAmortizedGuide(
-    ...     amortizer=encoder,
-    ...     param_names=["r", "p_capture"]
-    ... )
-
-    Notes
-    -----
-    This is designed for future VAE support where multiple parameters
-    are predicted by a shared encoder network. Not fully implemented yet.
+        Names of parameters that share this amortizer / decoder output.
+    amortizer : Amortizer, optional
+        Legacy: shared amortizer when encoder/decoder/latent_spec not used.
 
     See Also
     --------
     AmortizedGuide : Single-parameter amortization.
+    scribe.models.builders.parameter_specs.GaussianLatentSpec : Latent spec for
+    z.
     """
 
-    amortizer: Optional["Amortizer"] = None
+    encoder: Optional[Any] = None
+    decoder: Optional[Any] = None
+    latent_spec: Optional[Any] = None
     param_names: List[str] = field(default_factory=list)
+    amortizer: Optional["Amortizer"] = None
