@@ -189,10 +189,10 @@ class TestEncoderCovariateConditioning:
 
 class TestDecoderCovariateConditioning:
     def test_gaussian_decoder_with_covariates(self):
-        from scribe.models.components.vae_components import GaussianDecoder
+        from scribe.models.components.vae_components import SimpleDecoder
 
         specs = [CovariateSpec("batch", num_categories=4, embedding_dim=8)]
-        decoder = GaussianDecoder(
+        decoder = SimpleDecoder(
             output_dim=20,
             latent_dim=5,
             hidden_dims=[32, 16],
@@ -205,9 +205,9 @@ class TestDecoderCovariateConditioning:
         assert out.shape == (3, 20)
 
     def test_decoder_without_covariates_unchanged(self):
-        from scribe.models.components.vae_components import GaussianDecoder
+        from scribe.models.components.vae_components import SimpleDecoder
 
-        decoder = GaussianDecoder(
+        decoder = SimpleDecoder(
             output_dim=20,
             latent_dim=5,
             hidden_dims=[32, 16],
@@ -218,10 +218,10 @@ class TestDecoderCovariateConditioning:
         assert out.shape == (3, 20)
 
     def test_covariates_affect_output(self):
-        from scribe.models.components.vae_components import GaussianDecoder
+        from scribe.models.components.vae_components import SimpleDecoder
 
         specs = [CovariateSpec("batch", num_categories=4, embedding_dim=8)]
-        decoder = GaussianDecoder(
+        decoder = SimpleDecoder(
             output_dim=20,
             latent_dim=5,
             hidden_dims=[32, 16],
@@ -408,7 +408,10 @@ class TestFlowChainCovariateConditioning:
             covariate_specs=specs,
         )
         x = jax.random.normal(jax.random.PRNGKey(1), (4, 6))
-        covs = {"batch": jnp.array([0, 1, 2, 3]), "donor": jnp.array([0, 1, 2, 3])}
+        covs = {
+            "batch": jnp.array([0, 1, 2, 3]),
+            "donor": jnp.array([0, 1, 2, 3]),
+        }
         params = chain.init(jax.random.PRNGKey(0), x, covariates=covs)
         z, ld_fwd = chain.apply(params, x, covariates=covs)
         x_rec, ld_inv = chain.apply(params, z, reverse=True, covariates=covs)

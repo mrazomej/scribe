@@ -27,6 +27,7 @@ from scribe.flows import (
     rqs_inverse,
     unconstrained_to_rqs_params,
 )
+from scribe.models.components.covariate_embedding import CovariateSpec
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +150,7 @@ class TestAffineCoupling:
 
     @pytest.fixture
     def flow_and_params(self, rng):
-        flow = AffineCoupling(
-            features=6, hidden_dims=[32, 32], mask_parity=0
-        )
+        flow = AffineCoupling(features=6, hidden_dims=[32, 32], mask_parity=0)
         params = flow.init(rng, jnp.zeros(6))
         return flow, params
 
@@ -169,9 +168,7 @@ class TestAffineCoupling:
         x_rec, log_det_inv = flow.apply(params, y, reverse=True)
 
         npt.assert_allclose(x_rec, x, atol=1e-5)
-        npt.assert_allclose(
-            log_det_fwd + log_det_inv, 0.0, atol=1e-5
-        )
+        npt.assert_allclose(log_det_fwd + log_det_inv, 0.0, atol=1e-5)
 
     def test_masked_dims_unchanged(self, flow_and_params):
         """Masked dimensions should not be modified."""
@@ -184,12 +181,8 @@ class TestAffineCoupling:
 
     def test_alternating_parity(self, rng):
         """Test that different parities mask different dimensions."""
-        flow0 = AffineCoupling(
-            features=6, hidden_dims=[16], mask_parity=0
-        )
-        flow1 = AffineCoupling(
-            features=6, hidden_dims=[16], mask_parity=1
-        )
+        flow0 = AffineCoupling(features=6, hidden_dims=[16], mask_parity=0)
+        flow1 = AffineCoupling(features=6, hidden_dims=[16], mask_parity=1)
         p0 = flow0.init(rng, jnp.zeros(6))
         p1 = flow1.init(rng, jnp.zeros(6))
 
@@ -241,9 +234,7 @@ class TestSplineCoupling:
         x_rec, log_det_inv = flow.apply(params, y, reverse=True)
 
         npt.assert_allclose(x_rec, x, atol=1e-4)
-        npt.assert_allclose(
-            log_det_fwd + log_det_inv, 0.0, atol=1e-4
-        )
+        npt.assert_allclose(log_det_fwd + log_det_inv, 0.0, atol=1e-4)
 
     def test_masked_dims_unchanged(self, flow_and_params):
         flow, params = flow_and_params
@@ -311,9 +302,9 @@ class TestMADE:
         # (output d depends only on inputs 0..d-1)
         for d in range(D):
             for d_prime in range(d, D):
-                assert jnp.abs(jac[d, d_prime]) < 1e-5, (
-                    f"Output {d} depends on input {d_prime}: {jac[d, d_prime]}"
-                )
+                assert (
+                    jnp.abs(jac[d, d_prime]) < 1e-5
+                ), f"Output {d} depends on input {d_prime}: {jac[d, d_prime]}"
 
 
 # ---------------------------------------------------------------------------
@@ -383,9 +374,7 @@ class TestIAF:
         x_rec, log_det_inv = flow.apply(params, z, reverse=True)
 
         npt.assert_allclose(x_rec, x, atol=1e-4)
-        npt.assert_allclose(
-            log_det_fwd + log_det_inv, jnp.zeros(2), atol=1e-4
-        )
+        npt.assert_allclose(log_det_fwd + log_det_inv, jnp.zeros(2), atol=1e-4)
 
     def test_inverse_is_parallel(self, flow_and_params):
         """IAF inverse (sampling direction) should produce valid output."""
@@ -411,7 +400,9 @@ class TestIAF:
 class TestFlowChain:
     """Tests for sequential flow composition."""
 
-    @pytest.mark.parametrize("flow_type", ["affine_coupling", "spline_coupling"])
+    @pytest.mark.parametrize(
+        "flow_type", ["affine_coupling", "spline_coupling"]
+    )
     def test_coupling_chain_forward_inverse(self, rng, flow_type):
         """Coupling chains should be invertible up to float32 precision.
 
@@ -431,9 +422,7 @@ class TestFlowChain:
         x_rec, log_det_inv = chain.apply(params, z, reverse=True)
 
         npt.assert_allclose(x_rec, x, atol=0.02)
-        npt.assert_allclose(
-            log_det_fwd + log_det_inv, jnp.zeros(3), atol=0.02
-        )
+        npt.assert_allclose(log_det_fwd + log_det_inv, jnp.zeros(3), atol=0.02)
 
     def test_maf_chain_output_shape(self, rng):
         chain = FlowChain(
@@ -474,6 +463,78 @@ class TestFlowChain:
         x = jax.random.normal(jax.random.PRNGKey(51), (2, 4))
         z, _ = chain.apply(params, x)
         assert z.shape == x.shape
+
+    def test_chain_without_covariates_optional(self, rng):
+        """FlowChain works without covariates (covariate_specs=None)."""
+        chain = FlowChain(
+            features=4,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[16],
+        )
+        params = chain.init(rng, jnp.zeros(4))
+        x = jax.random.normal(jax.random.PRNGKey(52), (3, 4))
+        z, log_det = chain.apply(params, x)
+        assert z.shape == x.shape
+        assert log_det.shape == (3,)
+
+    def test_chain_with_categorical_covariates(self, rng):
+        """FlowChain with covariate_specs: init and apply with covariates dict."""
+        covariate_specs = [
+            CovariateSpec("batch", num_categories=4, embedding_dim=8),
+        ]
+        chain = FlowChain(
+            features=6,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[32, 32],
+            covariate_specs=covariate_specs,
+        )
+        batch_size = 3
+        x_init = jnp.zeros((batch_size, 6))
+        covariates_init = {"batch": jnp.array([0, 1, 0])}
+        params = chain.init(rng, x_init, covariates=covariates_init)
+
+        x = jax.random.normal(jax.random.PRNGKey(53), (batch_size, 6)) * 2.0
+        covariates = {"batch": jnp.array([0, 2, 1])}
+        z, log_det_fwd = chain.apply(
+            params, x, covariates=covariates, reverse=False
+        )
+        x_rec, log_det_inv = chain.apply(
+            params, z, covariates=covariates, reverse=True
+        )
+
+        assert z.shape == x.shape
+        assert log_det_fwd.shape == (batch_size,)
+        npt.assert_allclose(x_rec, x, atol=0.02)
+        npt.assert_allclose(
+            log_det_fwd + log_det_inv, jnp.zeros(batch_size), atol=0.02
+        )
+
+    def test_chain_with_covariates_different_context(self, rng):
+        """Covariate-conditioned chain produces different output for different covariates."""
+        covariate_specs = [
+            CovariateSpec("batch", num_categories=4, embedding_dim=8),
+        ]
+        chain = FlowChain(
+            features=4,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[16, 16],
+            covariate_specs=covariate_specs,
+        )
+        batch_size = 2
+        x_init = jnp.zeros((batch_size, 4))
+        params = chain.init(
+            rng, x_init, covariates={"batch": jnp.array([0, 0])}
+        )
+
+        x = jax.random.normal(jax.random.PRNGKey(54), (batch_size, 4))
+        z_a, _ = chain.apply(params, x, covariates={"batch": jnp.array([0, 0])})
+        z_b, _ = chain.apply(params, x, covariates={"batch": jnp.array([1, 1])})
+        # Different context should generally yield different z (not guaranteed for all
+        # weights, but with high probability they differ).
+        assert jnp.any(jnp.abs(z_a - z_b) > 1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -594,6 +655,4 @@ class TestNumericalStability:
         x_rec, log_det_inv = flow.apply(params, y, reverse=True)
 
         npt.assert_allclose(x_rec, x, atol=1e-5)
-        npt.assert_allclose(
-            log_det_fwd + log_det_inv, jnp.zeros(3), atol=1e-5
-        )
+        npt.assert_allclose(log_det_fwd + log_det_inv, jnp.zeros(3), atol=1e-5)
