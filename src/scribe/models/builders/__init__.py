@@ -60,6 +60,9 @@ from .parameter_specs import (
     SigmoidNormalSpec,
     ExpNormalSpec,
     SoftplusNormalSpec,
+    # Latent specs (VAE z)
+    LatentSpec,
+    GaussianLatentSpec,
     # Derived parameters
     DerivedParam,
     # Functions
@@ -87,6 +90,8 @@ __all__ = [
     "SigmoidNormalSpec",
     "ExpNormalSpec",
     "SoftplusNormalSpec",
+    "LatentSpec",
+    "GaussianLatentSpec",
     # Spec functions
     "sample_prior",
     "resolve_shape",
