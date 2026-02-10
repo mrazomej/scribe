@@ -5,7 +5,7 @@ helper functions for capture parameter sampling.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import jax.numpy as jnp
 import numpyro
@@ -109,6 +109,9 @@ class Likelihood(ABC):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        vae_cell_fn: Optional[
+            Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
+        ] = None,
     ) -> None:
         """
         Sample observations given parameters.
@@ -130,13 +133,19 @@ class Likelihood(ABC):
             Mini-batch size for stochastic VI. If None, uses all cells.
         model_config : ModelConfig
             Model configuration with hyperparameters.
+        vae_cell_fn : callable, optional
+            If provided, called inside the cell plate **before** obs sampling.
+            Signature: ``vae_cell_fn(batch_idx) -> Dict[str, jnp.ndarray]``.
+            Returns decoder-driven parameter values to merge into
+            ``param_values``.
 
         Notes
         -----
         This method should:
             1. Create the appropriate cell plate (with or without subsampling)
-            2. Sample any cell-specific parameters from cell_specs
-            3. Compute the likelihood distribution
-            4. Sample or condition on counts
+            2. If ``vae_cell_fn`` is provided, call it and update param_values
+            3. Sample any cell-specific parameters from cell_specs
+            4. Compute the likelihood distribution
+            5. Sample or condition on counts
         """
         pass

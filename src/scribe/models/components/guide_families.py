@@ -22,8 +22,8 @@ LowRankGuide
     Marker for low-rank MVN covariance structure.
 AmortizedGuide
     Marker for amortized inference using neural networks.
-GroupedAmortizedGuide
-    Marker for joint amortization of multiple parameters (future VAE).
+VAELatentGuide
+    Guide family for VAE latent variable z.
 
 Examples
 --------
@@ -211,44 +211,47 @@ class AmortizedGuide(GuideFamily):
 
 
 # ------------------------------------------------------------------------------
-# Grouped Amortized Guide Family
+# VAE Latent Guide Family
 # ------------------------------------------------------------------------------
 
 
 @dataclass
-class GroupedAmortizedGuide(GuideFamily):
-    """
-    Marker for joint amortization of multiple parameters (VAE path).
+class VAELatentGuide(GuideFamily):
+    """Guide family for VAE latent variable z.
 
-    When encoder, decoder, and latent_spec are set, this drives the VAE guide:
-    encoder maps counts to latent params; latent_spec.make_guide_dist(params)
-    builds the guide distribution for z; decoder maps z to parameter outputs.
-    When only amortizer is set, uses a single shared amortizer (legacy).
+    In the guide, the encoder maps counts to latent distribution parameters;
+    ``latent_spec.make_guide_dist(params)`` builds the guide distribution for
+    z.  The decoder is stored here so the **model** builder can access it —
+    the guide never runs the decoder.
+
+    ``param_names`` is derived from ``decoder.output_heads`` so there is a
+    single source of truth for which model parameters come from the decoder.
 
     Parameters
     ----------
     encoder : optional
-        VAE encoder (e.g. GaussianEncoder). Maps (counts, covariates?) to
-        (loc, log_scale) or similar. Used with decoder and latent_spec.
+        VAE encoder (e.g. ``GaussianEncoder``).
     decoder : optional
-        VAE decoder (e.g. SimpleDecoder). Maps z to parameter dict.
+        VAE decoder (e.g. ``MultiHeadDecoder``).
     latent_spec : optional
-        LatentSpec (e.g. GaussianLatentSpec). make_guide_dist(encoder_output)
-        returns the guide distribution for z.
-    param_names : List[str]
-        Names of parameters that share this amortizer / decoder output.
-    amortizer : Amortizer, optional
-        Legacy: shared amortizer when encoder/decoder/latent_spec not used.
+        Latent specification (e.g. ``GaussianLatentSpec``).
+    flow : optional
+        Posterior flow on z (future — not implemented yet).
 
     See Also
     --------
     AmortizedGuide : Single-parameter amortization.
-    scribe.models.builders.parameter_specs.GaussianLatentSpec : Latent spec for
-    z.
+    scribe.models.builders.parameter_specs.GaussianLatentSpec : Latent spec.
     """
 
     encoder: Optional[Any] = None
     decoder: Optional[Any] = None
     latent_spec: Optional[Any] = None
-    param_names: List[str] = field(default_factory=list)
-    amortizer: Optional["Amortizer"] = None
+    flow: Optional[Any] = None
+
+    @property
+    def param_names(self) -> List[str]:
+        """Parameter names produced by the decoder — single source of truth."""
+        if self.decoder is not None and hasattr(self.decoder, "output_heads"):
+            return [h.param_name for h in self.decoder.output_heads]
+        return []

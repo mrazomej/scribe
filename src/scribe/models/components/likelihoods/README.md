@@ -34,6 +34,23 @@ All likelihoods handle three plate modes for different use cases:
 | Full Sampling | provided | `None` | MCMC, small datasets |
 | Batch Sampling | provided | specified | SVI on large datasets |
 
+## VAE Path
+
+When the model uses a **VAE** (encoder/decoder with `VAELatentGuide`), the model
+builder passes a **`vae_cell_fn`** into each likelihood's `sample()` method. The
+likelihood then:
+
+1. Runs inside the cell plate (per-cell or per minibatch).
+2. Calls `vae_cell_fn(batch_idx)` to obtain decoder-driven parameters (e.g. `r`,
+   `gate`) and merges them into `param_values`.
+3. Builds the observation distribution from the full `param_values` and samples
+   or conditions on counts.
+
+Decoder-driven parameters are **not** sample sites; they are produced by the
+decoder from the latent `z`. Mixture detection in likelihoods uses
+`"mixing_weights" in param_values` (not shape-based checks) so that VAE per-cell
+decoder output is not mistaken for a mixture.
+
 ## Usage
 
 ```python
@@ -73,5 +90,8 @@ To add a new likelihood:
 
 1. Create a new file or add to an existing one
 2. Inherit from `Likelihood` (in `base.py`)
-3. Implement the `sample` method handling all three plate modes
+3. Implement the `sample` method with signature including `vae_cell_fn: Optional[Callable] = None`, handling:
+   - All three plate modes (prior predictive, full, batch)
+   - Non-VAE path: `vae_cell_fn is None` — build distribution once from `param_values`
+   - VAE path: `vae_cell_fn` provided — call it inside the cell plate, merge into `param_values`, then build distribution
 4. Export the class in `__init__.py`

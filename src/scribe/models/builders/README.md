@@ -58,10 +58,11 @@ spec builds the Distribution.
   `Normal(loc, exp(0.5*log_scale)).to_event(1)`.
 
 The guide builder uses this when a cell-specific spec has
-`GroupedAmortizedGuide` with `encoder` and `latent_spec` set: it runs the
+`VAELatentGuide` with `encoder` and `latent_spec` set: it runs the
 encoder, builds `var_params = {"loc": loc, "log_scale": log_scale}`,
 calls `latent_spec.make_guide_dist(var_params)`, and samples
-`numpyro.sample(latent_spec.sample_site, guide_dist)`.
+`numpyro.sample(latent_spec.sample_site, guide_dist)`. Decoder-driven
+parameter names come from `decoder.output_heads` (`VAELatentGuide.param_names`).
 
 ```python
 from scribe.models.builders import GaussianLatentSpec
@@ -80,7 +81,7 @@ Each parameter can have its own guide family:
 | `MeanFieldGuide` | Factorized variational family | Default, fast |
 | `LowRankGuide(rank)` | Low-rank MVN covariance | Gene correlations |
 | `AmortizedGuide(net)` | Neural network amortization | High-dim params |
-| `GroupedAmortizedGuide` | VAE: encoder + latent_spec (z) + decoder | Joint latent + params |
+| `VAELatentGuide` | VAE: encoder + latent_spec (z) + decoder | Joint latent z; decoder-driven params (no guide sites) |
 
 ## Usage
 
@@ -200,6 +201,26 @@ The ModelBuilder handles three plate modes:
 
 Cell-specific parameters are sampled inside the cell plate and support
 batch indexing for efficient stochastic VI.
+
+## VAE Path (model builder)
+
+When any cell spec has `guide_family=VAELatentGuide` with `decoder` and
+`latent_spec` set, the model builder:
+
+1. **Validates** that no mixture specs are present (VAE and mixture are mutually
+   exclusive).
+2. Builds a **`vae_cell_fn`** closure that: samples `z` from
+   `latent_spec.make_prior_dist()`, runs the decoder via
+   `flax_module("vae_decoder", decoder, ...)`, and registers decoder outputs as
+   `numpyro.deterministic` sites.
+3. **Filters** VAE marker specs out of the specs passed to the likelihood (so
+   `z` is not sampled again via `sample_prior`).
+4. Passes **`vae_cell_fn`** into the likelihood's `sample()`; the likelihood
+   calls it inside the cell plate and merges the returned dict into
+   `param_values` before building the observation distribution.
+
+Decoder-driven parameters are thus deterministic given `z`, not sample sites, so
+they have no guide counterpart.
 
 ## Files
 

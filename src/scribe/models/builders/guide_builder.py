@@ -58,7 +58,7 @@ from scribe.stats.distributions import BetaPrime
 from ..components.amortizers import AmortizedOutput
 from ..components.guide_families import (
     AmortizedGuide,
-    GroupedAmortizedGuide,
+    VAELatentGuide,
     GuideFamily,
     LowRankGuide,
     MeanFieldGuide,
@@ -677,7 +677,7 @@ def _run_amortizer(
 
 
 def _setup_grouped_amortized_latent(
-    guide: GroupedAmortizedGuide,
+    guide: VAELatentGuide,
     dims: Dict[str, int],
     model_config: "ModelConfig",
     counts: Optional[jnp.ndarray],
@@ -690,10 +690,10 @@ def _setup_grouped_amortized_latent(
     turns encoder output into the guide distribution for z.
     """
     if counts is None:
-        raise ValueError("GroupedAmortizedGuide with encoder requires counts")
+        raise ValueError("VAELatentGuide with encoder requires counts")
     if guide.encoder is None or guide.latent_spec is None:
         raise ValueError(
-            "GroupedAmortizedGuide VAE path requires encoder and latent_spec"
+            "VAELatentGuide VAE path requires encoder and latent_spec"
         )
     n_genes = dims["n_genes"]
     net = flax_module(
@@ -1055,7 +1055,7 @@ class GuideBuilder:
             # 3. Setup guides for CELL-SPECIFIC parameters (inside cell plate)
             #    Handle batch indexing for non-amortized guides
             #    Register amortizer modules ONCE before the plate loop
-            #    If any spec uses GroupedAmortizedGuide with encoder+latent_spec,
+            #    If any spec uses VAELatentGuide with encoder+latent_spec,
             #    run the VAE latent block once (encoder -> latent_spec -> sample z)
             # ================================================================
             cell_specs = [s for s in specs if s.is_cell_specific]
@@ -1063,7 +1063,7 @@ class GuideBuilder:
             for s in cell_specs:
                 gf = s.guide_family
                 if (
-                    isinstance(gf, GroupedAmortizedGuide)
+                    isinstance(gf, VAELatentGuide)
                     and gf.encoder is not None
                     and gf.latent_spec is not None
                 ):
