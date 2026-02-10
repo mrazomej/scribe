@@ -1063,6 +1063,19 @@ class LatentSpec(BaseModel):
             f"{type(self).__name__} must implement make_guide_dist()"
         )
 
+    def make_prior_dist(self) -> dist.Distribution:
+        """Build the prior distribution for z in the model.
+
+        Returns
+        -------
+        dist.Distribution
+            NumPyro distribution for ``numpyro.sample(sample_site, dist)``
+            in the model (e.g. standard Normal for a Gaussian latent).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement make_prior_dist()"
+        )
+
 
 # ------------------------------------------------------------------------------
 # Gaussian Latent Specification
@@ -1101,6 +1114,13 @@ class GaussianLatentSpec(LatentSpec):
         log_scale = var_params["log_scale"]
         scale = jnp.exp(0.5 * log_scale)
         return dist.Normal(loc, scale).to_event(1)
+
+    def make_prior_dist(self) -> dist.Distribution:
+        """Standard Normal prior: z ~ N(0, I).to_event(1)."""
+        return dist.Normal(
+            jnp.zeros(self.latent_dim),
+            jnp.ones(self.latent_dim),
+        ).to_event(1)
 
 
 # ==============================================================================

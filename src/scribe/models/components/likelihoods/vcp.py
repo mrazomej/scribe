@@ -11,7 +11,7 @@ ZINBWithVCPLikelihood
     Zero-Inflated NB with Variable Capture Probability.
 """
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import jax.numpy as jnp
 import numpyro
@@ -144,14 +144,18 @@ class NBWithVCPLikelihood(Likelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        vae_cell_fn: Optional[
+            Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
+        ] = None,
     ) -> None:
         """Sample from NB likelihood with variable capture probability."""
         n_cells = dims["n_cells"]
-        p = param_values["p"]
-        r = param_values["r"]
-
-        # Check if this is a mixture model
-        is_mixture = r.ndim == 2  # (n_components, n_genes) vs (n_genes,)
+        # When vae_cell_fn is set, r (and possibly p) come from the decoder
+        # inside the plate; do not read them here.
+        if vae_cell_fn is None:
+            p = param_values["p"]
+            r = param_values["r"]
+            is_mixture = "mixing_weights" in param_values
 
         # Determine which capture parameter we're using
         if self.capture_param_name is not None:
@@ -194,7 +198,18 @@ class NBWithVCPLikelihood(Likelihood):
             if batch_size is not None and counts is not None:
                 obs = counts[idx]
 
-            # Check if capture parameter is already in param_values (from posterior_samples)
+            # VAE path: call decoder inside plate, then read decoder-driven
+            # params
+            if vae_cell_fn is not None:
+                param_values.update(
+                    vae_cell_fn(idx if batch_size is not None else None)
+                )
+                p = param_values["p"]
+                r = param_values["r"]
+                is_mixture = "mixing_weights" in param_values
+
+            # Check if capture parameter is already in param_values (from
+            # posterior_samples)
             # This happens when generating PPC samples with Predictive
             if target_name in param_values:
                 # Use value from posterior_samples (for PPC)
@@ -203,7 +218,8 @@ class NBWithVCPLikelihood(Likelihood):
                 if batch_size is not None and idx is not None:
                     capture_value = capture_value[idx]
             else:
-                # Sample from prior (for prior predictive checks or when not in param_values)
+                # Sample from prior (for prior predictive checks or when not in
+                # param_values)
                 capture_value = self._sample_capture_param(
                     use_phi_capture, capture_prior_params
                 )
@@ -387,15 +403,19 @@ class ZINBWithVCPLikelihood(Likelihood):
         dims: Dict[str, int],
         batch_size: Optional[int],
         model_config: "ModelConfig",
+        vae_cell_fn: Optional[
+            Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
+        ] = None,
     ) -> None:
         """Sample from ZINB likelihood with variable capture probability."""
         n_cells = dims["n_cells"]
-        p = param_values["p"]
-        r = param_values["r"]
-        gate = param_values["gate"]
-
-        # Check if this is a mixture model
-        is_mixture = r.ndim == 2  # (n_components, n_genes) vs (n_genes,)
+        # When vae_cell_fn is set, r/gate (and possibly p) come from the decoder
+        # inside the plate; do not read them here.
+        if vae_cell_fn is None:
+            p = param_values["p"]
+            r = param_values["r"]
+            gate = param_values["gate"]
+            is_mixture = "mixing_weights" in param_values
 
         # Determine which capture parameter we're using
         if self.capture_param_name is not None:
@@ -415,8 +435,9 @@ class ZINBWithVCPLikelihood(Likelihood):
                 capture_prior_params = pspec.prior
                 break
 
-        # Broadcast gate if needed (do this once, outside the plate)
-        if is_mixture:
+        # Broadcast gate if needed (non-VAE only; VAE path sets these inside
+        # plate)
+        if vae_cell_fn is None and is_mixture:
             if gate.ndim == 1 and gate.shape[0] == r.shape[1]:
                 gate = gate[None, :]
             elif gate.ndim == 0:
@@ -438,6 +459,16 @@ class ZINBWithVCPLikelihood(Likelihood):
         with plate_context as idx:
             if batch_size is not None and counts is not None:
                 obs = counts[idx]
+
+            # VAE path: call decoder inside plate, re-read updated params
+            if vae_cell_fn is not None:
+                param_values.update(
+                    vae_cell_fn(idx if batch_size is not None else None)
+                )
+                p = param_values["p"]
+                r = param_values["r"]
+                gate = param_values["gate"]
+                is_mixture = "mixing_weights" in param_values
 
             # Check if capture parameter is already in param_values (from posterior_samples)
             # This happens when generating PPC samples with Predictive

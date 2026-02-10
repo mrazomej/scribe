@@ -5,7 +5,7 @@ zeros (from the NB distribution) and structural/technical zeros
 (from the zero-inflation component).
 """
 
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 import jax.numpy as jnp
 import numpyro
@@ -53,17 +53,10 @@ class ZeroInflatedNBLikelihood(Likelihood):
     >>> builder.with_likelihood(likelihood)
     """
 
-    def sample(
-        self,
-        param_values: Dict[str, jnp.ndarray],
-        cell_specs: List["ParamSpec"],
-        counts: Optional[jnp.ndarray],
-        dims: Dict[str, int],
-        batch_size: Optional[int],
-        model_config: "ModelConfig",
-    ) -> None:
-        """Sample from Zero-Inflated Negative Binomial likelihood."""
-        n_cells = dims["n_cells"]
+    def _build_dist(
+        self, param_values: Dict[str, jnp.ndarray]
+    ) -> dist.Distribution:
+        """Build the ZINB distribution from current param_values."""
         p = param_values["p"]
         r = param_values["r"]
         gate = param_values["gate"]
@@ -71,7 +64,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
         # ====================================================================
         # Check if this is a mixture model
         # ====================================================================
-        is_mixture = r.ndim == 2  # (n_components, n_genes) vs (n_genes,)
+        is_mixture = "mixing_weights" in param_values
 
         if is_mixture:
             # ================================================================
@@ -102,41 +95,94 @@ class ZeroInflatedNBLikelihood(Likelihood):
             zinb_base = dist.ZeroInflatedDistribution(
                 base_nb, gate=gate
             ).to_event(1)
-            base_dist = dist.MixtureSameFamily(mixing_dist, zinb_base)
-        else:
-            # ================================================================
-            # Single-component model: standard distribution
-            # ================================================================
-            base_nb = dist.NegativeBinomialProbs(r, p)
-            base_dist = dist.ZeroInflatedDistribution(
-                base_nb, gate=gate
-            ).to_event(1)
+            return dist.MixtureSameFamily(mixing_dist, zinb_base)
+
+        base_nb = dist.NegativeBinomialProbs(r, p)
+        return dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(1)
+
+    def sample(
+        self,
+        param_values: Dict[str, jnp.ndarray],
+        cell_specs: List["ParamSpec"],
+        counts: Optional[jnp.ndarray],
+        dims: Dict[str, int],
+        batch_size: Optional[int],
+        model_config: "ModelConfig",
+        vae_cell_fn: Optional[
+            Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
+        ] = None,
+    ) -> None:
+        """Sample from Zero-Inflated Negative Binomial likelihood.
+
+        Handles three plate modes:
+        - Prior predictive: sample counts from prior
+        - Full: condition on all counts
+        - Batched: condition on mini-batch with subsampling
+        """
+        n_cells = dims["n_cells"]
 
         # ====================================================================
-        # MODE 1: Prior predictive
+        # Non-VAE fast path: build distribution once outside the plate
         # ====================================================================
+        # === Non-VAE fast path: All parameter values available, build
+        # distribution outside plate ===
+        if vae_cell_fn is None:
+            # Build the entire likelihood distribution once using the provided
+            # parameters
+            base_dist = self._build_dist(param_values)
+
+            if counts is None:
+                # Prior predictive path: no observed counts, draw samples using
+                # base_dist
+                with numpyro.plate("cells", n_cells):
+                    for spec in cell_specs:
+                        sample_prior(spec, dims, model_config)
+                    numpyro.sample("counts", base_dist)
+            elif batch_size is None:
+                # Observed counts, no batching: condition on full observed data
+                with numpyro.plate("cells", n_cells):
+                    for spec in cell_specs:
+                        sample_prior(spec, dims, model_config)
+                    numpyro.sample("counts", base_dist, obs=counts)
+            else:
+                # Observed counts, with mini-batching/subsampling
+                with numpyro.plate(
+                    "cells", n_cells, subsample_size=batch_size
+                ) as idx:
+                    for spec in cell_specs:
+                        sample_prior(spec, dims, model_config)
+                    numpyro.sample("counts", base_dist, obs=counts[idx])
+            return
+
+        # === VAE path: Decoder and prior logic run inside plate, distribution
+        # built per cell/batch === The vae_cell_fn callback is used to run
+        # decoder/prior logic on the fly within the plate
         if counts is None:
+            # Prior predictive, run decoder per cell before sampling
             with numpyro.plate("cells", n_cells):
+                param_values.update(vae_cell_fn(None))
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
-                numpyro.sample("counts", base_dist)
-
-        # ====================================================================
-        # MODE 2: Full sampling
-        # ====================================================================
+                numpyro.sample("counts", self._build_dist(param_values))
         elif batch_size is None:
+            # Observed counts, no batching: decoder runs per cell, then sample
+            # with observed counts
             with numpyro.plate("cells", n_cells):
+                param_values.update(vae_cell_fn(None))
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
-                numpyro.sample("counts", base_dist, obs=counts)
-
-        # ====================================================================
-        # MODE 3: Batch sampling
-        # ====================================================================
+                numpyro.sample(
+                    "counts", self._build_dist(param_values), obs=counts
+                )
         else:
+            # Observed counts, with batching/subsampling: decoder runs only for
+            # the subsampled indices
             with numpyro.plate(
                 "cells", n_cells, subsample_size=batch_size
             ) as idx:
+                param_values.update(vae_cell_fn(idx))
                 for spec in cell_specs:
                     sample_prior(spec, dims, model_config)
-                numpyro.sample("counts", base_dist, obs=counts[idx])
+                numpyro.sample(
+                    "counts", self._build_dist(param_values), obs=counts[idx]
+                )

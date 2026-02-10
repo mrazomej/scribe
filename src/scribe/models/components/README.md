@@ -8,7 +8,7 @@ This directory contains the atomic components used by the builders:
 
 - **likelihoods/**: Likelihood functions (NB, ZINB, VCP variants)
 - **guide_families.py**: Variational family implementations (MeanField, LowRank,
-  Amortized, GroupedAmortized)
+  Amortized, VAELatentGuide)
 - **vae_components.py**: Encoder/decoder building blocks for VAE-style models
 - **covariate_embedding.py**: Categorical covariate embedding for conditioning
 - **amortizers.py**: Neural network amortizers for variational parameters
@@ -54,7 +54,7 @@ approximation to use:
 | `MeanFieldGuide`        | Factorized variational family   | Default, fast     |
 | `LowRankGuide(rank)`    | Low-rank MVN covariance         | Gene correlations |
 | `AmortizedGuide(net)`   | Neural network amortization     | High-dim params   |
-| `GroupedAmortizedGuide` | VAE: encoder + latent_spec + decoder | Joint latent z + params |
+| `VAELatentGuide`        | VAE: encoder + latent_spec + decoder | Joint latent z + decoder-driven params |
 
 ### Example
 
@@ -117,19 +117,21 @@ via `encode_to_params` (encoder) or `decode_to_output` (decoder).
 
 | Class               | Description |
 |---------------------|-------------|
-| `AbstractEncoder`  | Base: input transform → optional standardize → optional covariate concat → MLP → `encode_to_params(h)` |
+| `AbstractEncoder`   | Base: input transform → optional standardize → optional covariate concat → MLP → `encode_to_params(h)` |
 | `GaussianEncoder`   | Diagonal-Gaussian posterior: outputs `(loc, log_scale)` |
 | `AbstractDecoder`   | Base: optional covariate concat to z → reversed MLP → `decode_to_output(h)` |
-| `SimpleDecoder`     | Single continuous vector output; optional destandardization |
+| `MultiHeadDecoder`  | Multi-head output: one head per decoder-driven parameter; each head has `output_dim` and `transform` (e.g. `"exp"`, `"sigmoid"`) |
+| `DecoderOutputHead` | Frozen spec for one head: `param_name`, `output_dim`, `transform` (key into `OUTPUT_TRANSFORMS`) |
 
 Registries for lookup by name: `ENCODER_REGISTRY`, `DECODER_REGISTRY` (e.g.
 `ENCODER_REGISTRY["gaussian"]` → `GaussianEncoder`).
 
-When used with **GroupedAmortizedGuide**, the guide builder (see
+When used with **VAELatentGuide**, the guide builder (see
 [builders README](../builders/README.md)) wires encoder output to a
 **LatentSpec** (e.g. `GaussianLatentSpec`): encoder → `var_params` →
 `latent_spec.make_guide_dist(var_params)` → `sample(site, guide_dist)` for the
-latent z.
+latent z. Decoder-driven parameter names are derived from `decoder.output_heads`
+(`VAELatentGuide.param_names`), not set manually.
 
 ### Input transforms and standardization
 
@@ -147,10 +149,10 @@ module embeds and concatenates covariates to the MLP input.
 ### Example: encoder and decoder
 
 ```python
-from scribe.models.components import GaussianEncoder, SimpleDecoder
+from scribe.models.components import GaussianEncoder, MultiHeadDecoder, DecoderOutputHead
 import jax.numpy as jnp
 
-input_dim, latent_dim = 2000, 10
+input_dim, latent_dim, n_genes = 2000, 10, 500
 hidden_dims = [256, 128]
 
 encoder = GaussianEncoder(
@@ -160,31 +162,35 @@ encoder = GaussianEncoder(
     activation="relu",
     input_transformation="log1p",
 )
-decoder = SimpleDecoder(
-    output_dim=input_dim,
+decoder = MultiHeadDecoder(
+    output_dim=0,
     latent_dim=latent_dim,
     hidden_dims=hidden_dims,
+    output_heads=(
+        DecoderOutputHead("r", output_dim=n_genes, transform="exp"),
+    ),
 )
 
 # Without covariates
 enc_params = encoder.init(rng, jnp.zeros(input_dim))
 dec_params = decoder.init(rng, jnp.zeros(latent_dim))
 loc, log_scale = encoder.apply(enc_params, counts)
-reconstruction = decoder.apply(dec_params, z)
+decoder_out = decoder.apply(dec_params, z)  # dict with "r", etc.
 ```
 
 ### Example: with covariates
 
 ```python
-from scribe.models.components import GaussianEncoder, SimpleDecoder, CovariateSpec
+from scribe.models.components import GaussianEncoder, MultiHeadDecoder, DecoderOutputHead, CovariateSpec
 
 covariate_specs = [CovariateSpec("batch", num_categories=4, embedding_dim=8)]
 encoder = GaussianEncoder(
     input_dim=100, latent_dim=10, hidden_dims=[64, 32],
     covariate_specs=covariate_specs,
 )
-decoder = SimpleDecoder(
-    output_dim=100, latent_dim=10, hidden_dims=[64, 32],
+decoder = MultiHeadDecoder(
+    output_dim=0, latent_dim=10, hidden_dims=[64, 32],
+    output_heads=(DecoderOutputHead("r", output_dim=100, transform="exp"),),
     covariate_specs=covariate_specs,
 )
 x = jnp.ones((3, 100))
@@ -402,9 +408,9 @@ MY_STATISTIC = SufficientStatistic(
 │  │ Likelihoods  │ │  Guide Families  │ │ Covariate     │ │ VAE Enc/Dec    │  │
 │  │              │ │                  │ │ Embedding     │ │               │  │
 │  │ NegBinomial  │ │ MeanFieldGuide   │ │ CovariateSpec │ │ GaussianEnc   │  │
-│  │ ZINB, VCP    │ │ LowRankGuide     │ │ Covariate     │ │ SimpleDecoder │  │
+│  │ ZINB, VCP    │ │ LowRankGuide     │ │ Covariate     │ │ MultiHeadDec   │  │
 │  │              │ │ AmortizedGuide   │ │ Embedding     │ │ AbstractEnc   │  │
-│  │              │ │ GroupedAmortized │ │               │ │ AbstractDec   │  │
+│  │              │ │ VAELatentGuide   │ │               │ │ AbstractDec   │  │
 │  └──────────────┘ └─────────────────┘ └──────────────┘ └───────────────┘  │
 │                                                                             │
 │  ┌─────────────────┐                                                       │

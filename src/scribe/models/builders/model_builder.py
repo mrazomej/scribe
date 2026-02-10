@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 import jax.numpy as jnp
 import numpyro
+from numpyro.contrib.module import flax_module
 
 from .parameter_specs import (
     DerivedParam,
@@ -37,6 +38,7 @@ from .parameter_specs import (
     ParamSpec,
     sample_prior,
 )
+from ..components.guide_families import VAELatentGuide
 
 if TYPE_CHECKING:
     from ..components.likelihoods import Likelihood
@@ -212,6 +214,21 @@ class ModelBuilder:
                 "Likelihood must be set before building. Use with_likelihood()."
             )
 
+        # Validate: VAE and mixture are mutually exclusive.
+        # The VAE's continuous latent space replaces discrete mixture
+        # components, so combining them is not supported.
+        has_vae = any(
+            isinstance(s.guide_family, VAELatentGuide)
+            and getattr(s.guide_family, "decoder", None) is not None
+            for s in self.param_specs
+        )
+        has_mixture = any(s.is_mixture for s in self.param_specs)
+        if has_vae and has_mixture:
+            raise ValueError(
+                "VAE and mixture models cannot be combined. The VAE's "
+                "continuous latent space replaces discrete mixture components."
+            )
+
         # Capture builder state in closure
         specs = self.param_specs
         derived = self.derived_params
@@ -333,13 +350,80 @@ class ModelBuilder:
             #    - Batch sampling: counts provided, batch_size specified
             # ================================================================
             cell_specs = [s for s in specs if s.is_cell_specific]
+
+            # ============================================================
+            # 4a. Detect if any cell-specific parameter uses a VAE guide.
+            #     If present, build a vae_cell_fn closure to run VAE logic
+            #     inside the cell plate in the likelihood.
+            #     The closure does the following for each cell:
+            #       1. Samples z from the prior distribution using the
+            #       latent_spec.
+            #       2. Runs the decoder network on z to generate per-cell
+            #       parameters.
+            #       3. Registers each decoded output as a deterministic site.
+            # ============================================================
+            vae_cell_fn = None
+            for s in cell_specs:
+                gf = s.guide_family
+                # Check if this spec uses a VAELatentGuide with a decoder and
+                # latent_spec defined
+                if (
+                    isinstance(gf, VAELatentGuide)
+                    and gf.decoder is not None
+                    and gf.latent_spec is not None
+                ):
+                    latent_spec = gf.latent_spec
+                    decoder = gf.decoder
+
+                    # Define the closure; called inside the likelihood cell
+                    # plate before observation sampling
+                    def vae_cell_fn(_batch_idx):
+                        # Sample the latent variable z from its prior
+                        z = numpyro.sample(
+                            latent_spec.sample_site,
+                            latent_spec.make_prior_dist(),
+                        )
+                        # Get a Flax-wrapped decoder module-ready for JAX shape
+                        # and parameter management
+                        decoder_net = flax_module(
+                            "vae_decoder",
+                            decoder,
+                            input_shape=(latent_spec.latent_dim,),
+                        )
+                        # Run decoder on z (can optionally support covariates in
+                        # the future)
+                        decoder_out = decoder_net(z)
+                        # Register outputs as deterministic sites so they're
+                        # available to the rest of the model
+                        for name, value in decoder_out.items():
+                            numpyro.deterministic(name, value)
+                        return decoder_out
+
+                    # Only the first detected VAE cell spec is handled; exit
+                    # after building the closure
+                    break
+
+            # Filter out VAE marker specs — their latent is sampled
+            # inside vae_cell_fn, so they must NOT be sample_prior'd
+            # again by the likelihood.  Non-VAE cell specs (e.g.
+            # p_capture for VCP) are kept and sampled normally.
+            if vae_cell_fn is not None:
+                non_vae_cell_specs = [
+                    s
+                    for s in cell_specs
+                    if not isinstance(s.guide_family, VAELatentGuide)
+                ]
+            else:
+                non_vae_cell_specs = cell_specs
+
             likelihood.sample(
                 param_values=param_values,
-                cell_specs=cell_specs,
+                cell_specs=non_vae_cell_specs,
                 counts=counts,
                 dims=dims,
                 batch_size=batch_size,
                 model_config=model_config,
+                vae_cell_fn=vae_cell_fn,
             )
 
         return model
