@@ -45,6 +45,7 @@ scribe.models.components.covariate_embedding : ``CovariateSpec``, ``CovariateEmb
 scribe.models.components.amortizers.Amortizer : Amortizer MLP pattern.
 """
 
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple, Type
 
 import jax
@@ -75,8 +76,75 @@ def _get_input_transform(name: str) -> Callable:
 
 
 # ---------------------------------------------------------------------------
-# Activation helper
+# Output transformations (decoder heads)
 # ---------------------------------------------------------------------------
+
+
+def _identity(x: jnp.ndarray) -> jnp.ndarray:
+    return x
+
+
+def _clamp_exp(x: jnp.ndarray) -> jnp.ndarray:
+    return jnp.exp(jnp.clip(x, -5.0, 5.0))
+
+
+OUTPUT_TRANSFORMS: Dict[str, Callable[[jnp.ndarray], jnp.ndarray]] = {
+    "identity": _identity,
+    "exp": jnp.exp,
+    "softplus": jax.nn.softplus,
+    "sigmoid": jax.nn.sigmoid,
+    "clamp_exp": _clamp_exp,
+}
+
+
+def _get_output_transform(name: str) -> Callable:
+    if name not in OUTPUT_TRANSFORMS:
+        raise ValueError(
+            f"Unknown output transform '{name}'. "
+            f"Choose from: {list(OUTPUT_TRANSFORMS.keys())}"
+        )
+    return OUTPUT_TRANSFORMS[name]
+
+
+# ------------------------------------------------------------------------------
+# DecoderOutputHead
+# ------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DecoderOutputHead:
+    """Configuration for a single decoder output head.
+
+    Each head corresponds to one model parameter produced by the decoder
+    (e.g. dispersion ``r``, zero-inflation ``gate``).
+
+    Parameters
+    ----------
+    param_name : str
+        Name of the model parameter (e.g. ``"r"``, ``"gate"``).
+    output_dim : int
+        Dimensionality of this head's output (e.g. ``n_genes``).
+    transform : str
+        Key into :data:`OUTPUT_TRANSFORMS` applied to the raw Dense
+        output to produce the constrained value.
+    """
+
+    param_name: str
+    output_dim: int
+    transform: str = "identity"
+
+    def __post_init__(self):
+        if self.transform not in OUTPUT_TRANSFORMS:
+            raise ValueError(
+                f"Unknown transform '{self.transform}' for head "
+                f"'{self.param_name}'. "
+                f"Choose from: {list(OUTPUT_TRANSFORMS.keys())}"
+            )
+
+
+# ------------------------------------------------------------------------------
+# Activation helper
+# ------------------------------------------------------------------------------
 
 _ACTIVATIONS: Dict[str, Callable] = {
     "relu": jax.nn.relu,
@@ -321,36 +389,48 @@ class AbstractDecoder(nn.Module):
 
 
 # ===========================================================================
-# SimpleDecoder
+# MultiHeadDecoder
 # ===========================================================================
 
 
-class SimpleDecoder(AbstractDecoder):
-    """Decoder that outputs a single continuous reconstruction vector.
+class MultiHeadDecoder(AbstractDecoder):
+    """Decoder with one or more output heads, each producing a named parameter.
 
-    Applies optional destandardization after the output projection.
+    Each head applies its own ``Dense`` projection followed by a transform
+    from :data:`OUTPUT_TRANSFORMS`.  The decoder returns a dict mapping
+    ``param_name → constrained_array``.
+
+    Parameters
+    ----------
+    output_heads : Tuple[DecoderOutputHead, ...]
+        One entry per model parameter produced by the decoder.
 
     Examples
     --------
-    >>> decoder = SimpleDecoder(
-    ...     output_dim=2000, latent_dim=10,
-    ...     hidden_dims=[256, 128],
+    >>> heads = (
+    ...     DecoderOutputHead("r", output_dim=2000, transform="exp"),
+    ...     DecoderOutputHead("gate", output_dim=2000, transform="sigmoid"),
+    ... )
+    >>> decoder = MultiHeadDecoder(
+    ...     output_dim=0, latent_dim=10,
+    ...     hidden_dims=[128, 64], output_heads=heads,
     ... )
     >>> params = decoder.init(jax.random.PRNGKey(0), jnp.zeros(10))
-    >>> reconstruction = decoder.apply(params, z)
+    >>> out = decoder.apply(params, jnp.zeros(10))
+    >>> out["r"].shape, out["gate"].shape
+    ((2000,), (2000,))
     """
 
+    output_heads: Tuple[DecoderOutputHead, ...] = ()
+
     @nn.compact
-    def decode_to_output(self, h: jnp.ndarray) -> jnp.ndarray:
-        output = nn.Dense(self.output_dim, name="output")(h)
-        if (
-            self.standardize_mean is not None
-            and self.standardize_std is not None
-        ):
-            output = (
-                output * (self.standardize_std + 1e-8) + self.standardize_mean
-            )
-        return output
+    def decode_to_output(self, h: jnp.ndarray) -> Dict[str, jnp.ndarray]:
+        result: Dict[str, jnp.ndarray] = {}
+        for head in self.output_heads:
+            raw = nn.Dense(head.output_dim, name=f"head_{head.param_name}")(h)
+            transform_fn = _get_output_transform(head.transform)
+            result[head.param_name] = transform_fn(raw)
+        return result
 
 
 # ===========================================================================
@@ -362,5 +442,5 @@ ENCODER_REGISTRY: Dict[str, Type[AbstractEncoder]] = {
 }
 
 DECODER_REGISTRY: Dict[str, Type[AbstractDecoder]] = {
-    "simple": SimpleDecoder,
+    "multi_head": MultiHeadDecoder,
 }

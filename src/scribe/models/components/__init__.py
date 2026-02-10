@@ -60,7 +60,9 @@ from .vae_components import (
     AbstractEncoder,
     GaussianEncoder,
     AbstractDecoder,
-    SimpleDecoder,
+    MultiHeadDecoder,
+    DecoderOutputHead,
+    OUTPUT_TRANSFORMS,
     ENCODER_REGISTRY,
     DECODER_REGISTRY,
 )
@@ -90,7 +92,9 @@ __all__ = [
     "AbstractEncoder",
     "GaussianEncoder",
     "AbstractDecoder",
-    "SimpleDecoder",
+    "MultiHeadDecoder",
+    "DecoderOutputHead",
+    "OUTPUT_TRANSFORMS",
     "ENCODER_REGISTRY",
     "DECODER_REGISTRY",
 ]
