@@ -188,44 +188,59 @@ class TestEncoderCovariateConditioning:
 
 
 class TestDecoderCovariateConditioning:
-    def test_gaussian_decoder_with_covariates(self):
-        from scribe.models.components.vae_components import SimpleDecoder
+    def test_multi_head_decoder_with_covariates(self):
+        from scribe.models.components.vae_components import (
+            MultiHeadDecoder,
+            DecoderOutputHead,
+        )
 
         specs = [CovariateSpec("batch", num_categories=4, embedding_dim=8)]
-        decoder = SimpleDecoder(
-            output_dim=20,
+        heads = (DecoderOutputHead("r", output_dim=20, transform="exp"),)
+        decoder = MultiHeadDecoder(
+            output_dim=0,
             latent_dim=5,
             hidden_dims=[32, 16],
             covariate_specs=specs,
+            output_heads=heads,
         )
         z = jnp.ones((3, 5))
         covs = {"batch": jnp.array([0, 1, 2])}
         params = decoder.init(jax.random.PRNGKey(0), z, covs)
         out = decoder.apply(params, z, covs)
-        assert out.shape == (3, 20)
+        assert out["r"].shape == (3, 20)
 
     def test_decoder_without_covariates_unchanged(self):
-        from scribe.models.components.vae_components import SimpleDecoder
+        from scribe.models.components.vae_components import (
+            MultiHeadDecoder,
+            DecoderOutputHead,
+        )
 
-        decoder = SimpleDecoder(
-            output_dim=20,
+        heads = (DecoderOutputHead("r", output_dim=20, transform="exp"),)
+        decoder = MultiHeadDecoder(
+            output_dim=0,
             latent_dim=5,
             hidden_dims=[32, 16],
+            output_heads=heads,
         )
         z = jnp.ones((3, 5))
         params = decoder.init(jax.random.PRNGKey(0), z)
         out = decoder.apply(params, z)
-        assert out.shape == (3, 20)
+        assert out["r"].shape == (3, 20)
 
     def test_covariates_affect_output(self):
-        from scribe.models.components.vae_components import SimpleDecoder
+        from scribe.models.components.vae_components import (
+            MultiHeadDecoder,
+            DecoderOutputHead,
+        )
 
         specs = [CovariateSpec("batch", num_categories=4, embedding_dim=8)]
-        decoder = SimpleDecoder(
-            output_dim=20,
+        heads = (DecoderOutputHead("r", output_dim=20, transform="exp"),)
+        decoder = MultiHeadDecoder(
+            output_dim=0,
             latent_dim=5,
             hidden_dims=[32, 16],
             covariate_specs=specs,
+            output_heads=heads,
         )
         z = jnp.ones((1, 5))
         covs_0 = {"batch": jnp.array([0])}
@@ -234,7 +249,7 @@ class TestDecoderCovariateConditioning:
 
         out_0 = decoder.apply(params, z, covs_0)
         out_1 = decoder.apply(params, z, covs_1)
-        assert not jnp.allclose(out_0, out_1)
+        assert not jnp.allclose(out_0["r"], out_1["r"])
 
 
 # ===========================================================================
