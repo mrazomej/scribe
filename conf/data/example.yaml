@@ -47,6 +47,12 @@ name: "my_dataset"
 # Path to the count matrix file (.h5ad or .csv), relative to project root
 path: "data/my_experiment/counts.h5ad"
 
+# ---- Optional: Layer Selection ----------------------------------------------
+# For h5ad files: which AnnData layer holds the raw counts.
+# If null (default), adata.X is used.  Set this when your raw counts live in
+# a layer (e.g., "counts", "raw_counts", "spliced").
+# layer: "counts"
+
 # ---- Optional: Preprocessing Pipeline --------------------------------------
 # Uncomment and customize the block below to enable preprocessing.
 # Steps are applied in the order listed. All steps are optional; remove or
