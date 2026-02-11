@@ -60,6 +60,7 @@ scribe.models.components.guide_families : Guide dispatch implementations.
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
+    Any,
     Callable,
     Dict,
     List,
@@ -1029,6 +1030,13 @@ class LatentSpec(BaseModel):
     ----------
     sample_site : str
         NumPyro sample site name for the latent (e.g. "z").
+    flow : object, optional
+        Optional normalizing flow (e.g. ``FlowChain``) to use as a learned
+        prior on z.  When ``None`` (default) the prior is a standard
+        distribution (e.g. ``Normal(0, I)``).  When set, the model builder
+        wraps the flow in a ``FlowDistribution`` so that
+        ``z ~ FlowDistribution(flow, base=Normal(0, I))``.  The flow
+        parameters are learned jointly during SVI via NumPyro's param store.
 
     See Also
     --------
@@ -1039,6 +1047,14 @@ class LatentSpec(BaseModel):
 
     sample_site: str = Field(
         default="z", description="NumPyro sample site name for z"
+    )
+    flow: Optional[Any] = Field(
+        default=None,
+        description=(
+            "Optional prior flow (e.g. FlowChain). When set, the model "
+            "samples z from FlowDistribution(flow, base=Normal(0,I)) "
+            "instead of the standard prior."
+        ),
     )
 
     def make_guide_dist(
@@ -1094,6 +1110,12 @@ class GaussianLatentSpec(LatentSpec):
         Dimensionality of the latent space.
     sample_site : str
         NumPyro sample site name (default "z").
+    flow : object, optional
+        Optional normalizing flow for a learned prior on z.  Inherited
+        from ``LatentSpec``.  When set, the model builder uses
+        ``FlowDistribution(flow, base=Normal(0, I))`` instead of the
+        standard ``Normal(0, I)`` prior.  The flow's ``features``
+        attribute must equal ``latent_dim``.
     """
 
     latent_dim: int = Field(..., description="Dimensionality of the latent z")

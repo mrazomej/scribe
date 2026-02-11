@@ -30,8 +30,10 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 import jax.numpy as jnp
 import numpyro
+import numpyro.distributions as dist
 from numpyro.contrib.module import flax_module
 
+from scribe.flows import FlowDistribution
 from .parameter_specs import (
     DerivedParam,
     DirichletSpec,
@@ -229,6 +231,28 @@ class ModelBuilder:
                 "continuous latent space replaces discrete mixture components."
             )
 
+        # Validate: if a flow prior is set, its features must match
+        # the latent dimensionality.
+        for s in self.param_specs:
+            gf = s.guide_family
+            if (
+                isinstance(gf, VAELatentGuide)
+                and gf.latent_spec is not None
+                and getattr(gf.latent_spec, "flow", None) is not None
+            ):
+                latent_spec = gf.latent_spec
+                flow_features = getattr(latent_spec.flow, "features", None)
+                if (
+                    flow_features is not None
+                    and flow_features != latent_spec.latent_dim
+                ):
+                    raise ValueError(
+                        f"Flow features ({flow_features}) must equal "
+                        f"latent_dim ({latent_spec.latent_dim}). "
+                        "The prior flow must operate on the same "
+                        "dimensionality as the latent space."
+                    )
+
         # Capture builder state in closure
         specs = self.param_specs
         derived = self.derived_params
@@ -378,20 +402,43 @@ class ModelBuilder:
                     # Define the closure; called inside the likelihood cell
                     # plate before observation sampling
                     def vae_cell_fn(_batch_idx):
-                        # Sample the latent variable z from its prior
+                        # Build the prior distribution for z.
+                        # If a prior flow is set on the latent spec, register
+                        # it with flax_module and wrap in FlowDistribution;
+                        # otherwise use the standard prior (Normal(0, I)).
+                        if latent_spec.flow is not None:
+                            # Register the flow as a Flax module so its
+                            # parameters are tracked by NumPyro's param store
+                            flow_fn = flax_module(
+                                "vae_prior_flow",
+                                latent_spec.flow,
+                                input_shape=(latent_spec.latent_dim,),
+                            )
+                            # Base distribution: standard Normal matching the
+                            # latent dimensionality
+                            base = dist.Normal(
+                                jnp.zeros(latent_spec.latent_dim),
+                                jnp.ones(latent_spec.latent_dim),
+                            ).to_event(1)
+                            # Wrap into FlowDistribution — a proper NumPyro
+                            # distribution with sample() and log_prob()
+                            prior = FlowDistribution(flow_fn, base)
+                        else:
+                            # Standard Gaussian prior: z ~ N(0, I)
+                            prior = latent_spec.make_prior_dist()
+
+                        # Sample the latent variable z from the prior
                         z = numpyro.sample(
-                            latent_spec.sample_site,
-                            latent_spec.make_prior_dist(),
+                            latent_spec.sample_site, prior
                         )
-                        # Get a Flax-wrapped decoder module-ready for JAX shape
-                        # and parameter management
+                        # Get a Flax-wrapped decoder module ready for JAX
+                        # shape and parameter management
                         decoder_net = flax_module(
                             "vae_decoder",
                             decoder,
                             input_shape=(latent_spec.latent_dim,),
                         )
-                        # Run decoder on z (can optionally support covariates in
-                        # the future)
+                        # Run decoder on z to produce per-cell parameters
                         decoder_out = decoder_net(z)
                         # Register outputs as deterministic sites so they're
                         # available to the rest of the model
