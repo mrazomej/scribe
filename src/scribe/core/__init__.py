@@ -7,6 +7,10 @@ This module contains shared functionality used by both SVI and MCMC inference me
 from .input_processor import InputProcessor
 from .normalization import normalize_counts_from_posterior
 from .normalization_logistic import fit_logistic_normal_from_posterior
+from .annotation_prior import (
+    build_annotation_prior_logits,
+    validate_annotation_prior_logits,
+)
 
 # Differential expression module
 from . import de
@@ -24,6 +28,8 @@ __all__ = [
     "InputProcessor",
     "normalize_counts_from_posterior",
     "fit_logistic_normal_from_posterior",
+    "build_annotation_prior_logits",
+    "validate_annotation_prior_logits",
     "de",
     "compute_cell_type_probabilities",
     "compute_cell_type_probabilities_map",

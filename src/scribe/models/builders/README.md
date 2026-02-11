@@ -202,6 +202,46 @@ The ModelBuilder handles three plate modes:
 Cell-specific parameters are sampled inside the cell plate and support
 batch indexing for efficient stochastic VI.
 
+### Annotation Prior Logits
+
+The model closure built by `ModelBuilder.build()` accepts an optional
+`annotation_prior_logits` keyword argument of shape `(n_cells, n_components)`.
+This array is forwarded directly to `likelihood.sample()`.
+
+The **guide** closure built by `GuideBuilder.build()` also accepts
+`annotation_prior_logits` for API compatibility (NumPyro passes the same
+kwargs to both model and guide), but ignores it.  Annotation priors are
+observed data, not latent variables, so no variational approximation is
+needed.
+
+```python
+# Model function signature (after build):
+model(n_cells, n_genes, model_config,
+      counts=None, batch_size=None,
+      annotation_prior_logits=None)
+
+# Guide function signature (after build):
+guide(n_cells, n_genes, model_config,
+      counts=None, batch_size=None,
+      annotation_prior_logits=None)  # ignored
+```
+
+The `annotation_prior_logits` array flows through the inference stack as
+follows:
+
+```
+scribe.fit(annotation_key=...)  →  build_annotation_prior_logits()
+                                        │
+                                        ▼
+_run_inference(annotation_prior_logits=...)  →  _run_svi_inference(...)
+                                                        │
+                                                        ▼
+SVIInferenceEngine.run_inference(annotation_prior_logits=...)
+                                        │
+                                        ▼
+model_args["annotation_prior_logits"]  →  model(...)  →  likelihood.sample(...)
+```
+
 ## VAE Path (model builder)
 
 When any cell spec has `guide_family=VAELatentGuide` with `decoder` and

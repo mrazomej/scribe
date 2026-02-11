@@ -34,13 +34,14 @@ See Also
 scribe.models.builders.model_builder : Uses likelihoods to build models.
 """
 
-from .base import Likelihood
+from .base import Likelihood, compute_cell_specific_mixing
 from .negative_binomial import NegativeBinomialLikelihood
 from .zero_inflated import ZeroInflatedNBLikelihood
 from .vcp import NBWithVCPLikelihood, ZINBWithVCPLikelihood
 
 __all__ = [
     "Likelihood",
+    "compute_cell_specific_mixing",
     "NegativeBinomialLikelihood",
     "ZeroInflatedNBLikelihood",
     "NBWithVCPLikelihood",

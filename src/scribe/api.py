@@ -60,6 +60,10 @@ from .inference.utils import (
 )
 from .inference.preset_builder import build_config_from_preset
 from .inference.dispatcher import _run_inference
+from .core.annotation_prior import (
+    build_annotation_prior_logits,
+    validate_annotation_prior_logits,
+)
 
 # Import result types for type annotations
 from .svi.results import ScribeSVIResults
@@ -135,6 +139,10 @@ def fit(
     cells_axis: int = 0,
     layer: Optional[str] = None,
     seed: int = 42,
+    # Annotation prior options (for mixture models)
+    annotation_key: Optional[Union[str, List[str]]] = None,
+    annotation_confidence: float = 3.0,
+    annotation_component_order: Optional[List[str]] = None,
     # Power user: explicit configs override above
     model_config: Optional[ModelConfig] = None,
     inference_config: Optional[InferenceConfig] = None,
@@ -276,6 +284,37 @@ def fit(
     seed : int, default=42
         Random seed for reproducibility.
 
+    annotation_key : str or list of str, optional
+        Column name(s) in ``adata.obs`` containing categorical cell-type
+        annotations.  When provided (together with ``n_components``),
+        the annotations are used as soft priors on per-cell mixture
+        component assignments.  Requires ``counts`` to be an AnnData
+        object and ``n_components`` to be set.
+
+        When a **list** of column names is given, composite labels are
+        formed for each cell by joining the per-column values with
+        ``"__"`` (double underscore).  For example, columns
+        ``["cell_type", "treatment"]`` with values ``"T"`` and ``"ctrl"``
+        produce the composite label ``"T__ctrl"``.  A cell is considered
+        unlabeled (receives zero logits) if *any* of the specified
+        columns has a missing value.
+
+    annotation_confidence : float, default=3.0
+        Strength of the annotation prior (kappa).  Controls how strongly
+        the annotation influences the component assignment:
+
+        * ``0`` — annotations are ignored (standard model).
+        * ``3`` (default) — annotated component gets ~20x prior boost.
+        * Large values — approaches hard assignment.
+
+    annotation_component_order : list of str, optional
+        Explicit mapping from annotation labels to component indices.
+        The *i*-th element is assigned to component *i*.  If ``None``,
+        unique labels are sorted alphabetically.  When using multiple
+        ``annotation_key`` columns, these should be the composite labels
+        using ``"__"`` as separator (e.g.
+        ``["T__ctrl", "T__stim", "B__ctrl", "B__stim"]``).
+
     model_config : ModelConfig, optional
         Fully configured model configuration object.
         If provided, overrides model, parameterization, unconstrained,
@@ -379,6 +418,37 @@ def fit(
     count_data, adata, n_cells, n_genes = process_counts_data(
         counts, data_config
     )
+
+    # ==========================================================================
+    # Step 2b: Build annotation prior logits (if requested)
+    # ==========================================================================
+    annotation_prior_logits = None
+    if annotation_key is not None:
+        if adata is None:
+            raise ValueError(
+                "annotation_key requires counts to be an AnnData object "
+                "(not a raw array), so that adata.obs can be read."
+            )
+        # Resolve n_components — may come from explicit kwarg or from
+        # a user-supplied model_config
+        _n_comp = n_components
+        if _n_comp is None and model_config is not None:
+            _n_comp = model_config.n_components
+        if _n_comp is None:
+            raise ValueError(
+                "annotation_key requires n_components to be set "
+                "(either as a kwarg or in model_config)."
+            )
+        annotation_prior_logits, _label_map = build_annotation_prior_logits(
+            adata=adata,
+            obs_key=annotation_key,
+            n_components=_n_comp,
+            confidence=annotation_confidence,
+            component_order=annotation_component_order,
+        )
+        validate_annotation_prior_logits(
+            annotation_prior_logits, n_cells, _n_comp
+        )
 
     # ==========================================================================
     # Step 3: Build or use ModelConfig
@@ -502,4 +572,5 @@ def fit(
         n_genes=n_genes,
         data_config=data_config,
         seed=seed,
+        annotation_prior_logits=annotation_prior_logits,
     )

@@ -466,6 +466,130 @@ large_dataset_normalized = normalize_counts_from_posterior(
 )
 ```
 
+## Annotation Priors (`annotation_prior.py`)
+
+This module provides utilities for injecting per-cell prior beliefs about
+mixture component assignments into SCRIBE mixture models.  The key functions
+are:
+
+### `build_annotation_prior_logits`
+
+```python
+from scribe.core import build_annotation_prior_logits
+
+# Single column
+logits, label_map = build_annotation_prior_logits(
+    adata,                      # AnnData with adata.obs[obs_key]
+    obs_key="cell_type",        # column in adata.obs
+    n_components=3,             # number of mixture components K
+    confidence=3.0,             # kappa: prior strength
+    component_order=None,       # optional list mapping labels to indices
+)
+# logits: jnp.ndarray, shape (n_cells, K) — additive logit offsets
+# label_map: dict, e.g. {"T": 0, "B": 1, "Mono": 2}
+
+# Multiple columns (composite labels)
+logits, label_map = build_annotation_prior_logits(
+    adata,
+    obs_key=["cell_type", "treatment"],   # list of column names
+    n_components=6,
+    confidence=3.0,
+)
+# label_map: e.g. {"B__ctrl": 0, "B__stim": 1, "T__ctrl": 2, "T__stim": 3}
+```
+
+When `obs_key` is a **list**, composite labels are formed by joining per-column
+values with `"__"` (double underscore).  For example, a cell with
+`cell_type="T"` and `treatment="ctrl"` gets the composite label `"T__ctrl"`.
+A cell is considered unlabeled if **any** of the specified columns has a
+missing value.
+
+#### How to prepare `adata.obs`
+
+Each annotation column should be a string/categorical column in `adata.obs`.
+Cells without annotations should have `NaN` (or `None`) — they receive
+all-zero logits, meaning the model treats them identically to the standard
+(unannotated) case.
+
+```python
+import pandas as pd
+adata.obs["cell_type"] = pd.Categorical(["T", "B", None, "T", "Mono", ...])
+adata.obs["treatment"] = pd.Categorical(["ctrl", "stim", "ctrl", None, ...])
+```
+
+#### The `confidence` parameter (kappa)
+
+The confidence parameter controls how strongly the annotation influences the
+per-cell prior:
+
+| kappa | Effect |
+|-------|--------|
+| `0` | Annotations are completely ignored (all-zero logits, standard model) |
+| `3` (default) | Annotated component gets ~exp(3) ≈ 20× prior weight boost |
+| `5` | Annotated component gets ~exp(5) ≈ 150× boost |
+| `→ ∞` | Hard assignment to the annotated component |
+
+The data can always override the prior: the posterior assignment is
+`p(z_i = k | x_i) ∝ pi_{i,k} · f_k(x_i | θ_k)`.
+
+### `validate_annotation_prior_logits`
+
+```python
+from scribe.core import validate_annotation_prior_logits
+
+# Raises ValueError if shape or finiteness checks fail
+validate_annotation_prior_logits(logits, n_cells=1000, n_components=3)
+```
+
+### Usage via `scribe.fit()`
+
+The simplest way to use annotation priors is via the high-level API:
+
+```python
+import scribe
+
+# Single annotation column
+result = scribe.fit(
+    adata,
+    model="nbdm",
+    n_components=3,
+    n_steps=50000,
+    annotation_key="cell_type",       # reads from adata.obs
+    annotation_confidence=3.0,        # kappa
+    annotation_component_order=["T", "B", "Mono"],  # optional
+)
+
+# Multiple annotation columns (all observed combinations become labels)
+result = scribe.fit(
+    adata,
+    model="nbdm",
+    n_components=6,
+    n_steps=50000,
+    annotation_key=["cell_type", "treatment"],  # forms composite labels
+    annotation_confidence=3.0,
+    annotation_component_order=[                # optional explicit order
+        "T__ctrl", "T__stim", "B__ctrl", "B__stim", "Mono__ctrl", "Mono__stim"
+    ],
+)
+```
+
+### Future Extensibility: Auxiliary Observation Model
+
+The annotation prior system is designed to be extensible.  Currently it uses
+a **logit-nudging** approach that modifies the mixing weights additively in
+log-space.  A future **auxiliary observation model** could:
+
+1. Replace `compute_cell_specific_mixing` with explicit discrete `z_i` sampling
+   + `config_enumerate` for marginalization.
+2. Add a confusion matrix parameter and an auxiliary `numpyro.sample("annotation", ...)`
+   site that treats annotations as a noisy observation of the latent assignment.
+3. Select the strategy via a new `annotation_strategy="logit_nudge"|"auxiliary_observation"`
+   parameter — the API (`annotation_key`, `annotation_confidence`) would remain
+   the same.
+
+The `build_annotation_prior_logits` function and the label-to-component mapping
+are reusable by the auxiliary observation model.
+
 ## Integration with Other Modules
 
 - **Models**: Core utilities are used by all model types and parameterizations

@@ -77,6 +77,7 @@ def _svi_handler(
     config: SVIConfig | MCMCConfig,
     data_config: DataConfig,
     seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Handler for SVI inference."""
     from .svi import _run_svi_inference
@@ -93,6 +94,7 @@ def _svi_handler(
         svi_config=config,
         data_config=data_config,
         seed=seed,
+        annotation_prior_logits=annotation_prior_logits,
     )
 
 
@@ -108,6 +110,7 @@ def _mcmc_handler(
     config: SVIConfig | MCMCConfig,
     data_config: DataConfig,
     seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Handler for MCMC inference."""
     from .mcmc import _run_mcmc_inference
@@ -124,6 +127,7 @@ def _mcmc_handler(
         mcmc_config=config,
         data_config=data_config,
         seed=seed,
+        annotation_prior_logits=annotation_prior_logits,
     )
 
 
@@ -139,6 +143,7 @@ def _vae_handler(
     config: SVIConfig | MCMCConfig,
     data_config: DataConfig,
     seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Handler for VAE inference."""
     from .vae import _run_vae_inference
@@ -181,6 +186,7 @@ def _run_inference(
     n_genes: int,
     data_config: DataConfig,
     seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Route inference execution to the appropriate handler.
 
@@ -276,4 +282,5 @@ def _run_inference(
         config=config,
         data_config=data_config,
         seed=seed,
+        annotation_prior_logits=annotation_prior_logits,
     )

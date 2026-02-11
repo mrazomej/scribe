@@ -290,6 +290,7 @@ class ModelBuilder:
             model_config: "ModelConfig",
             counts: Optional[jnp.ndarray] = None,
             batch_size: Optional[int] = None,
+            annotation_prior_logits: Optional[jnp.ndarray] = None,
         ):
             """NumPyro model function.
 
@@ -306,6 +307,13 @@ class ModelBuilder:
                 predictive).
             batch_size : Optional[int]
                 Mini-batch size for stochastic VI. If None, uses all cells.
+            annotation_prior_logits : Optional[jnp.ndarray], shape (n_cells,
+            n_components)
+                Per-cell logit offsets for mixture component assignment priors.
+                When provided for a mixture model, global mixing weights are
+                combined with these logits to produce cell-specific mixing
+                probabilities.  If None (default), the global mixing weights are
+                used for all cells.
             """
             # ================================================================
             # Setup dimensions dict for shape resolution
@@ -509,6 +517,7 @@ class ModelBuilder:
                 batch_size=batch_size,
                 model_config=model_config,
                 vae_cell_fn=vae_cell_fn,
+                annotation_prior_logits=annotation_prior_logits,
             )
 
         return model

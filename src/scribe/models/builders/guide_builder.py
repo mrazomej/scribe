@@ -965,6 +965,7 @@ class GuideBuilder:
             model_config: "ModelConfig",
             counts: Optional[jnp.ndarray] = None,
             batch_size: Optional[int] = None,
+            annotation_prior_logits: Optional[jnp.ndarray] = None,
         ):
             """NumPyro guide function.
 
@@ -980,6 +981,11 @@ class GuideBuilder:
                 Observed count matrix (needed for amortized guides).
             batch_size : Optional[int]
                 Mini-batch size for stochastic VI.
+            annotation_prior_logits : Optional[jnp.ndarray]
+                Accepted for API compatibility with the model function
+                (NumPyro passes the same kwargs to both model and guide).
+                Ignored by the guide — annotation priors are observed data,
+                not latent variables requiring variational approximation.
             """
             # ================================================================
             # Setup dimensions dict
