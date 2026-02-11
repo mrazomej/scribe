@@ -78,19 +78,24 @@ def _run_vae_inference(
         VAE-specific results from ScribeVAEResults.from_training().
     """
     # 1. Run SVI (engine uses get_model_and_guide with n_genes for VAE path)
-    svi_results = SVIInferenceEngine.run_inference(
-        model_config=model_config,
-        count_data=count_data,
-        n_cells=n_cells,
-        n_genes=n_genes,
-        n_steps=svi_config.n_steps,
-        batch_size=svi_config.batch_size,
-        seed=seed,
-        stable_update=svi_config.stable_update,
-        early_stopping=svi_config.early_stopping,
-        optimizer=svi_config.optimizer,
-        loss=svi_config.loss,
-    )
+    # Only pass optimizer/loss when set; otherwise engine uses defaults (Adam, TraceMeanField_ELBO)
+    run_kwargs: dict = {
+        "model_config": model_config,
+        "count_data": count_data,
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "n_steps": svi_config.n_steps,
+        "batch_size": svi_config.batch_size,
+        "seed": seed,
+        "stable_update": svi_config.stable_update,
+        "early_stopping": svi_config.early_stopping,
+    }
+    if svi_config.optimizer is not None:
+        run_kwargs["optimizer"] = svi_config.optimizer
+    if svi_config.loss is not None:
+        run_kwargs["loss"] = svi_config.loss
+
+    svi_results = SVIInferenceEngine.run_inference(**run_kwargs)
 
     # 2. Extract VAELatentGuide from param_specs (in model_config_for_results)
     model_config_for_results = svi_results.model_config
