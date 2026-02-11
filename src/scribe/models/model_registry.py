@@ -424,6 +424,7 @@ def get_model_and_guide(
     model_config: "ModelConfig",
     unconstrained: Optional[bool] = None,
     guide_families: Optional["GuideFamilyConfig"] = None,
+    n_genes: Optional[int] = None,
 ) -> Tuple[Callable, Callable, "ModelConfig"]:
     """Create model and guide functions using the unified factory.
 
@@ -510,8 +511,10 @@ def get_model_and_guide(
     else:
         effective_config = model_config
 
-    # Use the unified factory
-    model, guide, param_specs = create_model(effective_config)
+    # Use the unified factory (n_genes required for VAE)
+    model, guide, param_specs = create_model(
+        effective_config, n_genes=n_genes
+    )
     model_config_for_results = (
         effective_config.model_copy(update={"param_specs": param_specs})
         if param_specs

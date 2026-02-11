@@ -522,8 +522,9 @@ class SVIInferenceEngine:
         SVIRunResult : Container for inference results.
         """
         # Get model and guide functions using the builder-based API
+        # Pass n_genes for VAE (required for encoder/decoder sizing)
         model, guide, model_config_for_results = get_model_and_guide(
-            model_config
+            model_config, n_genes=n_genes
         )
 
         # Create SVI instance

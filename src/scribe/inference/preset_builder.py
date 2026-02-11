@@ -57,6 +57,17 @@ def build_config_from_preset(
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
+    # VAE architecture options (when inference_method="vae")
+    vae_latent_dim: int = 10,
+    vae_encoder_hidden_dims: Optional[List[int]] = None,
+    vae_decoder_hidden_dims: Optional[List[int]] = None,
+    vae_activation: Optional[str] = None,
+    vae_input_transform: str = "log1p",
+    vae_standardize: bool = False,
+    vae_decoder_transforms: Optional[Dict[str, str]] = None,
+    vae_flow_type: str = "none",
+    vae_flow_num_layers: int = 4,
+    vae_flow_hidden_dims: Optional[List[int]] = None,
     # Amortization options
     amortize_capture: bool = False,
     capture_hidden_dims: Optional[List[int]] = None,
@@ -250,6 +261,25 @@ def build_config_from_preset(
         .with_parameterization(parameterization)
         .with_inference(inference_method)
     )
+
+    if inference_method == "vae":
+        vae_kwargs = {
+            "latent_dim": vae_latent_dim,
+            "input_transform": vae_input_transform,
+            "standardize": vae_standardize,
+            "decoder_transforms": vae_decoder_transforms,
+            "flow_type": vae_flow_type,
+            "flow_num_layers": vae_flow_num_layers,
+        }
+        if vae_encoder_hidden_dims is not None:
+            vae_kwargs["encoder_hidden_dims"] = vae_encoder_hidden_dims
+        if vae_decoder_hidden_dims is not None:
+            vae_kwargs["decoder_hidden_dims"] = vae_decoder_hidden_dims
+        if vae_activation is not None:
+            vae_kwargs["activation"] = vae_activation
+        if vae_flow_hidden_dims is not None:
+            vae_kwargs["flow_hidden_dims"] = vae_flow_hidden_dims
+        builder.with_vae(**vae_kwargs)
 
     if unconstrained:
         builder.unconstrained()

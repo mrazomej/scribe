@@ -331,3 +331,55 @@ class TestMixtureBroadcastingIntegration:
         assert trace["phi"]["value"].shape == ()
         assert trace["mu"]["value"].shape == (2, n_genes)
         assert trace["r"]["value"].shape == (2, n_genes)
+
+
+class TestDecoderOutputSpec:
+    """Test decoder_output_spec for VAE decoder heads."""
+
+    def test_canonical_nbdm(self):
+        """Canonical param: r only for NBDM."""
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        p = PARAMETERIZATIONS["canonical"]
+        spec = p.decoder_output_spec("nbdm")
+        assert spec == [("r", "softplus")]
+
+    def test_canonical_zinb(self):
+        """Canonical param: r and gate for ZINB."""
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        p = PARAMETERIZATIONS["canonical"]
+        spec = p.decoder_output_spec("zinb")
+        assert spec == [("r", "softplus"), ("gate", "sigmoid")]
+
+    def test_mean_prob_nbdm(self):
+        """Mean-prob param: mu only for NBDM."""
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        p = PARAMETERIZATIONS["mean_prob"]
+        spec = p.decoder_output_spec("nbdm")
+        assert spec == [("mu", "softplus")]
+
+    def test_mean_odds_zinb(self):
+        """Mean-odds param: mu and gate for ZINB."""
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        p = PARAMETERIZATIONS["mean_odds"]
+        spec = p.decoder_output_spec("zinb")
+        assert spec == [("mu", "softplus"), ("gate", "sigmoid")]
+
+    def test_mean_odds_nbvcp(self):
+        """Mean-odds with nbvcp: mu only (no gate)."""
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        p = PARAMETERIZATIONS["mean_odds"]
+        spec = p.decoder_output_spec("nbvcp")
+        assert spec == [("mu", "softplus")]
+
+    def test_mean_odds_zinbvcp(self):
+        """Mean-odds with zinbvcp: mu and gate."""
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        p = PARAMETERIZATIONS["mean_odds"]
+        spec = p.decoder_output_spec("zinbvcp")
+        assert spec == [("mu", "softplus"), ("gate", "sigmoid")]
