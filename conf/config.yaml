@@ -35,7 +35,9 @@ parameterization: mean_odds
 unconstrained: false
 
 # Mixture model configuration
-# Set to integer >= 2 for mixture models, null for single component
+# Set to integer >= 2 for mixture models, null for single component.
+# When annotation_key is provided and n_components is null, the number
+# of components is automatically inferred from the unique labels.
 n_components: null
 
 # Which parameters should be component-specific in mixture models
@@ -73,6 +75,17 @@ amortization:
     output_transform: softplus  # Transform for constrained outputs: softplus or exp
     output_clamp_min: 0.1       # Min clamp for alpha/beta (null to disable)
     output_clamp_max: 50.0      # Max clamp for alpha/beta (null to disable)
+
+# --- Annotation Prior (for mixture models) ---
+# Provide per-cell prior beliefs about component assignments from adata.obs.
+# annotation_key: column name (str) or list of column names in adata.obs.
+#   When a list, composite labels are formed by joining values with "__".
+#   e.g. ["cell_type", "treatment"] → "T__ctrl", "B__stim", ...
+# annotation_confidence: kappa, prior strength (0=ignore, 3=default ~20x boost)
+# annotation_component_order: explicit label-to-component index ordering (optional)
+annotation_key: null
+annotation_confidence: 3.0
+annotation_component_order: null
 
 # --- General Settings ---
 seed: 42

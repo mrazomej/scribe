@@ -270,6 +270,16 @@ def main(cfg: DictConfig) -> None:
                 output_clamp_max=capture_cfg.get("output_clamp_max", 50.0),
             )
 
+    # Build annotation prior kwargs (convert OmegaConf lists to plain Python)
+    annotation_key = cfg.get("annotation_key")
+    if annotation_key is not None:
+        annotation_key = OmegaConf.to_container(annotation_key, resolve=True)
+    annotation_component_order = cfg.get("annotation_component_order")
+    if annotation_component_order is not None:
+        annotation_component_order = OmegaConf.to_container(
+            annotation_component_order, resolve=True
+        )
+
     # Build kwargs for scribe.fit()
     kwargs = {
         # Model configuration
@@ -283,6 +293,10 @@ def main(cfg: DictConfig) -> None:
         # Amortization: single config object (when set, fit() uses it; else uses
         # individual params)
         "capture_amortization": capture_amortization,
+        # Annotation prior configuration
+        "annotation_key": annotation_key,
+        "annotation_confidence": cfg.get("annotation_confidence", 3.0),
+        "annotation_component_order": annotation_component_order,
         # Inference configuration
         "inference_method": inference_method,
         # Data configuration
@@ -314,6 +328,14 @@ def main(cfg: DictConfig) -> None:
             f"[dim]Amortized capture:[/dim] [bold]{kwargs['capture_hidden_dims']}[/bold] "
             f"[dim]({kwargs['capture_activation']})[/dim]"
         )
+    if kwargs.get("annotation_key"):
+        ann_msg = (
+            f"[dim]Annotation prior:[/dim] [bold]{kwargs['annotation_key']}[/bold] "
+            f"[dim](confidence={kwargs['annotation_confidence']})[/dim]"
+        )
+        if not kwargs.get("n_components"):
+            ann_msg += " [dim](n_components will be inferred from labels)[/dim]"
+        console.print(ann_msg)
 
     # ==========================================================================
     # Model Inference Section

@@ -346,6 +346,10 @@ class ParamSpec(BaseModel):
         self, value: Tuple[float, float], name: str, dist_type: Type
     ) -> None:
         """Validate hyperparameter tuple based on distribution type."""
+        # Dirichlet uses variable-length concentration vectors;
+        # its own validator (validate_dirichlet_hyperparameters) handles it.
+        if dist_type is dist.Dirichlet:
+            return
         if len(value) != 2:
             raise ValueError(
                 f"Parameter '{self.name}': {name} "
