@@ -9,6 +9,7 @@ Supports early stopping based on loss convergence and Orbax checkpointing.
 from .inference_engine import SVIInferenceEngine, SVIRunResult
 from .results_factory import SVIResultsFactory
 from .results import ScribeSVIResults
+from .vae_results import ScribeVAEResults
 from .checkpoint import (
     checkpoint_exists,
     save_svi_checkpoint,
@@ -22,6 +23,7 @@ __all__ = [
     "SVIRunResult",
     "SVIResultsFactory",
     "ScribeSVIResults",
+    "ScribeVAEResults",
     # Checkpoint utilities
     "checkpoint_exists",
     "save_svi_checkpoint",
