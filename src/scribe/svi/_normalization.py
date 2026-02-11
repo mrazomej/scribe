@@ -142,9 +142,6 @@ class NormalizationMixin:
                 "No posterior samples found. Call get_posterior_samples() first."
             )
 
-        # Convert to canonical form to ensure r parameter is available
-        self._convert_to_canonical()
-
         # Create default RNG key if not provided (lazy initialization)
         if rng_key is None:
             rng_key = random.PRNGKey(42)
@@ -307,9 +304,6 @@ class NormalizationMixin:
             raise ValueError(
                 "No posterior samples found. Call get_posterior_samples() first."
             )
-
-        # Convert to canonical form to ensure r parameter is available
-        self._convert_to_canonical()
 
         # Validate distribution_type parameter
         from ..stats import SoftmaxNormal, LowRankLogisticNormal

@@ -122,9 +122,6 @@ class MixtureAnalysisMixin:
                 "No posterior samples found. Call get_posterior_samples() first."
             )
 
-        # Convert posterior samples to canonical form
-        self._convert_to_canonical()
-
         print("Computing log-likelihoods...")
 
         # Compute log-likelihoods for each component
