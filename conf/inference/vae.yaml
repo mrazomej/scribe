@@ -1,13 +1,12 @@
 # @package inference
 # Variational Autoencoder configuration
-# VAE uses SVI internally for optimization
+# VAE uses SVI internally for optimization.
+# Inherits n_steps, batch_size, stable_update, early_stopping from svi.
+
+defaults:
+  - svi
 
 method: vae
-
-# SVI parameters used for VAE training
-n_steps: 50_000
-batch_size: null
-stable_update: true
 
 # VAE architecture
 vae_latent_dim: 10
