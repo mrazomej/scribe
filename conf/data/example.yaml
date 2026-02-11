@@ -1,0 +1,80 @@
+# @package data
+#
+# Dataset Configuration Example
+# =============================
+#
+# This file serves as a template for creating your own dataset configuration.
+# Copy this file, rename it to something descriptive (e.g., my_dataset.yaml),
+# and fill in the required fields below.
+#
+# Usage:
+#   python infer.py data=my_dataset          # uses conf/data/my_dataset.yaml
+#   python infer.py data=example              # uses this file directly
+#
+# Required Fields
+# ---------------
+# - name : A short, descriptive identifier for your dataset. Used in output
+#          directory paths and job names (avoid spaces and special characters).
+# - path : Path to the count matrix file, relative to the project root or
+#          absolute. Supported formats:
+#            * .h5ad  — AnnData HDF5 (scanpy). Reads from adata.X by default;
+#                       use the `layer` option in config.yaml to read from a
+#                       specific layer (e.g., layer: "raw_counts").
+#            * .csv   — Plain CSV with genes as columns and cells as rows.
+#                       The `cells_axis` option in config.yaml controls the
+#                       orientation (0 = cells-as-rows, 1 = cells-as-columns).
+#
+# Optional Fields
+# ---------------
+# - preprocessing : A pipeline of scanpy-style preprocessing steps applied
+#                   before model fitting. Each step is optional. If the entire
+#                   block is omitted, the raw counts are used as-is.
+#
+# Notes
+# -----
+# - Scribe models operate on raw (integer) count data. The preprocessing
+#   pipeline below is used only for gene selection (e.g., highly variable
+#   genes). After selection, the original raw counts of those genes are passed
+#   to the model — normalized/log-transformed values are never used for fitting.
+# - If your data is already filtered and you don't need HVG selection, you can
+#   omit the preprocessing block entirely.
+
+# ---- Required Fields --------------------------------------------------------
+
+# A short identifier for the dataset (used in output paths and job names)
+name: "my_dataset"
+
+# Path to the count matrix file (.h5ad or .csv), relative to project root
+path: "data/my_experiment/counts.h5ad"
+
+# ---- Optional: Preprocessing Pipeline --------------------------------------
+# Uncomment and customize the block below to enable preprocessing.
+# Steps are applied in the order listed. All steps are optional; remove or
+# comment out any you don't need.
+#
+# preprocessing:
+#
+#   # Filter out cells with fewer than `min_genes` detected genes.
+#   # Useful for removing empty droplets or low-quality cells.
+#   filter_cells:
+#     min_genes: 200             # minimum genes per cell (null to skip)
+#
+#   # Filter out genes detected in fewer than `min_cells` cells.
+#   # Removes genes that are too rare to model reliably.
+#   filter_genes:
+#     min_cells: 3               # minimum cells per gene (null to skip)
+#
+#   # Normalize total counts per cell to a fixed target sum.
+#   # This is a prerequisite for log1p and HVG selection, NOT for the model.
+#   normalize_total:
+#     target_sum: 1e4            # target total counts per cell
+#
+#   # Log-transform the normalized counts: X = log(1 + X).
+#   # Required before highly_variable_genes with flavor="seurat".
+#   log1p: {}
+#
+#   # Select highly variable genes (HVGs) to reduce dimensionality.
+#   # Only the raw counts of selected genes are kept for model fitting.
+#   highly_variable_genes:
+#     n_top_genes: 2000          # number of top variable genes to select
+#     flavor: "seurat"           # method: "seurat", "cell_ranger", or "seurat_v3"

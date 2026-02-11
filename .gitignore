@@ -107,6 +107,10 @@ Temporary Items
 .devcontainer/
 .github/dependabot.yml
 
+# User-specific data configs (see conf/data/example.yaml for template)
+conf/data/
+!conf/data/example.yaml
+
 # Data Folders
 data/**
 sandbox/**
