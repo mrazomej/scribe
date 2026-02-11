@@ -13,6 +13,7 @@ from .enums import ModelType, Parameterization, InferenceMethod
 from .groups import (
     VAEConfig,
     GuideFamilyConfig,
+    PriorOverrides,
 )
 from .parameter_mapping import get_active_parameters
 from ..builders.parameter_specs import ParamSpec
@@ -121,6 +122,12 @@ class ModelConfig(BaseModel):
             "prior/guide hyperparameter overrides. The unified factory uses "
             "these to customize default parameters."
         ),
+    )
+
+    # Prior overrides (populated by ModelConfigBuilder with defaults)
+    priors: PriorOverrides = Field(
+        default_factory=PriorOverrides,
+        description="Prior hyperparameters (e.g., Beta, LogNormal) per parameter.",
     )
 
     vae: Optional[VAEConfig] = Field(
@@ -255,17 +262,22 @@ class ModelConfig(BaseModel):
     # --------------------------------------------------------------------------
 
     def get_prior_overrides(self) -> Dict[str, Any]:
-        """Extract prior overrides from param_specs.
+        """Extract prior overrides from priors field or param_specs.
 
         Returns a dictionary mapping parameter names to their prior
-        hyperparameters. Only includes parameters that have explicit
-        prior values set.
+        hyperparameters. Prefers the priors field when it has content;
+        otherwise falls back to param_specs.
 
         Returns
         -------
         Dict[str, Any]
             Dictionary of prior overrides, e.g., {"p": (2.0, 2.0)}.
         """
+        # Prefer priors from the priors field when it has content
+        extra = getattr(self.priors, "__pydantic_extra__", None)
+        if extra:
+            return dict(extra)
+        # Fall back to param_specs
         priors = {}
         for spec in self.param_specs:
             if hasattr(spec, "prior") and spec.prior is not None:
@@ -322,18 +334,12 @@ class ModelConfig(BaseModel):
         ModelConfig
             New config with updated priors.
         """
-        # Update param_specs with new prior values
-        updated_specs = []
-        for spec in self.param_specs:
-            if spec.name in priors:
-                updated_spec = spec.model_copy(
-                    update={"prior": priors[spec.name]}
-                )
-                updated_specs.append(updated_spec)
-            else:
-                updated_specs.append(spec)
-
-        return self.model_copy(update={"param_specs": updated_specs})
+        # Use priors field (populated by builder)
+        current = self.get_prior_overrides()
+        updated = {**current, **priors}
+        return self.model_copy(
+            update={"priors": PriorOverrides(**updated)}
+        )
 
     # --------------------------------------------------------------------------
 

@@ -5,10 +5,12 @@ from .enums import ModelType, Parameterization, InferenceMethod
 from .groups import (
     VAEConfig,
     GuideFamilyConfig,
+    PriorOverrides,
 )
 from .base import ModelConfig
 from .parameter_mapping import get_required_parameters
 from ..builders.parameter_specs import ParamSpec
+from ..components.guide_families import LowRankGuide
 
 # ==============================================================================
 # Model Configuration Builder Class
@@ -341,6 +343,108 @@ class ModelConfigBuilder:
 
     # --------------------------------------------------------------------------
 
+    def _prior_value_to_tuple(self, value: Any) -> tuple:
+        """Convert prior value to tuple (handles JAX/NumPy arrays)."""
+        if isinstance(value, (tuple, list)):
+            return tuple(value)
+        if hasattr(value, "tolist"):
+            return tuple(value.tolist())
+        if hasattr(value, "__iter__") and not isinstance(value, (str, dict)):
+            return tuple(value)
+        raise ValueError(
+            f"Prior value must be a tuple, list, or array-like, got {type(value)}"
+        )
+
+    def _validate_priors(self) -> None:
+        """Validate prior parameters before building ModelConfig.
+
+        Raises
+        ------
+        ValueError
+            If any prior has invalid values (negative, wrong length).
+        """
+        # Params that expect 2-tuples (Beta, LogNormal, BetaPrime)
+        SCALAR_2_PARAMS = frozenset(
+            {"p", "r", "mu", "gate", "p_capture", "phi", "phi_capture"}
+        )
+        # Beta-like: both must be > 0
+        BETA_PARAMS = frozenset({"p", "gate", "p_capture"})
+        # LogNormal: scale (second) must be > 0
+        LOGNORMAL_PARAMS = frozenset({"r", "mu"})
+        # BetaPrime: both must be > 0
+        BETAPRIME_PARAMS = frozenset({"phi", "phi_capture"})
+
+        for param, value in self._priors.items():
+            try:
+                vals = self._prior_value_to_tuple(value)
+            except ValueError as e:
+                raise ValueError(
+                    f"Prior for '{param}' must be a tuple, list, or array-like"
+                ) from e
+            if param == "mixing":
+                expected = self._n_components or 2
+                if len(vals) != expected:
+                    raise ValueError(
+                        f"Prior for 'mixing' must have {expected} values "
+                        f"(n_components), got {len(vals)}"
+                    )
+                if self._unconstrained:
+                    if any(v < 0 for v in vals):
+                        raise ValueError(
+                            "Prior parameters must be non-negative "
+                            "(unconstrained mixing)"
+                        )
+                else:
+                    if any(v <= 0 for v in vals):
+                        raise ValueError("Prior parameters must be positive")
+            elif param in SCALAR_2_PARAMS:
+                if len(vals) != 2:
+                    raise ValueError(
+                        f"Prior for '{param}' must have 2 values, got {len(vals)}"
+                    )
+                if param in BETA_PARAMS or param in BETAPRIME_PARAMS:
+                    # Constrained: Beta/BetaPrime need both > 0
+                    # Unconstrained: Normal(loc, scale), only scale must be > 0
+                    if self._unconstrained:
+                        if vals[1] <= 0:
+                            raise ValueError(
+                                "Prior parameters must be positive"
+                            )
+                    else:
+                        if any(v <= 0 for v in vals):
+                            raise ValueError(
+                                "Prior parameters must be positive"
+                            )
+                elif param in LOGNORMAL_PARAMS:
+                    if vals[1] <= 0:
+                        raise ValueError("Prior parameters must be positive")
+
+    def _validate_guide_families(self) -> None:
+        """Validate guide family configuration.
+
+        Raises
+        ------
+        ValueError
+            If LowRankGuide has rank <= 0.
+        """
+        if self._guide_families is None:
+            return
+        for name in (
+            "p",
+            "r",
+            "mu",
+            "phi",
+            "gate",
+            "p_capture",
+            "phi_capture",
+            "mixing",
+        ):
+            gf = getattr(self._guide_families, name, None)
+            if isinstance(gf, LowRankGuide) and gf.rank <= 0:
+                raise ValueError("rank must be positive")
+
+    # --------------------------------------------------------------------------
+
     def build(self) -> ModelConfig:
         """Build and validate the configuration.
 
@@ -359,6 +463,11 @@ class ModelConfigBuilder:
                 "base_model is required. Use .for_model() to set it."
             )
 
+        # Apply defaults and validate priors
+        self._apply_defaults()
+        self._validate_priors()
+        self._validate_guide_families()
+
         # base_model should always be the base type (e.g., "nbdm", not
         # "nbdm_mix")
         # Mixture is indicated by n_components, not by modifying base_model
@@ -375,6 +484,12 @@ class ModelConfigBuilder:
         # For now, pass empty list - preset factories will populate it
         param_specs: List[ParamSpec] = []
 
+        # Build priors from merged user + defaults (convert arrays to tuples)
+        priors_dict = {
+            k: self._prior_value_to_tuple(v) for k, v in self._priors.items()
+        }
+        priors = PriorOverrides(**priors_dict)
+
         # Build unified ModelConfig
         return ModelConfig(
             base_model=base_model,
@@ -385,5 +500,6 @@ class ModelConfigBuilder:
             mixture_params=self._mixture_params,
             guide_families=self._guide_families,
             param_specs=param_specs,
+            priors=priors,
             vae=vae_config,
         )

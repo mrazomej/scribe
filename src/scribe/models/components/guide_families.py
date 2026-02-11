@@ -150,6 +150,10 @@ class LowRankGuide(GuideFamily):
 
     rank: int = 10
 
+    def __post_init__(self) -> None:
+        if self.rank <= 0:
+            raise ValueError("rank must be positive")
+
 
 # ------------------------------------------------------------------------------
 # Amortized Guide Family

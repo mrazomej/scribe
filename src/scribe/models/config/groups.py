@@ -45,6 +45,37 @@ from ..components.guide_families import GuideFamily
 
 
 # ==============================================================================
+# Prior Overrides Configuration Group
+# ==============================================================================
+
+
+class PriorOverrides(BaseModel):
+    """Prior parameter overrides with attribute-style access and model_copy.
+
+    Stores prior hyperparameters (e.g., Beta, LogNormal) as tuples keyed by
+    parameter name. Used for config.priors.p, config.priors.model_copy(), etc.
+
+    Validation is performed by ModelConfigBuilder before construction.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="allow")
+
+    def __getattr__(self, name: str) -> Any:
+        """Attribute access for prior params (e.g. config.priors.p)."""
+        if name.startswith("_") or name in ("model_copy", "model_dump"):
+            return object.__getattribute__(self, name)
+        try:
+            extra = object.__getattribute__(self, "__pydantic_extra__")
+            if extra is not None and name in extra:
+                return extra[name]
+        except AttributeError:
+            pass
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        ) from None
+
+
+# ==============================================================================
 # Guide Family Configuration Group
 # ==============================================================================
 

@@ -56,7 +56,7 @@ class TestModelConfigBuilder:
             .build()
         )
 
-        assert config.base_model == "nbdm_mix"
+        assert config.base_model == "nbdm"
         assert config.n_components == 3
         assert config.is_mixture is True
 
@@ -114,7 +114,7 @@ class TestModelConfigBuilder:
         )
 
         assert isinstance(config, ModelConfig)
-        assert config.base_model == "zinb_mix"
+        assert config.base_model == "zinb"
         assert config.parameterization == Parameterization.LINKED
         assert config.n_components == 3
         assert config.unconstrained is True
@@ -399,7 +399,7 @@ class TestModelTypeValidation:
             .build()
         )
 
-        assert config.base_model == "nbdm_mix"
+        assert config.base_model == "nbdm"
         assert config.n_components == 3
 
 
@@ -534,7 +534,7 @@ class TestComplexConfigurations:
         )
 
         assert isinstance(config, ModelConfig)
-        assert config.base_model == "zinb_mix"
+        assert config.base_model == "zinb"
         assert config.parameterization == Parameterization.LINKED
         assert config.n_components == 3
         assert config.unconstrained is True
