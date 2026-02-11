@@ -636,6 +636,83 @@ class TestSVISmoke:
         assert result.n_genes == n_genes
         assert result.n_components == 2
 
+    def test_fit_api_infers_n_components_single_key(self):
+        """n_components is auto-inferred from annotation labels when omitted."""
+        import anndata
+        import scribe
+
+        n_cells, n_genes = 12, 5
+        rng = np.random.default_rng(42)
+        X = rng.poisson(5, (n_cells, n_genes)).astype(np.float32)
+        labels = ["A"] * 4 + ["B"] * 4 + ["C"] * 4
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        # Do NOT pass n_components — should be inferred as 3
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=3,
+            batch_size=6,
+            annotation_key="ct",
+            annotation_confidence=3.0,
+            seed=42,
+        )
+
+        assert result.n_components == 3
+
+    def test_fit_api_infers_n_components_multi_key(self):
+        """n_components is auto-inferred from composite annotation labels."""
+        import anndata
+        import scribe
+
+        n_cells, n_genes = 8, 5
+        rng = np.random.default_rng(42)
+        X = rng.poisson(5, (n_cells, n_genes)).astype(np.float32)
+        obs = pd.DataFrame(
+            {
+                "cell_type": ["A", "A", "B", "B"] * 2,
+                "batch": ["x", "y", "x", "y"] * 2,
+            }
+        )
+        adata = anndata.AnnData(X=X, obs=obs)
+
+        # 4 unique composites: A__x, A__y, B__x, B__y -> n_components=4
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=3,
+            batch_size=4,
+            annotation_key=["cell_type", "batch"],
+            annotation_confidence=3.0,
+            seed=42,
+        )
+
+        assert result.n_components == 4
+
+    def test_fit_api_infers_n_components_with_nan(self):
+        """n_components ignores NaN labels when auto-inferring."""
+        import anndata
+        import scribe
+
+        n_cells, n_genes = 10, 5
+        rng = np.random.default_rng(42)
+        X = rng.poisson(5, (n_cells, n_genes)).astype(np.float32)
+        labels = ["A"] * 4 + ["B"] * 4 + [np.nan, np.nan]
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        # 2 unique non-null labels → n_components=2
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=3,
+            batch_size=5,
+            annotation_key="ct",
+            annotation_confidence=3.0,
+            seed=42,
+        )
+
+        assert result.n_components == 2
+
     def test_svi_zinb_mixture_with_annotation(self):
         """Run SVI on ZINB mixture with annotation priors."""
         from scribe.inference import run_scribe

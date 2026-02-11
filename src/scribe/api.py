@@ -89,6 +89,55 @@ VALID_PARAMETERIZATIONS = {
 # Valid inference methods
 VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae"}
 
+
+# ==============================================================================
+# Internal helpers
+# ==============================================================================
+
+
+def _count_unique_labels(
+    adata: "AnnData",
+    annotation_key: Union[str, List[str]],
+) -> int:
+    """
+    Count the number of unique non-null annotation labels.
+
+    When ``annotation_key`` is a list of column names, composite labels
+    are formed (identical to the logic in
+    :func:`build_annotation_prior_logits`) and the unique composites are
+    counted.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix.
+    annotation_key : str or list of str
+        Column name(s) in ``adata.obs``.
+
+    Returns
+    -------
+    int
+        Number of unique non-null labels (or composite labels).
+    """
+    import pandas as pd
+
+    if isinstance(annotation_key, str):
+        obs_keys = [annotation_key]
+    else:
+        obs_keys = list(annotation_key)
+
+    if len(obs_keys) == 1:
+        col = adata.obs[obs_keys[0]]
+        if hasattr(col, "cat"):
+            col = col.astype(object)
+        return int(len(col.dropna().unique()))
+    else:
+        from .core.annotation_prior import _resolve_composite_annotations
+
+        composite = _resolve_composite_annotations(adata, obs_keys)
+        return int(len(composite.dropna().unique()))
+
+
 # ==============================================================================
 # Public API
 # ==============================================================================
@@ -185,7 +234,10 @@ def fit(
     n_components : int, optional
         Number of mixture components for cell type discovery.
         If None (default), uses a single-component model.
-        Must be >= 2 if specified.
+        Must be >= 2 if specified.  When ``annotation_key`` is provided
+        and ``n_components`` is omitted, the number of components is
+        automatically inferred from the number of unique non-null
+        annotation labels.
 
     mixture_params : List[str], optional
         Which parameters should be component-specific in mixture models. If None
@@ -286,10 +338,12 @@ def fit(
 
     annotation_key : str or list of str, optional
         Column name(s) in ``adata.obs`` containing categorical cell-type
-        annotations.  When provided (together with ``n_components``),
-        the annotations are used as soft priors on per-cell mixture
-        component assignments.  Requires ``counts`` to be an AnnData
-        object and ``n_components`` to be set.
+        annotations.  When provided, the annotations are used as soft
+        priors on per-cell mixture component assignments.  Requires
+        ``counts`` to be an AnnData object.
+
+        If ``n_components`` is **not** specified, it is automatically
+        inferred from the number of unique non-null annotation labels.
 
         When a **list** of column names is given, composite labels are
         formed for each cell by joining the per-column values with
@@ -429,16 +483,15 @@ def fit(
                 "annotation_key requires counts to be an AnnData object "
                 "(not a raw array), so that adata.obs can be read."
             )
-        # Resolve n_components — may come from explicit kwarg or from
-        # a user-supplied model_config
+        # Resolve n_components — may come from explicit kwarg, from a
+        # user-supplied model_config, or be inferred from annotations.
         _n_comp = n_components
         if _n_comp is None and model_config is not None:
             _n_comp = model_config.n_components
         if _n_comp is None:
-            raise ValueError(
-                "annotation_key requires n_components to be set "
-                "(either as a kwarg or in model_config)."
-            )
+            # Infer from the number of unique non-null annotation labels
+            _n_comp = _count_unique_labels(adata, annotation_key)
+            n_components = _n_comp  # propagate so ModelConfig picks it up
         annotation_prior_logits, _label_map = build_annotation_prior_logits(
             adata=adata,
             obs_key=annotation_key,
