@@ -581,22 +581,3 @@ class ParameterExtractionMixin:
 
         return estimates
 
-    # --------------------------------------------------------------------------
-    # Parameter conversion method
-    # --------------------------------------------------------------------------
-
-    def _convert_to_canonical(self):
-        """
-        [DEPRECATED] Convert posterior samples to canonical (p, r) form.
-
-        This method is deprecated and will be removed in a future version. The
-        posterior sampling process now automatically returns both constrained
-        and unconstrained parameters.
-        """
-        warnings.warn(
-            "The '_convert_to_canonical' method is deprecated and will be removed. "
-            "Posterior samples are now automatically converted.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self
