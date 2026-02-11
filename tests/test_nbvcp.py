@@ -643,7 +643,7 @@ def test_ppc_without_counts_raises_error(small_dataset, rng_key):
 
     # Test PPC without counts (should raise ValueError)
     with pytest.raises(
-        ValueError, match="Amortized guide requires counts data"
+        ValueError, match="counts.*required.*amortized capture"
     ):
         results.get_ppc_samples(
             rng_key=rng_key,
