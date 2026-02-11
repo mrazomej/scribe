@@ -194,8 +194,11 @@ def main(cfg: DictConfig) -> None:
 
     data_path = hydra.utils.to_absolute_path(cfg.data.path)
     console.print(f"[dim]Loading data from:[/dim] [cyan]{data_path}[/cyan]")
+    # When annotation_key is set we need the full AnnData (for adata.obs);
+    # otherwise a plain JAX array is sufficient and lighter weight.
+    needs_adata = cfg.get("annotation_key") is not None
     counts = load_and_preprocess_anndata(
-        data_path, cfg.data.get("preprocessing")
+        data_path, cfg.data.get("preprocessing"), return_jax=not needs_adata
     )
     console.print(
         f"[green]✓[/green] [bold green]Data loaded successfully![/bold green] [dim]Shape:[/dim] {counts.shape}"
@@ -272,10 +275,12 @@ def main(cfg: DictConfig) -> None:
 
     # Build annotation prior kwargs (convert OmegaConf lists to plain Python)
     annotation_key = cfg.get("annotation_key")
-    if annotation_key is not None:
+    if annotation_key is not None and OmegaConf.is_config(annotation_key):
         annotation_key = OmegaConf.to_container(annotation_key, resolve=True)
     annotation_component_order = cfg.get("annotation_component_order")
-    if annotation_component_order is not None:
+    if annotation_component_order is not None and OmegaConf.is_config(
+        annotation_component_order
+    ):
         annotation_component_order = OmegaConf.to_container(
             annotation_component_order, resolve=True
         )
@@ -301,7 +306,7 @@ def main(cfg: DictConfig) -> None:
         "inference_method": inference_method,
         # Data configuration
         "cells_axis": cfg.cells_axis,
-        "layer": cfg.layer,
+        "layer": cfg.data.get("layer", cfg.layer),
         "seed": cfg.seed,
     }
 

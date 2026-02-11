@@ -92,6 +92,9 @@ seed: 42
 
 # Data Processing
 cells_axis: 0
+# AnnData layer for raw counts (null → use .X).
+# Can also be set per-dataset in the data config file (data.layer),
+# which takes precedence over this global setting.
 layer: null
 
 # --- Output Configuration ---

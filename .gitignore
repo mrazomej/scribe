@@ -118,6 +118,9 @@ sandbox/**
 output/**
 outputs/**
 **/output/**
+# Exploratory code
+code/exploratory/**
+altos/**
 # Cache folder for docs
 CACHE/
 cache/
