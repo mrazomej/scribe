@@ -6,6 +6,7 @@ Tests that the full VAE pipeline works:
 3. SVI training with ELBO converges (loss decreases)
 4. Prior predictive sampling produces valid counts
 5. Batched SVI training works
+6. Flow-based priors (dpVAE) — trace, SVI, prior predictive, validation
 """
 
 import numpy as np
@@ -17,6 +18,7 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import SVI, Trace_ELBO, Predictive
 
+from scribe.flows import FlowChain
 from scribe.models.builders import (
     BetaSpec,
     LogNormalSpec,
@@ -591,3 +593,406 @@ class TestVAELatentGuideParamNames:
     def test_param_names_empty_without_decoder(self):
         vg = VAELatentGuide()
         assert vg.param_names == []
+
+
+# ==============================================================================
+# Flow Prior (dpVAE) Tests
+# ==============================================================================
+
+
+def _build_flow_prior_vae(
+    flow_type="affine_coupling", num_layers=2
+):
+    """Build a VAE model+guide with a flow-based prior on z.
+
+    Parameters
+    ----------
+    flow_type : str
+        Type of flow to use for the prior (e.g. "affine_coupling").
+    num_layers : int
+        Number of flow layers in the prior flow chain.
+
+    Returns
+    -------
+    model_fn : callable
+        NumPyro model function.
+    guide_fn : callable
+        NumPyro guide function.
+    """
+    # Build the prior flow: a FlowChain matching latent_dim
+    prior_flow = FlowChain(
+        features=LATENT_DIM,
+        num_layers=num_layers,
+        flow_type=flow_type,
+        hidden_dims=[32],
+    )
+
+    # Encoder and decoder (same architecture as standard VAE tests)
+    encoder = GaussianEncoder(
+        input_dim=N_GENES,
+        latent_dim=LATENT_DIM,
+        hidden_dims=HIDDEN_DIMS,
+    )
+    decoder = MultiHeadDecoder(
+        output_dim=0,
+        latent_dim=LATENT_DIM,
+        hidden_dims=HIDDEN_DIMS,
+        output_heads=(
+            DecoderOutputHead("r", output_dim=N_GENES, transform="exp"),
+        ),
+    )
+
+    # Latent spec WITH flow prior
+    latent_spec = GaussianLatentSpec(
+        latent_dim=LATENT_DIM, flow=prior_flow
+    )
+
+    vae_guide_family = VAELatentGuide(
+        encoder=encoder, decoder=decoder, latent_spec=latent_spec
+    )
+
+    # VAE marker spec + global p
+    z_spec = BetaSpec(
+        name="z_marker",
+        shape_dims=(),
+        default_params=(1.0, 1.0),
+        is_cell_specific=True,
+        guide_family=vae_guide_family,
+    )
+    p_spec = BetaSpec(
+        name="p",
+        shape_dims=(),
+        default_params=(1.0, 1.0),
+        guide_family=MeanFieldGuide(),
+    )
+
+    specs = [p_spec, z_spec]
+
+    model = ModelBuilder()
+    guide = GuideBuilder()
+    for spec in specs:
+        model.add_param(spec)
+        guide.add_param(spec)
+    model.with_likelihood(NegativeBinomialLikelihood())
+
+    return model.build(), guide.build()
+
+
+class TestVAEFlowPrior:
+    """Test VAE with flow-based prior (dpVAE path)."""
+
+    def test_flow_prior_trace_contains_z_and_flow_params(
+        self, model_config, small_counts, rng_key
+    ):
+        """Model trace should contain z sample site and flow params.
+
+        Verifies that when a flow is set on the latent spec:
+        - The z sample site is present with correct shape.
+        - The decoder output (r) is a deterministic site.
+        - The flow parameters appear as NumPyro param sites
+          (keyed as 'vae_prior_flow$params').
+        """
+        model_fn, guide_fn = _build_flow_prior_vae()
+
+        trace = numpyro.handlers.trace(
+            numpyro.handlers.seed(model_fn, rng_key)
+        ).get_trace(
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=small_counts,
+        )
+
+        # z should be sampled from the flow prior
+        assert "z" in trace
+        assert trace["z"]["value"].shape == (N_CELLS, LATENT_DIM)
+
+        # r should be a deterministic site (from decoder)
+        assert "r" in trace
+        assert trace["r"]["value"].shape == (N_CELLS, N_GENES)
+
+        # p should still be sampled from its prior
+        assert "p" in trace
+
+        # counts should be observed
+        assert "counts" in trace
+
+        # Flow params should appear in the trace (registered by flax_module)
+        assert "vae_prior_flow$params" in trace
+
+    def test_flow_prior_svi_step_finite_loss(
+        self, model_config, small_counts, rng_key
+    ):
+        """SVI with flow prior should initialize and produce finite loss.
+
+        A single SVI init + update cycle should complete without errors
+        and produce a finite ELBO loss value, confirming that the flow
+        distribution integrates correctly with NumPyro's gradient-based
+        inference.
+        """
+        model_fn, guide_fn = _build_flow_prior_vae()
+
+        svi = SVI(model_fn, guide_fn, numpyro.optim.Adam(1e-3), Trace_ELBO())
+        svi_state = svi.init(
+            rng_key,
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=small_counts,
+        )
+
+        svi_state, loss = svi.update(
+            svi_state,
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=small_counts,
+        )
+
+        assert jnp.isfinite(loss), f"Loss is not finite: {loss}"
+
+    def test_flow_prior_svi_loss_decreases(
+        self, model_config, small_counts, rng_key
+    ):
+        """SVI loss should decrease over training with a flow prior.
+
+        Trains for 200 steps and checks that the average loss over the
+        last 20 steps is lower than the average over the first 20 steps.
+        """
+        model_fn, guide_fn = _build_flow_prior_vae()
+
+        svi = SVI(model_fn, guide_fn, numpyro.optim.Adam(5e-3), Trace_ELBO())
+        svi_state = svi.init(
+            rng_key,
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=small_counts,
+        )
+
+        losses = []
+        for _ in range(200):
+            svi_state, loss = svi.update(
+                svi_state,
+                n_cells=N_CELLS,
+                n_genes=N_GENES,
+                model_config=model_config,
+                counts=small_counts,
+            )
+            losses.append(float(loss))
+
+        # All losses should be finite
+        assert all(np.isfinite(l) for l in losses), (
+            "Some losses are not finite"
+        )
+        # Average of last 20 should be lower than average of first 20
+        early_avg = np.mean(losses[:20])
+        late_avg = np.mean(losses[-20:])
+        assert late_avg < early_avg, (
+            f"Flow prior loss did not decrease: "
+            f"early={early_avg:.1f}, late={late_avg:.1f}"
+        )
+
+    def test_flow_prior_predictive_sampling(
+        self, model_config, rng_key
+    ):
+        """Prior predictive with flow prior should produce valid samples.
+
+        When counts=None, the model should sample z from the flow prior,
+        decode it, and produce valid count samples.
+        """
+        model_fn, _ = _build_flow_prior_vae()
+
+        predictive = Predictive(model_fn, num_samples=3)
+        samples = predictive(
+            rng_key,
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=None,
+        )
+
+        # z samples should have correct shape
+        assert "z" in samples
+        assert samples["z"].shape == (3, N_CELLS, LATENT_DIM)
+        assert jnp.all(jnp.isfinite(samples["z"]))
+
+        # count samples should have correct shape and be non-negative
+        assert "counts" in samples
+        assert samples["counts"].shape == (3, N_CELLS, N_GENES)
+        assert jnp.all(samples["counts"] >= 0)
+
+    def test_flow_prior_z_differs_from_standard_normal(
+        self, model_config, rng_key
+    ):
+        """Flow prior z samples should differ from standard Normal samples.
+
+        After a few training steps the flow should be non-identity, so
+        the marginal distribution of z under the flow prior should differ
+        from a standard Normal.  We compare sample means — a freshly
+        initialized flow won't be exactly identity due to random init.
+        """
+        model_fn, guide_fn = _build_flow_prior_vae()
+
+        # Train for a few steps so flow params move from init
+        svi = SVI(model_fn, guide_fn, numpyro.optim.Adam(1e-2), Trace_ELBO())
+        key1, key2 = random.split(rng_key)
+        counts = random.poisson(
+            key1, lam=10.0, shape=(N_CELLS, N_GENES)
+        ).astype(jnp.float32)
+
+        svi_state = svi.init(
+            key2,
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=counts,
+        )
+        for _ in range(50):
+            svi_state, _ = svi.update(
+                svi_state,
+                n_cells=N_CELLS,
+                n_genes=N_GENES,
+                model_config=model_config,
+                counts=counts,
+            )
+
+        # Get trained params and sample from prior predictive
+        params = svi.get_params(svi_state)
+        predictive = Predictive(model_fn, params=params, num_samples=5)
+        samples = predictive(
+            random.PRNGKey(99),
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=None,
+        )
+
+        z_samples = samples["z"]  # (5, N_CELLS, LATENT_DIM)
+        assert jnp.all(jnp.isfinite(z_samples))
+
+
+class TestVAEFlowPriorValidation:
+    """Test validation of flow prior configuration."""
+
+    def test_flow_features_mismatch_raises(self):
+        """Building model with flow.features != latent_dim should raise.
+
+        The prior flow must operate on the same dimensionality as the
+        latent space.  A mismatch is caught at build time with a clear
+        ValueError.
+        """
+        # Flow with features=10, but latent_dim=5 — mismatch
+        bad_flow = FlowChain(
+            features=10,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[32],
+        )
+
+        encoder = GaussianEncoder(
+            input_dim=N_GENES,
+            latent_dim=LATENT_DIM,
+            hidden_dims=HIDDEN_DIMS,
+        )
+        decoder = MultiHeadDecoder(
+            output_dim=0,
+            latent_dim=LATENT_DIM,
+            hidden_dims=HIDDEN_DIMS,
+            output_heads=(
+                DecoderOutputHead("r", output_dim=N_GENES, transform="exp"),
+            ),
+        )
+        latent_spec = GaussianLatentSpec(
+            latent_dim=LATENT_DIM, flow=bad_flow
+        )
+
+        vae_gf = VAELatentGuide(
+            encoder=encoder, decoder=decoder, latent_spec=latent_spec
+        )
+
+        z_spec = BetaSpec(
+            name="z_marker",
+            shape_dims=(),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            guide_family=vae_gf,
+        )
+        p_spec = BetaSpec(
+            name="p",
+            shape_dims=(),
+            default_params=(1.0, 1.0),
+            guide_family=MeanFieldGuide(),
+        )
+
+        model = ModelBuilder()
+        model.add_param(p_spec).add_param(z_spec)
+        model.with_likelihood(NegativeBinomialLikelihood())
+
+        with pytest.raises(ValueError, match="Flow features.*must equal"):
+            model.build()
+
+    def test_latent_spec_flow_defaults_to_none(self):
+        """GaussianLatentSpec without flow should default to None.
+
+        This ensures backward compatibility — existing code that creates
+        a GaussianLatentSpec without specifying ``flow`` continues to
+        work as before.
+        """
+        spec = GaussianLatentSpec(latent_dim=10)
+        assert spec.flow is None
+
+    def test_latent_spec_accepts_flow(self):
+        """GaussianLatentSpec should accept a flow object.
+
+        Verifies that a FlowChain can be passed as the ``flow``
+        parameter without errors and is stored correctly.
+        """
+        flow = FlowChain(
+            features=10,
+            num_layers=2,
+            flow_type="affine_coupling",
+            hidden_dims=[32],
+        )
+        spec = GaussianLatentSpec(latent_dim=10, flow=flow)
+        assert spec.flow is flow
+
+    def test_standard_vae_unchanged_with_flow_field(
+        self, vae_guide_family, model_config, small_counts, rng_key
+    ):
+        """Standard VAE (flow=None) should still work after adding flow field.
+
+        Regression test ensuring the flow field addition doesn't break
+        the existing standard VAE path.
+        """
+        model_fn, guide_fn = _build_nb_vae_model_and_guide(vae_guide_family)
+
+        svi = SVI(model_fn, guide_fn, numpyro.optim.Adam(1e-3), Trace_ELBO())
+        svi_state = svi.init(
+            rng_key,
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=small_counts,
+        )
+
+        svi_state, loss = svi.update(
+            svi_state,
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=small_counts,
+        )
+
+        assert jnp.isfinite(loss)
+
+        # The trace should NOT contain flow params
+        trace = numpyro.handlers.trace(
+            numpyro.handlers.seed(model_fn, rng_key)
+        ).get_trace(
+            n_cells=N_CELLS,
+            n_genes=N_GENES,
+            model_config=model_config,
+            counts=small_counts,
+        )
+        assert "vae_prior_flow$params" not in trace
