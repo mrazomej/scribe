@@ -448,6 +448,7 @@ class SVIInferenceEngine:
         seed: int = 42,
         stable_update: bool = True,
         early_stopping: Optional[EarlyStoppingConfig] = None,
+        annotation_prior_logits: Optional[jnp.ndarray] = None,
         progress: bool = True,
     ) -> SVIRunResult:
         """
@@ -540,6 +541,7 @@ class SVIInferenceEngine:
             "counts": count_data,
             "batch_size": batch_size,
             "model_config": model_config,
+            "annotation_prior_logits": annotation_prior_logits,
         }
 
         # Choose execution mode based on early stopping configuration

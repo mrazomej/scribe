@@ -29,6 +29,7 @@ def _run_mcmc_inference(
     mcmc_config: MCMCConfig,
     data_config: DataConfig,
     seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Execute MCMC inference.
 
@@ -112,6 +113,7 @@ def _run_mcmc_inference(
         n_chains=n_chains,
         seed=seed,
         mcmc_kwargs=mcmc_kwargs,
+        annotation_prior_logits=annotation_prior_logits,
     )
 
     # Compute model_type: add _mix suffix for mixture models

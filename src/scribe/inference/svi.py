@@ -29,6 +29,7 @@ def _run_svi_inference(
     svi_config: SVIConfig,
     data_config: DataConfig,
     seed: int,
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Execute SVI inference with optional early stopping.
 
@@ -124,6 +125,7 @@ def _run_svi_inference(
         "seed": seed,
         "stable_update": stable_update,
         "early_stopping": early_stopping,
+        "annotation_prior_logits": annotation_prior_logits,
     }
 
     # Add optional optimizer and loss if provided

@@ -26,6 +26,7 @@ class MCMCInferenceEngine:
         n_chains: int = 1,
         seed: int = 42,
         mcmc_kwargs: Optional[dict] = None,
+        annotation_prior_logits: Optional[jnp.ndarray] = None,
     ) -> any:
         """
         Execute MCMC inference using NUTS.
@@ -79,6 +80,7 @@ class MCMCInferenceEngine:
             "n_genes": n_genes,
             "counts": count_data,
             "model_config": model_config,
+            "annotation_prior_logits": annotation_prior_logits,
         }
 
         # Run inference

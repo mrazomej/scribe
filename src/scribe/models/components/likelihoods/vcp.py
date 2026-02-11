@@ -19,6 +19,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
+    compute_cell_specific_mixing,
     _sample_phi_capture_constrained,
     _sample_phi_capture_unconstrained,
     _sample_p_capture_constrained,
@@ -147,8 +148,13 @@ class NBWithVCPLikelihood(Likelihood):
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
+        annotation_prior_logits: Optional[jnp.ndarray] = None,
     ) -> None:
-        """Sample from NB likelihood with variable capture probability."""
+        """Sample from NB likelihood with variable capture probability.
+
+        When ``annotation_prior_logits`` is provided and this is a mixture
+        model, per-cell mixing weights are computed inside the cell plate.
+        """
         n_cells = dims["n_cells"]
         # When vae_cell_fn is set, r (and possibly p) come from the decoder
         # inside the plate; do not read them here.
@@ -224,6 +230,11 @@ class NBWithVCPLikelihood(Likelihood):
                     use_phi_capture, capture_prior_params
                 )
 
+            # Determine whether to use cell-specific mixing
+            use_annotation = (
+                annotation_prior_logits is not None and is_mixture
+            )
+
             if use_phi_capture:
                 # Mean-odds parameterization
                 phi = param_values["phi"]
@@ -246,7 +257,18 @@ class NBWithVCPLikelihood(Likelihood):
 
                 if is_mixture:
                     mixing_weights = param_values["mixing_weights"]
-                    mixing_dist = dist.Categorical(probs=mixing_weights)
+                    if use_annotation:
+                        ann_batch = (
+                            annotation_prior_logits[idx]
+                            if idx is not None
+                            else annotation_prior_logits
+                        )
+                        cell_mixing = compute_cell_specific_mixing(
+                            mixing_weights, ann_batch
+                        )
+                        mixing_dist = dist.Categorical(probs=cell_mixing)
+                    else:
+                        mixing_dist = dist.Categorical(probs=mixing_weights)
                     base_dist = dist.NegativeBinomialLogits(r, logits).to_event(
                         1
                     )
@@ -288,7 +310,18 @@ class NBWithVCPLikelihood(Likelihood):
 
                 if is_mixture:
                     mixing_weights = param_values["mixing_weights"]
-                    mixing_dist = dist.Categorical(probs=mixing_weights)
+                    if use_annotation:
+                        ann_batch = (
+                            annotation_prior_logits[idx]
+                            if idx is not None
+                            else annotation_prior_logits
+                        )
+                        cell_mixing = compute_cell_specific_mixing(
+                            mixing_weights, ann_batch
+                        )
+                        mixing_dist = dist.Categorical(probs=cell_mixing)
+                    else:
+                        mixing_dist = dist.Categorical(probs=mixing_weights)
                     base_dist = dist.NegativeBinomialProbs(r, p_hat).to_event(1)
                     mixture_dist = dist.MixtureSameFamily(
                         mixing_dist, base_dist
@@ -406,8 +439,13 @@ class ZINBWithVCPLikelihood(Likelihood):
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
+        annotation_prior_logits: Optional[jnp.ndarray] = None,
     ) -> None:
-        """Sample from ZINB likelihood with variable capture probability."""
+        """Sample from ZINB likelihood with variable capture probability.
+
+        When ``annotation_prior_logits`` is provided and this is a mixture
+        model, per-cell mixing weights are computed inside the cell plate.
+        """
         n_cells = dims["n_cells"]
         # When vae_cell_fn is set, r/gate (and possibly p) come from the decoder
         # inside the plate; do not read them here.
@@ -484,6 +522,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                     use_phi_capture, capture_prior_params
                 )
 
+            # Determine whether to use cell-specific mixing
+            use_annotation = (
+                annotation_prior_logits is not None and is_mixture
+            )
+
             if use_phi_capture:
                 # Mean-odds parameterization
                 phi = param_values["phi"]
@@ -506,7 +549,18 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 if is_mixture:
                     mixing_weights = param_values["mixing_weights"]
-                    mixing_dist = dist.Categorical(probs=mixing_weights)
+                    if use_annotation:
+                        ann_batch = (
+                            annotation_prior_logits[idx]
+                            if idx is not None
+                            else annotation_prior_logits
+                        )
+                        cell_mixing = compute_cell_specific_mixing(
+                            mixing_weights, ann_batch
+                        )
+                        mixing_dist = dist.Categorical(probs=cell_mixing)
+                    else:
+                        mixing_dist = dist.Categorical(probs=mixing_weights)
                     base_nb = dist.NegativeBinomialLogits(r, logits)
                     zinb_base = dist.ZeroInflatedDistribution(
                         base_nb, gate=gate
@@ -548,7 +602,18 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 if is_mixture:
                     mixing_weights = param_values["mixing_weights"]
-                    mixing_dist = dist.Categorical(probs=mixing_weights)
+                    if use_annotation:
+                        ann_batch = (
+                            annotation_prior_logits[idx]
+                            if idx is not None
+                            else annotation_prior_logits
+                        )
+                        cell_mixing = compute_cell_specific_mixing(
+                            mixing_weights, ann_batch
+                        )
+                        mixing_dist = dist.Categorical(probs=cell_mixing)
+                    else:
+                        mixing_dist = dist.Categorical(probs=mixing_weights)
                     base_nb = dist.NegativeBinomialProbs(r, p_hat)
                     zinb_base = dist.ZeroInflatedDistribution(
                         base_nb, gate=gate

@@ -48,6 +48,8 @@ def run_scribe(
     layer: Optional[str] = None,  # Used if data_config not provided
     # Common parameters
     seed: int = 42,
+    # Annotation prior (pre-built logits, for power users)
+    annotation_prior_logits: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Unified inference interface with preset support.
 
@@ -222,4 +224,5 @@ def run_scribe(
         n_genes=n_genes,
         data_config=data_config,
         seed=seed,
+        annotation_prior_logits=annotation_prior_logits,
     )

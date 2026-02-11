@@ -1,12 +1,13 @@
 """Base classes and utilities for likelihood components.
 
 This module provides the abstract base class for all likelihoods and
-helper functions for capture parameter sampling.
+helper functions for capture parameter sampling and cell-specific mixing.
 """
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
+import jax
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
@@ -70,6 +71,57 @@ def _sample_p_capture_unconstrained(
     return numpyro.sample(constrained_name, transformed_dist)
 
 
+# ==============================================================================
+# Helper for cell-specific mixing weights (annotation priors)
+# ==============================================================================
+
+
+def compute_cell_specific_mixing(
+    mixing_weights: jnp.ndarray,
+    annotation_logits: jnp.ndarray,
+) -> jnp.ndarray:
+    """
+    Combine global mixing weights with per-cell annotation logits.
+
+    Computes cell-specific mixing probabilities by adding annotation logit
+    offsets to the log of the global mixing weights and applying softmax.
+    This implements the logit-nudging strategy for annotation priors in
+    mixture models.
+
+    Parameters
+    ----------
+    mixing_weights : jnp.ndarray, shape ``(K,)``
+        Global mixing weight vector (simplex, sums to 1).  Typically
+        sampled from a Dirichlet prior.
+    annotation_logits : jnp.ndarray, shape ``(batch, K)``
+        Per-cell additive logit offsets.  Zero rows leave the mixing
+        weights unchanged; positive entries bias toward the corresponding
+        component.
+
+    Returns
+    -------
+    cell_mixing : jnp.ndarray, shape ``(batch, K)``
+        Normalised per-cell mixing probabilities.  Each row sums to 1.
+
+    Notes
+    -----
+    The computation is:
+
+        πᵢₖ = softmaxₖ ( log πₖ + annotation_logitsᵢₖ )
+
+    A small epsilon (1e-8) is added before taking the log to avoid
+    −∞ when a mixing weight is numerically zero.
+
+    This function is the single point where annotation priors interact
+    with the mixture distribution.  A future auxiliary-observation
+    strategy can replace this function while keeping the rest of the
+    likelihood code unchanged.
+    """
+    log_weights = jnp.log(mixing_weights + 1e-8)  # (K,)
+    cell_logits = log_weights + annotation_logits  # (batch, K)
+    return jax.nn.softmax(cell_logits, axis=-1)  # (batch, K)
+
+
 # ------------------------------------------------------------------------------
 # Likelihood Base Class
 # ------------------------------------------------------------------------------
@@ -112,6 +164,7 @@ class Likelihood(ABC):
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
+        annotation_prior_logits: Optional[jnp.ndarray] = None,
     ) -> None:
         """
         Sample observations given parameters.
@@ -138,6 +191,14 @@ class Likelihood(ABC):
             Signature: ``vae_cell_fn(batch_idx) -> Dict[str, jnp.ndarray]``.
             Returns decoder-driven parameter values to merge into
             ``param_values``.
+        annotation_prior_logits : jnp.ndarray, optional
+            Per-cell logit offsets for mixture component assignment priors,
+            shape ``(n_cells, n_components)``.  When provided for a mixture
+            model, the global ``mixing_weights`` are combined with these
+            logits inside the cell plate to produce cell-specific mixing
+            probabilities via :func:`compute_cell_specific_mixing`.
+            If ``None``, the global mixing weights are used for all cells
+            (standard behaviour).
 
         Notes
         -----

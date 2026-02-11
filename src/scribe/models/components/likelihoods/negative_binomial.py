@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 
-from .base import Likelihood
+from .base import Likelihood, compute_cell_specific_mixing
 from ...builders.parameter_specs import sample_prior
 
 if TYPE_CHECKING:
@@ -81,6 +81,51 @@ class NegativeBinomialLikelihood(Likelihood):
         # Standard (non-mixture) Negative Binomial: return as event of size 1.
         return dist.NegativeBinomialProbs(r, p).to_event(1)
 
+    # --------------------------------------------------------------------------
+
+    def _build_annotated_mixture_dist(
+        self,
+        param_values: Dict[str, jnp.ndarray],
+        annotation_logits_batch: jnp.ndarray,
+    ) -> dist.Distribution:
+        """
+        Build a mixture NB distribution with cell-specific mixing weights.
+
+        Parameters
+        ----------
+        param_values : Dict[str, jnp.ndarray]
+            Sampled parameter values including ``mixing_weights``, ``p``,
+            and ``r``.
+        annotation_logits_batch : jnp.ndarray, shape ``(batch, K)``
+            Per-cell annotation logit offsets for the current batch.
+
+        Returns
+        -------
+        dist.Distribution
+            A ``MixtureSameFamily`` distribution whose ``Categorical``
+            mixing component has per-cell probabilities.
+        """
+        mixing_weights = param_values["mixing_weights"]
+        p = param_values["p"]
+        r = param_values["r"]
+
+        # Cell-specific mixing via logit nudging
+        cell_mixing = compute_cell_specific_mixing(
+            mixing_weights, annotation_logits_batch
+        )  # (batch, K)
+        mixing_dist = dist.Categorical(probs=cell_mixing)
+
+        # Broadcast p to match r shape (n_components, n_genes)
+        if p.ndim == 0:
+            p = p[None, None]
+        elif p.ndim == 1:
+            p = p[:, None]
+
+        base_dist_component = dist.NegativeBinomialProbs(r, p).to_event(1)
+        return dist.MixtureSameFamily(mixing_dist, base_dist_component)
+
+    # --------------------------------------------------------------------------
+
     def sample(
         self,
         param_values: Dict[str, jnp.ndarray],
@@ -92,6 +137,7 @@ class NegativeBinomialLikelihood(Likelihood):
         vae_cell_fn: Optional[
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
+        annotation_prior_logits: Optional[jnp.ndarray] = None,
     ) -> None:
         """Sample from Negative Binomial likelihood.
 
@@ -99,20 +145,58 @@ class NegativeBinomialLikelihood(Likelihood):
         - Prior predictive: sample counts from prior
         - Full: condition on all counts
         - Batched: condition on mini-batch with subsampling
+
+        When ``annotation_prior_logits`` is provided and this is a mixture
+        model, per-cell mixing weights are computed inside the cell plate.
         """
         n_cells = dims["n_cells"]
 
+        # Determine whether we need cell-specific mixing (annotation path)
+        is_mixture = "mixing_weights" in param_values
+        use_annotation = annotation_prior_logits is not None and is_mixture
+
         # ====================================================================
-        # Non-VAE fast path: If vae_cell_fn is None, this is not a VAE model. In
-        # this case, build the counts distribution once *outside* the plate,
-        # because all cell parameters are shared (i.e., not decoder-driven).
-        # This is an efficiency optimization: avoids rebuilding the distribution
-        # per-cell. The three branches handle: (1) prior predictive, (2) full
-        # data, (3) minibatch/subsample.
+        # Non-VAE fast path: If vae_cell_fn is None, this is not a VAE model.
         # ====================================================================
         if vae_cell_fn is None:
-            # Build NB or Mixture-NB distribution with all parameters (no
-            # decoder involved).
+
+            # ----------------------------------------------------------------
+            # Annotation prior path: must build dist inside the cell plate
+            # because mixing weights are now cell-specific.
+            # ----------------------------------------------------------------
+            if use_annotation:
+                if counts is None:
+                    with numpyro.plate("cells", n_cells):
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_dist = self._build_annotated_mixture_dist(
+                            param_values, annotation_prior_logits
+                        )
+                        numpyro.sample("counts", cell_dist)
+                elif batch_size is None:
+                    with numpyro.plate("cells", n_cells):
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_dist = self._build_annotated_mixture_dist(
+                            param_values, annotation_prior_logits
+                        )
+                        numpyro.sample("counts", cell_dist, obs=counts)
+                else:
+                    with numpyro.plate(
+                        "cells", n_cells, subsample_size=batch_size
+                    ) as idx:
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_dist = self._build_annotated_mixture_dist(
+                            param_values, annotation_prior_logits[idx]
+                        )
+                        numpyro.sample("counts", cell_dist, obs=counts[idx])
+                return
+
+            # ----------------------------------------------------------------
+            # Standard (no annotation) path: build dist once outside plate
+            # for efficiency.
+            # ----------------------------------------------------------------
             base_dist = self._build_dist(param_values)
 
             if counts is None:
