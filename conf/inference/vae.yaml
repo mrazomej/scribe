@@ -9,8 +9,20 @@ n_steps: 50_000
 batch_size: null
 stable_update: true
 
-# VAE architecture (optional overrides)
-# These are advanced options - defaults work well for most cases
-# vae_latent_dim: 3
-# vae_hidden_dims: [256, 256]
-# vae_activation: gelu
+# VAE architecture
+vae_latent_dim: 10
+vae_encoder_hidden_dims: [256, 128, 64]
+vae_decoder_hidden_dims: [64, 128, 256]
+vae_activation: leaky_relu
+vae_input_transform: log1p
+vae_standardize: false
+
+# Decoder output transforms (optional per-param overrides)
+# Default: softplus for positive params, sigmoid for bounded params
+# Override with: vae_decoder_transforms.r=exp
+vae_decoder_transforms: null
+
+# Flow prior (on by default — spline coupling is most expressive)
+vae_flow_type: coupling_spline  # none, coupling_affine, coupling_spline, maf, iaf
+vae_flow_num_layers: 4
+vae_flow_hidden_dims: [64, 64]

@@ -98,6 +98,7 @@ class ModelBuilder:
         """Initialize an empty ModelBuilder."""
         self.param_specs: List[ParamSpec] = []
         self.derived_params: List[DerivedParam] = []
+        self.vae_in_plate_derived: List[DerivedParam] = []
         self.likelihood: Optional["Likelihood"] = None
 
     # --------------------------------------------------------------------------
@@ -138,6 +139,30 @@ class ModelBuilder:
         return self
 
     # --------------------------------------------------------------------------
+
+    def set_vae_in_plate_derived(
+        self, derived_params: List[DerivedParam]
+    ) -> "ModelBuilder":
+        """
+        Set derived params that depend on decoder outputs (computed in
+        vae_cell_fn).
+
+        These are derived params whose deps include at least one decoder output.
+        They must be computed inside the cell plate after the decoder runs.
+
+        Parameters
+        ----------
+        derived_params : List[DerivedParam]
+            Derived params that depend on decoder outputs (e.g., r = mu * phi
+            when mu comes from decoder).
+
+        Returns
+        -------
+        ModelBuilder
+            Self, for method chaining.
+        """
+        self.vae_in_plate_derived = list(derived_params)
+        return self
 
     def add_derived(
         self, name: str, compute: Callable, deps: List[str]
@@ -256,6 +281,7 @@ class ModelBuilder:
         # Capture builder state in closure
         specs = self.param_specs
         derived = self.derived_params
+        in_plate_derived = self.vae_in_plate_derived
         likelihood = self.likelihood
 
         def model(
@@ -428,9 +454,7 @@ class ModelBuilder:
                             prior = latent_spec.make_prior_dist()
 
                         # Sample the latent variable z from the prior
-                        z = numpyro.sample(
-                            latent_spec.sample_site, prior
-                        )
+                        z = numpyro.sample(latent_spec.sample_site, prior)
                         # Get a Flax-wrapped decoder module ready for JAX
                         # shape and parameter management
                         decoder_net = flax_module(
@@ -439,11 +463,25 @@ class ModelBuilder:
                             input_shape=(latent_spec.latent_dim,),
                         )
                         # Run decoder on z to produce per-cell parameters
-                        decoder_out = decoder_net(z)
+                        decoder_out = dict(decoder_net(z))
                         # Register outputs as deterministic sites so they're
                         # available to the rest of the model
                         for name, value in decoder_out.items():
                             numpyro.deterministic(name, value)
+
+                        # Compute in-plate derived params (deps include decoder
+                        # outputs)
+                        for d in in_plate_derived:
+                            deps = {}
+                            for dep in d.deps:
+                                if dep in decoder_out:
+                                    deps[dep] = decoder_out[dep]
+                                else:
+                                    deps[dep] = param_values[dep]
+                            result = d.compute(**deps)
+                            numpyro.deterministic(d.name, result)
+                            decoder_out[d.name] = result
+
                         return decoder_out
 
                     # Only the first detected VAE cell spec is handled; exit

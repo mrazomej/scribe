@@ -7,8 +7,6 @@ from src.scribe.models.config import (
     ModelType,
     Parameterization,
     InferenceMethod,
-    VAEPriorType,
-    VAEActivation,
     GuideFamilyConfig,
 )
 from src.scribe.models.components import LowRankGuide
@@ -63,11 +61,16 @@ class TestModelConfigBuilder:
         assert config.is_mixture is True
 
     def test_vae_config(self):
-        """Test VAE configuration."""
+        """Test VAE configuration with composable schema."""
         config = (
             ModelConfigBuilder()
             .for_model("zinb")
-            .with_vae(latent_dim=5, hidden_dims=[256, 128], activation="gelu")
+            .with_vae(
+                latent_dim=5,
+                encoder_hidden_dims=[256, 128],
+                decoder_hidden_dims=[128, 256],
+                activation="gelu",
+            )
             .with_priors(p=(1.0, 1.0), r=(2.0, 0.5), gate=(1.0, 1.0))
             .build()
         )
@@ -75,8 +78,9 @@ class TestModelConfigBuilder:
         assert config.inference_method == InferenceMethod.VAE
         assert config.vae is not None
         assert config.vae.latent_dim == 5
-        assert config.vae.hidden_dims == [256, 128]
-        assert config.vae.activation == VAEActivation.GELU
+        assert config.vae.encoder_hidden_dims == [256, 128]
+        assert config.vae.decoder_hidden_dims == [128, 256]
+        assert config.vae.activation == "gelu"
 
     def test_with_priors(self):
         """Test setting priors."""
@@ -166,7 +170,7 @@ class TestModelConfigBuilder:
             .for_model(ModelType.NBDM)
             .with_parameterization(Parameterization.LINKED)
             .with_inference(InferenceMethod.VAE)
-            .with_vae(prior_type=VAEPriorType.DECOUPLED)
+            .with_vae(flow_type="coupling_affine")
             .with_priors(p=(1.0, 1.0), mu=(1.0, 1.0))
             .build()
         )
@@ -174,7 +178,7 @@ class TestModelConfigBuilder:
         assert config.base_model == "nbdm"
         assert config.parameterization == Parameterization.LINKED
         assert config.inference_method == InferenceMethod.VAE
-        assert config.vae.prior_type == VAEPriorType.DECOUPLED
+        assert config.vae.flow_type == "coupling_affine"
 
 
 class TestComputedFields:
@@ -300,13 +304,18 @@ class TestValidation:
         config = (
             ModelConfigBuilder()
             .for_model("nbdm")
-            .with_vae(latent_dim=5, hidden_dims=[256, 128])
+            .with_vae(
+                latent_dim=5,
+                encoder_hidden_dims=[256, 128],
+                decoder_hidden_dims=[128, 256],
+            )
             .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
         assert config.vae.latent_dim == 5
-        assert config.vae.hidden_dims == [256, 128]
+        assert config.vae.encoder_hidden_dims == [256, 128]
+        assert config.vae.decoder_hidden_dims == [128, 256]
 
     def test_invalid_vae_params(self):
         """Test that invalid VAE parameters raise errors."""
@@ -326,7 +335,7 @@ class TestValidation:
             (
                 ModelConfigBuilder()
                 .for_model("nbdm")
-                .with_vae(hidden_dims=[256, -128])
+                .with_vae(encoder_hidden_dims=[256, -128])
                 .build()
             )
 
@@ -462,7 +471,7 @@ class TestVAEConfiguration:
         assert config.inference_method == InferenceMethod.VAE
 
     def test_vae_default_config(self):
-        """Test VAE default configuration."""
+        """Test VAE default configuration (composable schema)."""
         config = (
             ModelConfigBuilder()
             .for_model("nbdm")
@@ -472,33 +481,35 @@ class TestVAEConfiguration:
         )
 
         assert config.vae is not None
-        assert config.vae.latent_dim == 3
-        assert config.vae.prior_type == VAEPriorType.STANDARD
+        assert config.vae.latent_dim == 10
+        assert config.vae.flow_type == "none"
+        assert config.vae.encoder_hidden_dims == [128, 64]
+        assert config.vae.decoder_hidden_dims == [64, 128]
 
-    def test_vae_prior_types(self):
-        """Test different VAE prior types."""
-        # Standard prior
+    def test_vae_flow_types(self):
+        """Test different VAE flow prior types."""
+        # Standard prior (flow_type=none)
         config1 = (
             ModelConfigBuilder()
             .for_model("nbdm")
-            .with_vae(prior_type="standard")
+            .with_vae(flow_type="none")
             .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
-        assert config1.vae.prior_type == VAEPriorType.STANDARD
+        assert config1.vae.flow_type == "none"
 
-        # Decoupled prior
+        # Flow prior
         config2 = (
             ModelConfigBuilder()
             .for_model("nbdm")
-            .with_vae(prior_type="decoupled", prior_num_layers=3)
+            .with_vae(flow_type="coupling_affine", flow_num_layers=3)
             .with_priors(p=(1.0, 1.0), r=(2.0, 0.5))
             .build()
         )
 
-        assert config2.vae.prior_type == VAEPriorType.DECOUPLED
-        assert config2.vae.prior_num_layers == 3
+        assert config2.vae.flow_type == "coupling_affine"
+        assert config2.vae.flow_num_layers == 3
 
 
 class TestComplexConfigurations:

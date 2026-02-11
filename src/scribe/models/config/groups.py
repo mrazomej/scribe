@@ -23,9 +23,15 @@ blocks used to create full model configurations in SCRIBE.
 """
 
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
-import jax.numpy as jnp
-from .enums import VAEPriorType, VAEMaskType, VAEActivation, InferenceMethod
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+    ConfigDict,
+)
+
+from .enums import InferenceMethod
 
 # Import GuideFamily for Pydantic's runtime type checking
 # We use Any as the type hint since GuideFamily is a dataclass that Pydantic
@@ -370,53 +376,103 @@ class AmortizationConfig(BaseModel):
 
 
 class VAEConfig(BaseModel):
-    """VAE-specific configuration with validation."""
+    """VAE-specific configuration with composable architecture.
+
+    Clean schema for encoder, decoder, flow prior, and preprocessing.
+    All legacy fields have been removed.
+    """
 
     model_config = ConfigDict(
         frozen=True, arbitrary_types_allowed=True, extra="forbid"
     )
 
     # Architecture
-    latent_dim: int = Field(3, gt=0, description="Latent space dimensionality")
-    hidden_dims: Optional[List[int]] = Field(
-        None, description="Encoder/decoder hidden layer sizes"
+    latent_dim: int = Field(10, gt=0, description="Latent space dimensionality")
+    encoder_hidden_dims: List[int] = Field(
+        default_factory=lambda: [128, 64],
+        description="Encoder hidden layer sizes",
     )
-    activation: Optional[VAEActivation] = Field(
-        None, description="Activation function"
+    decoder_hidden_dims: List[int] = Field(
+        default_factory=lambda: [64, 128],
+        description="Decoder hidden layer sizes",
     )
-    input_transformation: Optional[str] = None
-
-    # VCP encoder (for variable capture models)
-    vcp_hidden_dims: Optional[List[int]] = None
-    vcp_activation: Optional[VAEActivation] = None
-
-    # Prior configuration
-    prior_type: VAEPriorType = Field(
-        VAEPriorType.STANDARD, description="Prior type"
+    activation: str = Field("relu", description="Activation function")
+    input_transform: str = Field(
+        "log1p",
+        description="Input transformation before encoder (log1p, log, sqrt, identity)",
     )
-    prior_num_layers: int = Field(
-        2, gt=0, description="Number of layers for decoupled prior"
-    )
-    prior_hidden_dims: Optional[List[int]] = None
-    prior_activation: Optional[VAEActivation] = None
-    prior_mask_type: VAEMaskType = Field(
-        VAEMaskType.ALTERNATING, description="Mask type for decoupled prior"
-    )
-
-    # Preprocessing
     standardize: bool = Field(
         False, description="Whether to standardize input data"
     )
-    standardize_mean: Optional[jnp.ndarray] = None
-    standardize_std: Optional[jnp.ndarray] = None
 
-    @field_validator("hidden_dims", "vcp_hidden_dims", "prior_hidden_dims")
+    # Decoder output transforms (optional per-param overrides)
+    decoder_transforms: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Override default output transforms per decoder param. "
+            "Keys are param names (e.g. 'r', 'mu', 'gate'), values are "
+            "transform names: identity, exp, softplus, sigmoid, clamp_exp."
+        ),
+    )
+
+    # Flow prior
+    flow_type: str = Field(
+        "none",
+        description="Flow type for prior: none, coupling_affine, coupling_spline, maf, iaf",
+    )
+    flow_num_layers: int = Field(4, gt=0, description="Number of flow layers")
+    flow_hidden_dims: List[int] = Field(
+        default_factory=lambda: [64, 64],
+        description="Flow conditioner hidden dimensions",
+    )
+
+    @field_validator("decoder_transforms")
     @classmethod
-    def validate_hidden_dims(
-        cls, v: Optional[List[int]]
-    ) -> Optional[List[int]]:
-        """Validate hidden dimensions are positive."""
-        if v is not None and any(d <= 0 for d in v):
+    def validate_decoder_transforms(cls, v):
+        if v is not None:
+            valid = {"identity", "exp", "softplus", "sigmoid", "clamp_exp"}
+            for param, transform in v.items():
+                if transform not in valid:
+                    raise ValueError(
+                        f"Invalid transform '{transform}' for param '{param}'. "
+                        f"Must be one of {valid}"
+                    )
+        return v
+
+    @field_validator("flow_type")
+    @classmethod
+    def validate_flow_type(cls, v):
+        valid = {"none", "coupling_affine", "coupling_spline", "maf", "iaf"}
+        if v not in valid:
+            raise ValueError(f"Invalid flow_type: {v}. Must be one of {valid}")
+        return v
+
+    @field_validator("activation")
+    @classmethod
+    def validate_activation(cls, v):
+        valid = {"relu", "gelu", "silu", "tanh", "elu", "leaky_relu"}
+        if v.lower() not in valid:
+            raise ValueError(f"Invalid activation: {v}. Must be one of {valid}")
+        return v.lower()
+
+    @field_validator("input_transform")
+    @classmethod
+    def validate_input_transform(cls, v):
+        valid = {"log1p", "log", "sqrt", "identity"}
+        if v.lower() not in valid:
+            raise ValueError(
+                f"Invalid input_transform: {v}. Must be one of {valid}"
+            )
+        return v.lower()
+
+    @field_validator(
+        "encoder_hidden_dims", "decoder_hidden_dims", "flow_hidden_dims"
+    )
+    @classmethod
+    def validate_hidden_dims(cls, v: List[int]) -> List[int]:
+        if not v:
+            raise ValueError("hidden_dims must have at least one layer")
+        if any(d <= 0 for d in v):
             raise ValueError(f"Hidden dimensions must be positive, got {v}")
         return v
 

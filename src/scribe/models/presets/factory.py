@@ -33,16 +33,33 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 import numpyro
 
 from ..builders import GuideBuilder, ModelBuilder
+from ..builders.parameter_specs import ExpNormalSpec, GaussianLatentSpec
+from ..components.guide_families import VAELatentGuide
+from ..components.vae_components import (
+    DecoderOutputHead,
+    GaussianEncoder,
+    MultiHeadDecoder,
+)
 from ..config import GuideFamilyConfig, ModelConfig
 from ..config.enums import InferenceMethod
 from ..config.enums import Parameterization as ParamEnum
+from ..config.groups import VAEConfig
 from ..parameterizations import PARAMETERIZATIONS
+from scribe.flows import FlowChain
 from .registry import (
     LIKELIHOOD_REGISTRY,
     MODEL_EXTRA_PARAMS,
     apply_prior_guide_overrides,
     build_extra_param_spec,
 )
+
+# Map VAEConfig flow_type to FlowChain flow_type
+_FLOW_TYPE_MAP = {
+    "coupling_affine": "affine_coupling",
+    "coupling_spline": "spline_coupling",
+    "maf": "maf",
+    "iaf": "iaf",
+}
 
 # ==============================================================================
 # Model/Guide Validation
@@ -141,6 +158,191 @@ def validate_model_guide_compatibility(
 
 
 # ==============================================================================
+# VAE Model Factory
+# ==============================================================================
+
+
+def _create_vae_model(
+    model_config: ModelConfig,
+    priors: Optional[Dict[str, Tuple[float, ...]]] = None,
+    guides: Optional[Dict[str, Tuple[float, ...]]] = None,
+    validate: bool = True,
+    n_genes: int = 0,
+) -> Tuple[Callable, Callable, List]:
+    """
+    Create VAE model and guide from ModelConfig with composable architecture.
+    """
+    vae = model_config.vae
+    base_model = model_config.base_model
+    unconstrained = model_config.unconstrained
+    param_key = _get_parameterization_key(model_config.parameterization)
+    param_strategy = PARAMETERIZATIONS[param_key]
+    guide_families = model_config.guide_families or GuideFamilyConfig()
+
+    # 1. Build decoder output heads from parameterization (with optional
+    #    overrides)
+    output_spec = param_strategy.decoder_output_spec(base_model)
+    if vae.decoder_transforms:
+        output_spec = [
+            (name, vae.decoder_transforms.get(name, transform))
+            for name, transform in output_spec
+        ]
+    output_heads = tuple(
+        DecoderOutputHead(name, n_genes, transform)
+        for name, transform in output_spec
+    )
+
+    # 2. Build encoder
+    encoder = GaussianEncoder(
+        input_dim=n_genes,
+        latent_dim=vae.latent_dim,
+        hidden_dims=vae.encoder_hidden_dims,
+        activation=vae.activation,
+        input_transformation=vae.input_transform,
+    )
+
+    # 3. Build decoder
+    decoder = MultiHeadDecoder(
+        output_dim=0,
+        latent_dim=vae.latent_dim,
+        hidden_dims=vae.decoder_hidden_dims,
+        output_heads=output_heads,
+        activation=vae.activation,
+    )
+
+    # 4. Build flow (if needed) and latent spec
+    flow = None
+    if vae.flow_type != "none":
+        flow_type = _FLOW_TYPE_MAP.get(vae.flow_type, vae.flow_type)
+        flow = FlowChain(
+            features=vae.latent_dim,
+            num_layers=vae.flow_num_layers,
+            flow_type=flow_type,
+            hidden_dims=vae.flow_hidden_dims,
+        )
+    latent_spec = GaussianLatentSpec(
+        latent_dim=vae.latent_dim,
+        sample_site="z",
+        flow=flow,
+    )
+
+    # 5. Build VAELatentGuide
+    vae_guide = VAELatentGuide(
+        encoder=encoder,
+        decoder=decoder,
+        latent_spec=latent_spec,
+    )
+    decoder_param_names = set(vae_guide.param_names)
+
+    # 6. Build param specs: latent marker + non-decoder core + non-decoder extra
+    core_specs = param_strategy.build_param_specs(
+        unconstrained=unconstrained,
+        guide_families=guide_families,
+    )
+    non_decoder_specs = [
+        s for s in core_specs if s.name not in decoder_param_names
+    ]
+
+    # Latent marker spec (cell-specific, carries VAELatentGuide)
+    latent_marker = ExpNormalSpec(
+        name="z",
+        shape_dims=("n_genes",),
+        default_params=(0.0, 1.0),
+        is_cell_specific=True,
+        guide_family=vae_guide,
+    )
+
+    # Extra params (gate, p_capture) that aren't decoder outputs
+    extra_param_names = MODEL_EXTRA_PARAMS.get(base_model, [])
+    extra_specs = []
+    for param_name in extra_param_names:
+        transformed = param_strategy.transform_model_param(param_name)
+        if transformed not in decoder_param_names:
+            extra_spec = build_extra_param_spec(
+                param_name=param_name,
+                unconstrained=unconstrained,
+                guide_families=guide_families,
+                param_strategy=param_strategy,
+            )
+            extra_specs.append(extra_spec)
+
+    param_specs = [latent_marker] + non_decoder_specs + extra_specs
+
+    # 7. Split derived params into pre-plate and in-plate
+    all_derived = param_strategy.build_derived_params()
+    pre_plate_derived = []
+    in_plate_derived = []
+    for d in all_derived:
+        if any(dep in decoder_param_names for dep in d.deps):
+            in_plate_derived.append(d)
+        else:
+            pre_plate_derived.append(d)
+
+    # 8. Apply prior/guide overrides
+    merged_priors = _extract_priors_from_param_specs(model_config.param_specs)
+    if priors:
+        merged_priors.update(priors)
+    merged_guides = _extract_guides_from_param_specs(model_config.param_specs)
+    if guides:
+        merged_guides.update(guides)
+    if merged_priors or merged_guides:
+        param_specs = apply_prior_guide_overrides(
+            param_specs,
+            priors=merged_priors or None,
+            guides=merged_guides or None,
+        )
+
+    # 9. Build model
+    likelihood_class = LIKELIHOOD_REGISTRY[base_model]
+    if base_model in ("nbvcp", "zinbvcp"):
+        capture_param_name = param_strategy.transform_model_param("p_capture")
+        likelihood_instance = likelihood_class(
+            capture_param_name=capture_param_name
+        )
+    else:
+        likelihood_instance = likelihood_class()
+
+    model_builder = ModelBuilder()
+    for spec in param_specs:
+        model_builder.add_param(spec)
+    for d in pre_plate_derived:
+        model_builder.add_derived(d.name, d.compute, d.deps)
+    model_builder.set_vae_in_plate_derived(in_plate_derived)
+    model_builder.with_likelihood(likelihood_instance)
+    model = model_builder.build()
+
+    # 10. Build guide
+    guide = GuideBuilder().from_specs(param_specs).build()
+
+    # 11. Validate (optional) — VAE guide requires counts; use dummy data
+    if validate:
+        import jax.numpy as jnp
+
+        dummy_counts = jnp.zeros((10, n_genes))
+        try:
+            with numpyro.handlers.seed(rng_seed=0):
+                model(
+                    n_cells=10,
+                    n_genes=n_genes,
+                    model_config=model_config,
+                    counts=dummy_counts,
+                )
+            with numpyro.handlers.seed(rng_seed=0):
+                guide(
+                    n_cells=10,
+                    n_genes=n_genes,
+                    model_config=model_config,
+                    counts=dummy_counts,
+                )
+        except Exception as e:
+            raise RuntimeError(
+                f"VAE model/guide validation failed during dry run: {e}"
+            ) from e
+
+    return model, guide, param_specs
+
+
+# ==============================================================================
 # Unified Model Factory
 # ==============================================================================
 
@@ -150,6 +352,7 @@ def create_model(
     priors: Optional[Dict[str, Tuple[float, ...]]] = None,
     guides: Optional[Dict[str, Tuple[float, ...]]] = None,
     validate: bool = True,
+    n_genes: Optional[int] = None,
 ) -> Tuple[Callable, Callable, List]:
     """Create model and guide functions from a ModelConfig.
 
@@ -227,6 +430,23 @@ def create_model(
     --------
     create_model_from_params : Convenience function with flat parameters.
     """
+    # ==========================================================================
+    # Step 0: VAE path — use composable factory when inference is VAE
+    # ==========================================================================
+    if (
+        model_config.inference_method == InferenceMethod.VAE
+        and model_config.vae is not None
+    ):
+        if n_genes is None:
+            raise ValueError("n_genes is required for VAE inference")
+        return _create_vae_model(
+            model_config=model_config,
+            priors=priors,
+            guides=guides,
+            validate=validate,
+            n_genes=n_genes,
+        )
+
     # ==========================================================================
     # Step 1: Validate and get parameterization strategy
     # ==========================================================================

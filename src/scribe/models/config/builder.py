@@ -1,7 +1,7 @@
 """Builder pattern for constructing ModelConfig instances."""
 
 from typing import Optional, Dict, Any, Union, List
-from .enums import ModelType, Parameterization, InferenceMethod, VAEPriorType
+from .enums import ModelType, Parameterization, InferenceMethod
 from .groups import (
     VAEConfig,
     GuideFamilyConfig,
@@ -223,39 +223,60 @@ class ModelConfigBuilder:
 
     def with_vae(
         self,
-        latent_dim: int = 3,
-        hidden_dims: Optional[list] = None,
-        activation: Optional[str] = None,
-        prior_type: Union[str, VAEPriorType] = VAEPriorType.STANDARD,
-        **kwargs,
+        latent_dim: int = 10,
+        encoder_hidden_dims: Optional[List[int]] = None,
+        decoder_hidden_dims: Optional[List[int]] = None,
+        activation: str = "relu",
+        input_transform: str = "log1p",
+        standardize: bool = False,
+        decoder_transforms: Optional[Dict[str, str]] = None,
+        flow_type: str = "none",
+        flow_num_layers: int = 4,
+        flow_hidden_dims: Optional[List[int]] = None,
     ) -> "ModelConfigBuilder":
-        """Configure VAE parameters.
+        """Configure VAE parameters with composable architecture.
 
         Parameters
         ----------
         latent_dim : int
-            Latent space dimensionality
-        hidden_dims : list, optional
-            Hidden layer sizes
-        activation : str, optional
-            Activation function ("relu", "gelu", "tanh")
-        prior_type : str or VAEPriorType
-            Prior type ("standard" or "decoupled")
-        **kwargs
-            Additional VAE parameters
+            Latent space dimensionality.
+        encoder_hidden_dims : List[int], optional
+            Encoder hidden layer sizes. Default: [128, 64].
+        decoder_hidden_dims : List[int], optional
+            Decoder hidden layer sizes. Default: [64, 128].
+        activation : str
+            Activation function (relu, gelu, silu, tanh, elu, leaky_relu).
+        input_transform : str
+            Input transformation before encoder (log1p, log, sqrt, identity).
+        standardize : bool
+            Whether to standardize input data.
+        decoder_transforms : Dict[str, str], optional
+            Per-param override of decoder output transforms.
+        flow_type : str
+            Flow prior type: none, coupling_affine, coupling_spline, maf, iaf.
+        flow_num_layers : int
+            Number of flow layers.
+        flow_hidden_dims : List[int], optional
+            Flow conditioner hidden dimensions. Default: [64, 64].
         """
         self._inference_method = InferenceMethod.VAE
-        self._vae_params = {
+        vae_params = {
             "latent_dim": latent_dim,
-            "hidden_dims": hidden_dims,
             "activation": activation,
-            "prior_type": (
-                prior_type
-                if isinstance(prior_type, VAEPriorType)
-                else VAEPriorType(prior_type)
-            ),
-            **kwargs,
+            "input_transform": input_transform,
+            "standardize": standardize,
+            "flow_type": flow_type,
+            "flow_num_layers": flow_num_layers,
         }
+        if encoder_hidden_dims is not None:
+            vae_params["encoder_hidden_dims"] = encoder_hidden_dims
+        if decoder_hidden_dims is not None:
+            vae_params["decoder_hidden_dims"] = decoder_hidden_dims
+        if decoder_transforms is not None:
+            vae_params["decoder_transforms"] = decoder_transforms
+        if flow_hidden_dims is not None:
+            vae_params["flow_hidden_dims"] = flow_hidden_dims
+        self._vae_params = vae_params
         return self
 
     # --------------------------------------------------------------------------

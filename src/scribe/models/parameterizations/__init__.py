@@ -34,7 +34,7 @@ Examples
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import jax.numpy as jnp
 
@@ -126,6 +126,27 @@ class Parameterization(ABC):
             Derived parameter specifications.
         """
         pass
+
+    def decoder_output_spec(self, base_model: str) -> List[Tuple[str, str]]:
+        """Return (param_name, transform) for each decoder output head.
+
+        The decoder produces the gene-specific core parameter for this
+        parameterization. Additional heads (e.g., gate) are added based
+        on the base_model type.
+
+        Parameters
+        ----------
+        base_model : str
+            Base model type: "nbdm", "zinb", "nbvcp", "zinbvcp".
+
+        Returns
+        -------
+        List of (param_name, transform) tuples.
+        """
+        specs = [(self.gene_param_name, "softplus")]
+        if base_model in ("zinb", "zinbvcp"):
+            specs.append(("gate", "sigmoid"))
+        return specs
 
     def transform_model_param(self, param_name: str) -> str:
         """Transform model-specific parameter names.
