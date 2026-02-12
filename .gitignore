@@ -135,3 +135,7 @@ paper/_output/*
 paper/site_libs/*
 # Random folder
 /.luarc.json
+
+# SLURM launcher scripts and logs
+slurm_infer.py
+slurm_logs/
