@@ -173,6 +173,63 @@ preprocessing:
     min_cells: 5
 ```
 
+### Covariate-Split Inference (`split_by`)
+
+A data config can include optional `split_by` and `n_jobs` fields to enable
+**covariate-split parallel inference**.  When `split_by` is set, the
+`infer_split.py` orchestrator will fit a separate model for each unique value
+of that column in `adata.obs`, running them in parallel across GPUs.
+
+```yaml
+# @package data
+name: "bleo_study01"
+path: "data/lung/bleo_study01.h5ad"
+split_by: "treatment"   # .obs column to split on
+n_jobs: null             # parallel workers (null = auto-detect from GPUs)
+preprocessing:
+  filter_cells:
+    min_genes: 200
+  filter_genes:
+    min_cells: 5
+```
+
+| Field      | Type          | Description                                                                                         |
+|------------|---------------|-----------------------------------------------------------------------------------------------------|
+| `split_by` | `str`         | Column name in `adata.obs`. Each unique value defines a data subset that gets its own model fit.    |
+| `n_jobs`   | `int \| null` | Number of parallel joblib workers.  Defaults to the number of visible CUDA GPUs, falling back to 1. |
+
+**Usage** --- run `infer_split.py` instead of `infer.py` with the exact same
+Hydra overrides:
+
+```bash
+# Split by treatment column, auto-detect GPUs
+python infer_split.py data=bleo_study01 variable_capture=true annotation_key=subclass-l1
+
+# Explicitly set parallel workers
+python infer_split.py data=bleo_study01 data.n_jobs=4 variable_capture=true
+
+# All standard infer.py overrides work
+python infer_split.py data=bleo_study01 inference.n_steps=100000 inference.batch_size=512
+```
+
+Under the hood, `infer_split.py`:
+
+1. Loads the h5ad to discover the unique values of the `split_by` column.
+2. Generates lightweight temporary data YAMLs in `conf/data/_tmp_split/`,
+   each pointing to the **same** original h5ad but with `subset_column` /
+   `subset_value` fields for in-memory filtering.
+3. Launches `python infer.py -m data=_tmp_split/v1,_tmp_split/v2,...` with
+   the Hydra joblib launcher for parallelism and round-robin GPU assignment.
+4. Cleans up the temporary YAMLs after completion.
+
+Output directories follow the standard layout with the covariate value
+appended to the data name:
+
+```
+outputs/bleo_study01_bleomycin/nbvcp/svi/...
+outputs/bleo_study01_control/nbvcp/svi/...
+```
+
 ## Inference Configurations (`inference/`)
 
 ### SVI (`inference/svi.yaml`)
@@ -264,6 +321,22 @@ python infer.py model=zinb inference.batch_size=1024 inference.n_steps=200000
 # More MCMC samples for publication-quality inference
 python infer.py model=nbdm inference=mcmc inference.n_samples=5000 inference.n_chains=4
 ```
+
+### Covariate-Split Parallel Inference
+
+Fit separate models for each level of a covariate (e.g. treatment) in
+parallel across GPUs:
+
+```bash
+# Requires split_by in the data config
+python infer_split.py data=bleo_study01 variable_capture=true
+
+# Override parallelism
+python infer_split.py data=bleo_study01 data.n_jobs=2 model=nbvcp guide_rank=32
+```
+
+See the [Covariate-Split Inference](#covariate-split-inference-split_by)
+section under Data Configurations for full details.
 
 ### Amortized Inference for Large Datasets
 
