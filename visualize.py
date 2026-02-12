@@ -45,6 +45,7 @@ from viz_utils import (
     plot_umap,
     plot_correlation_heatmap,
     plot_mixture_ppc,
+    plot_annotation_ppc,
 )
 
 console = Console()
@@ -129,6 +130,14 @@ Examples:
         action="store_true",
         default=None,
         help="Enable mixture model PPC (for mixture models only)",
+    )
+    parser.add_argument(
+        "--annotation-ppc",
+        action="store_true",
+        default=None,
+        help="Enable per-annotation PPC (for mixture models with "
+        "annotation_key only). Plots each annotation's observed data "
+        "against its corresponding component's posterior predictive.",
     )
     parser.add_argument(
         "--all",
@@ -218,6 +227,7 @@ def _load_default_viz_config():
                 "umap": False,
                 "heatmap": False,
                 "mixture_ppc": False,
+                "annotation_ppc": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
                 "ppc_opts": {"n_rows": 6, "n_cols": 6, "n_samples": 1500},
@@ -240,6 +250,11 @@ def _load_default_viz_config():
                 "mixture_ppc_opts": {
                     "n_rows": 6,
                     "n_cols": 6,
+                    "n_samples": 1500,
+                },
+                "annotation_ppc_opts": {
+                    "n_rows": 5,
+                    "n_cols": 5,
                     "n_samples": 1500,
                 },
             }
@@ -267,6 +282,7 @@ def _build_viz_config(args):
         viz_cfg.umap = True
         viz_cfg.heatmap = True
         viz_cfg.mixture_ppc = True
+        viz_cfg.annotation_ppc = True
 
     # Apply boolean overrides only when flags are explicitly provided.
     if args.no_loss:
@@ -281,6 +297,8 @@ def _build_viz_config(args):
         viz_cfg.heatmap = True
     if args.mixture_ppc:
         viz_cfg.mixture_ppc = True
+    if args.annotation_ppc:
+        viz_cfg.annotation_ppc = True
 
     # Scalar / numeric overrides (only when provided).
     if args.format is not None:
@@ -503,6 +521,29 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
         f"[green]Data loaded![/green] [dim]Shape:[/dim] {counts.shape}"
     )
 
+    # Extract annotation labels (needed for annotation PPC)
+    annotation_key = orig_cfg.get("annotation_key", None)
+    cell_labels = None
+    if annotation_key is not None:
+        if isinstance(annotation_key, str):
+            cell_labels = np.array(
+                adata.obs[annotation_key].astype(str)
+            )
+        else:
+            # List of columns → composite labels joined with "__"
+            annotation_key = list(annotation_key)
+            parts = [
+                adata.obs[k].astype(str) for k in annotation_key
+            ]
+            combined = parts[0]
+            for part in parts[1:]:
+                combined = combined + "__" + part
+            cell_labels = np.array(combined)
+        console.print(
+            f"[dim]Annotation key:[/dim] [cyan]{annotation_key}[/cyan] "
+            f"({len(np.unique(cell_labels))} unique labels)"
+        )
+
     # ======================================================================
     # Generate Plots
     # ======================================================================
@@ -649,6 +690,49 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 "(not a mixture model)[/yellow]"
             )
 
+    if viz_cfg.annotation_ppc:
+        if is_mixture and cell_labels is not None:
+            if not overwrite and _plot_exists(
+                figs_dir, "_annotation_ppc_", fmt
+            ):
+                plots_skipped.append("annotation PPC")
+                console.print(
+                    "[yellow]  Skipping annotation PPC "
+                    "(already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating annotation PPC...[/dim]"
+                )
+                try:
+                    plot_annotation_ppc(
+                        results,
+                        counts,
+                        cell_labels,
+                        figs_dir,
+                        orig_cfg,
+                        viz_cfg,
+                    )
+                    plots_generated.append("annotation PPC")
+                    console.print(
+                        "[green]  Annotation PPC saved[/green]"
+                    )
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate annotation "
+                        f"PPC: {e}[/red]"
+                    )
+        elif not is_mixture:
+            console.print(
+                "[yellow]  Skipping annotation PPC "
+                "(not a mixture model)[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]  Skipping annotation PPC "
+                "(no annotation_key in config)[/yellow]"
+            )
+
     # ======================================================================
     # Completion Summary
     # ======================================================================
@@ -703,6 +787,8 @@ def main() -> None:
         enabled_plots.append("heatmap")
     if viz_cfg.mixture_ppc:
         enabled_plots.append("mixture PPC")
+    if viz_cfg.annotation_ppc:
+        enabled_plots.append("annotation PPC")
 
     console.print(
         f"[dim]Plots to generate:[/dim] {', '.join(enabled_plots)}"
