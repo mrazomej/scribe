@@ -109,6 +109,13 @@ hydra:
     # Note: We use 'model' in path to keep runs organized by model type
     # sanitize_dirname removes brackets [] which cause issues with Orbax checkpoint library
     dir: outputs/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname}}
+  sweep:
+    # For --multirun (joblib) sweeps, use the same output structure as single runs
+    # instead of Hydra's default multirun/ directory.  sweep.dir is resolved once
+    # before jobs are composed, so per-job interpolations (data.name, model, etc.)
+    # must go in sweep.subdir which is resolved per-job.
+    dir: outputs
+    subdir: ${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname}}
   job:
     name: ${data.name}_${inference.method}
     config:
@@ -129,3 +136,4 @@ hydra:
           - viz.heatmap_opts
           - viz.mixture_ppc_opts
           - output_dir
+          - inference.early_stopping.enabled
