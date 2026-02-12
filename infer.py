@@ -86,7 +86,31 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from scribe.data_loader import load_and_preprocess_anndata
 
-console = Console()
+# NOTE: Do NOT create a module-level Console() here.  Rich's Console
+# contains an _thread.RLock that cannot be pickled, which breaks Hydra's
+# joblib launcher for multirun sweeps.  Use _get_console() instead.
+_console = None
+
+
+def _get_console() -> Console:
+    """
+    Return a lazily-initialised, process-local Rich Console instance.
+
+    A module-level ``Console()`` contains an ``_thread.RLock`` that cannot
+    be pickled.  When Hydra's joblib launcher serialises the task function
+    for multiprocessing this causes a ``PicklingError``.  Creating the
+    console on first use inside each worker avoids that problem entirely.
+
+    Returns
+    -------
+    Console
+        Rich Console instance for the current process.
+    """
+    global _console
+    if _console is None:
+        _console = Console()
+    return _console
+
 
 # Suppress scanpy/anndata deprecation warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="scanpy")
@@ -168,6 +192,7 @@ def _build_priors_dict(priors_cfg):
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
+    console = _get_console()
     console.print()
     console.print(
         Panel.fit(
