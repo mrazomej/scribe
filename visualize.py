@@ -94,11 +94,13 @@ Examples:
     parser.add_argument(
         "--no-loss",
         action="store_true",
+        default=None,
         help="Disable loss history plot",
     )
     parser.add_argument(
         "--no-ecdf",
         action="store_true",
+        default=None,
         help="Disable ECDF plot",
     )
 
@@ -106,21 +108,25 @@ Examples:
     parser.add_argument(
         "--ppc",
         action="store_true",
+        default=None,
         help="Enable posterior predictive check plots",
     )
     parser.add_argument(
         "--umap",
         action="store_true",
+        default=None,
         help="Enable UMAP projection plot",
     )
     parser.add_argument(
         "--heatmap",
         action="store_true",
+        default=None,
         help="Enable correlation heatmap",
     )
     parser.add_argument(
         "--mixture-ppc",
         action="store_true",
+        default=None,
         help="Enable mixture model PPC (for mixture models only)",
     )
     parser.add_argument(
@@ -143,35 +149,143 @@ Examples:
     parser.add_argument(
         "--format",
         choices=["png", "pdf", "svg", "eps"],
-        default="png",
+        default=None,
         help="Output format for figures (default: png)",
     )
     parser.add_argument(
         "--ecdf-genes",
         type=int,
-        default=25,
+        default=None,
         help="Number of genes to show in ECDF plot (default: 25)",
     )
     parser.add_argument(
         "--ppc-rows",
         type=int,
-        default=5,
+        default=None,
         help="Number of rows in PPC grid (default: 5)",
     )
     parser.add_argument(
         "--ppc-cols",
         type=int,
-        default=5,
+        default=None,
         help="Number of columns in PPC grid (default: 5)",
     )
     parser.add_argument(
         "--ppc-samples",
         type=int,
-        default=1500,
+        default=None,
         help="Number of posterior samples for PPC (default: 1500)",
     )
 
     return parser.parse_args()
+
+
+# ------------------------------------------------------------------------------
+
+
+def _load_default_viz_config():
+    """Load visualization defaults from ``conf/viz/default.yaml``.
+
+    Returns
+    -------
+    DictConfig
+        Visualization config from the project defaults. If the defaults file is
+        unavailable, returns a minimal fallback config with safe defaults.
+    """
+    defaults_path = os.path.join(
+        os.path.dirname(__file__), "conf", "viz", "default.yaml"
+    )
+
+    if not os.path.exists(defaults_path):
+        console.print(
+            "[yellow]⚠[/yellow] [yellow]Could not find conf/viz/default.yaml; "
+            "using built-in defaults.[/yellow]"
+        )
+        return OmegaConf.create(
+            {
+                "loss": True,
+                "ecdf": True,
+                "ppc": False,
+                "umap": False,
+                "heatmap": False,
+                "mixture_ppc": False,
+                "format": "png",
+                "ecdf_opts": {"n_genes": 25},
+                "ppc_opts": {"n_rows": 6, "n_cols": 6, "n_samples": 1500},
+                "umap_opts": {
+                    "n_neighbors": 15,
+                    "min_dist": 0.1,
+                    "n_components": 2,
+                    "random_state": 42,
+                    "batch_size": 1000,
+                    "data_color": "dark_blue",
+                    "synthetic_color": "dark_red",
+                    "cache_umap": True,
+                },
+                "heatmap_opts": {
+                    "n_genes": 1500,
+                    "n_samples": 512,
+                    "figsize": 12,
+                    "cmap": "RdBu_r",
+                },
+                "mixture_ppc_opts": {
+                    "n_rows": 6,
+                    "n_cols": 6,
+                    "n_samples": 1500,
+                },
+            }
+        )
+
+    defaults_cfg = OmegaConf.load(defaults_path)
+    # The defaults file is packaged as:
+    #   viz:
+    #     ...
+    return defaults_cfg.get("viz", defaults_cfg)
+
+
+# ------------------------------------------------------------------------------
+
+
+def _build_viz_config(args):
+    """Build visualization config from defaults + explicit CLI overrides."""
+    viz_cfg = _load_default_viz_config()
+
+    # --all forces all plot toggles on while preserving nested option defaults.
+    if args.all_plots:
+        viz_cfg.loss = True
+        viz_cfg.ecdf = True
+        viz_cfg.ppc = True
+        viz_cfg.umap = True
+        viz_cfg.heatmap = True
+        viz_cfg.mixture_ppc = True
+
+    # Apply boolean overrides only when flags are explicitly provided.
+    if args.no_loss:
+        viz_cfg.loss = False
+    if args.no_ecdf:
+        viz_cfg.ecdf = False
+    if args.ppc:
+        viz_cfg.ppc = True
+    if args.umap:
+        viz_cfg.umap = True
+    if args.heatmap:
+        viz_cfg.heatmap = True
+    if args.mixture_ppc:
+        viz_cfg.mixture_ppc = True
+
+    # Scalar / numeric overrides (only when provided).
+    if args.format is not None:
+        viz_cfg.format = args.format
+    if args.ecdf_genes is not None:
+        viz_cfg.ecdf_opts.n_genes = args.ecdf_genes
+    if args.ppc_rows is not None:
+        viz_cfg.ppc_opts.n_rows = args.ppc_rows
+    if args.ppc_cols is not None:
+        viz_cfg.ppc_opts.n_cols = args.ppc_cols
+    if args.ppc_samples is not None:
+        viz_cfg.ppc_opts.n_samples = args.ppc_samples
+
+    return viz_cfg
 
 
 # ------------------------------------------------------------------------------
@@ -471,43 +585,8 @@ def main() -> None:
     console.print("[dim]Setting up matplotlib style...[/dim]")
     scribe.viz.matplotlib_style()
 
-    # Build viz config from command line arguments
-    if args.all_plots:
-        viz_cfg = OmegaConf.create(
-            {
-                "loss": True,
-                "ecdf": True,
-                "ppc": True,
-                "umap": True,
-                "heatmap": True,
-                "mixture_ppc": True,
-                "format": args.format,
-                "ecdf_opts": {"n_genes": args.ecdf_genes},
-                "ppc_opts": {
-                    "n_rows": args.ppc_rows,
-                    "n_cols": args.ppc_cols,
-                    "n_samples": args.ppc_samples,
-                },
-            }
-        )
-    else:
-        viz_cfg = OmegaConf.create(
-            {
-                "loss": not args.no_loss,
-                "ecdf": not args.no_ecdf,
-                "ppc": args.ppc,
-                "umap": args.umap,
-                "heatmap": args.heatmap,
-                "mixture_ppc": args.mixture_ppc,
-                "format": args.format,
-                "ecdf_opts": {"n_genes": args.ecdf_genes},
-                "ppc_opts": {
-                    "n_rows": args.ppc_rows,
-                    "n_cols": args.ppc_cols,
-                    "n_samples": args.ppc_samples,
-                },
-            }
-        )
+    # Build viz config from project defaults + explicit CLI overrides
+    viz_cfg = _build_viz_config(args)
 
     # Display what will be generated
     enabled_plots = []
