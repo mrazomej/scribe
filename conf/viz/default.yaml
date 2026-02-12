@@ -6,7 +6,7 @@ viz:
   # Set to ??? to auto-detect based on data/inference config
   run_dir: ???
   loss: true
-  ecdf: true
+  ecdf: false
   ppc: false
   umap: false  # Disabled by default (can be slow for large datasets)
   heatmap: false  # Disabled by default (requires posterior sampling which can be slow)
@@ -19,8 +19,8 @@ viz:
 
   # PPC plot options
   ppc_opts:
-    n_rows: 6  # Number of expression bins (logarithmically spaced)
-    n_cols: 6  # Number of genes per bin
+    n_rows: 5  # Number of expression bins (logarithmically spaced)
+    n_cols: 5  # Number of genes per bin
     n_samples: 1500
   
   # UMAP plot options
@@ -36,13 +36,13 @@ viz:
 
   # Correlation heatmap options
   heatmap_opts:
-    n_genes: 500  # Number of genes to display (selected by correlation variance)
-    n_samples: 256  # Number of posterior samples to generate for correlation computation
+    n_genes: 1500  # Number of genes to display (selected by correlation variance)
+    n_samples: 512 # Number of posterior samples to generate for correlation computation
     figsize: 12  # Figure size (square)
     cmap: "RdBu_r"  # Colormap (red=positive, blue=negative correlation)
 
   # Mixture model PPC options (genes with highest CV across components)
   mixture_ppc_opts:
-    n_rows: 6  # Number of rows in the grid
-    n_cols: 6  # Number of columns in the grid
+    n_rows: 5  # Number of rows in the grid
+    n_cols: 5  # Number of columns in the grid
     n_samples: 1500  # Number of PPC samples per component
