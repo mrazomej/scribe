@@ -299,6 +299,94 @@ class TestEarlyStoppingLogic:
         # So patience should accumulate
         assert patience_counter >= early_stopping.patience
 
+    def test_warmup_excludes_best_loss_tracking(self):
+        """Test that warmup does not update best_loss or patience."""
+        early_stopping = EarlyStoppingConfig(
+            enabled=True,
+            patience=30,
+            min_delta=1.0,
+            check_every=5,
+            warmup=20,
+            smoothing_window=5,
+        )
+
+        losses = [100.0 - i for i in range(40)]
+        best_loss = float("inf")
+        patience_counter = 0
+
+        for step in range(len(losses)):
+            should_check = (
+                step % early_stopping.check_every == 0
+                and (step + 1) >= early_stopping.smoothing_window
+            )
+            if not should_check:
+                continue
+
+            window_start = max(0, (step + 1) - early_stopping.smoothing_window)
+            smoothed_loss = np.mean(losses[window_start : step + 1])
+
+            if early_stopping.enabled and step >= early_stopping.warmup:
+                if not np.isfinite(best_loss):
+                    best_loss = smoothed_loss
+                    patience_counter = 0
+                else:
+                    improvement = best_loss - smoothed_loss
+                    if improvement > early_stopping.min_delta:
+                        best_loss = smoothed_loss
+                        patience_counter = 0
+                    else:
+                        patience_counter += early_stopping.check_every
+            else:
+                assert np.isinf(best_loss)
+                assert patience_counter == 0
+
+        assert np.isfinite(best_loss)
+        assert best_loss <= 100.0
+
+    def test_min_delta_pct_first_post_warmup_check_sets_baseline(self):
+        """Test that percent-mode baseline initializes on first eligible check."""
+        early_stopping = EarlyStoppingConfig(
+            enabled=True,
+            patience=20,
+            min_delta_pct=0.01,
+            check_every=5,
+            warmup=10,
+            smoothing_window=5,
+        )
+
+        losses = [100.0] * 30
+        best_loss = float("inf")
+        patience_counter = 0
+
+        for step in range(len(losses)):
+            should_check = (
+                step % early_stopping.check_every == 0
+                and (step + 1) >= early_stopping.smoothing_window
+            )
+            if not should_check:
+                continue
+
+            if not (early_stopping.enabled and step >= early_stopping.warmup):
+                continue
+
+            window_start = max(0, (step + 1) - early_stopping.smoothing_window)
+            smoothed_loss = np.mean(losses[window_start : step + 1])
+
+            if not np.isfinite(best_loss):
+                best_loss = smoothed_loss
+                patience_counter = 0
+            else:
+                improvement = best_loss - smoothed_loss
+                improvement_pct = 100.0 * improvement / max(abs(best_loss), 1e-8)
+                if improvement_pct > early_stopping.min_delta_pct:
+                    best_loss = smoothed_loss
+                    patience_counter = 0
+                else:
+                    patience_counter += early_stopping.check_every
+
+        assert best_loss == 100.0
+        assert patience_counter > 0
+
 
 # =============================================================================
 # Integration Tests - Actual SVI Runs (Slow, skipped by default)
