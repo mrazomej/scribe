@@ -277,36 +277,49 @@ def _run_with_early_stopping(
                 )
                 smoothed_loss = np.mean(losses[window_start:])
 
-                # Compute improvement (absolute difference)
-                improvement = best_loss - smoothed_loss
+                # Apply convergence logic only after warmup when enabled. During
+                # warmup, we intentionally skip best-loss/patience updates so
+                # early transient improvements do not set an unrealistically
+                # strict baseline.
+                if early_stopping.enabled and step >= early_stopping.warmup:
+                    # Initialize the post-warmup baseline on first eligible
+                    # check.
+                    if not np.isfinite(best_loss):
+                        best_loss = smoothed_loss
+                        best_step = step
+                        if early_stopping.restore_best:
+                            best_state = svi_state
+                        patience_counter = 0
+                    else:
+                        # Compute improvement (absolute difference)
+                        improvement = best_loss - smoothed_loss
 
-                # Check for improvement using either relative (%) or absolute
-                # threshold.  min_delta_pct takes precedence if specified.
-                if early_stopping.min_delta_pct is not None:
-                    # Use relative (percentage) threshold
-                    improvement_pct = 100.0 * improvement / (best_loss + eps)
-                    is_improvement = (
-                        improvement_pct > early_stopping.min_delta_pct
-                    )
-                else:
-                    # Use absolute threshold
-                    is_improvement = improvement > early_stopping.min_delta
+                        # Check for improvement using either relative (%) or
+                        # absolute threshold. min_delta_pct takes precedence.
+                        if early_stopping.min_delta_pct is not None:
+                            # Use a finite denominator to avoid NaN/Inf on the
+                            # first comparison or with very small losses.
+                            denom = max(abs(best_loss), eps)
+                            improvement_pct = 100.0 * improvement / denom
+                            is_improvement = (
+                                improvement_pct > early_stopping.min_delta_pct
+                            )
+                        else:
+                            # Use absolute threshold
+                            is_improvement = (
+                                improvement > early_stopping.min_delta
+                            )
 
-                if is_improvement:
-                    # Improvement detected
-                    best_loss = smoothed_loss
-                    if early_stopping.enabled and early_stopping.restore_best:
-                        best_state = svi_state
-                    best_step = step
-                    patience_counter = 0
-                else:
-                    # No improvement - count towards patience only when
-                    # early stopping is enabled and past warmup
-                    if (
-                        early_stopping.enabled
-                        and step >= early_stopping.warmup
-                    ):
-                        patience_counter += early_stopping.check_every
+                        if is_improvement:
+                            # Improvement detected
+                            best_loss = smoothed_loss
+                            if early_stopping.restore_best:
+                                best_state = svi_state
+                            best_step = step
+                            patience_counter = 0
+                        else:
+                            # No improvement - count towards patience
+                            patience_counter += early_stopping.check_every
 
                 # Save checkpoint if checkpoint_dir is set and enough steps
                 # have passed since the last checkpoint.  Checkpoints are
