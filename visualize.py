@@ -32,6 +32,7 @@ import argparse
 from omegaconf import OmegaConf
 import scribe
 import pickle
+import glob
 import os
 import warnings
 from rich.console import Console
@@ -143,6 +144,14 @@ Examples:
         help="Recursively search the given directory for model output "
         "directories (containing scribe_results.pkl) and generate "
         "plots for each one found",
+    )
+
+    # Overwrite control
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Re-generate plots even if the output files already exist. "
+        "Without this flag, existing plots are skipped.",
     )
 
     # Plot options
@@ -291,6 +300,32 @@ def _build_viz_config(args):
 # ------------------------------------------------------------------------------
 
 
+def _plot_exists(figs_dir, suffix, fmt):
+    """
+    Check whether output files for a given plot type already exist.
+
+    Parameters
+    ----------
+    figs_dir : str
+        Path to the figures directory.
+    suffix : str
+        Filename suffix that identifies the plot type (e.g. ``"_loss"``,
+        ``"steps_ppc"``).  Matched as ``*{suffix}.{fmt}`` via glob.
+    fmt : str
+        File extension / output format (e.g. ``"png"``).
+
+    Returns
+    -------
+    bool
+        ``True`` if at least one matching file exists.
+    """
+    pattern = os.path.join(figs_dir, f"*{suffix}.{fmt}")
+    return len(glob.glob(pattern)) > 0
+
+
+# ------------------------------------------------------------------------------
+
+
 def _find_model_dirs(root_dir):
     """
     Recursively search for directories containing ``scribe_results.pkl``.
@@ -316,7 +351,7 @@ def _find_model_dirs(root_dir):
 # ------------------------------------------------------------------------------
 
 
-def _process_single_model_dir(model_dir, viz_cfg):
+def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     """
     Run the full visualization pipeline on a single model output directory.
 
@@ -331,6 +366,10 @@ def _process_single_model_dir(model_dir, viz_cfg):
         ``scribe_results.pkl`` and ``.hydra/config.yaml``.
     viz_cfg : DictConfig
         Visualization configuration built from the command-line arguments.
+    overwrite : bool, optional
+        When ``False`` (the default), plots whose output files already
+        exist in the ``figs/`` subdirectory are skipped.  Set to ``True``
+        to regenerate all requested plots unconditionally.
 
     Returns
     -------
@@ -467,66 +506,108 @@ def _process_single_model_dir(model_dir, viz_cfg):
     # ======================================================================
     # Generate Plots
     # ======================================================================
+    fmt = viz_cfg.format
     plots_generated = []
+    plots_skipped = []
 
     if viz_cfg.loss:
-        console.print("[dim]Generating loss history plot...[/dim]")
-        try:
-            plot_loss(results, figs_dir, orig_cfg, viz_cfg)
-            plots_generated.append("loss")
-            console.print("[green]  Loss plot saved[/green]")
-        except Exception as e:
+        if not overwrite and _plot_exists(figs_dir, "_loss", fmt):
+            plots_skipped.append("loss")
             console.print(
-                f"[red]  Failed to generate loss plot: {e}[/red]"
+                "[yellow]  Skipping loss (already exists)[/yellow]"
             )
+        else:
+            console.print("[dim]Generating loss history plot...[/dim]")
+            try:
+                plot_loss(results, figs_dir, orig_cfg, viz_cfg)
+                plots_generated.append("loss")
+                console.print("[green]  Loss plot saved[/green]")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate loss plot: {e}[/red]"
+                )
 
     if viz_cfg.ecdf:
-        console.print("[dim]Generating ECDF plot...[/dim]")
-        try:
-            plot_ecdf(counts, figs_dir, orig_cfg, viz_cfg)
-            plots_generated.append("ECDF")
-            console.print("[green]  ECDF plot saved[/green]")
-        except Exception as e:
+        if not overwrite and _plot_exists(figs_dir, "_ecdf", fmt):
+            plots_skipped.append("ECDF")
             console.print(
-                f"[red]  Failed to generate ECDF plot: {e}[/red]"
+                "[yellow]  Skipping ECDF (already exists)[/yellow]"
             )
+        else:
+            console.print("[dim]Generating ECDF plot...[/dim]")
+            try:
+                plot_ecdf(counts, figs_dir, orig_cfg, viz_cfg)
+                plots_generated.append("ECDF")
+                console.print("[green]  ECDF plot saved[/green]")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate ECDF plot: {e}[/red]"
+                )
 
     if viz_cfg.ppc:
-        console.print(
-            "[dim]Generating posterior predictive check plots...[/dim]"
-        )
-        try:
-            plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
-            plots_generated.append("PPC")
-            console.print("[green]  PPC plots saved[/green]")
-        except Exception as e:
+        # "steps_ppc" matches the regular PPC file (e.g.
+        # "...50000steps_ppc.png") but not per-component or mixture
+        # variants whose suffixes differ.
+        if not overwrite and _plot_exists(figs_dir, "steps_ppc", fmt):
+            plots_skipped.append("PPC")
             console.print(
-                f"[red]  Failed to generate PPC plots: {e}[/red]"
+                "[yellow]  Skipping PPC (already exists)[/yellow]"
             )
+        else:
+            console.print(
+                "[dim]Generating posterior predictive check "
+                "plots...[/dim]"
+            )
+            try:
+                plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
+                plots_generated.append("PPC")
+                console.print("[green]  PPC plots saved[/green]")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate PPC plots: {e}[/red]"
+                )
 
     if viz_cfg.umap:
-        console.print("[dim]Generating UMAP projection plot...[/dim]")
-        try:
-            plot_umap(results, counts, figs_dir, orig_cfg, viz_cfg)
-            plots_generated.append("UMAP")
-            console.print("[green]  UMAP plot saved[/green]")
-        except Exception as e:
+        if not overwrite and _plot_exists(figs_dir, "_umap", fmt):
+            plots_skipped.append("UMAP")
             console.print(
-                f"[red]  Failed to generate UMAP plot: {e}[/red]"
+                "[yellow]  Skipping UMAP (already exists)[/yellow]"
             )
+        else:
+            console.print(
+                "[dim]Generating UMAP projection plot...[/dim]"
+            )
+            try:
+                plot_umap(results, counts, figs_dir, orig_cfg, viz_cfg)
+                plots_generated.append("UMAP")
+                console.print("[green]  UMAP plot saved[/green]")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate UMAP plot: {e}[/red]"
+                )
 
     if viz_cfg.heatmap:
-        console.print("[dim]Generating correlation heatmap...[/dim]")
-        try:
-            plot_correlation_heatmap(
-                results, counts, figs_dir, orig_cfg, viz_cfg
-            )
-            plots_generated.append("heatmap")
-            console.print("[green]  Heatmap saved[/green]")
-        except Exception as e:
+        if not overwrite and _plot_exists(
+            figs_dir, "_correlation_heatmap", fmt
+        ):
+            plots_skipped.append("heatmap")
             console.print(
-                f"[red]  Failed to generate heatmap: {e}[/red]"
+                "[yellow]  Skipping heatmap (already exists)[/yellow]"
             )
+        else:
+            console.print(
+                "[dim]Generating correlation heatmap...[/dim]"
+            )
+            try:
+                plot_correlation_heatmap(
+                    results, counts, figs_dir, orig_cfg, viz_cfg
+                )
+                plots_generated.append("heatmap")
+                console.print("[green]  Heatmap saved[/green]")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate heatmap: {e}[/red]"
+                )
 
     # Check for mixture model before generating mixture PPC.
     # Prefer results.n_components (handles auto-inferred from annotations)
@@ -537,17 +618,31 @@ def _process_single_model_dir(model_dir, viz_cfg):
     is_mixture = _nc is not None and _nc > 1
     if viz_cfg.mixture_ppc:
         if is_mixture:
-            console.print("[dim]Generating mixture model PPC...[/dim]")
-            try:
-                plot_mixture_ppc(
-                    results, counts, figs_dir, orig_cfg, viz_cfg
-                )
-                plots_generated.append("mixture PPC")
-                console.print("[green]  Mixture PPC saved[/green]")
-            except Exception as e:
+            if not overwrite and _plot_exists(
+                figs_dir, "_mixture_ppc", fmt
+            ):
+                plots_skipped.append("mixture PPC")
                 console.print(
-                    f"[red]  Failed to generate mixture PPC: {e}[/red]"
+                    "[yellow]  Skipping mixture PPC "
+                    "(already exists)[/yellow]"
                 )
+            else:
+                console.print(
+                    "[dim]Generating mixture model PPC...[/dim]"
+                )
+                try:
+                    plot_mixture_ppc(
+                        results, counts, figs_dir, orig_cfg, viz_cfg
+                    )
+                    plots_generated.append("mixture PPC")
+                    console.print(
+                        "[green]  Mixture PPC saved[/green]"
+                    )
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate mixture "
+                        f"PPC: {e}[/red]"
+                    )
         else:
             console.print(
                 "[yellow]  Skipping mixture PPC "
@@ -561,6 +656,12 @@ def _process_single_model_dir(model_dir, viz_cfg):
     console.print(
         f"[dim]Plots generated:[/dim] [bold]{plots_str}[/bold]"
     )
+    if plots_skipped:
+        skipped_str = ", ".join(plots_skipped)
+        console.print(
+            f"[dim]Plots skipped (already exist):[/dim] "
+            f"[yellow]{skipped_str}[/yellow]"
+        )
     console.print(f"[dim]Figures directory:[/dim] [cyan]{figs_dir}[/cyan]")
     return True
 
@@ -662,7 +763,9 @@ def main() -> None:
                 )
             )
             try:
-                if _process_single_model_dir(model_dir, viz_cfg):
+                if _process_single_model_dir(
+                    model_dir, viz_cfg, overwrite=args.overwrite
+                ):
                     succeeded += 1
                 else:
                     failed += 1
@@ -702,7 +805,9 @@ def main() -> None:
             )
             return
 
-        _process_single_model_dir(model_dir, viz_cfg)
+        _process_single_model_dir(
+            model_dir, viz_cfg, overwrite=args.overwrite
+        )
 
     console.print()
 
