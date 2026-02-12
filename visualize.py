@@ -453,11 +453,13 @@ def main() -> None:
         except Exception as e:
             console.print(f"[red]  Failed to generate heatmap: {e}[/red]")
 
-    # Check for mixture model before generating mixture PPC
-    is_mixture = (
-        orig_cfg.get("n_components") is not None
-        and orig_cfg.get("n_components", 1) > 1
-    )
+    # Check for mixture model before generating mixture PPC.
+    # Prefer results.n_components (handles auto-inferred from annotations)
+    # over the config value (which may be null when inferred at runtime).
+    _res_nc = getattr(results, "n_components", None)
+    _cfg_nc = orig_cfg.get("n_components")
+    _nc = _res_nc if _res_nc is not None else _cfg_nc
+    is_mixture = _nc is not None and _nc > 1
     if viz_cfg.mixture_ppc:
         if is_mixture:
             console.print("[dim]Generating mixture model PPC...[/dim]")

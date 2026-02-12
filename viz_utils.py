@@ -554,7 +554,33 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
 
 def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
-    """Plot UMAP projection of experimental and synthetic data."""
+    """
+    Plot UMAP projection of experimental and synthetic data.
+
+    Before computing the UMAP embedding, both the experimental counts and the
+    synthetic (posterior-predictive) counts are preprocessed with the standard
+    scRNA-seq pipeline used in the field:
+
+    1. **Library-size normalisation** -- each cell is scaled so that its total
+       UMI count equals ``target_sum`` (default 10 000).
+    2. **Log1p transform** -- ``log(1 + x)`` is applied element-wise.
+
+    This preprocessing is performed on local copies; the original ``counts``
+    array and the results object are never modified.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults
+        Inference results object.
+    counts : array-like, shape (n_cells, n_genes)
+        Raw count matrix (integers).
+    figs_dir : str
+        Directory in which to save the figure.
+    cfg : DictConfig
+        Original Hydra configuration.
+    viz_cfg : DictConfig
+        Visualization configuration.
+    """
     import pickle
 
     console.print("[dim]Plotting UMAP projection...[/dim]")
@@ -578,6 +604,19 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     data_color = umap_opts.get("data_color", "dark_blue")
     synthetic_color = umap_opts.get("synthetic_color", "dark_red")
     cache_umap = umap_opts.get("cache_umap", True)
+    target_sum = umap_opts.get("target_sum", 1e4)
+
+    # ------------------------------------------------------------------
+    # Standard scRNA-seq preprocessing (local copy -- never stored)
+    # ------------------------------------------------------------------
+    console.print(
+        f"[dim]Applying library-size normalisation (target_sum={target_sum:,.0f}) "
+        f"+ log1p to experimental counts...[/dim]"
+    )
+    counts_np = np.array(counts, dtype=np.float64)
+    lib_sizes = counts_np.sum(axis=1, keepdims=True)
+    lib_sizes = np.where(lib_sizes == 0, 1.0, lib_sizes)  # avoid div-by-zero
+    counts_norm = np.log1p(counts_np / lib_sizes * target_sum)
 
     # Get colors from scribe.viz if available
     try:
@@ -604,6 +643,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         "min_dist": min_dist,
         "n_components": n_components,
         "random_state": random_state,
+        "target_sum": target_sum,
         "n_cells": counts.shape[0],
         "n_genes": counts.shape[1],
     }
@@ -656,7 +696,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
             min_dist=min_dist,
             random_state=random_state,
         )
-        umap_embedding = umap_reducer.fit_transform(counts)
+        umap_embedding = umap_reducer.fit_transform(counts_norm)
 
         # Save to cache if caching is enabled
         if cache_path:
@@ -732,10 +772,20 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         # Other array type - convert to numpy
         synthetic_data = np.array(synthetic_data)
 
+    # Apply the same library-size normalisation + log1p to synthetic data
+    console.print(
+        "[dim]Applying library-size normalisation + log1p to synthetic "
+        "counts...[/dim]"
+    )
+    synthetic_data = synthetic_data.astype(np.float64)
+    syn_lib_sizes = synthetic_data.sum(axis=1, keepdims=True)
+    syn_lib_sizes = np.where(syn_lib_sizes == 0, 1.0, syn_lib_sizes)
+    synthetic_norm = np.log1p(synthetic_data / syn_lib_sizes * target_sum)
+
     console.print("[dim]Projecting synthetic data onto UMAP space...[/dim]")
 
     # Project synthetic data onto the same UMAP space
-    umap_synthetic = umap_reducer.transform(synthetic_data)
+    umap_synthetic = umap_reducer.transform(synthetic_norm)
 
     console.print("[dim]Creating overlay plot...[/dim]")
 
@@ -998,29 +1048,36 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
     """
-    Select genes with highest CV across components, binned by expression level.
+    Select genes with highest divergence across components, binned by
+    expression level.
 
     Uses the same log-spaced binning strategy as the standard PPC, but within
-    each expression bin, selects genes with highest coefficient of variation
-    (CV) across mixture components instead of log-spacing.
+    each expression bin, selects genes with the highest maximum pairwise
+    log-fold-change across mixture components.  This metric identifies genes
+    where at least two components differ the most, which produces the most
+    visually informative PPC panels regardless of the number of components.
+
+    For two components the log-fold-change is monotonically equivalent to the
+    coefficient of variation (CV), so behaviour is unchanged in the
+    two-component case.
 
     Parameters
     ----------
     results : ScribeSVIResults
-        Results object containing model parameters
+        Results object containing model parameters.
     counts : array-like
-        Count matrix (n_cells, n_genes) for computing median expression
+        Count matrix (n_cells, n_genes) for computing median expression.
     n_rows : int
-        Number of expression bins
+        Number of expression bins.
     n_cols : int
-        Number of genes per bin (max)
+        Number of genes per bin (max).
 
     Returns
     -------
     selected_idx : np.ndarray
-        Indices of selected genes
-    cv_values : np.ndarray
-        CV values for selected genes
+        Indices of selected genes.
+    divergence_values : np.ndarray
+        Max pairwise log-fold-change values for selected genes.
     """
     import jax.numpy as jnp
 
@@ -1048,11 +1105,14 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
             f"Available: {list(map_estimates.keys())}"
         )
 
-    # Compute CV across components for each gene
-    param_std = jnp.std(param, axis=0)
-    param_mean = jnp.mean(param, axis=0)
-    param_mean = jnp.where(param_mean == 0, 1e-10, param_mean)
-    cv_all = np.array(param_std / param_mean)
+    # Compute max pairwise log-fold-change across components for each gene.
+    # log(max_k / min_k) equals the largest absolute log-fold-change between
+    # any pair of components.  Clamp the minimum to avoid log(0).
+    param_clamped = jnp.clip(param, a_min=1e-10)
+    lfc_range = np.array(
+        jnp.log(jnp.max(param_clamped, axis=0))
+        - jnp.log(jnp.min(param_clamped, axis=0))
+    )
 
     # Compute median expression for binning
     counts_np = np.array(counts)
@@ -1066,7 +1126,7 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
     sorted_order = np.argsort(median_counts[nonzero_idx])
     sorted_idx = nonzero_idx[sorted_order]
     sorted_medians = median_counts[sorted_idx]
-    sorted_cvs = cv_all[sorted_idx]
+    sorted_lfc = lfc_range[sorted_idx]
 
     # Get expression range
     min_expr = sorted_medians[0]
@@ -1098,27 +1158,27 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
         bin_selected = []
 
         if len(bin_indices) > 0:
-            # Get CVs for genes in this bin
-            bin_cvs = sorted_cvs[bin_indices]
+            # Get log-fold-changes for genes in this bin
+            bin_lfc = sorted_lfc[bin_indices]
 
             if len(bin_indices) <= n_cols:
                 # Use all genes in bin
                 bin_selected = list(bin_indices)
             else:
-                # Select top n_cols genes by CV within this bin
-                top_cv_order = np.argsort(bin_cvs)[::-1][:n_cols]
-                bin_selected = list(bin_indices[top_cv_order])
+                # Select top n_cols genes by LFC within this bin
+                top_lfc_order = np.argsort(bin_lfc)[::-1][:n_cols]
+                bin_selected = list(bin_indices[top_lfc_order])
 
         selected_by_bin.append(bin_selected)
         selected_set.update(bin_selected)
 
     # Second pass: backfill bins that are short from previous bins
-    # Create pool of unselected genes sorted by CV
+    # Create pool of unselected genes sorted by LFC
     all_indices = set(range(len(sorted_idx)))
     unselected_indices = np.array(sorted(list(all_indices - selected_set)))
 
     if len(unselected_indices) > 0:
-        unselected_cvs = sorted_cvs[unselected_indices]
+        unselected_lfc = sorted_lfc[unselected_indices]
         unselected_medians = sorted_medians[unselected_indices]
 
         # Fill each bin to n_cols
@@ -1133,17 +1193,17 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
                 # (lower or equal expression)
                 candidates_mask = unselected_medians <= bin_end
                 candidates = unselected_indices[candidates_mask]
-                candidate_cvs = unselected_cvs[candidates_mask]
+                candidate_lfc = unselected_lfc[candidates_mask]
 
                 if len(candidates) == 0:
                     # If no candidates below, use all unselected
                     candidates = unselected_indices
-                    candidate_cvs = unselected_cvs
+                    candidate_lfc = unselected_lfc
 
-                # Select top CV candidates
+                # Select top LFC candidates
                 n_to_add = min(needed, len(candidates))
-                top_cv_order = np.argsort(candidate_cvs)[::-1][:n_to_add]
-                to_add = candidates[top_cv_order]
+                top_lfc_order = np.argsort(candidate_lfc)[::-1][:n_to_add]
+                to_add = candidates[top_lfc_order]
 
                 bin_selected.extend(list(to_add))
                 selected_set.update(to_add)
@@ -1151,20 +1211,20 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
                 # Remove from unselected pool
                 mask = ~np.isin(unselected_indices, to_add)
                 unselected_indices = unselected_indices[mask]
-                unselected_cvs = unselected_cvs[mask]
+                unselected_lfc = unselected_lfc[mask]
                 unselected_medians = unselected_medians[mask]
 
             selected_by_bin[i] = bin_selected
 
     # Flatten and convert back to original gene indices
     final_selected_sorted = []
-    final_cvs = []
+    final_lfc = []
     for bin_selected in selected_by_bin:
         for idx in bin_selected:
             final_selected_sorted.append(sorted_idx[idx])
-            final_cvs.append(sorted_cvs[idx])
+            final_lfc.append(sorted_lfc[idx])
 
-    return np.array(final_selected_sorted), np.array(final_cvs)
+    return np.array(final_selected_sorted), np.array(final_lfc)
 
 
 # ------------------------------------------------------------------------------
@@ -1647,11 +1707,21 @@ def _plot_ppc_comparison_figure(
 
 def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     """
-    Plot PPC for mixture models showing genes with highest CV across components.
+    Plot PPC for mixture models showing genes with highest divergence across
+    components.
+
+    Genes are selected by maximum pairwise log-fold-change across mixture
+    components, binned by expression level.  This highlights genes where at
+    least two components differ the most, producing the most visually
+    informative PPC panels regardless of the number of components.
 
     Generates separate plots:
-    - One for the combined mixture PPC
-    - One per component
+
+    - One for the combined mixture PPC.
+    - One per component.
+    - A comparison overlay (mixture + all components) **only when
+      n_components <= 2**, since the limited colour-palette makes the overlay
+      unreadable for more components.
 
     All plots use the same format as the standard PPC (credible regions).
 
@@ -1694,15 +1764,17 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         f"({n_cols} genes/bin) across {n_components} components...[/dim]"
     )
 
-    # Select genes with highest CV within expression bins
-    top_gene_indices, top_cvs = _select_divergent_genes(
+    # Select genes with highest divergence (max pairwise log-fold-change)
+    # within expression bins
+    top_gene_indices, top_lfc = _select_divergent_genes(
         results, counts, n_rows, n_cols
     )
     top_gene_indices = np.array(top_gene_indices)
     n_genes_to_plot = len(top_gene_indices)
 
     console.print(
-        f"[dim]Selected {n_genes_to_plot} genes. Top CVs:[/dim] {np.array(top_cvs[:5])}"
+        f"[dim]Selected {n_genes_to_plot} genes. Top log-fold-changes:[/dim] "
+        f"{np.array(top_lfc[:5])}"
     )
 
     # Subset results to selected genes for memory efficiency
@@ -1798,26 +1870,36 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
         del component_samples  # Free JAX array
 
-    # --- Plot 3: Combined Comparison Plot ---
-    console.print("[dim]Generating combined comparison plot...[/dim]")
-    _plot_ppc_comparison_figure(
-        mixture_samples=mixture_samples_np,
-        component_samples_list=all_component_samples,
-        counts=counts,
-        selected_idx=top_gene_indices,
-        n_rows=n_rows,
-        n_cols=n_cols,
-        figs_dir=figs_dir,
-        fname=f"{base_fname}_ppc_comparison",
-        output_format=output_format,
-        component_cmaps=component_cmaps,
-    )
+    # --- Plot 3: Combined Comparison Plot (only for <= 2 components) ---
+    # With >2 components the overlaid colormaps become unreadable (limited
+    # palette) and the per-component plots already convey the information.
+    if n_components <= 2:
+        console.print("[dim]Generating combined comparison plot...[/dim]")
+        _plot_ppc_comparison_figure(
+            mixture_samples=mixture_samples_np,
+            component_samples_list=all_component_samples,
+            counts=counts,
+            selected_idx=top_gene_indices,
+            n_rows=n_rows,
+            n_cols=n_cols,
+            figs_dir=figs_dir,
+            fname=f"{base_fname}_ppc_comparison",
+            output_format=output_format,
+            component_cmaps=component_cmaps,
+        )
+        n_plots = 2 + n_components
+    else:
+        console.print(
+            f"[yellow]Skipping comparison plot ({n_components} components "
+            f"> 2; per-component plots are generated instead)[/yellow]"
+        )
+        n_plots = 1 + n_components
 
     # Clean up
     del mixture_samples_np, all_component_samples
 
     console.print(
-        f"[green]✓[/green] [dim]Generated {2 + n_components} mixture PPC plots[/dim]"
+        f"[green]✓[/green] [dim]Generated {n_plots} mixture PPC plots[/dim]"
     )
 
     # Clean up
