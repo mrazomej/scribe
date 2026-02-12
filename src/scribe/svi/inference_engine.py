@@ -82,11 +82,20 @@ def _run_with_early_stopping(
     progress: bool = True,
     model_config: Optional[ModelConfig] = None,
 ) -> SVIRunResult:
-    """Run SVI with early stopping based on loss convergence.
+    """Run SVI with a custom training loop, checkpointing, and optional early stopping.
 
-    This function implements a custom training loop that monitors the loss and
-    stops when convergence is detected. Supports Orbax checkpointing for
-    resumable training.
+    This function implements a JIT-compiled training loop that monitors the
+    loss, saves periodic Orbax checkpoints for resumable training, and
+    optionally stops when convergence is detected.
+
+    The loop is used whenever an ``EarlyStoppingConfig`` is provided,
+    **regardless** of ``early_stopping.enabled``:
+
+    * ``enabled=True`` — full early-stopping behaviour (convergence checks,
+      patience counter, restore-best).
+    * ``enabled=False`` — the loop still runs for all ``n_steps`` but
+      checkpoints are saved periodically and training can be resumed after
+      interruption.
 
     Parameters
     ----------
@@ -99,11 +108,14 @@ def _run_with_early_stopping(
     n_steps : int
         Maximum number of optimization steps.
     early_stopping : EarlyStoppingConfig
-        Early stopping configuration, including checkpoint_dir and resume.
+        Early stopping and checkpointing configuration, including
+        ``checkpoint_dir`` and ``resume``.
     stable_update : bool, default=True
         Whether to use numerically stable updates.
     progress : bool, default=True
         Whether to show progress bar.
+    model_config : Optional[ModelConfig], default=None
+        Model configuration to attach to the result for provenance.
 
     Returns
     -------
@@ -113,10 +125,13 @@ def _run_with_early_stopping(
 
     Notes
     -----
-    When `checkpoint_dir` is set in early_stopping config:
-    - Saves checkpoint whenever loss improves
-    - If `resume=True` and checkpoint exists, resumes from it
-    - Checkpoint includes params, step, best_loss, and loss history
+    When ``checkpoint_dir`` is set in early_stopping config:
+
+    - Saves checkpoints at regular intervals (every ``checkpoint_every``
+      steps) regardless of whether the loss improved.
+    - If ``resume=True`` and a checkpoint exists, resumes from it.
+    - Checkpoint includes optimiser state, step, best_loss, and loss
+      history.
     """
     # Check for existing checkpoint and restore if requested
     checkpoint_dir = early_stopping.checkpoint_dir
@@ -248,14 +263,14 @@ def _run_with_early_stopping(
             else:
                 pbar.update(task, advance=1)
 
-            # Check for improvement every check_every steps (for checkpointing)
-            # This happens even during warmup - we still track best loss and save
-            should_check_improvement = (
-                early_stopping.enabled
-                and step % early_stopping.check_every == 0
+            # Periodically monitor loss and save checkpoints.
+            # This runs regardless of early_stopping.enabled so that
+            # checkpoints are always saved for resumability.
+            should_check = (
+                step % early_stopping.check_every == 0
                 and len(losses) >= early_stopping.smoothing_window
             )
-            if should_check_improvement:
+            if should_check:
                 # Compute smoothed loss (moving average)
                 window_start = max(
                     0, len(losses) - early_stopping.smoothing_window
@@ -266,7 +281,7 @@ def _run_with_early_stopping(
                 improvement = best_loss - smoothed_loss
 
                 # Check for improvement using either relative (%) or absolute
-                # threshold min_delta_pct takes precedence if specified
+                # threshold.  min_delta_pct takes precedence if specified.
                 if early_stopping.min_delta_pct is not None:
                     # Use relative (percentage) threshold
                     improvement_pct = 100.0 * improvement / (best_loss + eps)
@@ -280,36 +295,44 @@ def _run_with_early_stopping(
                 if is_improvement:
                     # Improvement detected
                     best_loss = smoothed_loss
-                    if early_stopping.restore_best:
+                    if early_stopping.enabled and early_stopping.restore_best:
                         best_state = svi_state
                     best_step = step
                     patience_counter = 0
-
-                    # Save checkpoint if checkpoint_dir is set and enough steps
-                    # have passed since the last checkpoint
-                    should_checkpoint = (
-                        checkpoint_dir
-                        and (step - last_checkpoint_step)
-                        >= early_stopping.checkpoint_every
-                    )
-                    if should_checkpoint:
-                        save_svi_checkpoint(
-                            checkpoint_dir=checkpoint_dir,
-                            optim_state=svi_state.optim_state,
-                            step=step,
-                            best_loss=best_loss,
-                            losses=losses,
-                            patience_counter=patience_counter,
-                        )
-                        last_checkpoint_step = step
                 else:
-                    # No improvement - only count towards patience after warmup
-                    if step >= early_stopping.warmup:
+                    # No improvement - count towards patience only when
+                    # early stopping is enabled and past warmup
+                    if (
+                        early_stopping.enabled
+                        and step >= early_stopping.warmup
+                    ):
                         patience_counter += early_stopping.check_every
 
-                # Check if patience exceeded (only after warmup)
+                # Save checkpoint if checkpoint_dir is set and enough steps
+                # have passed since the last checkpoint.  Checkpoints are
+                # saved at regular intervals regardless of whether the loss
+                # improved, so that long runs can always be resumed.
+                should_checkpoint = (
+                    checkpoint_dir
+                    and (step - last_checkpoint_step)
+                    >= early_stopping.checkpoint_every
+                )
+                if should_checkpoint:
+                    save_svi_checkpoint(
+                        checkpoint_dir=checkpoint_dir,
+                        optim_state=svi_state.optim_state,
+                        step=step,
+                        best_loss=best_loss,
+                        losses=losses,
+                        patience_counter=patience_counter,
+                    )
+                    last_checkpoint_step = step
+
+                # Check if patience exceeded (only when early stopping is
+                # enabled and past warmup)
                 if (
-                    step >= early_stopping.warmup
+                    early_stopping.enabled
+                    and step >= early_stopping.warmup
                     and patience_counter >= early_stopping.patience
                 ):
                     early_stopped = True
@@ -398,12 +421,17 @@ def _run_standard(
 
 
 class SVIInferenceEngine:
-    """Handles SVI inference execution with optional early stopping.
+    """Handles SVI inference execution with checkpointing and optional early stopping.
 
     This engine supports two modes of operation:
-    1. Standard mode: Uses NumPyro's built-in SVI.run() method
-    2. Early stopping mode: Uses a custom training loop that monitors
-       loss convergence and stops when improvement plateaus
+
+    1. **Custom loop** (when ``early_stopping`` config is provided): Uses a
+       JIT-compiled training loop with periodic checkpoint saving and optional
+       convergence-based early stopping.  Checkpoints are always saved so
+       that interrupted runs can be resumed, even when
+       ``early_stopping.enabled=False``.
+    2. **Standard mode** (when ``early_stopping`` is ``None``): Falls back to
+       NumPyro's built-in ``SVI.run()`` method with no checkpointing.
 
     Examples
     --------
@@ -480,8 +508,10 @@ class SVIInferenceEngine:
             Whether to use numerically stable parameter updates. When True,
             uses `svi.stable_update()` which handles NaN/Inf gracefully.
         early_stopping : Optional[EarlyStoppingConfig], default=None
-            Configuration for early stopping. If None or if
-            `early_stopping.enabled=False`, runs for the full `n_steps`.
+            Configuration for early stopping and checkpointing. When provided
+            (even with ``enabled=False``), the custom training loop is used
+            so that checkpoints are saved and training can be resumed. Only
+            falls back to NumPyro's built-in ``svi.run()`` when ``None``.
         progress : bool, default=True
             Whether to show progress bar during training.
 
@@ -544,8 +574,12 @@ class SVIInferenceEngine:
             "annotation_prior_logits": annotation_prior_logits,
         }
 
-        # Choose execution mode based on early stopping configuration
-        if early_stopping is not None and early_stopping.enabled:
+        # Choose execution mode based on early stopping configuration.
+        # Use the custom loop whenever an early_stopping config is provided
+        # (even when enabled=False) so that checkpoint saving and resume
+        # are always available.  Only fall back to NumPyro's built-in
+        # svi.run() when no early_stopping config is supplied at all.
+        if early_stopping is not None:
             return _run_with_early_stopping(
                 svi=svi,
                 rng_key=rng_key,
