@@ -1966,7 +1966,16 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # Different colormaps for each component (cycle if more components than
     # colors)
     component_cmaps = ["Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn"]
+    min_cells_for_info = mixture_ppc_opts.get("min_cells_for_info", 20)
     all_component_samples = []
+    counts_np = np.array(counts)
+
+    # Compute hard cell assignments once using MAP probabilities.
+    console.print("[dim]Computing MAP cell-to-component assignments...[/dim]")
+    assignment_probs = results.cell_type_probabilities_map(
+        counts=counts, verbose=False
+    )["probabilities"]
+    assignments = np.argmax(np.array(assignment_probs), axis=1)
 
     for k in range(n_components):
         console.print(
@@ -1987,18 +1996,40 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         )
 
         component_samples_np = np.array(component_samples)
+        # Keep full-cell samples for optional comparison plot.
         all_component_samples.append(component_samples_np)
+
+        # Subset both observed and predicted data to cells assigned to component k.
+        cell_mask_k = assignments == k
+        n_cells_component = int(np.sum(cell_mask_k))
+        if n_cells_component == 0:
+            console.print(
+                f"[yellow]Skipping Component {k+1} PPC (no assigned cells)[/yellow]"
+            )
+            del component_samples
+            continue
+        if n_cells_component < min_cells_for_info:
+            console.print(
+                f"[yellow]Component {k+1} has only {n_cells_component} assigned "
+                f"cells; PPC may be noisy[/yellow]"
+            )
+
+        component_samples_subset = component_samples_np[:, cell_mask_k, :]
+        counts_component = counts_np[cell_mask_k, :]
 
         # Cycle through colormaps if more components than colors
         cmap = component_cmaps[k % len(component_cmaps)]
 
         _plot_ppc_figure(
-            predictive_samples=component_samples_np,
-            counts=counts,
+            predictive_samples=component_samples_subset,
+            counts=counts_component,
             selected_idx=top_gene_indices,
             n_rows=n_rows,
             n_cols=n_cols,
-            title=f"Component {k+1} PPC (High CV Genes)",
+            title=(
+                f"Component {k+1} PPC (High CV Genes, "
+                f"{n_cells_component} assigned cells)"
+            ),
             figs_dir=figs_dir,
             fname=f"{base_fname}_component{k+1}_ppc",
             output_format=output_format,
