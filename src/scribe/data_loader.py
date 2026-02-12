@@ -13,7 +13,11 @@ from omegaconf import OmegaConf
 
 
 def load_and_preprocess_anndata(
-    path: str, prep_config: Optional[DictConfig] = None, return_jax: bool = True
+    path: str,
+    prep_config: Optional[DictConfig] = None,
+    return_jax: bool = True,
+    subset_column: Optional[str] = None,
+    subset_value: Optional[str] = None,
 ) -> Union[jnp.ndarray, AnnData]:
     """
     Load count data from a CSV or h5ad file and optionally apply scanpy
@@ -32,6 +36,16 @@ def load_and_preprocess_anndata(
     return_jax : bool, default True
         If True, return the data as a JAX numpy array. If False, return the
         original AnnData object with all preprocessing applied.
+    subset_column : Optional[str], default None
+        Column name in ``adata.obs`` used to subset the data before
+        preprocessing.  When both ``subset_column`` and ``subset_value`` are
+        provided, only observations where ``adata.obs[subset_column] ==
+        subset_value`` are retained.  This is used by ``infer_split.py`` to
+        fit separate models for each covariate value without writing
+        temporary h5ad files.
+    subset_value : Optional[str], default None
+        The value within ``subset_column`` to keep.  Ignored when
+        ``subset_column`` is ``None``.
 
     Returns
     -------
@@ -59,6 +73,27 @@ def load_and_preprocess_anndata(
 
     # Print the original shape of the data
     print(f"Original data shape: {adata.shape}")
+
+    # Subset by covariate column if requested (used by infer_split.py)
+    if subset_column is not None and subset_value is not None:
+        if subset_column not in adata.obs.columns:
+            raise ValueError(
+                f"subset_column '{subset_column}' not found in adata.obs. "
+                f"Available columns: {list(adata.obs.columns)}"
+            )
+        mask = adata.obs[subset_column] == subset_value
+        if mask.sum() == 0:
+            raise ValueError(
+                f"No observations found where "
+                f"adata.obs['{subset_column}'] == '{subset_value}'. "
+                f"Available values: "
+                f"{sorted(adata.obs[subset_column].unique())}"
+            )
+        adata = adata[mask].copy()
+        print(
+            f"Subset to {subset_column}='{subset_value}': "
+            f"{adata.shape[0]} cells retained"
+        )
 
     # If a preprocessing configuration is provided, apply the specified steps
     if prep_config:

@@ -230,7 +230,11 @@ def main(cfg: DictConfig) -> None:
     # otherwise a plain JAX array is sufficient and lighter weight.
     needs_adata = cfg.get("annotation_key") is not None
     counts = load_and_preprocess_anndata(
-        data_path, cfg.data.get("preprocessing"), return_jax=not needs_adata
+        data_path,
+        cfg.data.get("preprocessing"),
+        return_jax=not needs_adata,
+        subset_column=cfg.data.get("subset_column"),
+        subset_value=cfg.data.get("subset_value"),
     )
     # Keep a plain-array view for viz utilities that don't accept AnnData
     if needs_adata:
