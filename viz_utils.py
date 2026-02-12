@@ -630,12 +630,13 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         # Fallback to matplotlib color names
         pass
 
-    # Determine cache path (same directory as data file)
+    # Determine cache path (same directory as data file, named after it)
     data_path = cfg.data.path if hasattr(cfg, "data") else None
     cache_path = None
     if data_path and cache_umap:
         data_dir = os.path.dirname(data_path)
-        cache_path = os.path.join(data_dir, "2d_umap.pkl")
+        data_stem = os.path.splitext(os.path.basename(data_path))[0]
+        cache_path = os.path.join(data_dir, f"{data_stem}_umap.pkl")
 
     # Current UMAP parameters for cache validation
     current_params = {
