@@ -423,8 +423,8 @@ def main() -> None:
         f"data={data_list}",
         "hydra/launcher=joblib",
         f"hydra.launcher.n_jobs={n_jobs}",
-        # Per-job GPU assignment: Hydra resolves ${data.gpu_id} per-job
-        "hydra.job.env_set.CUDA_VISIBLE_DEVICES=${data.gpu_id}",
+        # GPU assignment is handled inside infer.py via cfg.data.gpu_id
+        # (set before JAX initialises CUDA devices).
         *forwarded_args,
     ]
 

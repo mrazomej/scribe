@@ -199,6 +199,15 @@ def _build_priors_dict(priors_cfg):
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
+    # ------------------------------------------------------------------
+    # GPU pinning (used by infer_split.py for multi-GPU parallel runs).
+    # Must happen before any JAX computation so that CUDA device
+    # initialisation only sees the assigned GPU.
+    # ------------------------------------------------------------------
+    gpu_id = cfg.data.get("gpu_id")
+    if gpu_id is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+
     console = _get_console()
     console.print()
     console.print(
