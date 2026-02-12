@@ -121,10 +121,17 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="anndata")
 # ==============================================================================
 
 # Register custom Hydra resolver to sanitize directory names
-# This removes brackets [] which cause issues with Orbax checkpoint library
+# - Removes brackets [] which cause issues with Orbax checkpoint library
+# - Replaces forward slashes / with hyphens - so that nested data configs
+#   (e.g. data=bleo_splits/bleo_study01) stay as a single directory component
+#   instead of creating unwanted subdirectories
 OmegaConf.register_new_resolver(
     "sanitize_dirname",
-    lambda x: x.replace("[", "").replace("]", "") if isinstance(x, str) else x,
+    lambda x: (
+        x.replace("[", "").replace("]", "").replace("/", "-")
+        if isinstance(x, str)
+        else x
+    ),
     replace=True,
 )
 
