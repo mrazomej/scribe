@@ -139,3 +139,6 @@ paper/site_libs/*
 # SLURM launcher scripts and logs
 slurm_infer.py
 slurm_logs/
+
+# Multirun directory
+multirun/
