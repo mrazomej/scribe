@@ -289,9 +289,33 @@ def main() -> None:
         )
         return
 
-    counts = scribe.data_loader.load_and_preprocess_anndata(
-        data_path, orig_cfg.data.get("preprocessing")
+    # Determine which AnnData layer holds the raw counts.
+    # Priority: data-level layer > top-level layer > None (uses .X)
+    layer = orig_cfg.data.get("layer", orig_cfg.get("layer", None))
+
+    adata = scribe.data_loader.load_and_preprocess_anndata(
+        data_path, orig_cfg.data.get("preprocessing"), return_jax=False
     )
+
+    # Extract the correct count matrix (from layer or .X)
+    import numpy as np
+
+    if layer is not None:
+        if layer not in adata.layers:
+            console.print(
+                f"[bold red]ERROR: Layer '{layer}' not found in AnnData![/bold red]"
+            )
+            console.print(
+                f"[yellow]Available layers: {list(adata.layers.keys())}[/yellow]"
+            )
+            return
+        raw = adata.layers[layer]
+        console.print(f"[dim]Using layer:[/dim] [cyan]{layer}[/cyan]")
+    else:
+        raw = adata.X
+        console.print("[dim]Using layer:[/dim] [cyan].X[/cyan]")
+
+    counts = np.asarray(raw.toarray() if hasattr(raw, "toarray") else raw)
     console.print(
         f"[green]Data loaded![/green] [dim]Shape:[/dim] {counts.shape}"
     )
