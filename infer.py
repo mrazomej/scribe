@@ -200,6 +200,17 @@ def main(cfg: DictConfig) -> None:
     counts = load_and_preprocess_anndata(
         data_path, cfg.data.get("preprocessing"), return_jax=not needs_adata
     )
+    # Keep a plain-array view for viz utilities that don't accept AnnData
+    if needs_adata:
+        import numpy as np
+
+        counts_array = (
+            np.asarray(counts.X.toarray())
+            if hasattr(counts.X, "toarray")
+            else np.asarray(counts.X)
+        )
+    else:
+        counts_array = counts
     console.print(
         f"[green]✓[/green] [bold green]Data loaded successfully![/bold green] [dim]Shape:[/dim] {counts.shape}"
     )
@@ -421,12 +432,12 @@ def main(cfg: DictConfig) -> None:
                 plot_loss(results, figs_dir, cfg, viz_cfg)
             if should_plot_ecdf:
                 console.print("[dim]Generating ECDF plot...[/dim]")
-                plot_ecdf(counts, figs_dir, cfg, viz_cfg)
+                plot_ecdf(counts_array, figs_dir, cfg, viz_cfg)
             if should_plot_ppc:
                 console.print(
                     "[dim]Generating posterior predictive check plots...[/dim]"
                 )
-                plot_ppc(results, counts, figs_dir, cfg, viz_cfg)
+                plot_ppc(results, counts_array, figs_dir, cfg, viz_cfg)
 
             console.print(
                 "[green]✓[/green] [bold green]All visualizations completed![/bold green]"

@@ -42,7 +42,7 @@ console = Console()
 # ==============================================================================
 
 
-def _get_config_values(cfg):
+def _get_config_values(cfg, results=None):
     """
     Extracts relevant configuration values from a Hydra/OmegaConf config object.
 
@@ -59,10 +59,18 @@ def _get_config_values(cfg):
     determine if the config uses the old structure. If not, it falls back to the
     new structure where keys are at the top level.
 
+    When ``results`` is provided and has a non-None ``n_components`` attribute,
+    that value takes precedence over the config.  This handles the case where
+    ``n_components`` was auto-inferred from annotation labels at runtime and is
+    therefore absent from the saved Hydra config.
+
     Parameters
     ----------
     cfg : OmegaConf.DictConfig or dict-like
         The configuration object from which to extract values.
+    results : object, optional
+        A results object (e.g., ``ScribeSVIResults``) that may carry the
+        actual ``n_components`` used during inference.
 
     Returns
     -------
@@ -122,6 +130,13 @@ def _get_config_values(cfg):
         model_type = model_attr.get("type", "default")
     else:
         model_type = "default"
+
+    # If a results object carries the actual n_components (e.g. auto-inferred
+    # from annotation labels), prefer that over the config value.
+    if results is not None:
+        res_nc = getattr(results, "n_components", None)
+        if res_nc is not None:
+            n_components = res_nc
 
     # Return all extracted values in a dictionary for easy access
     return {
@@ -317,7 +332,7 @@ def plot_loss(results, figs_dir, cfg, viz_cfg):
     output_format = viz_cfg.get("format", "png")
 
     # Construct filename from original config
-    config_vals = _get_config_values(cfg)
+    config_vals = _get_config_values(cfg, results=results)
     fname = (
         f"{config_vals['method']}_"
         f"{config_vals['parameterization'].replace('-', '_')}_"
@@ -514,7 +529,7 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     output_format = viz_cfg.get("format", "png")
 
     # Construct filename
-    config_vals = _get_config_values(cfg)
+    config_vals = _get_config_values(cfg, results=results)
     fname = (
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
@@ -758,7 +773,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     output_format = viz_cfg.get("format", "png")
 
     # Construct filename
-    config_vals = _get_config_values(cfg)
+    config_vals = _get_config_values(cfg, results=results)
     fname = (
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
@@ -962,7 +977,7 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
     output_format = viz_cfg.get("format", "png")
 
     # Construct filename
-    config_vals = _get_config_values(cfg)
+    config_vals = _get_config_values(cfg, results=results)
     fname = (
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
@@ -1695,7 +1710,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
     # Get output format and config values
     output_format = viz_cfg.get("format", "png")
-    config_vals = _get_config_values(cfg)
+    config_vals = _get_config_values(cfg, results=results)
     base_fname = (
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
