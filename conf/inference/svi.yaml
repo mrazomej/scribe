@@ -25,7 +25,7 @@ stable_update: true
 early_stopping:
   # Enable/disable early stopping
   # Set to false to always run for n_steps
-  enabled: true
+  enabled: false
   
   # Number of steps without improvement before stopping
   # Higher values = more tolerance for temporary loss increases

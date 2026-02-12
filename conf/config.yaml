@@ -129,11 +129,13 @@ hydra:
           - viz.umap
           - viz.heatmap
           - viz.mixture_ppc
+          - viz.annotation_ppc
           - viz.format
           - viz.ecdf_opts
           - viz.ppc_opts
           - viz.umap_opts
           - viz.heatmap_opts
           - viz.mixture_ppc_opts
+          - viz.annotation_ppc_opts
           - output_dir
           - inference.early_stopping.enabled
