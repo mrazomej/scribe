@@ -1,0 +1,698 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>scribe.stats.distributions &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../models/index.html">Available Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">scribe.stats.distributions</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for scribe.stats.distributions</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Custom probability distributions for SCRIBE.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.random</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">scipy</span> <span class="k">as</span> <span class="n">jsp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro.distributions</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Distribution</span><span class="p">,</span>
+    <span class="n">constraints</span><span class="p">,</span>
+    <span class="n">Gamma</span><span class="p">,</span>
+    <span class="n">LowRankMultivariateNormal</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpyro.distributions.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">promote_shapes</span><span class="p">,</span> <span class="n">validate_sample</span>
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Beta Prime Distribution</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="BetaPrime">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.BetaPrime">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BetaPrime</span><span class="p">(</span><span class="n">Distribution</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Beta Prime distribution (odds-of-Beta convention).</span>
+
+<span class="sd">    Convention</span>
+<span class="sd">    ----------</span>
+<span class="sd">    If p ~ Beta(α, β) and φ = (1 - p) / p (odds of &quot;success&quot; 1 - p), then</span>
+<span class="sd">    φ ~ BetaPrime(α, β) in THIS CLASS.</span>
+
+<span class="sd">    Implementation detail</span>
+<span class="sd">    ---------------------</span>
+<span class="sd">    Mathematically, φ has the *standard* Beta-prime with swapped parameters:</span>
+<span class="sd">        φ ~ BetaPrime_std(β, α).</span>
+<span class="sd">    This class accepts (α, β) at the call site and internally uses (β, α),</span>
+<span class="sd">    so that your models can pass (α, β) unchanged. This is necessary because the</span>
+<span class="sd">    NumPyro NegativeBinomial distribution expects the `probs` parameter to be</span>
+<span class="sd">    the *failure probability* p, so that the odds ratio φ = (1 - p) / p is</span>
+<span class="sd">    consistent with the parameterization of the BetaPrime distribution.</span>
+
+<span class="sd">    Density (with user parameters α, β)</span>
+<span class="sd">    -----------------------------------</span>
+<span class="sd">        f(φ; α, β) = φ^(β - 1) * (1 + φ)^(-(α + β)) / B(β, α),    φ &gt; 0</span>
+
+<span class="sd">    Note the Beta function arguments B(β, α).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    concentration1 : jnp.ndarray</span>
+<span class="sd">        α (matches the Beta prior&#39;s first shape)</span>
+<span class="sd">    concentration0 : jnp.ndarray</span>
+<span class="sd">        β (matches the Beta prior&#39;s second shape)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">arg_constraints</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;concentration1&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">positive</span><span class="p">,</span>  <span class="c1"># α</span>
+        <span class="s2">&quot;concentration0&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">positive</span><span class="p">,</span>  <span class="c1"># β</span>
+    <span class="p">}</span>
+    <span class="n">support</span> <span class="o">=</span> <span class="n">constraints</span><span class="o">.</span><span class="n">positive</span>
+    <span class="n">has_rsample</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">concentration1</span><span class="p">,</span> <span class="n">concentration0</span><span class="p">,</span> <span class="n">validate_args</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">alpha</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">concentration1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>  <span class="c1"># α</span>
+        <span class="n">beta</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">concentration0</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>  <span class="c1"># β</span>
+        <span class="c1"># store user-facing α, β</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">=</span> <span class="n">promote_shapes</span><span class="p">(</span><span class="n">alpha</span><span class="p">,</span> <span class="n">beta</span><span class="p">)</span>
+        <span class="c1"># internal standard Beta-prime uses (a_std, b_std) = (β, α)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_a_std</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">beta</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_b_std</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="n">batch_shape</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+            <span class="n">event_shape</span><span class="o">=</span><span class="p">(),</span>
+            <span class="n">validate_args</span><span class="o">=</span><span class="n">validate_args</span><span class="p">,</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="BetaPrime.sample">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.BetaPrime.sample">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">sample_shape</span><span class="o">=</span><span class="p">()):</span>
+        <span class="n">key1</span><span class="p">,</span> <span class="n">key2</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="c1"># φ = X / Y with X ~ Gamma(β, 1), Y ~ Gamma(α, 1)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">Gamma</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_a_std</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">key1</span><span class="p">,</span> <span class="n">sample_shape</span><span class="p">)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">Gamma</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_b_std</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">key2</span><span class="p">,</span> <span class="n">sample_shape</span><span class="p">)</span>
+        <span class="c1"># Clamp to prevent 0/0 = NaN when shape params are very small</span>
+        <span class="c1"># (Gamma with tiny shape can underflow to exactly 0.0 in float32)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mf">1e-30</span><span class="p">)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="mf">1e-30</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">x</span> <span class="o">/</span> <span class="n">y</span></div>
+
+
+<div class="viewcode-block" id="BetaPrime.log_prob">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.BetaPrime.log_prob">[docs]</a>
+    <span class="nd">@validate_sample</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">log_prob</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="c1"># log f(φ; α, β) = (β-1) log φ - (α+β) log(1+φ) - log B(β, α)</span>
+        <span class="c1"># Clamp value to prevent log(0) = -inf when samples are near zero</span>
+        <span class="n">safe_value</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="mf">1e-30</span><span class="p">)</span>
+        <span class="n">log_num</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">safe_value</span><span class="p">)</span> <span class="o">-</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">beta</span>
+        <span class="p">)</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+        <span class="n">log_den</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">jsp</span><span class="o">.</span><span class="n">special</span><span class="o">.</span><span class="n">gammaln</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_a_std</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">jsp</span><span class="o">.</span><span class="n">special</span><span class="o">.</span><span class="n">gammaln</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_b_std</span><span class="p">)</span>
+            <span class="o">-</span> <span class="n">jsp</span><span class="o">.</span><span class="n">special</span><span class="o">.</span><span class="n">gammaln</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_a_std</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">_b_std</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">log_num</span> <span class="o">-</span> <span class="n">log_den</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">mean</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># E[φ] = β / (α - 1), defined for α &gt; 1</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">/</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">-</span> <span class="mi">1</span><span class="p">),</span> <span class="n">jnp</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">variance</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># Var[φ] = β(β + α - 1) / [(α - 1)^2 (α - 2)], defined for α &gt; 2</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">beta</span>
+            <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="o">/</span> <span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">-</span> <span class="mi">2</span><span class="p">)),</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">mode</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># mode = (β - 1) / (α + 1) for β &gt;= 1; else 0</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">alpha</span> <span class="o">+</span> <span class="mi">1</span><span class="p">),</span> <span class="mf">0.0</span>
+        <span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">concentration1</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Access to concentration1 parameter (α) for NumPyro compatibility.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">alpha</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">concentration0</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Access to concentration0 parameter (β) for NumPyro compatibility.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">beta</span></div>
+
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Low-Rank Compositional Distributions</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="LowRankLogisticNormal">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.LowRankLogisticNormal">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">LowRankLogisticNormal</span><span class="p">(</span><span class="n">Distribution</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Low-rank Logistic-Normal distribution for compositional data.</span>
+
+<span class="sd">    This distribution models D-dimensional probability vectors (on the simplex)</span>
+<span class="sd">    using a (D-1)-dimensional low-rank multivariate normal distribution in</span>
+<span class="sd">    log-ratio space. It uses the Additive Log-Ratio (ALR) transformation.</span>
+
+<span class="sd">    Mathematical Definition</span>
+<span class="sd">    -----------------------</span>
+<span class="sd">    Let y ∈ ℝ^(D-1) ~ MVN(μ, Σ) where Σ = WW^T + diag(D) is low-rank.</span>
+<span class="sd">    The ALR transformation maps y to the simplex Δ^D:</span>
+
+<span class="sd">        xᵢ = exp(yᵢ) / (1 + Σⱼ exp(yⱼ))   for i = 1, ..., D-1</span>
+<span class="sd">        x_D = 1 / (1 + Σⱼ exp(yⱼ))</span>
+
+<span class="sd">    The inverse transformation (simplex to log-ratio space) is:</span>
+
+<span class="sd">        yᵢ = log(xᵢ / x_D)   for i = 1, ..., D-1</span>
+
+<span class="sd">    The Jacobian of the transformation has log-determinant:</span>
+
+<span class="sd">        log|det(J)| = -Σᵢ₌₁^D log(xᵢ)</span>
+
+<span class="sd">    Low-Rank Covariance Structure</span>
+<span class="sd">    ------------------------------</span>
+<span class="sd">    The covariance matrix has the form:</span>
+
+<span class="sd">        Σ = WW^T + diag(D)</span>
+
+<span class="sd">    where:</span>
+<span class="sd">    - W is a (D-1) × rank factor matrix</span>
+<span class="sd">    - D is a (D-1) diagonal vector</span>
+<span class="sd">    - Memory: O((D-1) × rank) vs O((D-1)²) for full covariance</span>
+
+<span class="sd">    This is critical for large D (e.g., 30K+ genes) where storing full</span>
+<span class="sd">    covariance is prohibitive.</span>
+
+<span class="sd">    Asymmetry and Reference Component</span>
+<span class="sd">    ----------------------------------</span>
+<span class="sd">    The ALR transformation treats the last component (x_D) as a reference.</span>
+<span class="sd">    This means the distribution is NOT symmetric under permutation of</span>
+<span class="sd">    components. If you need symmetry, use SoftmaxNormal instead (but note</span>
+<span class="sd">    that SoftmaxNormal cannot compute log_prob).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    loc : jnp.ndarray</span>
+<span class="sd">        Location parameter μ ∈ ℝ^(D-1) (mean in log-ratio space)</span>
+<span class="sd">    cov_factor : jnp.ndarray</span>
+<span class="sd">        Low-rank factor matrix W of shape (D-1, rank)</span>
+<span class="sd">    cov_diag : jnp.ndarray</span>
+<span class="sd">        Diagonal component D of shape (D-1,)</span>
+<span class="sd">    validate_args : bool, optional</span>
+<span class="sd">        Whether to validate input arguments</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; from jax import random</span>
+<span class="sd">    &gt;&gt;&gt; import jax.numpy as jnp</span>
+<span class="sd">    &gt;&gt;&gt; # Create a low-rank logistic-normal for 5-dimensional simplex</span>
+<span class="sd">    &gt;&gt;&gt; D = 5</span>
+<span class="sd">    &gt;&gt;&gt; rank = 2</span>
+<span class="sd">    &gt;&gt;&gt; loc = jnp.zeros(D - 1)</span>
+<span class="sd">    &gt;&gt;&gt; cov_factor = jnp.ones((D - 1, rank)) * 0.1</span>
+<span class="sd">    &gt;&gt;&gt; cov_diag = jnp.ones(D - 1) * 0.5</span>
+<span class="sd">    &gt;&gt;&gt; dist = LowRankLogisticNormal(loc, cov_factor, cov_diag)</span>
+<span class="sd">    &gt;&gt;&gt; # Sample from the distribution (returns D-dimensional simplex points)</span>
+<span class="sd">    &gt;&gt;&gt; samples = dist.sample(random.PRNGKey(0), (100,))</span>
+<span class="sd">    &gt;&gt;&gt; samples.shape</span>
+<span class="sd">    (100, 5)</span>
+<span class="sd">    &gt;&gt;&gt; # Samples sum to 1</span>
+<span class="sd">    &gt;&gt;&gt; jnp.allclose(samples.sum(axis=-1), 1.0)</span>
+<span class="sd">    True</span>
+<span class="sd">    &gt;&gt;&gt; # Evaluate log probability</span>
+<span class="sd">    &gt;&gt;&gt; log_p = dist.log_prob(samples[0])</span>
+
+<span class="sd">    References</span>
+<span class="sd">    ----------</span>
+<span class="sd">    Aitchison, J., &amp; Shen, S. M. (1980). Logistic-normal distributions: Some</span>
+<span class="sd">    properties and uses. Biometrika, 67(2), 261-272.</span>
+
+<span class="sd">    Aitchison, J. (1986). The Statistical Analysis of Compositional Data.</span>
+<span class="sd">    Chapman &amp; Hall.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    SoftmaxNormal : Symmetric alternative using softmax (no log_prob available)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Define constraints</span>
+    <span class="n">arg_constraints</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;loc&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">real_vector</span><span class="p">,</span>
+        <span class="s2">&quot;cov_factor&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">independent</span><span class="p">(</span><span class="n">constraints</span><span class="o">.</span><span class="n">real</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+        <span class="s2">&quot;cov_diag&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">positive</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="n">support</span> <span class="o">=</span> <span class="n">constraints</span><span class="o">.</span><span class="n">simplex</span>
+    <span class="n">has_rsample</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loc</span><span class="p">,</span> <span class="n">cov_factor</span><span class="p">,</span> <span class="n">cov_diag</span><span class="p">,</span> <span class="n">validate_args</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">loc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">loc</span><span class="p">)</span>
+        <span class="n">cov_factor</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cov_factor</span><span class="p">)</span>
+        <span class="n">cov_diag</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cov_diag</span><span class="p">)</span>
+
+        <span class="c1"># Store parameters</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">loc</span> <span class="o">=</span> <span class="n">loc</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cov_factor</span> <span class="o">=</span> <span class="n">cov_factor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cov_diag</span> <span class="o">=</span> <span class="n">cov_diag</span>
+
+        <span class="c1"># Infer dimensions</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_dims_unconstrained</span> <span class="o">=</span> <span class="n">loc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># D - 1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_dims_simplex</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_dims_unconstrained</span> <span class="o">+</span> <span class="mi">1</span>  <span class="c1"># D</span>
+
+        <span class="c1"># Create internal low-rank multivariate normal</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base_dist</span> <span class="o">=</span> <span class="n">LowRankMultivariateNormal</span><span class="p">(</span>
+            <span class="n">loc</span><span class="o">=</span><span class="n">loc</span><span class="p">,</span> <span class="n">cov_factor</span><span class="o">=</span><span class="n">cov_factor</span><span class="p">,</span> <span class="n">cov_diag</span><span class="o">=</span><span class="n">cov_diag</span>
+        <span class="p">)</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="n">batch_shape</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">base_dist</span><span class="o">.</span><span class="n">batch_shape</span><span class="p">,</span>
+            <span class="n">event_shape</span><span class="o">=</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_dims_simplex</span><span class="p">,),</span>
+            <span class="n">validate_args</span><span class="o">=</span><span class="n">validate_args</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="LowRankLogisticNormal.sample">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.LowRankLogisticNormal.sample">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">sample_shape</span><span class="o">=</span><span class="p">()):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Sample from the distribution.</span>
+
+<span class="sd">        Returns samples on the D-dimensional simplex.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        key : random.PRNGKey</span>
+<span class="sd">            JAX random key</span>
+<span class="sd">        sample_shape : tuple, optional</span>
+<span class="sd">            Shape of samples to draw</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        jnp.ndarray</span>
+<span class="sd">            Samples of shape (*sample_shape, *batch_shape, D) on the simplex</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Sample from base MVN in log-ratio space</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_dist</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">sample_shape</span><span class="p">)</span>  <span class="c1"># (..., D-1)</span>
+
+        <span class="c1"># Apply ALR transformation</span>
+        <span class="n">exp_y</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+        <span class="n">sum_exp</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">+</span> <span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">exp_y</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># Compute simplex coordinates</span>
+        <span class="n">x_first</span> <span class="o">=</span> <span class="n">exp_y</span> <span class="o">/</span> <span class="n">sum_exp</span>  <span class="c1"># (..., D-1)</span>
+        <span class="n">x_last</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">sum_exp</span>  <span class="c1"># (..., 1)</span>
+
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">x_first</span><span class="p">,</span> <span class="n">x_last</span><span class="p">],</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (..., D)</span></div>
+
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="LowRankLogisticNormal.log_prob">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.LowRankLogisticNormal.log_prob">[docs]</a>
+    <span class="nd">@validate_sample</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">log_prob</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Evaluate log probability density.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        value : jnp.ndarray</span>
+<span class="sd">            Points on the simplex of shape (..., D)</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        jnp.ndarray</span>
+<span class="sd">            Log probability density of shape (...)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Inverse ALR: x -&gt; y</span>
+        <span class="c1"># yᵢ = log(xᵢ / x_D)</span>
+        <span class="n">x_first</span> <span class="o">=</span> <span class="n">value</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># (..., D-1)</span>
+        <span class="n">x_last</span> <span class="o">=</span> <span class="n">value</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">:]</span>  <span class="c1"># (..., 1)</span>
+
+        <span class="c1"># Compute log-ratio coordinates (avoid log(0))</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">x_first</span> <span class="o">+</span> <span class="mf">1e-20</span><span class="p">)</span> <span class="o">-</span> <span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">x_last</span> <span class="o">+</span> <span class="mf">1e-20</span><span class="p">)</span>  <span class="c1"># (..., D-1)</span>
+
+        <span class="c1"># Log probability in unconstrained space</span>
+        <span class="n">log_prob_unconstrained</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_dist</span><span class="o">.</span><span class="n">log_prob</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>  <span class="c1"># (...)</span>
+
+        <span class="c1"># Jacobian correction: log|det(J)| = -Σᵢ log(xᵢ)</span>
+        <span class="n">log_jacob</span> <span class="o">=</span> <span class="o">-</span><span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">value</span> <span class="o">+</span> <span class="mf">1e-20</span><span class="p">),</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (...)</span>
+
+        <span class="k">return</span> <span class="n">log_prob_unconstrained</span> <span class="o">+</span> <span class="n">log_jacob</span></div>
+
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">mean</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Mean of the distribution on the simplex.</span>
+
+<span class="sd">        Note: This is an approximation computed via Monte Carlo sampling,</span>
+<span class="sd">        as the true mean does not have a closed form.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        jnp.ndarray</span>
+<span class="sd">            Approximate mean of shape (*batch_shape, D)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Approximate mean via sampling</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">samples</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">(</span><span class="mi">10000</span><span class="p">,))</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Softmax-Normal Distribution</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="SoftmaxNormal">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.SoftmaxNormal">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">SoftmaxNormal</span><span class="p">(</span><span class="n">Distribution</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Softmax-Normal distribution for compositional data (symmetric).</span>
+
+<span class="sd">    This distribution models D-dimensional probability vectors (on the simplex)</span>
+<span class="sd">    using a D-dimensional low-rank multivariate normal distribution with a</span>
+<span class="sd">    softmax transformation. Unlike LowRankLogisticNormal (which uses ALR),</span>
+<span class="sd">    this treats all components symmetrically.</span>
+
+<span class="sd">    Mathematical Definition</span>
+<span class="sd">    -----------------------</span>
+<span class="sd">    Let y ∈ ℝ^D ~ MVN(μ, Σ) where Σ = WW^T + diag(D) is low-rank.</span>
+<span class="sd">    The softmax transformation maps y to the simplex Δ^D:</span>
+
+<span class="sd">        xᵢ = exp(yᵢ) / Σⱼ exp(yⱼ)   for i = 1, ..., D</span>
+
+<span class="sd">    Symmetry and Invariance</span>
+<span class="sd">    -----------------------</span>
+<span class="sd">    The softmax transformation is:</span>
+<span class="sd">    - Symmetric: All components treated equally (no reference component)</span>
+<span class="sd">    - Translation-invariant: softmax(y + c·1) = softmax(y) for any constant c</span>
+
+<span class="sd">    This translation invariance means the transformation is SINGULAR - you</span>
+<span class="sd">    cannot uniquely invert it. Therefore, log_prob() is not available.</span>
+
+<span class="sd">    Low-Rank Covariance Structure</span>
+<span class="sd">    ------------------------------</span>
+<span class="sd">    The covariance matrix has the form:</span>
+
+<span class="sd">        Σ = WW^T + diag(D)</span>
+
+<span class="sd">    where:</span>
+<span class="sd">        - W is a D × rank factor matrix</span>
+<span class="sd">        - D is a D-dimensional diagonal vector</span>
+<span class="sd">        - Memory: O(D × rank) vs O(D²) for full covariance</span>
+
+<span class="sd">    When to Use</span>
+<span class="sd">    -----------</span>
+<span class="sd">    Use SoftmaxNormal when:</span>
+<span class="sd">        - You want symmetric treatment of all components</span>
+<span class="sd">        - You only need sampling (not log_prob evaluation)</span>
+<span class="sd">        - You&#39;re summarizing/visualizing posterior distributions</span>
+
+<span class="sd">    Use LowRankLogisticNormal when:</span>
+<span class="sd">        - You need to evaluate log_prob() for observed data</span>
+<span class="sd">        - You&#39;re using the distribution as a likelihood in Bayesian inference</span>
+<span class="sd">        - Asymmetry (reference component) is acceptable</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    loc : jnp.ndarray</span>
+<span class="sd">        Location parameter μ ∈ ℝ^D (mean in log-space)</span>
+<span class="sd">    cov_factor : jnp.ndarray</span>
+<span class="sd">        Low-rank factor matrix W of shape (D, rank)</span>
+<span class="sd">    cov_diag : jnp.ndarray</span>
+<span class="sd">        Diagonal component D of shape (D,)</span>
+<span class="sd">    validate_args : bool, optional</span>
+<span class="sd">        Whether to validate input arguments</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; from jax import random</span>
+<span class="sd">    &gt;&gt;&gt; import jax.numpy as jnp</span>
+<span class="sd">    &gt;&gt;&gt; # Create a softmax-normal for 5-dimensional simplex</span>
+<span class="sd">    &gt;&gt;&gt; D = 5</span>
+<span class="sd">    &gt;&gt;&gt; rank = 2</span>
+<span class="sd">    &gt;&gt;&gt; loc = jnp.zeros(D)</span>
+<span class="sd">    &gt;&gt;&gt; cov_factor = jnp.ones((D, rank)) * 0.1</span>
+<span class="sd">    &gt;&gt;&gt; cov_diag = jnp.ones(D) * 0.5</span>
+<span class="sd">    &gt;&gt;&gt; dist = SoftmaxNormal(loc, cov_factor, cov_diag)</span>
+<span class="sd">    &gt;&gt;&gt; # Sample from the distribution</span>
+<span class="sd">    &gt;&gt;&gt; samples = dist.sample(random.PRNGKey(0), (100,))</span>
+<span class="sd">    &gt;&gt;&gt; samples.shape</span>
+<span class="sd">    (100, 5)</span>
+<span class="sd">    &gt;&gt;&gt; # Samples sum to 1</span>
+<span class="sd">    &gt;&gt;&gt; jnp.allclose(samples.sum(axis=-1), 1.0)</span>
+<span class="sd">    True</span>
+<span class="sd">    &gt;&gt;&gt; # Access underlying log-space distribution</span>
+<span class="sd">    &gt;&gt;&gt; log_samples = dist.base_dist.sample(random.PRNGKey(1), (100,))</span>
+<span class="sd">    &gt;&gt;&gt; # Apply softmax manually</span>
+<span class="sd">    &gt;&gt;&gt; manual_samples = jax.nn.softmax(log_samples, axis=-1)</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    LowRankLogisticNormal : ALR-based alternative with log_prob() available</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Define constraints</span>
+    <span class="n">arg_constraints</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;loc&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">real_vector</span><span class="p">,</span>
+        <span class="s2">&quot;cov_factor&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">independent</span><span class="p">(</span><span class="n">constraints</span><span class="o">.</span><span class="n">real</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+        <span class="s2">&quot;cov_diag&quot;</span><span class="p">:</span> <span class="n">constraints</span><span class="o">.</span><span class="n">positive</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="n">support</span> <span class="o">=</span> <span class="n">constraints</span><span class="o">.</span><span class="n">simplex</span>
+    <span class="n">has_rsample</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loc</span><span class="p">,</span> <span class="n">cov_factor</span><span class="p">,</span> <span class="n">cov_diag</span><span class="p">,</span> <span class="n">validate_args</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">loc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">loc</span><span class="p">)</span>
+        <span class="n">cov_factor</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cov_factor</span><span class="p">)</span>
+        <span class="n">cov_diag</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cov_diag</span><span class="p">)</span>
+
+        <span class="c1"># Store parameters</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">loc</span> <span class="o">=</span> <span class="n">loc</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cov_factor</span> <span class="o">=</span> <span class="n">cov_factor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cov_diag</span> <span class="o">=</span> <span class="n">cov_diag</span>
+
+        <span class="c1"># Infer dimension</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_dims</span> <span class="o">=</span> <span class="n">loc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>  <span class="c1"># D</span>
+
+        <span class="c1"># Create internal low-rank multivariate normal</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base_dist</span> <span class="o">=</span> <span class="n">LowRankMultivariateNormal</span><span class="p">(</span>
+            <span class="n">loc</span><span class="o">=</span><span class="n">loc</span><span class="p">,</span> <span class="n">cov_factor</span><span class="o">=</span><span class="n">cov_factor</span><span class="p">,</span> <span class="n">cov_diag</span><span class="o">=</span><span class="n">cov_diag</span>
+        <span class="p">)</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="n">batch_shape</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">base_dist</span><span class="o">.</span><span class="n">batch_shape</span><span class="p">,</span>
+            <span class="n">event_shape</span><span class="o">=</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_dims</span><span class="p">,),</span>
+            <span class="n">validate_args</span><span class="o">=</span><span class="n">validate_args</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="SoftmaxNormal.sample">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.SoftmaxNormal.sample">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">sample_shape</span><span class="o">=</span><span class="p">()):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Sample from the distribution.</span>
+
+<span class="sd">        Returns samples on the D-dimensional simplex.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        key : random.PRNGKey</span>
+<span class="sd">            JAX random key</span>
+<span class="sd">        sample_shape : tuple, optional</span>
+<span class="sd">            Shape of samples to draw</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        jnp.ndarray</span>
+<span class="sd">            Samples of shape (*sample_shape, *batch_shape, D) on the simplex</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Sample from base MVN in log-space</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_dist</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">sample_shape</span><span class="p">)</span>  <span class="c1"># (..., D)</span>
+
+        <span class="c1"># Apply softmax transformation</span>
+        <span class="n">exp_y</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">exp_y</span> <span class="o">/</span> <span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">exp_y</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">x</span></div>
+
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="SoftmaxNormal.log_prob">
+<a class="viewcode-back" href="../../../api/stats.html#scribe.stats.SoftmaxNormal.log_prob">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">log_prob</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Evaluate log probability density.</span>
+
+<span class="sd">        NOT IMPLEMENTED: The softmax transformation is singular (adding a</span>
+<span class="sd">        constant to all log-space coordinates doesn&#39;t change the output),</span>
+<span class="sd">        so the Jacobian determinant is zero and log_prob is undefined.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        value : jnp.ndarray</span>
+<span class="sd">            Points on the simplex</span>
+
+<span class="sd">        Raises</span>
+<span class="sd">        ------</span>
+<span class="sd">        NotImplementedError</span>
+<span class="sd">            Always raised. Use LowRankLogisticNormal if you need log_prob(),</span>
+<span class="sd">            or access base_dist.log_prob() for log-space density.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s2">&quot;log_prob() is not available for SoftmaxNormal because the softmax &quot;</span>
+            <span class="s2">&quot;transformation is singular (adding a constant c to all components &quot;</span>
+            <span class="s2">&quot;of y doesn&#39;t change softmax(y)). &quot;</span>
+            <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">Options:&quot;</span>
+            <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">  1. Use LowRankLogisticNormal if you need log_prob() on the &quot;</span>
+            <span class="s2">&quot;simplex (note: it uses ALR so the last component is a reference)&quot;</span>
+            <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">  2. Use self.base_dist.log_prob() to evaluate density in &quot;</span>
+            <span class="s2">&quot;log-space (but this doesn&#39;t account for the softmax transform)&quot;</span>
+        <span class="p">)</span></div>
+
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">mean</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Mean of the distribution on the simplex.</span>
+
+<span class="sd">        Note: This is an approximation computed via Monte Carlo sampling,</span>
+<span class="sd">        as the true mean does not have a closed form.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        jnp.ndarray</span>
+<span class="sd">            Approximate mean of shape (*batch_shape, D)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Approximate mean via sampling</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">samples</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">(</span><span class="mi">10000</span><span class="p">,))</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

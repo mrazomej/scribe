@@ -1,0 +1,470 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>scribe.utils.parameter_collector &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../models/index.html">Available Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">scribe.utils.parameter_collector</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for scribe.utils.parameter_collector</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Parameter collection and mapping utilities for SCRIBE.</span>
+
+<span class="sd">This module provides utilities for collecting optional parameters and mapping</span>
+<span class="sd">them to the correct ModelConfig attribute names based on parameterization type</span>
+<span class="sd">and constraint settings.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Parameter Collector Class</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="ParameterCollector">
+<a class="viewcode-back" href="../../../api/utils.html#scribe.utils.ParameterCollector">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ParameterCollector</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Utility class for collecting and mapping optional parameters.</span>
+
+<span class="sd">    This class provides static methods to collect non-None parameters and map</span>
+<span class="sd">    them to the appropriate ModelConfig attribute names based on the model</span>
+<span class="sd">    parameterization and constraint settings.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; # Collect only non-None parameters</span>
+<span class="sd">    &gt;&gt;&gt; params = ParameterCollector.collect_non_none(</span>
+<span class="sd">    ...     r_prior=(1.0, 1.0),</span>
+<span class="sd">    ...     p_prior=None,</span>
+<span class="sd">    ...     gate_prior=(2.0, 0.5)</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; print(params)</span>
+<span class="sd">    {&#39;r_prior&#39;: (1.0, 1.0), &#39;gate_prior&#39;: (2.0, 0.5)}</span>
+
+<span class="sd">    &gt;&gt;&gt; # Collect and map prior parameters for standard parameterization</span>
+<span class="sd">    &gt;&gt;&gt; prior_config = ParameterCollector.collect_and_map_priors(</span>
+<span class="sd">    ...     unconstrained=False,</span>
+<span class="sd">    ...     parameterization=&quot;standard&quot;,</span>
+<span class="sd">    ...     r_prior=(1.0, 1.0),</span>
+<span class="sd">    ...     p_prior=(2.0, 0.5)</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; print(prior_config)</span>
+<span class="sd">    {&#39;r_param_prior&#39;: (1.0, 1.0), &#39;p_param_prior&#39;: (2.0, 0.5)}</span>
+
+<span class="sd">    &gt;&gt;&gt; # Collect VAE parameters</span>
+<span class="sd">    &gt;&gt;&gt; vae_config = ParameterCollector.collect_vae_params(</span>
+<span class="sd">    ...     vae_latent_dim=5,</span>
+<span class="sd">    ...     vae_hidden_dims=[256, 128],</span>
+<span class="sd">    ...     vae_activation=&quot;gelu&quot;</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; print(vae_config)</span>
+<span class="sd">    {</span>
+<span class="sd">        &#39;vae_latent_dim&#39;: 5,</span>
+<span class="sd">        &#39;vae_hidden_dims&#39;: [256, 128],</span>
+<span class="sd">        &#39;vae_activation&#39;: &#39;gelu&#39;</span>
+<span class="sd">    }</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+    <span class="c1"># Collect Non-None Parameters</span>
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="ParameterCollector.collect_non_none">
+<a class="viewcode-back" href="../../../api/utils.html#scribe.utils.ParameterCollector.collect_non_none">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_non_none</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return only non-None keyword arguments.</span>
+
+<span class="sd">        This is a simple utility to filter out None values from a dictionary</span>
+<span class="sd">        of keyword arguments, useful for collecting only the parameters that</span>
+<span class="sd">        were explicitly provided by the user.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        **kwargs</span>
+<span class="sd">            Keyword arguments to filter</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Dict[str, Any]</span>
+<span class="sd">            Dictionary containing only non-None values</span>
+
+<span class="sd">        Examples</span>
+<span class="sd">        --------</span>
+<span class="sd">        &gt;&gt;&gt; params = ParameterCollector.collect_non_none(</span>
+<span class="sd">        ...     a=1, b=None, c=&quot;hello&quot;, d=None</span>
+<span class="sd">        ... )</span>
+<span class="sd">        &gt;&gt;&gt; print(params)</span>
+<span class="sd">        {&#39;a&#39;: 1, &#39;c&#39;: &#39;hello&#39;}</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">}</span></div>
+
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+    <span class="c1"># Collect and Map Prior Parameters</span>
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="ParameterCollector.collect_and_map_priors">
+<a class="viewcode-back" href="../../../api/utils.html#scribe.utils.ParameterCollector.collect_and_map_priors">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_and_map_priors</span><span class="p">(</span>
+        <span class="n">unconstrained</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+        <span class="n">parameterization</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">r_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">p_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">gate_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">p_capture_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">mixing_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">mu_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">phi_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">phi_capture_prior</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Collect and map prior parameters to ModelConfig attribute names.</span>
+
+<span class="sd">        This method collects all non-None prior parameters and maps them to</span>
+<span class="sd">        the correct ModelConfig attribute names based on whether the model</span>
+<span class="sd">        uses unconstrained parameterization and the specific parameterization</span>
+<span class="sd">        type (standard, linked, odds_ratio).</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        unconstrained : bool</span>
+<span class="sd">            Whether the model uses unconstrained parameterization</span>
+<span class="sd">        parameterization : str</span>
+<span class="sd">            Model parameterization type (&quot;standard&quot;, &quot;linked&quot;, &quot;odds_ratio&quot;)</span>
+<span class="sd">        r_prior : Optional[tuple], default=None</span>
+<span class="sd">            Prior parameters for dispersion parameter (r)</span>
+<span class="sd">        p_prior : Optional[tuple], default=None</span>
+<span class="sd">            Prior parameters for success probability (p)</span>
+<span class="sd">        gate_prior : Optional[tuple], default=None</span>
+<span class="sd">            Prior parameters for zero-inflation gate</span>
+<span class="sd">        p_capture_prior : Optional[tuple], default=None</span>
+<span class="sd">            Prior parameters for variable capture probability</span>
+<span class="sd">        mixing_prior : Optional[Any], default=None</span>
+<span class="sd">            Prior parameters for mixture components</span>
+<span class="sd">        mu_prior : Optional[tuple], default=None</span>
+<span class="sd">            Prior parameters for mean parameter (used in linked/odds_ratio)</span>
+<span class="sd">        phi_prior : Optional[tuple], default=None</span>
+<span class="sd">            Prior parameters for odds ratio parameter (used in odds_ratio)</span>
+<span class="sd">        phi_capture_prior : Optional[tuple], default=None</span>
+<span class="sd">            Prior parameters for variable capture odds ratio</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Dict[str, Any]</span>
+<span class="sd">            Dictionary mapping ModelConfig attribute names to prior values</span>
+
+<span class="sd">        Examples</span>
+<span class="sd">        --------</span>
+<span class="sd">        &gt;&gt;&gt; # Standard parameterization (constrained)</span>
+<span class="sd">        &gt;&gt;&gt; config = ParameterCollector.collect_and_map_priors(</span>
+<span class="sd">        ...     unconstrained=False,</span>
+<span class="sd">        ...     parameterization=&quot;standard&quot;,</span>
+<span class="sd">        ...     r_prior=(1.0, 1.0),</span>
+<span class="sd">        ...     p_prior=(2.0, 0.5)</span>
+<span class="sd">        ... )</span>
+<span class="sd">        &gt;&gt;&gt; print(config)</span>
+<span class="sd">        {&#39;r_param_prior&#39;: (1.0, 1.0), &#39;p_param_prior&#39;: (2.0, 0.5)}</span>
+
+<span class="sd">        &gt;&gt;&gt; # Unconstrained standard parameterization</span>
+<span class="sd">        &gt;&gt;&gt; config = ParameterCollector.collect_and_map_priors(</span>
+<span class="sd">        ...     unconstrained=True,</span>
+<span class="sd">        ...     parameterization=&quot;standard&quot;,</span>
+<span class="sd">        ...     r_prior=(0.0, 1.0),</span>
+<span class="sd">        ...     p_prior=(0.0, 1.0)</span>
+<span class="sd">        ... )</span>
+<span class="sd">        &gt;&gt;&gt; print(config)</span>
+<span class="sd">        {</span>
+<span class="sd">            &#39;r_unconstrained_prior&#39;: (0.0, 1.0),</span>
+<span class="sd">            &#39;p_unconstrained_prior&#39;: (0.0, 1.0)</span>
+<span class="sd">        }</span>
+
+<span class="sd">        &gt;&gt;&gt; # Linked parameterization with mu parameter</span>
+<span class="sd">        &gt;&gt;&gt; config = ParameterCollector.collect_and_map_priors(</span>
+<span class="sd">        ...     unconstrained=False,</span>
+<span class="sd">        ...     parameterization=&quot;linked&quot;,</span>
+<span class="sd">        ...     p_prior=(1.0, 1.0),</span>
+<span class="sd">        ...     mu_prior=(0.0, 1.0)</span>
+<span class="sd">        ... )</span>
+<span class="sd">        &gt;&gt;&gt; print(config)</span>
+<span class="sd">        {&#39;p_param_prior&#39;: (1.0, 1.0), &#39;mu_param_prior&#39;: (0.0, 1.0)}</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Step 1: Collect non-None priors</span>
+        <span class="n">user_priors</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_non_none</span><span class="p">(</span>
+            <span class="n">r_prior</span><span class="o">=</span><span class="n">r_prior</span><span class="p">,</span>
+            <span class="n">p_prior</span><span class="o">=</span><span class="n">p_prior</span><span class="p">,</span>
+            <span class="n">gate_prior</span><span class="o">=</span><span class="n">gate_prior</span><span class="p">,</span>
+            <span class="n">p_capture_prior</span><span class="o">=</span><span class="n">p_capture_prior</span><span class="p">,</span>
+            <span class="n">mixing_prior</span><span class="o">=</span><span class="n">mixing_prior</span><span class="p">,</span>
+            <span class="n">mu_prior</span><span class="o">=</span><span class="n">mu_prior</span><span class="p">,</span>
+            <span class="n">phi_prior</span><span class="o">=</span><span class="n">phi_prior</span><span class="p">,</span>
+            <span class="n">phi_capture_prior</span><span class="o">=</span><span class="n">phi_capture_prior</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Step 2: Map to internal names based on unconstrained/parameterization</span>
+        <span class="k">if</span> <span class="n">unconstrained</span><span class="p">:</span>
+            <span class="c1"># For unconstrained parameterization, use unconstrained prior names</span>
+            <span class="n">mapped_priors</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;p_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;p_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;r_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;r_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;gate_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;gate_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;p_capture_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                    <span class="s2">&quot;p_capture_prior&quot;</span>
+                <span class="p">),</span>
+                <span class="s2">&quot;mixing_logits_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                    <span class="s2">&quot;mixing_prior&quot;</span>
+                <span class="p">),</span>
+            <span class="p">}</span>
+
+            <span class="c1"># Add parameterization-specific unconstrained priors</span>
+            <span class="k">if</span> <span class="n">parameterization</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;linked&quot;</span><span class="p">,</span> <span class="s2">&quot;mean_prob&quot;</span><span class="p">):</span>
+                <span class="n">mapped_priors</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;mu_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mu_prior&quot;</span><span class="p">),</span>
+                    <span class="p">}</span>
+                <span class="p">)</span>
+            <span class="k">elif</span> <span class="n">parameterization</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;odds_ratio&quot;</span><span class="p">,</span> <span class="s2">&quot;mean_odds&quot;</span><span class="p">):</span>
+                <span class="n">mapped_priors</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;phi_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_prior&quot;</span><span class="p">),</span>
+                        <span class="s2">&quot;mu_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mu_prior&quot;</span><span class="p">),</span>
+                        <span class="s2">&quot;phi_capture_unconstrained_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                            <span class="s2">&quot;phi_capture_prior&quot;</span>
+                        <span class="p">),</span>
+                    <span class="p">}</span>
+                <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># For constrained parameterization, use standard prior names</span>
+            <span class="n">mapped_priors</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;p_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;p_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;r_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;r_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;mu_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mu_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;phi_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;gate_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;gate_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;p_capture_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;p_capture_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;phi_capture_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_capture_prior&quot;</span><span class="p">),</span>
+                <span class="s2">&quot;mixing_param_prior&quot;</span><span class="p">:</span> <span class="n">user_priors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;mixing_prior&quot;</span><span class="p">),</span>
+            <span class="p">}</span>
+
+        <span class="c1"># Step 3: Return only non-None mapped values</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">mapped_priors</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">}</span></div>
+
+
+    <span class="c1"># --------------------------------------------------------------------------</span>
+    <span class="c1"># Collect VAE Parameters</span>
+    <span class="c1"># --------------------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="ParameterCollector.collect_vae_params">
+<a class="viewcode-back" href="../../../api/utils.html#scribe.utils.ParameterCollector.collect_vae_params">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_vae_params</span><span class="p">(</span>
+        <span class="n">vae_latent_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+        <span class="n">vae_hidden_dims</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_activation</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_input_transformation</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_vcp_hidden_dims</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_vcp_activation</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_prior_type</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+        <span class="n">vae_prior_num_layers</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_prior_hidden_dims</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_prior_activation</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">vae_prior_mask_type</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;alternating&quot;</span><span class="p">,</span>
+        <span class="n">vae_standardize</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Collect VAE-specific parameters for ModelConfig.</span>
+
+<span class="sd">        This method collects all VAE-related parameters and returns them as</span>
+<span class="sd">        a dictionary ready to be merged into ModelConfig kwargs. Only non-None</span>
+<span class="sd">        values are included in the returned dictionary.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        vae_latent_dim : int, default=3</span>
+<span class="sd">            Dimension of the VAE latent space</span>
+<span class="sd">        vae_hidden_dims : Optional[List[int]], default=None</span>
+<span class="sd">            List of hidden layer dimensions for the VAE encoder/decoder</span>
+<span class="sd">        vae_activation : Optional[str], default=None</span>
+<span class="sd">            Activation function name for VAE layers</span>
+<span class="sd">        vae_input_transformation : Optional[str], default=None</span>
+<span class="sd">            Input transformation for VAE</span>
+<span class="sd">        vae_vcp_hidden_dims : Optional[List[int]], default=None</span>
+<span class="sd">            Hidden layer dimensions for VCP encoder (variable capture models)</span>
+<span class="sd">        vae_vcp_activation : Optional[str], default=None</span>
+<span class="sd">            Activation function for VCP encoder</span>
+<span class="sd">        vae_prior_type : str, default=&quot;standard&quot;</span>
+<span class="sd">            Type of VAE prior (&quot;standard&quot; or &quot;decoupled&quot;)</span>
+<span class="sd">        vae_prior_num_layers : Optional[int], default=None</span>
+<span class="sd">            Number of coupling layers for decoupled prior</span>
+<span class="sd">        vae_prior_hidden_dims : Optional[List[int]], default=None</span>
+<span class="sd">            Hidden layer dimensions for decoupled prior coupling layers</span>
+<span class="sd">        vae_prior_activation : Optional[str], default=None</span>
+<span class="sd">            Activation function for decoupled prior coupling layers</span>
+<span class="sd">        vae_prior_mask_type : str, default=&quot;alternating&quot;</span>
+<span class="sd">            Mask type for decoupled prior coupling layers</span>
+<span class="sd">        vae_standardize : bool, default=False</span>
+<span class="sd">            Whether to standardize input data for VAE models</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Dict[str, Any]</span>
+<span class="sd">            Dictionary of VAE parameters ready for ModelConfig</span>
+
+<span class="sd">        Examples</span>
+<span class="sd">        --------</span>
+<span class="sd">        &gt;&gt;&gt; # Basic VAE configuration</span>
+<span class="sd">        &gt;&gt;&gt; vae_config = ParameterCollector.collect_vae_params(</span>
+<span class="sd">        ...     vae_latent_dim=5,</span>
+<span class="sd">        ...     vae_hidden_dims=[256, 128],</span>
+<span class="sd">        ...     vae_activation=&quot;gelu&quot;</span>
+<span class="sd">        ... )</span>
+<span class="sd">        &gt;&gt;&gt; print(vae_config)</span>
+<span class="sd">        {&#39;vae_latent_dim&#39;: 5, &#39;vae_hidden_dims&#39;: [256, 128], &#39;vae_activation&#39;: &#39;gelu&#39;}</span>
+
+<span class="sd">        &gt;&gt;&gt; # VAE with decoupled prior</span>
+<span class="sd">        &gt;&gt;&gt; vae_config = ParameterCollector.collect_vae_params(</span>
+<span class="sd">        ...     vae_latent_dim=3,</span>
+<span class="sd">        ...     vae_prior_type=&quot;decoupled&quot;,</span>
+<span class="sd">        ...     vae_prior_num_layers=3,</span>
+<span class="sd">        ...     vae_prior_hidden_dims=[64, 64]</span>
+<span class="sd">        ... )</span>
+<span class="sd">        &gt;&gt;&gt; print(vae_config)</span>
+<span class="sd">        {</span>
+<span class="sd">            &#39;vae_latent_dim&#39;: 3,</span>
+<span class="sd">            &#39;vae_prior_type&#39;: &#39;decoupled&#39;,</span>
+<span class="sd">            &#39;vae_prior_num_layers&#39;: 3,</span>
+<span class="sd">            &#39;vae_prior_hidden_dims&#39;: [64, 64]</span>
+<span class="sd">        }</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Collect all VAE parameters</span>
+        <span class="n">vae_params</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;vae_latent_dim&quot;</span><span class="p">:</span> <span class="n">vae_latent_dim</span><span class="p">,</span>
+            <span class="s2">&quot;vae_hidden_dims&quot;</span><span class="p">:</span> <span class="n">vae_hidden_dims</span><span class="p">,</span>
+            <span class="s2">&quot;vae_activation&quot;</span><span class="p">:</span> <span class="n">vae_activation</span><span class="p">,</span>
+            <span class="s2">&quot;vae_input_transformation&quot;</span><span class="p">:</span> <span class="n">vae_input_transformation</span><span class="p">,</span>
+            <span class="s2">&quot;vae_vcp_hidden_dims&quot;</span><span class="p">:</span> <span class="n">vae_vcp_hidden_dims</span><span class="p">,</span>
+            <span class="s2">&quot;vae_vcp_activation&quot;</span><span class="p">:</span> <span class="n">vae_vcp_activation</span><span class="p">,</span>
+            <span class="s2">&quot;vae_prior_type&quot;</span><span class="p">:</span> <span class="n">vae_prior_type</span><span class="p">,</span>
+            <span class="s2">&quot;vae_prior_num_layers&quot;</span><span class="p">:</span> <span class="n">vae_prior_num_layers</span><span class="p">,</span>
+            <span class="s2">&quot;vae_prior_hidden_dims&quot;</span><span class="p">:</span> <span class="n">vae_prior_hidden_dims</span><span class="p">,</span>
+            <span class="s2">&quot;vae_prior_activation&quot;</span><span class="p">:</span> <span class="n">vae_prior_activation</span><span class="p">,</span>
+            <span class="s2">&quot;vae_prior_mask_type&quot;</span><span class="p">:</span> <span class="n">vae_prior_mask_type</span><span class="p">,</span>
+            <span class="s2">&quot;vae_standardize&quot;</span><span class="p">:</span> <span class="n">vae_standardize</span><span class="p">,</span>
+        <span class="p">}</span>
+
+        <span class="c1"># Return only non-None values</span>
+        <span class="k">return</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_non_none</span><span class="p">(</span><span class="o">**</span><span class="n">vae_params</span><span class="p">)</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

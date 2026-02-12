@@ -1,0 +1,1038 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quickstart with 10x Genomics Data &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Available Models" href="../models/index.html" />
+    <link rel="prev" title="Quickstart" href="../quickstart.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../quickstart.html">Quickstart</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Quickstart with 10x Genomics Data</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#setup">Setup</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#loading-the-data">Loading the Data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#model-1-negative-binomial-dirichlet-multinomial-nbdm">Model 1: Negative Binomial-Dirichlet Multinomial (NBDM)</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#visualizing-results-for-nbdm">Visualizing Results for NBDM</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#strategic-gene-selection-for-posterior-predictive-checks">Strategic Gene Selection for Posterior Predictive Checks</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#posterior-predictive-check-visualization">Posterior Predictive Check Visualization</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#model-2-nbdm-with-variable-capture-probability-nbvcp">Model 2: NBDM with Variable Capture Probability (NBVCP)</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#visualizing-results-for-nbvcp">Visualizing Results for NBVCP</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#model-3-odds-ratio-parameterization">Model 3: Odds-Ratio Parameterization</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#visualizing-results-for-odds-ratio-model">Visualizing Results for Odds-Ratio Model</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#conclusion">Conclusion</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Available Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../quickstart.html">Quickstart</a></li>
+      <li class="breadcrumb-item active">Quickstart with 10x Genomics Data</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/auto_examples/quickstart.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-auto-examples-quickstart-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="quickstart-with-10x-genomics-data">
+<span id="sphx-glr-auto-examples-quickstart-py"></span><h1>Quickstart with 10x Genomics Data<a class="headerlink" href="#quickstart-with-10x-genomics-data" title="Link to this heading"></a></h1>
+<p>This tutorial will walk you through analyzing a real-world single-cell RNA-seq
+dataset using SCRIBE. For this tutorial, we will use the Jurkat cells dataset
+from 10x Genomics (available <a class="reference external" href="https://www.10xgenomics.com/datasets/jurkat-cells-1-standard-1-1-0">here</a>). To
+ilustrate <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code>’s flexibility, we will explore several models available,
+starting from the basic Negative Binomial-Dirichlet Multinomial (NBDM) model
+where all genes are negative binomially distributed with a shared success
+probability <span class="math notranslate nohighlight">\(p\)</span> and a gene-specific <span class="math notranslate nohighlight">\(r_g\)</span> parameter. Later on, we
+will account for the cell-to-cell variation in mRNA-to-UMI conversion efficiency
+by explicitly modeling the mRNA capture efficiency. Finally, we will explore a
+different parameterization of the model to help with convergence and
+performance.</p>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#setup" id="id1">Setup</a></p></li>
+<li><p><a class="reference internal" href="#loading-the-data" id="id2">Loading the Data</a></p></li>
+<li><p><a class="reference internal" href="#model-1-negative-binomial-dirichlet-multinomial-nbdm" id="id3">Model 1: Negative Binomial-Dirichlet Multinomial (NBDM)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#visualizing-results-for-nbdm" id="id4">Visualizing Results for NBDM</a></p></li>
+<li><p><a class="reference internal" href="#strategic-gene-selection-for-posterior-predictive-checks" id="id5">Strategic Gene Selection for Posterior Predictive Checks</a></p></li>
+<li><p><a class="reference internal" href="#posterior-predictive-check-visualization" id="id6">Posterior Predictive Check Visualization</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#model-2-nbdm-with-variable-capture-probability-nbvcp" id="id7">Model 2: NBDM with Variable Capture Probability (NBVCP)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#visualizing-results-for-nbvcp" id="id8">Visualizing Results for NBVCP</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#model-3-odds-ratio-parameterization" id="id9">Model 3: Odds-Ratio Parameterization</a></p>
+<ul>
+<li><p><a class="reference internal" href="#visualizing-results-for-odds-ratio-model" id="id10">Visualizing Results for Odds-Ratio Model</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#conclusion" id="id11">Conclusion</a></p></li>
+</ul>
+</nav>
+<section id="setup">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Setup</a><a class="headerlink" href="#setup" title="Link to this heading"></a></h2>
+<p>First, let’s import the necessary libraries and set up our directories.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">random</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">seaborn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sns</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">scanpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sc</span>  <span class="c1"># to load the data</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">scribe</span>  <span class="c1"># our main library</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pickle</span>  <span class="c1"># to save the results</span>
+
+<span class="c1"># Define directories</span>
+<span class="n">OUTPUT_DIR</span> <span class="o">=</span> <span class="s2">&quot;output&quot;</span>
+<span class="n">FIG_DIR</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">OUTPUT_DIR</span><span class="p">,</span> <span class="s2">&quot;figures&quot;</span><span class="p">)</span>
+
+<span class="c1"># Create output directory</span>
+<span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">OUTPUT_DIR</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">FIG_DIR</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Simple cache directory. This directory is used to store the results of the</span>
+<span class="c1"># models for this tutorial to avoid re-running the models as we work through the</span>
+<span class="c1"># tutorial. YOU DO NOT NEED TO DO THIS IN YOUR OWN ANALYSIS.</span>
+<span class="n">CACHE_DIR</span> <span class="o">=</span> <span class="s2">&quot;../../../CACHE&quot;</span>
+<span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">CACHE_DIR</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+
+<span class="c1"># Set plotting style and scanpy settings</span>
+<span class="n">scribe</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">matplotlib_style</span><span class="p">()</span>
+<span class="n">sc</span><span class="o">.</span><span class="n">settings</span><span class="o">.</span><span class="n">verbosity</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># Reduce scanpy output verbosity for cleaner tutorial</span>
+</pre></div>
+</div>
+</section>
+<section id="loading-the-data">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Loading the Data</a><a class="headerlink" href="#loading-the-data" title="Link to this heading"></a></h2>
+<p>We will use the Jurkat cell dataset from 10x Genomics. This dataset consists
+of ~3,200 human Jurkat cells, a T-lymphocyte cell line. For this tutorial,
+we’ll use the full transcriptome to demonstrate <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code>’s ability to handle
+large-scale single-cell datasets.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> is designed to work with the <strong>entire transcriptome</strong> and
+can easily handle datasets with 20,000+ genes, as long as you have the right
+hardware. This is the recommended approach for comprehensive analysis.</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define path to the data</span>
+<span class="n">data_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">scribe</span><span class="o">.</span><span class="vm">__file__</span><span class="p">),</span>
+        <span class="c1"># Here, put the path to the data.h5ad file in your computer.</span>
+        <span class="s2">&quot;../../data/10xGenomics/Jurkat_cells/data.h5ad&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># Load the data using scanpy</span>
+<span class="n">adata</span> <span class="o">=</span> <span class="n">sc</span><span class="o">.</span><span class="n">read_h5ad</span><span class="p">(</span><span class="n">data_path</span><span class="p">)</span>
+
+<span class="c1"># Extract raw counts for ``SCRIBE`` (``SCRIBE`` works with raw integer counts)</span>
+<span class="n">counts</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">toarray</span><span class="p">()</span>
+
+<span class="c1"># Define number of cells and genes</span>
+<span class="n">n_cells</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">n_obs</span>
+<span class="n">n_genes</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">n_vars</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Count matrix data type: </span><span class="si">{</span><span class="n">counts</span><span class="o">.</span><span class="n">dtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total UMIs in dataset: </span><span class="si">{</span><span class="n">counts</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">:</span><span class="s2">,.0f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Mean UMIs per cell: </span><span class="si">{</span><span class="n">counts</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Mean UMIs per gene: </span><span class="si">{</span><span class="n">counts</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Count matrix data type: float32
+Total UMIs in dataset: 50,727,268
+Mean UMIs per cell: 15570.1
+Mean UMIs per gene: 1549.5
+</pre></div>
+</div>
+</section>
+<section id="model-1-negative-binomial-dirichlet-multinomial-nbdm">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Model 1: Negative Binomial-Dirichlet Multinomial (NBDM)</a><a class="headerlink" href="#model-1-negative-binomial-dirichlet-multinomial-nbdm" title="Link to this heading"></a></h2>
+<p>The core of <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> is the Negative Binomial-Dirichlet Multinomial (NBDM)
+model. This model is derived from first principles, where a two-state promoter
+model can be shown to lead to a steady-state mRNA distribution that follows a
+Negative Binomial (NB) distribution. The only extra-ingredient <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> adds
+is to assume that all genes share the same success probability parameter
+<span class="math notranslate nohighlight">\(p\)</span>. Biophysically, this is equivalent to assuming that all genes share
+the same burst size.</p>
+<p>A key insight from this model is that if all genes share the same success
+probability parameter <span class="math notranslate nohighlight">\(p\)</span> in their NB distributions, the joint
+distribution of UMI counts for a cell can be factorized into two components:</p>
+<ol class="arabic simple">
+<li><p>A Negative Binomial distribution for the total number of UMIs in the cell.</p></li>
+<li><p>A Dirichlet-Multinomial (DM) distribution for the relative proportions of
+gene counts.</p></li>
+</ol>
+<p>This factorization allows <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> to normalize gene expression levels as
+the math reveals a natural scheme where the gene-specific <span class="math notranslate nohighlight">\(r_g\)</span>
+parameters can be used to compute the fraction of the transcriptome that each
+gene occupies.</p>
+<p>Let’s fit the basic NBDM model to our data using Stochastic Variational
+Inference (SVI). SVI is a type of variational inference that, although only
+approximately correct, is very fast and scalable, perfect for exploring large
+datasets quickly. For <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code>, all we need to specify is the number of
+steps to run the inference for (think of stochastic gradient descent for
+optimization), the batch size (how many cells to process at once for each
+optimization step), and a random seed for reproducibility.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Define inference parameters</span>
+<span class="n">n_steps</span> <span class="o">=</span> <span class="mi">30_000</span>
+<span class="n">batch_size</span> <span class="o">=</span> <span class="mi">512</span>
+<span class="n">seed</span> <span class="o">=</span> <span class="mi">42</span>
+
+<span class="c1"># Simple caching for NBDM model. Again, you do not need to do this in your own</span>
+<span class="c1"># analysis if you don&#39;t want to; this is just not to re-run the model if we</span>
+<span class="c1"># already have the results.</span>
+<span class="n">cache_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+    <span class="n">CACHE_DIR</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;svi_quickstart_nbdm_standard_</span><span class="si">{</span><span class="n">n_genes</span><span class="si">}</span><span class="s2">genes_</span><span class="si">{</span><span class="n">n_steps</span><span class="si">}</span><span class="s2">steps.pkl&quot;</span>
+<span class="p">)</span>
+<span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">cache_file</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading NBDM results from </span><span class="si">{</span><span class="n">cache_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">results_nbdm</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Running NBDM model...&quot;</span><span class="p">)</span>
+    <span class="n">results_nbdm</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+        <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>  <span class="c1"># The count matrix</span>
+        <span class="n">n_steps</span><span class="o">=</span><span class="n">n_steps</span><span class="p">,</span>  <span class="c1"># The number of steps to run the inference for</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>  <span class="c1"># The batch size</span>
+        <span class="n">seed</span><span class="o">=</span><span class="n">seed</span><span class="p">,</span>  <span class="c1"># The random seed</span>
+    <span class="p">)</span>
+    <span class="c1"># Save the results to a file.</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">pickle</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">results_nbdm</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved NBDM results to </span><span class="si">{</span><span class="n">cache_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Loading NBDM results from ../../../CACHE/svi_quickstart_nbdm_standard_32738genes_30000steps.pkl
+</pre></div>
+</div>
+<section id="visualizing-results-for-nbdm">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Visualizing Results for NBDM</a><a class="headerlink" href="#visualizing-results-for-nbdm" title="Link to this heading"></a></h3>
+<p>After fitting the model, we should always perform diagnostic checks to assess
+the model fit. We’ll look at the ELBO loss history first. What we are looking
+for is that the loss is decreasing over time, and that it plateaus at some
+point. Empirically, we have seen that anything between 25,000 and 50,000 steps
+is usually enough to get a good fit.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Although SVI aims to maximize the ELBO, here we are
+looking for a decreasing loss function, this is because the actual loss
+function implemented in SVI is the negative ELBO, also known as the
+Variational Free Energy.</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Plot ELBO loss history</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mf">3.5</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">results_nbdm</span><span class="o">.</span><span class="n">loss_history</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">&quot;step&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;ELBO Loss&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s2">&quot;NBDM ELBO Loss&quot;</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<img src="../_images/sphx_glr_quickstart_001.png" srcset="../_images/sphx_glr_quickstart_001.png" alt="NBDM ELBO Loss" class = "sphx-glr-single-img"/><p>This looks good. The loss is decreasing over time, and it plateaus at some
+point.</p>
+<p>After confirming that the optimization is converging, one of the most
+important steps in any Bayesian model (and one could argue in any statistical
+model) is to perform posterior predictive checks (PPCs).</p>
+<p>PPCs are a way to check if the model is able to reproduce the key features of
+the observed data. The logic is straightforward:</p>
+<ol class="arabic simple">
+<li><p><strong>Generate Synthetic Data</strong>: Use the fitted model to generate new datasets
+that should resemble the original data if the model is appropriate. This
+means that we take a sample of the posterior parameters and run them
+through the likelihood function to simulate a new dataset. We repeat this
+process multiple times to get a distribution of the predicted data.</p></li>
+<li><p><strong>Compare Distributions</strong>: Plot the distribution of observed counts
+alongside the distribution of model-predicted counts for the same genes.
+This is done by plotting the distribution of the observed counts alongside
+the distribution of the predicted counts for the same genes. Usually, we
+can plot quantiles of the predicted data to get a sense of the
+distribution.</p></li>
+<li><p><strong>Assess Model Fit</strong>: If the model is good, the observed data should fall
+within the credible intervals of the predicted data most of the time.</p></li>
+</ol>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>This is not a common practice in the field of single-cell RNA-seq analysis,
+but we argue it should be! A simple visual inspection of the quality of the
+fit is vital to understand how well the model is able to capture the data.</p>
+</div>
+</section>
+<section id="strategic-gene-selection-for-posterior-predictive-checks">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Strategic Gene Selection for Posterior Predictive Checks</a><a class="headerlink" href="#strategic-gene-selection-for-posterior-predictive-checks" title="Link to this heading"></a></h3>
+<p>Before generating PPC samples, we need to select a subset of genes to analyze.
+This is because generating PPC samples is a computationally and memory
+intensive process. Usually, we would like to generate between 100 and 1000
+samples; each sample being a full count matrix with the same number of cells
+and genes as the original data. You can see how this can get out of hand very
+quickly. Fortunately, <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code>’s results objects are <strong>indexable</strong>, allowing
+us to subset the results to only the genes we want to visualize.</p>
+<p>Rather than randomly selecting genes for visualization, we’ll use a strategic
+approach that ensures we capture genes across different expression levels.
+This is done by calculating the median expression for each gene across all
+cells in the dataset, filtering out completely unexpressed genes (median = 0),
+sorting genes by their median expression, and selecting evenly spaced genes
+across the expression spectrum. However, feel free to use whatever method you
+prefer.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>We filter genes with median expression equal to 0 for visualization
+purposes. However, these genes were taken into account for the model fit.
+This is the power of the full Bayesian framework <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> offers.</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">select_genes_for_visualization</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">n_genes</span><span class="o">=</span><span class="mi">25</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Select a representative subset of genes for visualization based on their</span>
+<span class="sd">    expression levels.</span>
+
+<span class="sd">    This function implements a stratified sampling approach that:</span>
+<span class="sd">        1. Calculates median expression for each gene across all cells</span>
+<span class="sd">        2. Filters out completely unexpressed genes (median = 0)</span>
+<span class="sd">        3. Sorts genes by their median expression</span>
+<span class="sd">        4. Selects evenly spaced genes across the expression spectrum</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    counts : array-like, shape (n_cells, n_genes)</span>
+<span class="sd">        The count matrix where rows are cells and columns are genes.</span>
+<span class="sd">    n_genes : int, default=25</span>
+<span class="sd">        Number of genes to select for visualization.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    selected_idx : array</span>
+<span class="sd">        Indices of selected genes, sorted by expression level.</span>
+<span class="sd">    median_expr : array</span>
+<span class="sd">        Median expression values for all genes.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Calculate median expression across cells for each gene</span>
+    <span class="c1"># We use median instead of mean because it&#39;s more robust to outliers</span>
+    <span class="c1"># and better represents the typical expression level</span>
+    <span class="n">median_expr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="c1"># Find genes that are expressed in at least some cells</span>
+    <span class="c1"># Genes with median = 0 are likely unexpressed or very lowly expressed</span>
+    <span class="n">expressed_idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">median_expr</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Sort expressed genes by their median expression level</span>
+    <span class="n">sorted_idx</span> <span class="o">=</span> <span class="n">expressed_idx</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">median_expr</span><span class="p">[</span><span class="n">expressed_idx</span><span class="p">])]</span>
+
+    <span class="c1"># Select evenly spaced genes across the expression spectrum</span>
+    <span class="c1"># This ensures we sample from low, medium, and high expression ranges</span>
+    <span class="n">spaced_indices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">sorted_idx</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">num</span><span class="o">=</span><span class="n">n_genes</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">int</span><span class="p">)</span>
+    <span class="n">selected_idx</span> <span class="o">=</span> <span class="n">sorted_idx</span><span class="p">[</span><span class="n">spaced_indices</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">selected_idx</span><span class="p">,</span> <span class="n">median_expr</span>
+
+
+<span class="c1"># Select genes using our strategic approach</span>
+<span class="n">n_genes_to_plot</span> <span class="o">=</span> <span class="mi">25</span>
+<span class="n">selected_idx</span><span class="p">,</span> <span class="n">median_expr</span> <span class="o">=</span> <span class="n">select_genes_for_visualization</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">,</span> <span class="n">n_genes</span><span class="o">=</span><span class="n">n_genes_to_plot</span>
+<span class="p">)</span>
+
+<span class="c1"># Sort selected indices - this is crucial for proper indexing of results!</span>
+<span class="c1"># This ensures correspondence between subset results and original gene indices</span>
+<span class="n">selected_idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Selected </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">)</span><span class="si">}</span><span class="s2"> genes for PPC analysis&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;Expression range: </span><span class="si">{</span><span class="n">median_expr</span><span class="p">[</span><span class="n">selected_idx</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> - &quot;</span>
+    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">median_expr</span><span class="p">[</span><span class="n">selected_idx</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Selected 25 genes for PPC analysis
+Expression range: 0.50 - 167.00
+</pre></div>
+</div>
+<p>We are now ready to generate the PPC samples. We will generate 500 samples,
+i.e., 500 simulated datasets with the same number of cells <span class="math notranslate nohighlight">\(\times\)</span> the
+number of genes we selected.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">n_samples</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="mi">500</span>  <span class="c1"># Can use more samples now since we&#39;re only doing selected genes</span>
+<span class="p">)</span>
+
+<span class="c1"># Subset results to selected genes before generating samples (major memory</span>
+<span class="c1"># savings!)</span>
+<span class="n">results_nbdm_subset</span> <span class="o">=</span> <span class="n">results_nbdm</span><span class="p">[</span><span class="n">selected_idx</span><span class="p">]</span>
+<span class="c1"># Generate the PPC samples</span>
+<span class="n">ppc_nbdm</span> <span class="o">=</span> <span class="n">results_nbdm_subset</span><span class="o">.</span><span class="n">get_ppc_samples</span><span class="p">(</span>
+    <span class="n">n_samples</span><span class="o">=</span><span class="n">n_samples</span><span class="p">,</span> <span class="n">rng_key</span><span class="o">=</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Now, since we will generate a plot for each selected gene, we need to
+calculate the optimal number of rows and columns for the plot grid. Let’s
+define a simple function to do this.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">calculate_subplot_grid</span><span class="p">(</span><span class="n">n_plots</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Calculate optimal subplot grid dimensions for a given number of plots.</span>
+
+<span class="sd">    Tries to create a square or near-square grid that accommodates all plots.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    n_plots : int</span>
+<span class="sd">        Number of subplots needed</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    nrows, ncols : int, int</span>
+<span class="sd">        Number of rows and columns for the subplot grid</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+    <span class="c1"># For perfect squares, use square grid</span>
+    <span class="n">sqrt_n</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">n_plots</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">sqrt_n</span> <span class="o">*</span> <span class="n">sqrt_n</span> <span class="o">==</span> <span class="n">n_plots</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">sqrt_n</span><span class="p">,</span> <span class="n">sqrt_n</span>
+
+    <span class="c1"># For non-perfect squares, find the closest rectangular grid</span>
+    <span class="c1"># that minimizes empty subplots</span>
+    <span class="k">for</span> <span class="n">cols</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">sqrt_n</span><span class="p">,</span> <span class="n">n_plots</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">rows</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">n_plots</span> <span class="o">/</span> <span class="n">cols</span><span class="p">)</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="n">rows</span> <span class="o">*</span> <span class="n">cols</span> <span class="o">&gt;=</span> <span class="n">n_plots</span> <span class="ow">and</span> <span class="nb">abs</span><span class="p">(</span><span class="n">rows</span> <span class="o">-</span> <span class="n">cols</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">2</span>
+        <span class="p">):</span>  <span class="c1"># Prefer near-square</span>
+            <span class="k">return</span> <span class="n">rows</span><span class="p">,</span> <span class="n">cols</span>
+
+    <span class="c1"># Fallback: use ceiling of square root</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">n_plots</span><span class="p">))</span>
+    <span class="n">cols</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">n_plots</span> <span class="o">/</span> <span class="n">rows</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rows</span><span class="p">,</span> <span class="n">cols</span>
+</pre></div>
+</div>
+</section>
+<section id="posterior-predictive-check-visualization">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Posterior Predictive Check Visualization</a><a class="headerlink" href="#posterior-predictive-check-visualization" title="Link to this heading"></a></h3>
+<p>We are ready to plot the PPCs. We will plot the credible regions for each gene
+as colored bands, and the observed data as a black line. We will also plot the
+median expression for each gene. <cite>SCRIBE</cite> provides several useful functions to
+generate these plots.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Plot PPCs for selected genes with dynamic grid layout</span>
+<span class="n">n_genes_to_plot</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">selected_idx</span><span class="p">)</span>
+<span class="n">nrows</span><span class="p">,</span> <span class="n">ncols</span> <span class="o">=</span> <span class="n">calculate_subplot_grid</span><span class="p">(</span><span class="n">n_genes_to_plot</span><span class="p">)</span>
+<span class="n">fig_width</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="n">ncols</span> <span class="o">*</span> <span class="mi">3</span><span class="p">)</span>  <span class="c1"># Minimum 12 inches, scale with columns</span>
+<span class="n">fig_height</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">nrows</span> <span class="o">*</span> <span class="mf">2.5</span><span class="p">)</span>  <span class="c1"># Minimum 8 inches, scale with rows</span>
+
+<span class="c1"># Print the number of rows and columns for the plot grid</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Creating </span><span class="si">{</span><span class="n">nrows</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">ncols</span><span class="si">}</span><span class="s2"> grid for </span><span class="si">{</span><span class="n">n_genes_to_plot</span><span class="si">}</span><span class="s2"> genes&quot;</span><span class="p">)</span>
+
+<span class="c1"># Initialize the plot</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">nrows</span><span class="p">,</span> <span class="n">ncols</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="n">fig_width</span><span class="p">,</span> <span class="n">fig_height</span><span class="p">))</span>
+<span class="c1"># Flatten the axes if we have more than one gene to plot</span>
+<span class="n">axes</span> <span class="o">=</span> <span class="n">axes</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span> <span class="k">if</span> <span class="n">n_genes_to_plot</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="p">[</span><span class="n">axes</span><span class="p">]</span>
+
+<span class="c1"># Add a title to the plot</span>
+<span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;NBDM Posterior Predictive Checks (</span><span class="si">{</span><span class="n">n_genes_to_plot</span><span class="si">}</span><span class="s2"> genes)&quot;</span><span class="p">,</span>
+    <span class="n">y</span><span class="o">=</span><span class="mf">0.98</span><span class="p">,</span>
+    <span class="n">fontsize</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Loop over the genes to plot</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_genes_to_plot</span><span class="p">):</span>
+    <span class="n">ax</span> <span class="o">=</span> <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">gene_idx</span> <span class="o">=</span> <span class="n">selected_idx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">gene_median_expr</span> <span class="o">=</span> <span class="n">median_expr</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">]</span>
+
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Generating PPC for gene </span><span class="si">{</span><span class="n">gene_idx</span><span class="si">}</span><span class="s2"> &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;(median expression: </span><span class="si">{</span><span class="n">gene_median_expr</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Compute credible regions for this gene&#39;s predicted counts</span>
+    <span class="c1"># Note: gene_idx is now the index within selected genes, not the original</span>
+    <span class="c1"># dataset</span>
+    <span class="n">credible_regions</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">stats</span><span class="o">.</span><span class="n">compute_histogram_credible_regions</span><span class="p">(</span>
+        <span class="n">ppc_nbdm</span><span class="p">[</span><span class="s2">&quot;predictive_samples&quot;</span><span class="p">][</span>
+            <span class="p">:,</span> <span class="p">:,</span> <span class="n">i</span>
+        <span class="p">],</span>  <span class="c1"># Use i (position in selected genes)</span>
+        <span class="n">credible_regions</span><span class="o">=</span><span class="p">[</span><span class="mi">95</span><span class="p">,</span> <span class="mi">68</span><span class="p">,</span> <span class="mi">50</span><span class="p">],</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Plot the credible regions as colored bands</span>
+    <span class="n">scribe</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">plot_histogram_credible_regions_stairs</span><span class="p">(</span>
+        <span class="n">ax</span><span class="p">,</span> <span class="n">credible_regions</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;Blues&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.5</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Calculate and plot the observed data histogram</span>
+    <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">credible_regions</span><span class="p">[</span><span class="s2">&quot;bin_edges&quot;</span><span class="p">]</span>
+    <span class="n">hist</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_idx</span><span class="p">],</span> <span class="n">bins</span><span class="o">=</span><span class="n">bin_edges</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">stairs</span><span class="p">(</span>
+        <span class="n">hist</span><span class="p">,</span> <span class="n">bin_edges</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;black&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Observed&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Enhanced axis labels with expression information</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;UMI counts&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;density&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">adata</span><span class="o">.</span><span class="n">var</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">]</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;(Median expr: </span><span class="si">{</span><span class="n">gene_median_expr</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">,</span>
+        <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+
+    <span class="c1"># Improve readability for low-count genes</span>
+    <span class="k">if</span> <span class="n">gene_median_expr</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_idx</span><span class="p">],</span> <span class="mi">95</span><span class="p">)))</span>
+
+<span class="c1"># Hide empty subplots if we have more subplot positions than genes</span>
+<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_genes_to_plot</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">axes</span><span class="p">)):</span>
+    <span class="n">axes</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<img src="../_images/sphx_glr_quickstart_002.png" srcset="../_images/sphx_glr_quickstart_002.png" alt="NBDM Posterior Predictive Checks (25 genes), UBE2T (Median expr: 3.0), CENPA (Median expr: 1.0), SNRPG (Median expr: 7.0), UBE2E1 (Median expr: 1.0), MED10 (Median expr: 1.0), RNF145 (Median expr: 1.0), SNRPC (Median expr: 4.0), HSP90AB1 (Median expr: 24.0), DDX56 (Median expr: 1.0), BAG1 (Median expr: 2.0), DPP7 (Median expr: 1.0), HSPA14 (Median expr: 1.0), YIF1A (Median expr: 2.0), AIP (Median expr: 1.0), MRPL51 (Median expr: 11.0), TSFM (Median expr: 1.0), UBE2N (Median expr: 2.0), EBPL (Median expr: 3.0), CALM1 (Median expr: 5.0), RPS2 (Median expr: 167.0), CMC2 (Median expr: 1.0), CRLS1 (Median expr: 1.0), MRGBP (Median expr: 0.5), POLR2E (Median expr: 2.0), BAX (Median expr: 1.0)" class = "sphx-glr-single-img"/><div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Creating 5x5 grid for 25 genes
+Generating PPC for gene 2629 (median expression: 3.00)
+Generating PPC for gene 3488 (median expression: 1.00)
+Generating PPC for gene 3902 (median expression: 7.00)
+Generating PPC for gene 5592 (median expression: 1.00)
+Generating PPC for gene 8585 (median expression: 1.00)
+Generating PPC for gene 9886 (median expression: 1.00)
+Generating PPC for gene 10744 (median expression: 4.00)
+Generating PPC for gene 10916 (median expression: 24.00)
+Generating PPC for gene 12225 (median expression: 1.00)
+Generating PPC for gene 15825 (median expression: 2.00)
+Generating PPC for gene 16829 (median expression: 1.00)
+Generating PPC for gene 17017 (median expression: 1.00)
+Generating PPC for gene 19203 (median expression: 2.00)
+Generating PPC for gene 19259 (median expression: 1.00)
+Generating PPC for gene 20152 (median expression: 11.00)
+Generating PPC for gene 20954 (median expression: 1.00)
+Generating PPC for gene 21229 (median expression: 2.00)
+Generating PPC for gene 22057 (median expression: 3.00)
+Generating PPC for gene 23206 (median expression: 5.00)
+Generating PPC for gene 24673 (median expression: 167.00)
+Generating PPC for gene 25837 (median expression: 1.00)
+Generating PPC for gene 28675 (median expression: 1.00)
+Generating PPC for gene 29321 (median expression: 0.50)
+Generating PPC for gene 29443 (median expression: 2.00)
+Generating PPC for gene 30931 (median expression: 1.00)
+</pre></div>
+</div>
+<p>We can see that the fit is already pretty good. Most of the observed counts
+fall within the colored regions, meaning that the inferred parameters are able
+to capture the observed data. However, we can improve the fit by using a more
+sophisticated model.</p>
+</section>
+</section>
+<section id="model-2-nbdm-with-variable-capture-probability-nbvcp">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Model 2: NBDM with Variable Capture Probability (NBVCP)</a><a class="headerlink" href="#model-2-nbdm-with-variable-capture-probability-nbvcp" title="Link to this heading"></a></h2>
+<p>The basic NBDM model assumes that the capture efficiency—the probability of an
+mRNA molecule being captured and sequenced as a UMI—is constant for all cells.
+However, this is often not true in practice due to technical variations. To
+demonstrate this, let’s plot the distribution of total UMI counts for each
+cell.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Initialize figure</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mf">3.5</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="n">sns</span><span class="o">.</span><span class="n">histplot</span><span class="p">(</span><span class="n">counts</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="n">ax</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">&quot;total UMI counts&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;count&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s2">&quot;Distribution of Total UMI Counts&quot;</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<img src="../_images/sphx_glr_quickstart_003.png" srcset="../_images/sphx_glr_quickstart_003.png" alt="Distribution of Total UMI Counts" class = "sphx-glr-single-img"/><p>These cells were already filtered for quality and still we have cells with
+<span class="math notranslate nohighlight">\(\approx\)</span> 5,000 UMIs vs cells with <span class="math notranslate nohighlight">\(\approx\)</span> 40,000 UMIs. This is
+unlikely to be due to biological differences, but rather to technical
+differences in the capture efficiency.</p>
+<p><code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> can account for this by using a Variable Capture Probability (VCP)
+model. As mentioned earlier, in the derivation of the NBDM model, we assumed
+all mRNA counts to be negative-binomially distributed. However, what we
+observe in an experiment are not the mRNA counts, but the UMIs. The simplest
+way to account for this conversion is to assume that each mRNA molecule in
+cell <span class="math notranslate nohighlight">\(c\)</span> has a probability <span class="math notranslate nohighlight">\(\nu^{(c)}\)</span> of being captured and
+sequenced as a UMI. We can show that after accounting for this effect, the
+resulting UMI counts distribution is also negative-binomially distributed.
+However, the parameter <span class="math notranslate nohighlight">\(p\)</span> is modified in a non-linear was as</p>
+<div class="math notranslate nohighlight">
+\[\hat{p}^{(c)} = \frac{p}{\nu^{(c)} + p (1 - \nu^{(c)})}.\]</div>
+<p>In this model, the capture efficiency <span class="math notranslate nohighlight">\(\nu^{(c)}\)</span> is a cell-specific
+latent variable that is inferred from the data. This allows the model to
+distinguish between biological zeros (genes not expressed) and technical zeros
+(genes expressed but not detected).</p>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>Note that this is very different from the conventional approach of assuming
+a zero-inflated negative binomial distribution (which <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> also
+supports). Zero-inflation in that sense is a per-gene parameter, while our
+approach is a per-cell parameter. Although it might be possible that there
+is a per-gene capture efficiency across all cells, we find it much more
+likely that the tehcnical variation comes from processing each cell
+separately.</p>
+</div>
+<p>Let’s fit the NBVCP model. The beauty of the API is that we can fit this
+variant by simply passing the <code class="docutils literal notranslate"><span class="pre">variable_capture=True</span></code> flag.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Simple caching for NBVCP model</span>
+<span class="n">cache_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+    <span class="n">CACHE_DIR</span><span class="p">,</span>
+    <span class="sa">f</span><span class="s2">&quot;svi_quickstart_nbvcp_standard_</span><span class="si">{</span><span class="n">n_genes</span><span class="si">}</span><span class="s2">genes_</span><span class="si">{</span><span class="n">n_steps</span><span class="si">}</span><span class="s2">steps.pkl&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">cache_file</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading NBVCP results from </span><span class="si">{</span><span class="n">cache_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">results_vcp</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Running NBVCP model...&quot;</span><span class="p">)</span>
+    <span class="n">results_vcp</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+        <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+        <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># this is the only difference from the NBDM model</span>
+        <span class="n">n_steps</span><span class="o">=</span><span class="n">n_steps</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">seed</span><span class="o">=</span><span class="n">seed</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">pickle</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">results_vcp</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved NBVCP results to </span><span class="si">{</span><span class="n">cache_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Loading NBVCP results from ../../../CACHE/svi_quickstart_nbvcp_standard_32738genes_30000steps.pkl
+</pre></div>
+</div>
+<section id="visualizing-results-for-nbvcp">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Visualizing Results for NBVCP</a><a class="headerlink" href="#visualizing-results-for-nbvcp" title="Link to this heading"></a></h3>
+<p>Now, let’s look at the diagnostics for the NBVCP model.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Plot ELBO loss history</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mf">3.5</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">results_vcp</span><span class="o">.</span><span class="n">loss_history</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">&quot;Step&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;ELBO Loss&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s2">&quot;NBVCP ELBO Loss&quot;</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<img src="../_images/sphx_glr_quickstart_004.png" srcset="../_images/sphx_glr_quickstart_004.png" alt="NBVCP ELBO Loss" class = "sphx-glr-single-img"/><p>As before, we can visualize the posterior predictive checks for the NBVCP
+model. The unified API makes it straightforward to do so by following the same
+steps as before.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Generate PPC samples for the NBVCP model (using same gene subset)</span>
+<span class="n">results_vcp_subset</span> <span class="o">=</span> <span class="n">results_vcp</span><span class="p">[</span><span class="n">selected_idx</span><span class="p">]</span>
+<span class="n">ppc_vcp</span> <span class="o">=</span> <span class="n">results_vcp_subset</span><span class="o">.</span><span class="n">get_ppc_samples</span><span class="p">(</span>
+    <span class="n">n_samples</span><span class="o">=</span><span class="n">n_samples</span><span class="p">,</span> <span class="n">rng_key</span><span class="o">=</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># Plot PPCs using the same strategically selected genes for fair comparison</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">nrows</span><span class="p">,</span> <span class="n">ncols</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="n">fig_width</span><span class="p">,</span> <span class="n">fig_height</span><span class="p">))</span>
+<span class="n">axes</span> <span class="o">=</span> <span class="n">axes</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span> <span class="k">if</span> <span class="n">n_genes_to_plot</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="p">[</span><span class="n">axes</span><span class="p">]</span>
+<span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;NBVCP Posterior Predictive Checks (</span><span class="si">{</span><span class="n">n_genes_to_plot</span><span class="si">}</span><span class="s2"> genes)</span><span class="se">\n</span><span class="s2">&quot;</span>
+    <span class="sa">f</span><span class="s2">&quot;(Same Gene Selection for Comparison)&quot;</span><span class="p">,</span>
+    <span class="n">y</span><span class="o">=</span><span class="mf">0.98</span><span class="p">,</span>
+    <span class="n">fontsize</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_genes_to_plot</span><span class="p">):</span>
+    <span class="n">ax</span> <span class="o">=</span> <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">gene_idx</span> <span class="o">=</span> <span class="n">selected_idx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">gene_median_expr</span> <span class="o">=</span> <span class="n">median_expr</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">]</span>
+
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Generating NBVCP PPC for gene </span><span class="si">{</span><span class="n">gene_idx</span><span class="si">}</span><span class="s2"> &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;(median expression: </span><span class="si">{</span><span class="n">gene_median_expr</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Compute credible regions for this gene&#39;s predicted counts</span>
+    <span class="n">credible_regions</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">stats</span><span class="o">.</span><span class="n">compute_histogram_credible_regions</span><span class="p">(</span>
+        <span class="n">ppc_vcp</span><span class="p">[</span><span class="s2">&quot;predictive_samples&quot;</span><span class="p">][</span>
+            <span class="p">:,</span> <span class="p">:,</span> <span class="n">i</span>
+        <span class="p">],</span>  <span class="c1"># Use i (position in selected genes)</span>
+        <span class="n">credible_regions</span><span class="o">=</span><span class="p">[</span><span class="mi">95</span><span class="p">,</span> <span class="mi">68</span><span class="p">,</span> <span class="mi">50</span><span class="p">],</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Plot the credible regions using green colormap to distinguish from NBDM</span>
+    <span class="n">scribe</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">plot_histogram_credible_regions_stairs</span><span class="p">(</span>
+        <span class="n">ax</span><span class="p">,</span> <span class="n">credible_regions</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;Greens&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.5</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Calculate and plot the observed data histogram</span>
+    <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">credible_regions</span><span class="p">[</span><span class="s2">&quot;bin_edges&quot;</span><span class="p">]</span>
+    <span class="n">hist</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_idx</span><span class="p">],</span> <span class="n">bins</span><span class="o">=</span><span class="n">bin_edges</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">stairs</span><span class="p">(</span>
+        <span class="n">hist</span><span class="p">,</span> <span class="n">bin_edges</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;black&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Observed&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Enhanced axis labels with expression information</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;UMI counts&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;density&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">adata</span><span class="o">.</span><span class="n">var</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">]</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;(Median expr: </span><span class="si">{</span><span class="n">gene_median_expr</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">,</span>
+        <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+
+    <span class="c1"># Improve readability for low-count genes</span>
+    <span class="k">if</span> <span class="n">gene_median_expr</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_idx</span><span class="p">],</span> <span class="mi">95</span><span class="p">)))</span>
+
+<span class="c1"># Hide empty subplots if we have more subplot positions than genes</span>
+<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_genes_to_plot</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">axes</span><span class="p">)):</span>
+    <span class="n">axes</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<img src="../_images/sphx_glr_quickstart_005.png" srcset="../_images/sphx_glr_quickstart_005.png" alt="NBVCP Posterior Predictive Checks (25 genes) (Same Gene Selection for Comparison), UBE2T (Median expr: 3.0), CENPA (Median expr: 1.0), SNRPG (Median expr: 7.0), UBE2E1 (Median expr: 1.0), MED10 (Median expr: 1.0), RNF145 (Median expr: 1.0), SNRPC (Median expr: 4.0), HSP90AB1 (Median expr: 24.0), DDX56 (Median expr: 1.0), BAG1 (Median expr: 2.0), DPP7 (Median expr: 1.0), HSPA14 (Median expr: 1.0), YIF1A (Median expr: 2.0), AIP (Median expr: 1.0), MRPL51 (Median expr: 11.0), TSFM (Median expr: 1.0), UBE2N (Median expr: 2.0), EBPL (Median expr: 3.0), CALM1 (Median expr: 5.0), RPS2 (Median expr: 167.0), CMC2 (Median expr: 1.0), CRLS1 (Median expr: 1.0), MRGBP (Median expr: 0.5), POLR2E (Median expr: 2.0), BAX (Median expr: 1.0)" class = "sphx-glr-single-img"/><div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Generating NBVCP PPC for gene 2629 (median expression: 3.00)
+Generating NBVCP PPC for gene 3488 (median expression: 1.00)
+Generating NBVCP PPC for gene 3902 (median expression: 7.00)
+Generating NBVCP PPC for gene 5592 (median expression: 1.00)
+Generating NBVCP PPC for gene 8585 (median expression: 1.00)
+Generating NBVCP PPC for gene 9886 (median expression: 1.00)
+Generating NBVCP PPC for gene 10744 (median expression: 4.00)
+Generating NBVCP PPC for gene 10916 (median expression: 24.00)
+Generating NBVCP PPC for gene 12225 (median expression: 1.00)
+Generating NBVCP PPC for gene 15825 (median expression: 2.00)
+Generating NBVCP PPC for gene 16829 (median expression: 1.00)
+Generating NBVCP PPC for gene 17017 (median expression: 1.00)
+Generating NBVCP PPC for gene 19203 (median expression: 2.00)
+Generating NBVCP PPC for gene 19259 (median expression: 1.00)
+Generating NBVCP PPC for gene 20152 (median expression: 11.00)
+Generating NBVCP PPC for gene 20954 (median expression: 1.00)
+Generating NBVCP PPC for gene 21229 (median expression: 2.00)
+Generating NBVCP PPC for gene 22057 (median expression: 3.00)
+Generating NBVCP PPC for gene 23206 (median expression: 5.00)
+Generating NBVCP PPC for gene 24673 (median expression: 167.00)
+Generating NBVCP PPC for gene 25837 (median expression: 1.00)
+Generating NBVCP PPC for gene 28675 (median expression: 1.00)
+Generating NBVCP PPC for gene 29321 (median expression: 0.50)
+Generating NBVCP PPC for gene 29443 (median expression: 2.00)
+Generating NBVCP PPC for gene 30931 (median expression: 1.00)
+</pre></div>
+</div>
+<p>For this particular dataset, the difference between the NBDM and NBVCP models
+is not very pronounced. However, in general, we recommend using the NBVCP
+model when there is evidence of technical variation in the capture efficiency.</p>
+<p>Moreover, even though the data falls within the colored regions, there also
+seems to be “unnecessary” uncertainty. Take for example the HSP90AB1 gene
+(second row, third column). Even though the data falls within the colored
+regions, these regions seem to be unnecessarily wide. The reason for this is
+subtle but important: When performing SVI, we use what is called a
+“mean-field” approximaiton. This means that we fit each parameter
+independently, ignoring all possible correlations between parameters. This
+allows us to use the power of modern gradient-based optimizers to find the
+optimal parameters. However, this also bring an issue when working with the
+negative binomial distribution, where the <span class="math notranslate nohighlight">\(r\)</span> and <span class="math notranslate nohighlight">\(p\)</span> parameters
+trade-off with each other—meaning that increasing one parameter while
+decreasing the other results in a distribution with a very similar shape.</p>
+<p>To address this issue, <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> comes with two other parameterizations of
+the same base NBDM model:</p>
+<ul class="simple">
+<li><p>the <code class="docutils literal notranslate"><span class="pre">linked</span></code> parameterization, in which we fit the same <span class="math notranslate nohighlight">\(p\)</span>
+parameter, but instead of fitting the <span class="math notranslate nohighlight">\(r\)</span> parameter, we fit the
+distribution mean <span class="math notranslate nohighlight">\(\mu\)</span> parameter. We then can recover the <span class="math notranslate nohighlight">\(r\)</span>
+parameter as <span class="math notranslate nohighlight">\(r = \mu * (1 - p) / p\)</span>.</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">odds-ratio</span></code> parameterization, in which we fit the so-called
+odds-ratio <span class="math notranslate nohighlight">\(\phi = (1 - p) / p\)</span> parameter, and the <span class="math notranslate nohighlight">\(\mu\)</span>
+parameter. We then can recover the <span class="math notranslate nohighlight">\(r\)</span> parameter as <span class="math notranslate nohighlight">\(r = \mu *
+\phi\)</span>.</p></li>
+</ul>
+<p>Changing between parameterizations is as simple as passing the appropriate
+<code class="docutils literal notranslate"><span class="pre">parameterization</span></code> flag to the <code class="docutils literal notranslate"><span class="pre">run_scribe</span></code> function. Let’s fit the NBVCP
+model with the odds-ratio parameterization.</p>
+</section>
+</section>
+<section id="model-3-odds-ratio-parameterization">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Model 3: Odds-Ratio Parameterization</a><a class="headerlink" href="#model-3-odds-ratio-parameterization" title="Link to this heading"></a></h2>
+<p>This reparameterization can lead to more stable and efficient inference,
+especially when the success probability <cite>p</cite> is very close to 0 or 1. Moreover,
+because of the mean-field approximation done for stochastic variational
+inference, this parameterization captures the known correlation between the
+<cite>r</cite> and <cite>p</cite> parameters by fitting the mean <cite>mu</cite> instead of the dispersion <cite>r</cite>.
+This results in much better posterior predictive checks.</p>
+<p>Let’s fit the NBVCP model with the odds-ratio parameterization. Again, we can
+do this by simply passing the <cite>parameterization=”odds_ratio”</cite> flag.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Simple caching for Odds-Ratio NBVCP model</span>
+<span class="n">cache_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+    <span class="n">CACHE_DIR</span><span class="p">,</span>
+    <span class="sa">f</span><span class="s2">&quot;svi_quickstart_nbvcp_odds-ratio_</span><span class="si">{</span><span class="n">n_genes</span><span class="si">}</span><span class="s2">genes_</span><span class="si">{</span><span class="n">n_steps</span><span class="si">}</span><span class="s2">steps.pkl&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">cache_file</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading Odds-Ratio NBVCP results from </span><span class="si">{</span><span class="n">cache_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">results_or</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Running Odds-Ratio NBVCP model...&quot;</span><span class="p">)</span>
+    <span class="n">results_or</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+        <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+        <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;odds_ratio&quot;</span><span class="p">,</span>
+        <span class="n">n_steps</span><span class="o">=</span><span class="n">n_steps</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">seed</span><span class="o">=</span><span class="n">seed</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">pickle</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">results_or</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved Odds-Ratio NBVCP results to </span><span class="si">{</span><span class="n">cache_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Loading Odds-Ratio NBVCP results from ../../../CACHE/svi_quickstart_nbvcp_odds-ratio_32738genes_30000steps.pkl
+</pre></div>
+</div>
+<section id="visualizing-results-for-odds-ratio-model">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Visualizing Results for Odds-Ratio Model</a><a class="headerlink" href="#visualizing-results-for-odds-ratio-model" title="Link to this heading"></a></h3>
+<p>Finally, let’s check the diagnostics for the odds-ratio model.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Plot ELBO loss history</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mf">3.5</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">results_or</span><span class="o">.</span><span class="n">loss_history</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">&quot;Step&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;ELBO Loss&quot;</span><span class="p">)</span>
+<span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s2">&quot;Odds-Ratio NBVCP ELBO Loss&quot;</span><span class="p">)</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<img src="../_images/sphx_glr_quickstart_006.png" srcset="../_images/sphx_glr_quickstart_006.png" alt="Odds-Ratio NBVCP ELBO Loss" class = "sphx-glr-single-img"/><p>And the PPCs.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Generate PPC samples for the odds-ratio model (using same gene subset)</span>
+<span class="n">results_or_subset</span> <span class="o">=</span> <span class="n">results_or</span><span class="p">[</span><span class="n">selected_idx</span><span class="p">]</span>
+<span class="n">ppc_or</span> <span class="o">=</span> <span class="n">results_or_subset</span><span class="o">.</span><span class="n">get_ppc_samples</span><span class="p">(</span>
+    <span class="n">n_samples</span><span class="o">=</span><span class="n">n_samples</span><span class="p">,</span> <span class="n">rng_key</span><span class="o">=</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># Plot PPCs using the same strategically selected genes for consistent comparison</span>
+<span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">nrows</span><span class="p">,</span> <span class="n">ncols</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="n">fig_width</span><span class="p">,</span> <span class="n">fig_height</span><span class="p">))</span>
+<span class="n">axes</span> <span class="o">=</span> <span class="n">axes</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span> <span class="k">if</span> <span class="n">n_genes_to_plot</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="p">[</span><span class="n">axes</span><span class="p">]</span>
+<span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;Odds-Ratio NBVCP Posterior Predictive Checks (</span><span class="si">{</span><span class="n">n_genes_to_plot</span><span class="si">}</span><span class="s2"> genes)</span><span class="se">\n</span><span class="s2">&quot;</span>
+    <span class="sa">f</span><span class="s2">&quot;(Consistent Gene Selection)&quot;</span><span class="p">,</span>
+    <span class="n">y</span><span class="o">=</span><span class="mf">0.98</span><span class="p">,</span>
+    <span class="n">fontsize</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_genes_to_plot</span><span class="p">):</span>
+    <span class="n">ax</span> <span class="o">=</span> <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">gene_idx</span> <span class="o">=</span> <span class="n">selected_idx</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">gene_median_expr</span> <span class="o">=</span> <span class="n">median_expr</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">]</span>
+
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;Generating Odds-Ratio PPC for gene </span><span class="si">{</span><span class="n">gene_idx</span><span class="si">}</span><span class="s2"> &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;(median expression: </span><span class="si">{</span><span class="n">gene_median_expr</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Compute credible regions for this gene&#39;s predicted counts</span>
+    <span class="n">credible_regions</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">stats</span><span class="o">.</span><span class="n">compute_histogram_credible_regions</span><span class="p">(</span>
+        <span class="n">ppc_or</span><span class="p">[</span><span class="s2">&quot;predictive_samples&quot;</span><span class="p">][</span>
+            <span class="p">:,</span> <span class="p">:,</span> <span class="n">i</span>
+        <span class="p">],</span>  <span class="c1"># Use i (position in selected genes)</span>
+        <span class="n">credible_regions</span><span class="o">=</span><span class="p">[</span><span class="mi">95</span><span class="p">,</span> <span class="mi">68</span><span class="p">,</span> <span class="mi">50</span><span class="p">],</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Plot the credible regions using orange colormap to distinguish from other</span>
+    <span class="c1"># models</span>
+    <span class="n">scribe</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">plot_histogram_credible_regions_stairs</span><span class="p">(</span>
+        <span class="n">ax</span><span class="p">,</span> <span class="n">credible_regions</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;Oranges&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.5</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Calculate and plot the observed data histogram</span>
+    <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">credible_regions</span><span class="p">[</span><span class="s2">&quot;bin_edges&quot;</span><span class="p">]</span>
+    <span class="n">hist</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">histogram</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_idx</span><span class="p">],</span> <span class="n">bins</span><span class="o">=</span><span class="n">bin_edges</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">stairs</span><span class="p">(</span>
+        <span class="n">hist</span><span class="p">,</span> <span class="n">bin_edges</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;black&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Observed&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Enhanced axis labels with expression information</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;UMI counts&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;density&quot;</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">adata</span><span class="o">.</span><span class="n">var</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="n">gene_idx</span><span class="p">]</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;(Median expr: </span><span class="si">{</span><span class="n">gene_median_expr</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">,</span>
+        <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+
+    <span class="c1"># Improve readability for low-count genes</span>
+    <span class="k">if</span> <span class="n">gene_median_expr</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span><span class="n">counts</span><span class="p">[:,</span> <span class="n">gene_idx</span><span class="p">],</span> <span class="mi">95</span><span class="p">)))</span>
+
+<span class="c1"># Hide empty subplots if we have more subplot positions than genes</span>
+<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_genes_to_plot</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">axes</span><span class="p">)):</span>
+    <span class="n">axes</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s2">&quot;off&quot;</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</pre></div>
+</div>
+<img src="../_images/sphx_glr_quickstart_007.png" srcset="../_images/sphx_glr_quickstart_007.png" alt="Odds-Ratio NBVCP Posterior Predictive Checks (25 genes) (Consistent Gene Selection), UBE2T (Median expr: 3.0), CENPA (Median expr: 1.0), SNRPG (Median expr: 7.0), UBE2E1 (Median expr: 1.0), MED10 (Median expr: 1.0), RNF145 (Median expr: 1.0), SNRPC (Median expr: 4.0), HSP90AB1 (Median expr: 24.0), DDX56 (Median expr: 1.0), BAG1 (Median expr: 2.0), DPP7 (Median expr: 1.0), HSPA14 (Median expr: 1.0), YIF1A (Median expr: 2.0), AIP (Median expr: 1.0), MRPL51 (Median expr: 11.0), TSFM (Median expr: 1.0), UBE2N (Median expr: 2.0), EBPL (Median expr: 3.0), CALM1 (Median expr: 5.0), RPS2 (Median expr: 167.0), CMC2 (Median expr: 1.0), CRLS1 (Median expr: 1.0), MRGBP (Median expr: 0.5), POLR2E (Median expr: 2.0), BAX (Median expr: 1.0)" class = "sphx-glr-single-img"/><div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Generating Odds-Ratio PPC for gene 2629 (median expression: 3.00)
+Generating Odds-Ratio PPC for gene 3488 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 3902 (median expression: 7.00)
+Generating Odds-Ratio PPC for gene 5592 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 8585 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 9886 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 10744 (median expression: 4.00)
+Generating Odds-Ratio PPC for gene 10916 (median expression: 24.00)
+Generating Odds-Ratio PPC for gene 12225 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 15825 (median expression: 2.00)
+Generating Odds-Ratio PPC for gene 16829 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 17017 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 19203 (median expression: 2.00)
+Generating Odds-Ratio PPC for gene 19259 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 20152 (median expression: 11.00)
+Generating Odds-Ratio PPC for gene 20954 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 21229 (median expression: 2.00)
+Generating Odds-Ratio PPC for gene 22057 (median expression: 3.00)
+Generating Odds-Ratio PPC for gene 23206 (median expression: 5.00)
+Generating Odds-Ratio PPC for gene 24673 (median expression: 167.00)
+Generating Odds-Ratio PPC for gene 25837 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 28675 (median expression: 1.00)
+Generating Odds-Ratio PPC for gene 29321 (median expression: 0.50)
+Generating Odds-Ratio PPC for gene 29443 (median expression: 2.00)
+Generating Odds-Ratio PPC for gene 30931 (median expression: 1.00)
+</pre></div>
+</div>
+<p>As expected, the posterior predictive checks for this parameterization look
+much tighter compared to the previous two models. Looking at our HSP90AB1 gene
+(second row, third column), we can see that the posterior predictive checks
+are much tighter compared to the previous two models.</p>
+<p>Capturing the correlation between the <span class="math notranslate nohighlight">\(r\)</span> and <span class="math notranslate nohighlight">\(p\)</span> parameters by
+fitting the mean and the odds-ratio parameter allows the simulated datasets to
+better match the observed data.</p>
+</section>
+</section>
+<section id="conclusion">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Conclusion</a><a class="headerlink" href="#conclusion" title="Link to this heading"></a></h2>
+<p>In this tutorial, we demonstrated how to use <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> to fit the NBDM,
+NBVCP, and odds-ratio models to a single-cell RNA-seq dataset. We also
+visualized the results of the models and compared the posterior predictive
+checks. We saw that the odds-ratio parameterization leads to much tighter
+posterior predictive checks compared to the other two models. <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> is a
+versatile tool that has more models and parameterizations to explore. We
+invite you to explore the rest of the documentation to learn more about how
+can <code class="docutils literal notranslate"><span class="pre">SCRIBE</span></code> help you analyze your own data.</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 43.271 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-auto-examples-quickstart-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/7aa44e0042f1a5916e22c1ef2cfd14ec/quickstart.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">quickstart.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/5969039a3124999e4dce047956f04299/quickstart.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">quickstart.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/aea8ec055c1a08a5e68c8dc2fabd33b8/quickstart.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">quickstart.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../quickstart.html" class="btn btn-neutral float-left" title="Quickstart" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="../models/index.html" class="btn btn-neutral float-right" title="Available Models" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

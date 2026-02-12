@@ -1,0 +1,918 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>stats &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="utils" href="utils.html" />
+    <link rel="prev" title="sampling" href="sampling.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Available Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="models.html">models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html">models_mix</a></li>
+<li class="toctree-l2"><a class="reference internal" href="svi.html">svi</a></li>
+<li class="toctree-l2"><a class="reference internal" href="results.html">results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sampling.html">sampling</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">stats</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.compute_histogram_percentiles"><code class="docutils literal notranslate"><span class="pre">compute_histogram_percentiles()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.compute_histogram_credible_regions"><code class="docutils literal notranslate"><span class="pre">compute_histogram_credible_regions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.compute_ecdf_percentiles"><code class="docutils literal notranslate"><span class="pre">compute_ecdf_percentiles()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.compute_ecdf_credible_regions"><code class="docutils literal notranslate"><span class="pre">compute_ecdf_credible_regions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.sample_dirichlet_from_parameters"><code class="docutils literal notranslate"><span class="pre">sample_dirichlet_from_parameters()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.fit_dirichlet_mle"><code class="docutils literal notranslate"><span class="pre">fit_dirichlet_mle()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.fit_dirichlet_minka"><code class="docutils literal notranslate"><span class="pre">fit_dirichlet_minka()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.BetaPrime"><code class="docutils literal notranslate"><span class="pre">BetaPrime</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.arg_constraints"><code class="docutils literal notranslate"><span class="pre">BetaPrime.arg_constraints</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.support"><code class="docutils literal notranslate"><span class="pre">BetaPrime.support</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.has_rsample"><code class="docutils literal notranslate"><span class="pre">BetaPrime.has_rsample</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.sample"><code class="docutils literal notranslate"><span class="pre">BetaPrime.sample()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.log_prob"><code class="docutils literal notranslate"><span class="pre">BetaPrime.log_prob()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.mean"><code class="docutils literal notranslate"><span class="pre">BetaPrime.mean</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.variance"><code class="docutils literal notranslate"><span class="pre">BetaPrime.variance</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.mode"><code class="docutils literal notranslate"><span class="pre">BetaPrime.mode</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.concentration1"><code class="docutils literal notranslate"><span class="pre">BetaPrime.concentration1</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.BetaPrime.concentration0"><code class="docutils literal notranslate"><span class="pre">BetaPrime.concentration0</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal"><code class="docutils literal notranslate"><span class="pre">LowRankLogisticNormal</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal.arg_constraints"><code class="docutils literal notranslate"><span class="pre">LowRankLogisticNormal.arg_constraints</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal.support"><code class="docutils literal notranslate"><span class="pre">LowRankLogisticNormal.support</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal.has_rsample"><code class="docutils literal notranslate"><span class="pre">LowRankLogisticNormal.has_rsample</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal.sample"><code class="docutils literal notranslate"><span class="pre">LowRankLogisticNormal.sample()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal.log_prob"><code class="docutils literal notranslate"><span class="pre">LowRankLogisticNormal.log_prob()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal.mean"><code class="docutils literal notranslate"><span class="pre">LowRankLogisticNormal.mean</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.SoftmaxNormal"><code class="docutils literal notranslate"><span class="pre">SoftmaxNormal</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.SoftmaxNormal.arg_constraints"><code class="docutils literal notranslate"><span class="pre">SoftmaxNormal.arg_constraints</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.SoftmaxNormal.support"><code class="docutils literal notranslate"><span class="pre">SoftmaxNormal.support</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.SoftmaxNormal.has_rsample"><code class="docutils literal notranslate"><span class="pre">SoftmaxNormal.has_rsample</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.SoftmaxNormal.sample"><code class="docutils literal notranslate"><span class="pre">SoftmaxNormal.sample()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.SoftmaxNormal.log_prob"><code class="docutils literal notranslate"><span class="pre">SoftmaxNormal.log_prob()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.stats.SoftmaxNormal.mean"><code class="docutils literal notranslate"><span class="pre">SoftmaxNormal.mean</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.stats.apply_distribution_mode_patches"><code class="docutils literal notranslate"><span class="pre">apply_distribution_mode_patches()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="utils.html">utils</a></li>
+<li class="toctree-l2"><a class="reference internal" href="viz.html">viz</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">stats</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/stats.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-scribe.stats">
+<span id="stats"></span><h1>stats<a class="headerlink" href="#module-scribe.stats" title="Link to this heading"></a></h1>
+<p>Statistics functions and distributions for SCRIBE.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.compute_histogram_percentiles">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">compute_histogram_percentiles</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">percentiles</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[5,</span> <span class="pre">25,</span> <span class="pre">50,</span> <span class="pre">75,</span> <span class="pre">95]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">normalize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/histogram.html#compute_histogram_percentiles"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.compute_histogram_percentiles" title="Link to this definition"></a></dt>
+<dd><p>Compute percentiles of histogram frequencies across multiple samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_points) by default, or (n_points,
+n_samples) if sample_axis=1</p></li>
+<li><p><strong>percentiles</strong> (<em>list-like</em><em>, </em><em>optional</em>) – List of percentiles to compute (default: [5, 25, 50, 75, 95])</p></li>
+<li><p><strong>normalize</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>optional</em>) – Whether to normalize histograms (default: True)</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>bin_edges</strong> (<em>array</em>) – Array of bin edges (integers from min to max value + 1)</p></li>
+<li><p><strong>hist_percentiles</strong> (<em>array</em>) – Array of shape (len(percentiles), len(bin_edges)-1) containing the
+percentiles of histogram frequencies for each bin</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.compute_histogram_credible_regions">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">compute_histogram_credible_regions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">credible_regions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[95,</span> <span class="pre">68,</span> <span class="pre">50]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">normalize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_bin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/histogram.html#compute_histogram_credible_regions"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.compute_histogram_credible_regions" title="Link to this definition"></a></dt>
+<dd><p>Compute credible regions of histogram frequencies across multiple samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_points) by default, or (n_points,
+n_samples) if sample_axis=1</p></li>
+<li><p><strong>credible_regions</strong> (<em>list-like</em><em>, </em><em>optional</em>) – List of credible region percentages to compute (default: [95, 68, 50])
+For example, 95 will compute the 2.5 and 97.5 percentiles</p></li>
+<li><p><strong>normalize</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>optional</em>) – Whether to normalize histograms (default: True)</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Number of samples to process in each batch (default: 100)</p></li>
+<li><p><strong>max_bin</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Maximum number of bins to process (default: None)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><p>Dictionary containing: - ‘bin_edges’: array of bin edges - ‘regions’:
+nested dictionary where each key is the credible region percentage</p>
+<blockquote>
+<div><dl class="simple">
+<dt>and values are dictionaries containing:</dt><dd><ul class="simple">
+<li><p>’lower’: lower bound of the credible region</p></li>
+<li><p>’upper’: upper bound of the credible region</p></li>
+<li><p>’median’: median (50th percentile)</p></li>
+</ul>
+</dd>
+</dl>
+</div></blockquote>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)">dict</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.compute_ecdf_percentiles">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">compute_ecdf_percentiles</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">percentiles</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[5,</span> <span class="pre">25,</span> <span class="pre">50,</span> <span class="pre">75,</span> <span class="pre">95]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/ecdf.html#compute_ecdf_percentiles"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.compute_ecdf_percentiles" title="Link to this definition"></a></dt>
+<dd><p>Compute percentiles of ECDF values across multiple samples of integers.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_points) by default, or (n_points,
+n_samples) if sample_axis=1, containing raw data samples of positive
+integers</p></li>
+<li><p><strong>percentiles</strong> (<em>list-like</em><em>, </em><em>optional</em>) – List of percentiles to compute (default: [5, 25, 50, 75, 95])</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>bin_edges</strong> (<em>array</em>) – Array of integer points at which ECDFs were evaluated (from min to max)</p></li>
+<li><p><strong>ecdf_percentiles</strong> (<em>array</em>) – Array of shape (len(percentiles), len(bin_edges)) containing the
+percentiles of ECDF values at each integer point</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.compute_ecdf_credible_regions">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">compute_ecdf_credible_regions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">credible_regions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[95,</span> <span class="pre">68,</span> <span class="pre">50]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_bin</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/ecdf.html#compute_ecdf_credible_regions"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.compute_ecdf_credible_regions" title="Link to this definition"></a></dt>
+<dd><p>Compute credible regions of ECDF values across multiple samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_points) by default, or (n_points,
+n_samples) if sample_axis=1, containing raw data samples</p></li>
+<li><p><strong>credible_regions</strong> (<em>list-like</em><em>, </em><em>optional</em>) – List of credible region percentages to compute (default: [95, 68, 50])
+For example, 95 will compute the 2.5 and 97.5 percentiles</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+<li><p><strong>batch_size</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Number of samples to process in each batch (default: 1000)</p></li>
+<li><p><strong>max_bin</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Maximum value to include in ECDF evaluation (default: None)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl>
+<dt>Dictionary containing:</dt><dd><ul class="simple">
+<li><p>’bin_edges’: array of points at which ECDFs were evaluated</p></li>
+<li><p>’regions’: nested dictionary where each key is the credible region
+percentage</p></li>
+</ul>
+<dl class="simple">
+<dt>and values are dictionaries containing:</dt><dd><ul class="simple">
+<li><p>’lower’: lower bound of the credible region</p></li>
+<li><p>’upper’: upper bound of the credible region</p></li>
+<li><p>’median’: median (50th percentile)</p></li>
+</ul>
+</dd>
+</dl>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)">dict</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.sample_dirichlet_from_parameters">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">sample_dirichlet_from_parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parameter_samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_samples_dirichlet</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rng_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/dirichlet.html#sample_dirichlet_from_parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.sample_dirichlet_from_parameters" title="Link to this definition"></a></dt>
+<dd><p>Samples from a Dirichlet distribution given an array of parameter samples.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>parameter_samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_variables) containing parameter samples
+to use as concentration parameters for Dirichlet distributions</p></li>
+<li><p><strong>n_samples_dirichlet</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Number of samples to draw from each Dirichlet distribution (default: 1)</p></li>
+<li><p><strong>rng_key</strong> (<em>random.PRNGKey</em><em>, </em><em>optional</em>) – JAX random number generator key. Defaults to random.PRNGKey(42) if None</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>If n_samples_dirichlet=1:</dt><dd><p>Array of shape (n_samples, n_variables)</p>
+</dd>
+<dt>If n_samples_dirichlet&gt;1:</dt><dd><p>Array of shape (n_samples, n_variables, n_samples_dirichlet)</p>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.fit_dirichlet_mle">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">fit_dirichlet_mle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tol</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-07</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/dirichlet.html#fit_dirichlet_mle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.fit_dirichlet_mle" title="Link to this definition"></a></dt>
+<dd><p>Fit a Dirichlet distribution to samples using Maximum Likelihood Estimation.</p>
+<p>This implementation uses Newton’s method to find the concentration
+parameters that maximize the likelihood of the observed samples. The
+algorithm iteratively updates the concentration parameters using gradient
+and Hessian information until convergence.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Array of shape (n_samples, n_variables) by default, or (n_variables,
+n_samples) if sample_axis=1, containing Dirichlet samples. Each
+row/column should sum to 1.</p></li>
+<li><p><strong>max_iter</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Maximum number of iterations for optimization (default: 1000)</p></li>
+<li><p><strong>tol</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Tolerance for convergence in parameter updates (default: 1e-7)</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Array of concentration parameters for the fitted Dirichlet distribution.
+Shape is (n_variables,).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.fit_dirichlet_minka">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">fit_dirichlet_minka</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">samples</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tol</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-07</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_axis</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/dirichlet.html#fit_dirichlet_minka"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.fit_dirichlet_minka" title="Link to this definition"></a></dt>
+<dd><p>Fit a Dirichlet distribution to data using Minka’s fixed-point iteration.</p>
+<dl class="simple">
+<dt>This function uses the relation:</dt><dd><p>ψ(α_j) - ψ(α₀) = ⟨ln x_j⟩    (with α₀ = ∑ₖ αₖ)</p>
+</dd>
+<dt>so that the fixed point update is:</dt><dd><p>α_j ← ψ⁻¹( ψ(α₀) + ⟨ln x_j⟩ )</p>
+</dd>
+</dl>
+<p>This method is generally more stable and faster than moment matching or
+maximum likelihood estimation via gradient descent.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>samples</strong> (<em>array-like</em>) – Data array with shape (n_samples, n_variables) by default (or transposed
+if sample_axis=1). Each row should sum to 1 (i.e., be a probability
+vector).</p></li>
+<li><p><strong>max_iter</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Maximum number of iterations for the fixed-point algorithm.</p></li>
+<li><p><strong>tol</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Tolerance for convergence - algorithm stops when max change in α is
+below this.</p></li>
+<li><p><strong>sample_axis</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Axis containing samples (default: 0). Use 1 if data is (n_variables,
+n_samples).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Estimated concentration parameters (α) of shape (n_variables,).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">BetaPrime</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">concentration1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">concentration0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">validate_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#BetaPrime"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.BetaPrime" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Distribution</span></code></p>
+<p>Beta Prime distribution (odds-of-Beta convention).</p>
+<section id="convention">
+<h2>Convention<a class="headerlink" href="#convention" title="Link to this heading"></a></h2>
+<p>If p ~ Beta(α, β) and φ = (1 - p) / p (odds of “success” 1 - p), then
+φ ~ BetaPrime(α, β) in THIS CLASS.</p>
+</section>
+<section id="implementation-detail">
+<h2>Implementation detail<a class="headerlink" href="#implementation-detail" title="Link to this heading"></a></h2>
+<dl class="simple">
+<dt>Mathematically, φ has the <em>standard</em> Beta-prime with swapped parameters:</dt><dd><p>φ ~ BetaPrime_std(β, α).</p>
+</dd>
+</dl>
+<p>This class accepts (α, β) at the call site and internally uses (β, α),
+so that your models can pass (α, β) unchanged. This is necessary because the
+NumPyro NegativeBinomial distribution expects the <cite>probs</cite> parameter to be
+the <em>failure probability</em> p, so that the odds ratio φ = (1 - p) / p is
+consistent with the parameterization of the BetaPrime distribution.</p>
+</section>
+<section id="density-with-user-parameters">
+<h2>Density (with user parameters α, β)<a class="headerlink" href="#density-with-user-parameters" title="Link to this heading"></a></h2>
+<blockquote>
+<div><p>f(φ; α, β) = φ^(β - 1) * (1 + φ)^(-(α + β)) / B(β, α),    φ &gt; 0</p>
+</div></blockquote>
+<p>Note the Beta function arguments B(β, α).</p>
+<dl class="field-list simple">
+<dt class="field-odd">param concentration1<span class="colon">:</span></dt>
+<dd class="field-odd"><p>α (matches the Beta prior’s first shape)</p>
+</dd>
+<dt class="field-even">type concentration1<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-odd">param concentration0<span class="colon">:</span></dt>
+<dd class="field-odd"><p>β (matches the Beta prior’s second shape)</p>
+</dd>
+<dt class="field-even">type concentration0<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.arg_constraints">
+<span class="sig-name descname"><span class="pre">arg_constraints</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><span class="pre">dict</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><span class="pre">Any</span></a><span class="p"><span class="pre">]</span></span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'concentration0':</span> <span class="pre">Positive(lower_bound=0.0),</span> <span class="pre">'concentration1':</span> <span class="pre">Positive(lower_bound=0.0)}</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.arg_constraints" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.support">
+<span class="sig-name descname"><span class="pre">support</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">Positive(lower_bound=0.0)</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.support" title="Link to this definition"></a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)"><em>ndarray</em></a><em> | </em><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a><em> | </em><a class="reference external" href="https://numpy.org/doc/stable/reference/arrays.scalars.html#numpy.number" title="(in NumPy v2.4)"><em>number</em></a><em> | </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> | </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#complex" title="(in Python v3.14)"><em>complex</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)"><em>ndarray</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/arrays.scalars.html#numpy.bool" title="(in NumPy v2.4)"><em>bool</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/arrays.scalars.html#numpy.number" title="(in NumPy v2.4)"><em>number</em></a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)">bool</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)">float</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#complex" title="(in Python v3.14)">complex</a> | <em>TypedNdArray</em></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.has_rsample">
+<span class="sig-name descname"><span class="pre">has_rsample</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.has_rsample" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.sample">
+<span class="sig-name descname"><span class="pre">sample</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_shape</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#BetaPrime.sample"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.BetaPrime.sample" title="Link to this definition"></a></dt>
+<dd><p>Returns a sample from the distribution having shape given by
+<cite>sample_shape + batch_shape + event_shape</cite>. Note that when <cite>sample_shape</cite> is non-empty,
+leading dimensions (of size <cite>sample_shape</cite>) of the returned sample will
+be filled with iid draws from the distribution instance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>key</strong> (<em>jax.random.PRNGKey</em>) – the rng_key key to be used for the distribution.</p></li>
+<li><p><strong>sample_shape</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a>) – the sample shape for the distribution.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>an array of shape <cite>sample_shape + batch_shape + event_shape</cite></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)">numpy.ndarray</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.log_prob">
+<span class="sig-name descname"><span class="pre">log_prob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#BetaPrime.log_prob"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.BetaPrime.log_prob" title="Link to this definition"></a></dt>
+<dd><p>Evaluates the log probability density for a batch of samples given by
+<cite>value</cite>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>value</strong> – A batch of samples from the distribution.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>an array with shape <cite>value.shape[:-self.event_shape]</cite></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ArrayLike</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.mean">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">mean</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.mean" title="Link to this definition"></a></dt>
+<dd><p>Mean of the distribution.</p>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.variance">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">variance</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.variance" title="Link to this definition"></a></dt>
+<dd><p>Variance of the distribution.</p>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.mode">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">mode</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.mode" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.concentration1">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">concentration1</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.concentration1" title="Link to this definition"></a></dt>
+<dd><p>Access to concentration1 parameter (α) for NumPyro compatibility.</p>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="scribe.stats.BetaPrime.concentration0">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">concentration0</span></span><a class="headerlink" href="#scribe.stats.BetaPrime.concentration0" title="Link to this definition"></a></dt>
+<dd><p>Access to concentration0 parameter (β) for NumPyro compatibility.</p>
+</dd></dl>
+
+</section>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="scribe.stats.LowRankLogisticNormal">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">LowRankLogisticNormal</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">loc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cov_factor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cov_diag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">validate_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#LowRankLogisticNormal"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.LowRankLogisticNormal" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Distribution</span></code></p>
+<p>Low-rank Logistic-Normal distribution for compositional data.</p>
+<p>This distribution models D-dimensional probability vectors (on the simplex)
+using a (D-1)-dimensional low-rank multivariate normal distribution in
+log-ratio space. It uses the Additive Log-Ratio (ALR) transformation.</p>
+<section id="mathematical-definition">
+<h2>Mathematical Definition<a class="headerlink" href="#mathematical-definition" title="Link to this heading"></a></h2>
+<p>Let y ∈ ℝ^(D-1) ~ MVN(μ, Σ) where Σ = WW^T + diag(D) is low-rank.
+The ALR transformation maps y to the simplex Δ^D:</p>
+<blockquote>
+<div><p>xᵢ = exp(yᵢ) / (1 + Σⱼ exp(yⱼ))   for i = 1, …, D-1
+x_D = 1 / (1 + Σⱼ exp(yⱼ))</p>
+</div></blockquote>
+<p>The inverse transformation (simplex to log-ratio space) is:</p>
+<blockquote>
+<div><p>yᵢ = log(xᵢ / x_D)   for i = 1, …, D-1</p>
+</div></blockquote>
+<p>The Jacobian of the transformation has log-determinant:</p>
+<blockquote>
+<div><p>log|det(J)| = -Σᵢ₌₁^D log(xᵢ)</p>
+</div></blockquote>
+</section>
+<section id="low-rank-covariance-structure">
+<h2>Low-Rank Covariance Structure<a class="headerlink" href="#low-rank-covariance-structure" title="Link to this heading"></a></h2>
+<p>The covariance matrix has the form:</p>
+<blockquote>
+<div><p>Σ = WW^T + diag(D)</p>
+</div></blockquote>
+<p>where:
+- W is a (D-1) × rank factor matrix
+- D is a (D-1) diagonal vector
+- Memory: O((D-1) × rank) vs O((D-1)²) for full covariance</p>
+<p>This is critical for large D (e.g., 30K+ genes) where storing full
+covariance is prohibitive.</p>
+</section>
+<section id="asymmetry-and-reference-component">
+<h2>Asymmetry and Reference Component<a class="headerlink" href="#asymmetry-and-reference-component" title="Link to this heading"></a></h2>
+<p>The ALR transformation treats the last component (x_D) as a reference.
+This means the distribution is NOT symmetric under permutation of
+components. If you need symmetry, use SoftmaxNormal instead (but note
+that SoftmaxNormal cannot compute log_prob).</p>
+<dl class="field-list simple">
+<dt class="field-odd">param loc<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Location parameter μ ∈ ℝ^(D-1) (mean in log-ratio space)</p>
+</dd>
+<dt class="field-even">type loc<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-odd">param cov_factor<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Low-rank factor matrix W of shape (D-1, rank)</p>
+</dd>
+<dt class="field-even">type cov_factor<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-odd">param cov_diag<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Diagonal component D of shape (D-1,)</p>
+</dd>
+<dt class="field-even">type cov_diag<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-odd">param validate_args<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Whether to validate input arguments</p>
+</dd>
+<dt class="field-even">type validate_args<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool, optional</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">random</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Create a low-rank logistic-normal for 5-dimensional simplex</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">D</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">rank</span> <span class="o">=</span> <span class="mi">2</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">loc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">D</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">cov_factor</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">D</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">rank</span><span class="p">))</span> <span class="o">*</span> <span class="mf">0.1</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">cov_diag</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">D</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">dist</span> <span class="o">=</span> <span class="n">LowRankLogisticNormal</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span> <span class="n">cov_factor</span><span class="p">,</span> <span class="n">cov_diag</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Sample from the distribution (returns D-dimensional simplex points)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">samples</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">100</span><span class="p">,))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">samples</span><span class="o">.</span><span class="n">shape</span>
+<span class="go">(100, 5)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Samples sum to 1</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">jnp</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">samples</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="go">True</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Evaluate log probability</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">log_p</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">log_prob</span><span class="p">(</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+</pre></div>
+</div>
+<p class="rubric">References</p>
+<p>Aitchison, J., &amp; Shen, S. M. (1980). Logistic-normal distributions: Some
+properties and uses. Biometrika, 67(2), 261-272.</p>
+<p>Aitchison, J. (1986). The Statistical Analysis of Compositional Data.
+Chapman &amp; Hall.</p>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#scribe.stats.SoftmaxNormal" title="scribe.stats.SoftmaxNormal"><code class="xref py py-obj docutils literal notranslate"><span class="pre">SoftmaxNormal</span></code></a></dt><dd><p>Symmetric alternative using softmax (no log_prob available)</p>
+</dd>
+</dl>
+</div>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.LowRankLogisticNormal.arg_constraints">
+<span class="sig-name descname"><span class="pre">arg_constraints</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><span class="pre">dict</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><span class="pre">Any</span></a><span class="p"><span class="pre">]</span></span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'cov_diag':</span> <span class="pre">Positive(lower_bound=0.0),</span> <span class="pre">'cov_factor':</span> <span class="pre">IndependentConstraint(Real(),</span> <span class="pre">2),</span> <span class="pre">'loc':</span> <span class="pre">RealVector(Real(),</span> <span class="pre">1)}</span></span><a class="headerlink" href="#scribe.stats.LowRankLogisticNormal.arg_constraints" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.LowRankLogisticNormal.support">
+<span class="sig-name descname"><span class="pre">support</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">Simplex()</span></span><a class="headerlink" href="#scribe.stats.LowRankLogisticNormal.support" title="Link to this definition"></a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)"><em>ndarray</em></a><em> | </em><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)"><em>ndarray</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/arrays.scalars.html#numpy.bool" title="(in NumPy v2.4)"><em>bool</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/arrays.scalars.html#numpy.number" title="(in NumPy v2.4)"><em>number</em></a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)">bool</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)">float</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#complex" title="(in Python v3.14)">complex</a> | <em>TypedNdArray</em></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.LowRankLogisticNormal.has_rsample">
+<span class="sig-name descname"><span class="pre">has_rsample</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></span><a class="headerlink" href="#scribe.stats.LowRankLogisticNormal.has_rsample" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.stats.LowRankLogisticNormal.sample">
+<span class="sig-name descname"><span class="pre">sample</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_shape</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#LowRankLogisticNormal.sample"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.LowRankLogisticNormal.sample" title="Link to this definition"></a></dt>
+<dd><p>Sample from the distribution.</p>
+<p>Returns samples on the D-dimensional simplex.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>key</strong> (<em>random.PRNGKey</em>) – JAX random key</p></li>
+<li><p><strong>sample_shape</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>, </em><em>optional</em>) – Shape of samples to draw</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Samples of shape (<a href="#id1"><span class="problematic" id="id2">*</span></a>sample_shape, <a href="#id3"><span class="problematic" id="id4">*</span></a>batch_shape, D) on the simplex</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.stats.LowRankLogisticNormal.log_prob">
+<span class="sig-name descname"><span class="pre">log_prob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#LowRankLogisticNormal.log_prob"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.LowRankLogisticNormal.log_prob" title="Link to this definition"></a></dt>
+<dd><p>Evaluate log probability density.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>value</strong> (<em>jnp.ndarray</em>) – Points on the simplex of shape (…, D)</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Log probability density of shape (…)</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="scribe.stats.LowRankLogisticNormal.mean">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">mean</span></span><a class="headerlink" href="#scribe.stats.LowRankLogisticNormal.mean" title="Link to this definition"></a></dt>
+<dd><p>Mean of the distribution on the simplex.</p>
+<p>Note: This is an approximation computed via Monte Carlo sampling,
+as the true mean does not have a closed form.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Approximate mean of shape (<a href="#id5"><span class="problematic" id="id6">*</span></a>batch_shape, D)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="scribe.stats.SoftmaxNormal">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">SoftmaxNormal</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">loc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cov_factor</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cov_diag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">validate_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#SoftmaxNormal"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.SoftmaxNormal" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Distribution</span></code></p>
+<p>Softmax-Normal distribution for compositional data (symmetric).</p>
+<p>This distribution models D-dimensional probability vectors (on the simplex)
+using a D-dimensional low-rank multivariate normal distribution with a
+softmax transformation. Unlike LowRankLogisticNormal (which uses ALR),
+this treats all components symmetrically.</p>
+<section id="id7">
+<h2>Mathematical Definition<a class="headerlink" href="#id7" title="Link to this heading"></a></h2>
+<p>Let y ∈ ℝ^D ~ MVN(μ, Σ) where Σ = WW^T + diag(D) is low-rank.
+The softmax transformation maps y to the simplex Δ^D:</p>
+<blockquote>
+<div><p>xᵢ = exp(yᵢ) / Σⱼ exp(yⱼ)   for i = 1, …, D</p>
+</div></blockquote>
+</section>
+<section id="symmetry-and-invariance">
+<h2>Symmetry and Invariance<a class="headerlink" href="#symmetry-and-invariance" title="Link to this heading"></a></h2>
+<p>The softmax transformation is:
+- Symmetric: All components treated equally (no reference component)
+- Translation-invariant: softmax(y + c·1) = softmax(y) for any constant c</p>
+<p>This translation invariance means the transformation is SINGULAR - you
+cannot uniquely invert it. Therefore, log_prob() is not available.</p>
+</section>
+<section id="id8">
+<h2>Low-Rank Covariance Structure<a class="headerlink" href="#id8" title="Link to this heading"></a></h2>
+<p>The covariance matrix has the form:</p>
+<blockquote>
+<div><p>Σ = WW^T + diag(D)</p>
+</div></blockquote>
+<dl class="simple">
+<dt>where:</dt><dd><ul class="simple">
+<li><p>W is a D × rank factor matrix</p></li>
+<li><p>D is a D-dimensional diagonal vector</p></li>
+<li><p>Memory: O(D × rank) vs O(D²) for full covariance</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="when-to-use">
+<h2>When to Use<a class="headerlink" href="#when-to-use" title="Link to this heading"></a></h2>
+<dl class="simple">
+<dt>Use SoftmaxNormal when:</dt><dd><ul class="simple">
+<li><p>You want symmetric treatment of all components</p></li>
+<li><p>You only need sampling (not log_prob evaluation)</p></li>
+<li><p>You’re summarizing/visualizing posterior distributions</p></li>
+</ul>
+</dd>
+<dt>Use LowRankLogisticNormal when:</dt><dd><ul class="simple">
+<li><p>You need to evaluate log_prob() for observed data</p></li>
+<li><p>You’re using the distribution as a likelihood in Bayesian inference</p></li>
+<li><p>Asymmetry (reference component) is acceptable</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">param loc<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Location parameter μ ∈ ℝ^D (mean in log-space)</p>
+</dd>
+<dt class="field-even">type loc<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-odd">param cov_factor<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Low-rank factor matrix W of shape (D, rank)</p>
+</dd>
+<dt class="field-even">type cov_factor<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-odd">param cov_diag<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Diagonal component D of shape (D,)</p>
+</dd>
+<dt class="field-even">type cov_diag<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+<dt class="field-odd">param validate_args<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Whether to validate input arguments</p>
+</dd>
+<dt class="field-even">type validate_args<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool, optional</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">random</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Create a softmax-normal for 5-dimensional simplex</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">D</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">rank</span> <span class="o">=</span> <span class="mi">2</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">loc</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">D</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">cov_factor</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">D</span><span class="p">,</span> <span class="n">rank</span><span class="p">))</span> <span class="o">*</span> <span class="mf">0.1</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">cov_diag</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">D</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.5</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">dist</span> <span class="o">=</span> <span class="n">SoftmaxNormal</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span> <span class="n">cov_factor</span><span class="p">,</span> <span class="n">cov_diag</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Sample from the distribution</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">samples</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">100</span><span class="p">,))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">samples</span><span class="o">.</span><span class="n">shape</span>
+<span class="go">(100, 5)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Samples sum to 1</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">jnp</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">samples</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="go">True</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Access underlying log-space distribution</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">log_samples</span> <span class="o">=</span> <span class="n">dist</span><span class="o">.</span><span class="n">base_dist</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">100</span><span class="p">,))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Apply softmax manually</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">manual_samples</span> <span class="o">=</span> <span class="n">jax</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="n">log_samples</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#scribe.stats.LowRankLogisticNormal" title="scribe.stats.LowRankLogisticNormal"><code class="xref py py-obj docutils literal notranslate"><span class="pre">LowRankLogisticNormal</span></code></a></dt><dd><p>ALR-based alternative with log_prob() available</p>
+</dd>
+</dl>
+</div>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.SoftmaxNormal.arg_constraints">
+<span class="sig-name descname"><span class="pre">arg_constraints</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#dict" title="(in Python v3.14)"><span class="pre">dict</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/library/typing.html#typing.Any" title="(in Python v3.14)"><span class="pre">Any</span></a><span class="p"><span class="pre">]</span></span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'cov_diag':</span> <span class="pre">Positive(lower_bound=0.0),</span> <span class="pre">'cov_factor':</span> <span class="pre">IndependentConstraint(Real(),</span> <span class="pre">2),</span> <span class="pre">'loc':</span> <span class="pre">RealVector(Real(),</span> <span class="pre">1)}</span></span><a class="headerlink" href="#scribe.stats.SoftmaxNormal.arg_constraints" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.SoftmaxNormal.support">
+<span class="sig-name descname"><span class="pre">support</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">Simplex()</span></span><a class="headerlink" href="#scribe.stats.SoftmaxNormal.support" title="Link to this definition"></a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)"><em>ndarray</em></a><em> | </em><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.jax.dev/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.4)"><em>ndarray</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/arrays.scalars.html#numpy.bool" title="(in NumPy v2.4)"><em>bool</em></a> | <a class="reference external" href="https://numpy.org/doc/stable/reference/arrays.scalars.html#numpy.number" title="(in NumPy v2.4)"><em>number</em></a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)">bool</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)">float</a> | <a class="reference external" href="https://docs.python.org/3/library/functions.html#complex" title="(in Python v3.14)">complex</a> | <em>TypedNdArray</em></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="scribe.stats.SoftmaxNormal.has_rsample">
+<span class="sig-name descname"><span class="pre">has_rsample</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></span><a class="headerlink" href="#scribe.stats.SoftmaxNormal.has_rsample" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.stats.SoftmaxNormal.sample">
+<span class="sig-name descname"><span class="pre">sample</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_shape</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#SoftmaxNormal.sample"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.SoftmaxNormal.sample" title="Link to this definition"></a></dt>
+<dd><p>Sample from the distribution.</p>
+<p>Returns samples on the D-dimensional simplex.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>key</strong> (<em>random.PRNGKey</em>) – JAX random key</p></li>
+<li><p><strong>sample_shape</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>, </em><em>optional</em>) – Shape of samples to draw</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Samples of shape (<a href="#id9"><span class="problematic" id="id10">*</span></a>sample_shape, <a href="#id11"><span class="problematic" id="id12">*</span></a>batch_shape, D) on the simplex</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.stats.SoftmaxNormal.log_prob">
+<span class="sig-name descname"><span class="pre">log_prob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/distributions.html#SoftmaxNormal.log_prob"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.SoftmaxNormal.log_prob" title="Link to this definition"></a></dt>
+<dd><p>Evaluate log probability density.</p>
+<p>NOT IMPLEMENTED: The softmax transformation is singular (adding a
+constant to all log-space coordinates doesn’t change the output),
+so the Jacobian determinant is zero and log_prob is undefined.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>value</strong> (<em>jnp.ndarray</em>) – Points on the simplex</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#NotImplementedError" title="(in Python v3.14)"><strong>NotImplementedError</strong></a> – Always raised. Use LowRankLogisticNormal if you need log_prob(),
+    or access base_dist.log_prob() for log-space density.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="scribe.stats.SoftmaxNormal.mean">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">mean</span></span><a class="headerlink" href="#scribe.stats.SoftmaxNormal.mean" title="Link to this definition"></a></dt>
+<dd><p>Mean of the distribution on the simplex.</p>
+<p>Note: This is an approximation computed via Monte Carlo sampling,
+as the true mean does not have a closed form.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Approximate mean of shape (<a href="#id13"><span class="problematic" id="id14">*</span></a>batch_shape, D)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>jnp.ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.stats.apply_distribution_mode_patches">
+<span class="sig-prename descclassname"><span class="pre">scribe.stats.</span></span><span class="sig-name descname"><span class="pre">apply_distribution_mode_patches</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/stats/patches.html#apply_distribution_mode_patches"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.stats.apply_distribution_mode_patches" title="Link to this definition"></a></dt>
+<dd><p>Apply mode property patches to NumPyro distributions.</p>
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="sampling.html" class="btn btn-neutral float-left" title="sampling" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="utils.html" class="btn btn-neutral float-right" title="utils" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

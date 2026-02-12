@@ -1,0 +1,586 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Available Models &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Negative Binomial-Dirichlet Multinomial Model (NBDM)" href="nbdm.html" />
+    <link rel="prev" title="Quickstart with 10x Genomics Data" href="../auto_examples/quickstart.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Available Models</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#quick-start">Quick Start</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#model-selection-guide">Model Selection Guide</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#available-model-variants">Available Model Variants</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#detailed-comparison">Detailed Comparison</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#basic-models">Basic Models</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mixture-models">Mixture Models</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#code-examples">Code Examples</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#typical-workflows">Typical Workflows</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#performance-considerations">Performance Considerations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#mathematical-foundation">Mathematical Foundation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#next-steps">Next Steps</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="nbdm.html">Negative Binomial-Dirichlet Multinomial Model (NBDM)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="zinb.html">Zero-Inflated Negative Binomial Model (ZINB)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="nbvcp.html">Negative Binomial with Variable Capture Probability Model (NBVCP)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="zinbvcp.html">Zero-Inflated Negative Binomial with Variable Capture Probability Model (ZINBVCP)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="models_mix.html">Mixture Models</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Available Models</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/models/index.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="available-models">
+<h1>Available Models<a class="headerlink" href="#available-models" title="Link to this heading"></a></h1>
+<p>SCRIBE provides a family of probabilistic models for single-cell RNA sequencing
+data, all built on the foundational <strong>Negative Binomial-Dirichlet Multinomial
+(NBDM)</strong> framework. Rather than choosing between completely different models,
+you select the variant that best matches your data characteristics using simple
+boolean flags.</p>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading"></a></h2>
+<p>All models are accessed through the same unified interface with boolean flags:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">scribe</span>
+
+<span class="c1"># Basic NBDM model with SVI</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">)</span>
+
+<span class="c1"># Zero-inflated model for data with excess zeros</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span> <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Variable capture model for cells with different capture efficiencies</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Combined model addressing both issues</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span>
+                           <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Mixture model for multiple cell populations</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span>
+                           <span class="n">mixture_model</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">n_components</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="c1"># MCMC inference with any model</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;mcmc&quot;</span><span class="p">,</span>
+                           <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">n_samples</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="model-selection-guide">
+<h2>Model Selection Guide<a class="headerlink" href="#model-selection-guide" title="Link to this heading"></a></h2>
+<p>Choose your model by answering these questions:</p>
+<div style="font-family: monospace; margin: 20px 0;">
+
+Does your data have <strong>excess zeros</strong> beyond biological variation?
+├─ <strong>YES</strong> → Set <code>zero_inflated=True</code>
+└─ <strong>NO</strong> → Continue with basic NBDM
+
+Do <strong>cells vary significantly</strong> in total UMI counts due to technical factors?
+├─ <strong>YES</strong> → Set <code>variable_capture=True</code>
+└─ <strong>NO</strong> → Continue with current choice
+
+Do you have <strong>multiple distinct cell populations</strong>?
+├─ <strong>YES</strong> → Set <code>mixture_model=True, n_components=K</code>
+└─ <strong>NO</strong> → You're done!
+
+</div></section>
+<section id="available-model-variants">
+<h2>Available Model Variants<a class="headerlink" href="#available-model-variants" title="Link to this heading"></a></h2>
+<table class="docutils align-default" id="id1">
+<caption><span class="caption-text">SCRIBE Model Family</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 15.0%" />
+<col style="width: 15.0%" />
+<col style="width: 15.0%" />
+<col style="width: 20.0%" />
+<col style="width: 20.0%" />
+<col style="width: 15.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p><strong>Model</strong></p></th>
+<th class="head"><p><strong>Zero Inflated</strong></p></th>
+<th class="head"><p><strong>Variable Capture</strong></p></th>
+<th class="head"><p><strong>Key Feature</strong></p></th>
+<th class="head"><p><strong>Best For</strong></p></th>
+<th class="head"><p><strong>Computational Cost</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference internal" href="nbdm.html"><span class="doc">NBDM</span></a></p></td>
+<td><p>✗</p></td>
+<td><p>✗</p></td>
+<td><p>Compositional normalization</p></td>
+<td><p>Clean data, moderate overdispersion</p></td>
+<td><p>Low</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="zinb.html"><span class="doc">ZINB</span></a></p></td>
+<td><p>✓</p></td>
+<td><p>✗</p></td>
+<td><p>Technical dropout modeling</p></td>
+<td><p>Data with excess zeros</p></td>
+<td><p>Low-Medium</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="nbvcp.html"><span class="doc">NBVCP</span></a></p></td>
+<td><p>✗</p></td>
+<td><p>✓</p></td>
+<td><p>Cell-specific capture rates</p></td>
+<td><p>Variable library sizes</p></td>
+<td><p>Medium</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="zinbvcp.html"><span class="doc">ZINBVCP</span></a></p></td>
+<td><p>✓</p></td>
+<td><p>✓</p></td>
+<td><p>Both dropouts and capture variation</p></td>
+<td><p>Complex technical artifacts</p></td>
+<td><p>High</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="models_mix.html"><span class="doc">Mixture Models</span></a></p></td>
+<td><p>Any</p></td>
+<td><p>Any</p></td>
+<td><p>Multiple cell populations</p></td>
+<td><p>Heterogeneous samples</p></td>
+<td><p>High</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="detailed-comparison">
+<h2>Detailed Comparison<a class="headerlink" href="#detailed-comparison" title="Link to this heading"></a></h2>
+<section id="basic-models">
+<h3>Basic Models<a class="headerlink" href="#basic-models" title="Link to this heading"></a></h3>
+<dl>
+<dt><strong>NBDM (Negative Binomial-Dirichlet Multinomial)</strong></dt><dd><p>The foundational model that provides principled compositional normalization by
+modeling:</p>
+<ul class="simple">
+<li><p>Total UMI count per cell (Negative Binomial)</p></li>
+<li><p>Gene-wise allocation of UMIs (Dirichlet-Multinomial)</p></li>
+</ul>
+<p><em>Use when</em>: Data is relatively clean with moderate overdispersion.</p>
+</dd>
+<dt><strong>ZINB (Zero-Inflated Negative Binomial)</strong></dt><dd><p>Extends NBDM by adding a zero-inflation component to handle technical
+dropouts:</p>
+<ul class="simple">
+<li><p>Gene-specific dropout probabilities</p></li>
+<li><p>Independent modeling of each gene</p></li>
+</ul>
+<p><em>Use when</em>: Excessive zeros beyond what NBDM predicts.</p>
+</dd>
+<dt><strong>NBVCP (NB with Variable Capture Probability)</strong></dt><dd><p>Extends NBDM by modeling cell-specific mRNA capture efficiencies:</p>
+<ul class="simple">
+<li><p>Cell-specific capture probabilities</p></li>
+<li><p>Accounts for technical variation in library preparation</p></li>
+</ul>
+<p><em>Use when</em>: Large variation in total UMI counts across cells.</p>
+</dd>
+<dt><strong>ZINBVCP (Zero-Inflated NB with Variable Capture Probability)</strong></dt><dd><p>Combines both zero-inflation and variable capture modeling:</p>
+<ul class="simple">
+<li><p>Most comprehensive single-cell artifact modeling</p></li>
+<li><p>Highest computational cost</p></li>
+</ul>
+<p><em>Use when</em>: Data has both excess zeros and variable capture efficiency.</p>
+</dd>
+</dl>
+</section>
+<section id="mixture-models">
+<h3>Mixture Models<a class="headerlink" href="#mixture-models" title="Link to this heading"></a></h3>
+<p>Any of the above models can be extended to mixture variants by adding
+<code class="docutils literal notranslate"><span class="pre">mixture_model=True</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># ZINB mixture model for 3 cell populations</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">fit_mcmc</span><span class="p">(</span>
+    <span class="n">counts</span><span class="p">,</span>
+    <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">mixture_model</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">n_components</span><span class="o">=</span><span class="mi">3</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p><em>Use when</em>: Your sample contains multiple distinct cell types or states.</p>
+</section>
+</section>
+<section id="code-examples">
+<h2>Code Examples<a class="headerlink" href="#code-examples" title="Link to this heading"></a></h2>
+<section id="typical-workflows">
+<h3>Typical Workflows<a class="headerlink" href="#typical-workflows" title="Link to this heading"></a></h3>
+<p><strong>Standard Analysis with SVI</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">scribe</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">anndata</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ad</span>
+
+<span class="c1"># Load data</span>
+<span class="n">adata</span> <span class="o">=</span> <span class="n">ad</span><span class="o">.</span><span class="n">read_h5ad</span><span class="p">(</span><span class="s1">&#39;data.h5ad&#39;</span><span class="p">)</span>
+
+<span class="c1"># Fit basic model using SVI</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span>
+    <span class="n">n_steps</span><span class="o">=</span><span class="mi">100_000</span>
+<span class="p">)</span>
+
+<span class="c1"># Get posterior predictive samples</span>
+<span class="n">ppc_samples</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">ppc_samples</span><span class="p">(</span><span class="n">n_samples</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+
+<span class="c1"># Visualize results</span>
+<span class="n">scribe</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">plot_parameter_posteriors</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>MCMC Analysis</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Fit model using MCMC</span>
+<span class="n">mcmc_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;mcmc&quot;</span><span class="p">,</span>
+    <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">n_samples</span><span class="o">=</span><span class="mi">2000</span><span class="p">,</span>
+    <span class="n">n_warmup</span><span class="o">=</span><span class="mi">1000</span>
+<span class="p">)</span>
+
+<span class="c1"># Check convergence diagnostics</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">mcmc_results</span><span class="o">.</span><span class="n">summary</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>Comparing Models</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Fit different models</span>
+<span class="n">basic_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span><span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">)</span>
+<span class="n">zinb_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+ <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span> <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span> <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Compare model fit using WAIC</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scribe.model_comparison</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_waic</span>
+<span class="n">basic_waic</span> <span class="o">=</span> <span class="n">compute_waic</span><span class="p">(</span><span class="n">basic_results</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+<span class="n">zinb_waic</span> <span class="o">=</span> <span class="n">compute_waic</span><span class="p">(</span><span class="n">zinb_results</span><span class="p">,</span> <span class="n">counts</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Basic WAIC: </span><span class="si">{</span><span class="n">basic_waic</span><span class="p">[</span><span class="s1">&#39;waic_2&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;ZINB WAIC: </span><span class="si">{</span><span class="n">zinb_waic</span><span class="p">[</span><span class="s1">&#39;waic_2&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>Mixture Model Analysis</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Fit mixture model</span>
+<span class="n">mixture_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span>
+    <span class="n">mixture_model</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">n_components</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">n_steps</span><span class="o">=</span><span class="mi">150_000</span>  <span class="c1"># More steps for mixture models</span>
+<span class="p">)</span>
+
+<span class="c1"># Get cell type assignments</span>
+<span class="n">assignments</span> <span class="o">=</span> <span class="n">mixture_results</span><span class="o">.</span><span class="n">cell_type_assignments</span><span class="p">(</span><span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">)</span>
+<span class="n">mean_probs</span> <span class="o">=</span> <span class="n">assignments</span><span class="p">[</span><span class="s1">&#39;mean_probabilities&#39;</span><span class="p">]</span>
+
+<span class="c1"># Analyze component-specific parameters</span>
+<span class="n">posterior_samples</span> <span class="o">=</span> <span class="n">mixture_results</span><span class="o">.</span><span class="n">get_posterior_samples</span><span class="p">(</span><span class="n">n_samples</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="n">r_k</span> <span class="o">=</span> <span class="n">posterior_samples</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;r_</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Component </span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2"> mean dispersion: </span><span class="si">{</span><span class="n">r_k</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>Advanced Parameterizations</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Standard parameterization (Beta/Gamma distributions)</span>
+<span class="n">standard_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span>
+    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+    <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Odds-ratio parameterization (often better for optimization)</span>
+<span class="n">odds_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;svi&quot;</span><span class="p">,</span>
+    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;odds_ratio&quot;</span><span class="p">,</span>
+    <span class="n">zero_inflated</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">phi_prior</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>  <span class="c1"># BetaPrime prior parameters</span>
+<span class="p">)</span>
+
+<span class="c1"># Unconstrained parameterization (good for MCMC)</span>
+<span class="n">unconstrained_results</span> <span class="o">=</span> <span class="n">scribe</span><span class="o">.</span><span class="n">run_scribe</span><span class="p">(</span>
+    <span class="n">counts</span><span class="o">=</span><span class="n">counts</span><span class="p">,</span>
+    <span class="n">inference_method</span><span class="o">=</span><span class="s2">&quot;mcmc&quot;</span><span class="p">,</span>
+    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;unconstrained&quot;</span><span class="p">,</span>
+    <span class="n">variable_capture</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="performance-considerations">
+<h2>Performance Considerations<a class="headerlink" href="#performance-considerations" title="Link to this heading"></a></h2>
+<p><strong>Computational Complexity</strong></p>
+<ul class="simple">
+<li><p><strong>NBDM</strong>: O(N × G) - Linear in cells and genes</p></li>
+<li><p><strong>ZINB</strong>: O(N × G) - Similar to NBDM</p></li>
+<li><p><strong>NBVCP</strong>: O(N × G) - Additional cell parameters</p></li>
+<li><p><strong>ZINBVCP</strong>: O(N × G) - Most parameters per model</p></li>
+<li><p><strong>Mixtures</strong>: O(K × base_model) - Scales with components</p></li>
+</ul>
+<p><strong>Memory Requirements</strong></p>
+<ul class="simple">
+<li><p>Base models: ~10-50 MB for typical datasets</p></li>
+<li><p>Variable capture: +N parameters (cell-specific)</p></li>
+<li><p>Mixture models: +K×(base parameters)</p></li>
+</ul>
+<p><strong>SVI Convergence (n_steps)</strong></p>
+<table class="docutils align-default" id="id2">
+<caption><span class="caption-text">Typical SVI Requirements</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p><strong>Model Type</strong></p></th>
+<th class="head"><p><strong>Standard</strong></p></th>
+<th class="head"><p><strong>Odds-Ratio</strong></p></th>
+<th class="head"><p><strong>Unconstrained</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>NBDM, ZINB</p></td>
+<td><p>50,000-100,000</p></td>
+<td><p>25,000-50,000</p></td>
+<td><p>100,000-200,000</p></td>
+</tr>
+<tr class="row-odd"><td><p>NBVCP, ZINBVCP</p></td>
+<td><p>100,000-150,000</p></td>
+<td><p>50,000-100,000</p></td>
+<td><p>150,000-300,000</p></td>
+</tr>
+<tr class="row-even"><td><p>Mixture Models</p></td>
+<td><p>150,000-300,000</p></td>
+<td><p>100,000-200,000</p></td>
+<td><p>300,000-500,000</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>MCMC Convergence (n_samples)</strong></p>
+<table class="docutils align-default" id="id3">
+<caption><span class="caption-text">Typical MCMC Requirements</span><a class="headerlink" href="#id3" title="Link to this table"></a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p><strong>Model Type</strong></p></th>
+<th class="head"><p><strong>Warmup Steps</strong></p></th>
+<th class="head"><p><strong>Sample Steps</strong></p></th>
+<th class="head"><p><strong>Chains</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>NBDM, ZINB</p></td>
+<td><p>1,000</p></td>
+<td><p>2,000</p></td>
+<td><p>2-4</p></td>
+</tr>
+<tr class="row-odd"><td><p>NBVCP, ZINBVCP</p></td>
+<td><p>2,000</p></td>
+<td><p>3,000</p></td>
+<td><p>4</p></td>
+</tr>
+<tr class="row-even"><td><p>Mixture Models</p></td>
+<td><p>3,000</p></td>
+<td><p>5,000</p></td>
+<td><p>4-8</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Parameterization Guide</strong></p>
+<ul class="simple">
+<li><p><strong>Standard</strong>: Good default choice, uses natural parameter distributions</p></li>
+<li><p><strong>Odds-Ratio</strong>: Often converges faster in SVI, good for optimization</p></li>
+<li><p><strong>Linked</strong>: Alternative parameterization for specific use cases</p></li>
+<li><p><strong>Unconstrained</strong>: Best for MCMC, allows unrestricted parameter space</p></li>
+</ul>
+</section>
+<section id="mathematical-foundation">
+<h2>Mathematical Foundation<a class="headerlink" href="#mathematical-foundation" title="Link to this heading"></a></h2>
+<p>All SCRIBE models build on the core insight that single-cell RNA-seq data can be decomposed into:</p>
+<ol class="arabic simple">
+<li><p><strong>Total transcriptome size</strong> (how many molecules per cell)</p></li>
+<li><p><strong>Gene-wise allocation</strong> (how molecules are distributed among genes)</p></li>
+</ol>
+<p>This decomposition enables principled normalization and uncertainty quantification. The mathematical derivation showing how this leads to the Negative Binomial-Dirichlet Multinomial formulation is detailed in our <span class="xref std std-doc">mathematical foundation</span>.</p>
+<p>Model variants extend this foundation by:</p>
+<ul class="simple">
+<li><p><strong>Zero-inflation</strong>: Adding technical dropout layers</p></li>
+<li><p><strong>Variable capture</strong>: Cell-specific efficiency parameters</p></li>
+<li><p><strong>Mixtures</strong>: Multiple parameter sets for different populations</p></li>
+</ul>
+</section>
+<section id="next-steps">
+<h2>Next Steps<a class="headerlink" href="#next-steps" title="Link to this heading"></a></h2>
+<ol class="arabic simple">
+<li><p><strong>Start with the basic NBDM model</strong> to establish baseline performance</p></li>
+<li><p><strong>Check model diagnostics</strong> to identify potential issues</p></li>
+<li><p><strong>Add complexity incrementally</strong> based on your data characteristics</p></li>
+<li><p><strong>Compare models</strong> using information criteria and posterior predictive checks</p></li>
+</ol>
+<p>For detailed information about each model:</p>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="nbdm.html">Negative Binomial-Dirichlet Multinomial Model (NBDM)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#model-structure">Model Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#model-derivation">Model Derivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#prior-distributions">Prior Distributions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#variational-inference">Variational Inference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#learning-algorithm">Learning Algorithm</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#posterior-inference">Posterior Inference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#implementation-details">Implementation Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#model-assumptions">Model Assumptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#usage-considerations">Usage Considerations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbdm.html#recap">Recap</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="zinb.html">Zero-Inflated Negative Binomial Model (ZINB)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#model-comparison-with-nbdm">Model Comparison with <span class="xref std std-doc">NBDM</span></a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#model-structure">Model Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#model-derivation">Model Derivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#prior-distributions">Prior Distributions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#variational-posterior-distribution">Variational Posterior Distribution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#learning-algorithm">Learning Algorithm</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#implementation-details">Implementation Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#model-assumptions">Model Assumptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinb.html#usage-considerations">Usage Considerations</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="nbvcp.html">Negative Binomial with Variable Capture Probability Model (NBVCP)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#model-comparison-with-nbdm">Model Comparison with <span class="xref std std-doc">NBDM</span></a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#model-structure">Model Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#model-derivation">Model Derivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#prior-distributions">Prior Distributions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#variational-posterior-distribution">Variational Posterior Distribution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#learning-algorithm">Learning Algorithm</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#implementation-details">Implementation Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#model-assumptions">Model Assumptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="nbvcp.html#usage-considerations">Usage Considerations</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="zinbvcp.html">Zero-Inflated Negative Binomial with Variable Capture Probability Model (ZINBVCP)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#model-comparison-with-nbvcp-and-zinb">Model Comparison with <span class="xref std std-doc">NBVCP</span> and <span class="xref std std-doc">ZINB</span></a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#model-structure">Model Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#model-derivation">Model Derivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#prior-distributions">Prior Distributions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#variational-posterior-distribution">Variational Posterior Distribution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#learning-algorithm">Learning Algorithm</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#implementation-details">Implementation Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#model-assumptions">Model Assumptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="zinbvcp.html#usage-considerations">Usage Considerations</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="models_mix.html">Mixture Models</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#general-structure">General Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#parameter-dependencies-by-model">Parameter Dependencies by Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#learning-process">Learning Process</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#usage-guidelines">Usage Guidelines</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#implementation-details">Implementation Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#inference-and-results">Inference and Results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#key-differences-from-base-models">Key Differences from Base Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html#references">References</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../auto_examples/quickstart.html" class="btn btn-neutral float-left" title="Quickstart with 10x Genomics Data" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="nbdm.html" class="btn btn-neutral float-right" title="Negative Binomial-Dirichlet Multinomial Model (NBDM)" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

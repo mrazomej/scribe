@@ -1,0 +1,448 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Negative Binomial-Dirichlet Multinomial Model (NBDM) &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Zero-Inflated Negative Binomial Model (ZINB)" href="zinb.html" />
+    <link rel="prev" title="Available Models" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">Available Models</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="index.html#quick-start">Quick Start</a></li>
+<li class="toctree-l2"><a class="reference internal" href="index.html#model-selection-guide">Model Selection Guide</a></li>
+<li class="toctree-l2"><a class="reference internal" href="index.html#available-model-variants">Available Model Variants</a></li>
+<li class="toctree-l2"><a class="reference internal" href="index.html#detailed-comparison">Detailed Comparison</a></li>
+<li class="toctree-l2"><a class="reference internal" href="index.html#code-examples">Code Examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="index.html#performance-considerations">Performance Considerations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="index.html#mathematical-foundation">Mathematical Foundation</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="index.html#next-steps">Next Steps</a><ul class="current">
+<li class="toctree-l3 current"><a class="current reference internal" href="#">Negative Binomial-Dirichlet Multinomial Model (NBDM)</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#model-structure">Model Structure</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#model-derivation">Model Derivation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#prior-distributions">Prior Distributions</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#variational-inference">Variational Inference</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#learning-algorithm">Learning Algorithm</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#posterior-inference">Posterior Inference</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#implementation-details">Implementation Details</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#model-assumptions">Model Assumptions</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#usage-considerations">Usage Considerations</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#recap">Recap</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="zinb.html">Zero-Inflated Negative Binomial Model (ZINB)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="nbvcp.html">Negative Binomial with Variable Capture Probability Model (NBVCP)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="zinbvcp.html">Zero-Inflated Negative Binomial with Variable Capture Probability Model (ZINBVCP)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="models_mix.html">Mixture Models</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/index.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">Available Models</a></li>
+      <li class="breadcrumb-item active">Negative Binomial-Dirichlet Multinomial Model (NBDM)</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/models/nbdm.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="negative-binomial-dirichlet-multinomial-model-nbdm">
+<h1>Negative Binomial-Dirichlet Multinomial Model (NBDM)<a class="headerlink" href="#negative-binomial-dirichlet-multinomial-model-nbdm" title="Link to this heading"></a></h1>
+<p>The Negative Binomial-Dirichlet Multinomial (NBDM) model is designed to capture
+key characteristics of single-cell RNA sequencing data, particularly:</p>
+<ol class="arabic simple">
+<li><p>The overdispersed nature of molecular counts</p></li>
+<li><p>The compositional aspect of sequencing data</p></li>
+<li><p>Gene-specific variation in expression levels</p></li>
+</ol>
+<p>We emphasize that the NBDM model is different from many standard scRNA-seq
+pipelines, which use library-size normalization (dividing by total UMI count,
+then log-transform, etc.). By contrast, the NBDM model integrates normalization
+into the generative process (via the Dirichlet-multinomial). This can provide a
+more principled measure of uncertainty and can help separate technical from
+biological variation.</p>
+<section id="model-structure">
+<span id="nbdm-model-structure"></span><h2>Model Structure<a class="headerlink" href="#model-structure" title="Link to this heading"></a></h2>
+<p>The NBDM model follows a hierarchical structure where:</p>
+<p>Each cell’s total molecular count follows a <a class="reference external" href="https://en.wikipedia.org/wiki/Negative_binomial_distribution">Negative Binomial distribution</a>. Given the
+total count, the allocation of molecules across genes follows a
+<a class="reference external" href="https://en.wikipedia.org/wiki/Dirichlet-multinomial_distribution">Dirichlet-Multinomial distribution</a>.</p>
+<p>Formally, for a dataset with <span class="math notranslate nohighlight">\(N\)</span> cells and <span class="math notranslate nohighlight">\(G\)</span> genes, let
+<span class="math notranslate nohighlight">\(u_{g}^{(c)}\)</span> be the UMI count for gene <span class="math notranslate nohighlight">\(g\)</span> in cell <span class="math notranslate nohighlight">\(c\)</span>, and
+<span class="math notranslate nohighlight">\(U^{(c)} = \sum_{g=1}^G u_{g}^{(c)}\)</span> be the total UMI count for cell
+<span class="math notranslate nohighlight">\(c\)</span>. The generative process is:</p>
+<ol class="arabic simple">
+<li><p>Draw global success probability: <span class="math notranslate nohighlight">\(p \sim \text{Beta}(\alpha_p, \beta_p)\)</span></p></li>
+<li><p>Draw gene-specific dispersion parameters: <span class="math notranslate nohighlight">\(r_g \sim
+\text{Gamma}(\alpha_r, \beta_r)\)</span> for <span class="math notranslate nohighlight">\(g = 1,\ldots,G\)</span></p></li>
+<li><p>For each cell <span class="math notranslate nohighlight">\(c = 1,\ldots,N\)</span>:</p>
+<ul class="simple">
+<li><p>Draw total count: <span class="math notranslate nohighlight">\(U^{(c)} \sim \text{NegativeBinomial}(\sum_g r_g,
+p)\)</span></p></li>
+<li><p>Draw gene proportions: <span class="math notranslate nohighlight">\(u^{(c)} \sim \text{DirichletMultinomial}(r,
+U^{(c)})\)</span></p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="model-derivation">
+<span id="nbdm-model-derivation"></span><h2>Model Derivation<a class="headerlink" href="#model-derivation" title="Link to this heading"></a></h2>
+<p>To derive the NBDM model, we start with the assumption that each gene’s mRNA
+count in the cell follows a Negative Binomial distribution, i.e., for gene
+<span class="math notranslate nohighlight">\(g\)</span>, the mRNA count <span class="math notranslate nohighlight">\(m_g\)</span> is of the form</p>
+<div class="math notranslate nohighlight">
+\[m_g \sim \text{NegativeBinomial}(r_g, p),
+\tag{1}\]</div>
+<p>where <span class="math notranslate nohighlight">\(r_g\)</span> is the gene-specific dispersion parameter and <span class="math notranslate nohighlight">\(p\)</span> is the
+success probability <strong>shared across all genes</strong>. Assuming each mRNA count is
+independent, the probability of observing an expression profile</p>
+<div class="math notranslate nohighlight">
+\[\underline{m} = (m_1, \ldots, m_G),
+\tag{2}\]</div>
+<p>where <span class="math notranslate nohighlight">\(G\)</span> is the total number of genes, is given by the product of the
+individual probabilities, i.e.,</p>
+<div class="math notranslate nohighlight">
+\[\pi(\underline{m} \mid \underline{r}, p) =
+\prod_{g=1}^G \text{NegativeBinomial}(m_g; r_g, p).
+\tag{3}\]</div>
+<p>Although one might question the assumption of a global success probability, this
+assumption is less relevant in practice, as the negative binomial distribution
+is a sloppy distribution, where changes in the success probability can be
+compensated by changes in the dispersion parameter to obtain equivalent
+numerically equivalent probability mass functions. In other words, the negative
+binomial is a highly flexible distribution for which multiple parameter
+combinations result in very similar probability mass functions.</p>
+<p>Eq. (1) and (3) describe the probability of a cell having a given mRNA count.
+However, experimentally, we do not directly observe the mRNA counts, but rather
+UMI counts. To model the transformation from mRNA to UMI counts, we assume that
+each mRNA molecule in the cell is captured with a probability <span class="math notranslate nohighlight">\(\nu\)</span>. This
+implies that, conditioned on the mRNA count, the UMI count follows a binomial
+distribution, i.e.,</p>
+<div class="math notranslate nohighlight">
+\[u_g \sim \text{Binomial}(m_g, \nu).
+\tag{4}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\nu\)</span> is the capture efficiency shared across all genes and cells.
+Nevertheless, since our observable only contains UMI counts, we must remove
+the dependency on the mRNA count to obtain a model that is identifiable. To do
+so, we can marginalize over the mRNA count, i.e.,</p>
+<div class="math notranslate nohighlight">
+\[\pi(u_g \mid r_g, p, \nu) = \sum_{m_g = u_g}^\infty \pi(m_g \mid r_g, p)
+\pi(u_g \mid m_g, \nu).
+\tag{5}\]</div>
+<p>In words, Eq. (5) states that the probability of observing a UMI count
+<span class="math notranslate nohighlight">\(u_g\)</span> for gene <span class="math notranslate nohighlight">\(g\)</span> is the sum of the probabilities of observing all
+possible mRNA counts <span class="math notranslate nohighlight">\(m_g\)</span> that result in <span class="math notranslate nohighlight">\(u_g\)</span> UMIs. The sum in Eq.
+(5) starts at <span class="math notranslate nohighlight">\(m_g = u_g\)</span> because, the cell cannot have more UMIs than the
+number of mRNA molecules.</p>
+<p>It can be shown that Eq. (5) results in a negative binomial distribution with
+a re-scaled <span class="math notranslate nohighlight">\(p\)</span> parameter, i.e.,</p>
+<div class="math notranslate nohighlight">
+\[\pi(u_g \mid r_g, \hat{p}) = \text{NegativeBinomial}(u_g; r_g, \hat{p}),
+\tag{6}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\hat{p} = \frac{p}{\nu + (1 - p){\nu}}\)</span>. Thus, the joint
+distribution of the UMI counts for all genes is given by</p>
+<div class="math notranslate nohighlight">
+\[\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\prod_{g=1}^G \text{NegativeBinomial}(u_g; r_g, \hat{p}).
+\tag{7}\]</div>
+<p>Given these assumptions, we can show that the model in Eq. (7) can be expressed
+in a much more compact form, where:</p>
+<ol class="arabic simple">
+<li><p>The total number of transcripts in the cell is drawn from a negative binomial</p></li>
+</ol>
+<div class="math notranslate nohighlight">
+\[U \sim \text{NegativeBinomial}(R, p),
+\tag{8}\]</div>
+<p>where <span class="math notranslate nohighlight">\(U\)</span> is the total number of UMIs in the cell, and</p>
+<div class="math notranslate nohighlight">
+\[R = \sum_{g=1}^G r_g,
+\tag{9}\]</div>
+<p>is the sum of the dispersion parameters across all genes. Furthermore,</p>
+<ol class="arabic simple" start="2">
+<li><p>The total count <span class="math notranslate nohighlight">\(U\)</span> is then distributed across all genes via a
+Dirichlet-multinomial distribution, i.e.,</p></li>
+</ol>
+<div class="math notranslate nohighlight">
+\[\underline{u} \mid U, \underline{r}, \sim
+\text{DirichletMultinomial}(\underline{u}; U, \underline{r}),
+\tag{10}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\underline{r} = (r_1, \ldots, r_G)\)</span> is the vector of dispersion
+parameters across all genes.</p>
+<p>The significance of this result is that in its derivation, we obtain a natural
+normalization scheme for the UMI counts. More specifically, the
+Dirichlet-multinomial from Eq. (10) is derived as</p>
+<div class="math notranslate nohighlight">
+\[\overbrace{
+    \pi(\underline{u} \mid U, \underline{r})
+ }^{\text{Dirichlet-multinomial}} =
+ \int d^G\underline{\rho} \;
+\overbrace{
+    \pi(\underline{\rho} \mid U, \underline{r})
+}^{\text{Dirichlet}} \;
+\overbrace{
+    \pi(\underline{u} \mid U, \underline{\rho})
+}^{\text{multinomial}},
+\tag{11}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\underline{\rho} = (\rho_1, \ldots, \rho_G)\)</span> is the vector of
+proportions across all genes that satisfies</p>
+<div class="math notranslate nohighlight">
+\[\sum_{g=1}^G \rho_g = 1, \; \rho_g \geq 0 \; \forall \; g.
+\tag{12}\]</div>
+<p>The derivation above shows that once the total number of UMIs, <span class="math notranslate nohighlight">\(U\)</span>, is
+drawn (via the negative binomial), the allocation of those UMIs across different
+genes follows a Dirichlet-multinomial distribution. Intuitively, this means we
+separate how many total UMIs a cell has from how those UMIs are split among its
+genes. The Dirichlet-multinomial “naturally normalizes” the data because it lets
+us talk about the fraction of the total transcriptome that each gene
+constitutes, rather than just raw counts.</p>
+<p>Concretely, if you know <span class="math notranslate nohighlight">\(U\)</span>, then you can think of a latent “proportion
+vector” <span class="math notranslate nohighlight">\(\rho=(\rho_1,\ldots,\rho_G)\)</span>, describing what fraction of
+<span class="math notranslate nohighlight">\(U\)</span> belongs to each gene. Instead of treating <span class="math notranslate nohighlight">\(\rho\)</span> as fixed, we
+place a Dirichlet distribution on it with parameters <span class="math notranslate nohighlight">\(r=(r_1,\ldots,r_G)\)</span>.
+These gene-specific parameters reflect how variable or overdispersed each gene’s
+expression tends to be. When you integrate over all possible proportion vectors
+<span class="math notranslate nohighlight">\(\rho\)</span>, you end up with a Dirichlet-multinomial distribution on the counts
+<span class="math notranslate nohighlight">\(u\)</span>. In practice, once you infer the posterior distribution of the
+<span class="math notranslate nohighlight">\(r\)</span> parameters from data, they become the “shape” parameters of the
+Dirichlet, which in turn captures your uncertainty about each gene’s fraction of
+the total transcriptome. This provides a principled, model-based way of
+normalizing single-cell RNA-seq data by explicitly modeling both the total
+number of UMIs and the gene-level fractions that compose it.</p>
+<p>For the detailed derivation, please refer to [cite paper here].</p>
+</section>
+<section id="prior-distributions">
+<h2>Prior Distributions<a class="headerlink" href="#prior-distributions" title="Link to this heading"></a></h2>
+<p>The model uses the following prior distributions:</p>
+<p>For the success probability <span class="math notranslate nohighlight">\(p\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[p \sim \text{Beta}(\alpha_p, \beta_p)
+\tag{13}\]</div>
+<p>Default values: <span class="math notranslate nohighlight">\(\alpha_p = \beta_p = 1\)</span> (uniform prior)</p>
+<p>For each gene’s dispersion parameter <span class="math notranslate nohighlight">\(r_j\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[r_j \sim \text{Gamma}(\alpha_r, \beta_r)
+\tag{14}\]</div>
+<p>Default values: <span class="math notranslate nohighlight">\(\alpha_r = 2\)</span>, <span class="math notranslate nohighlight">\(\beta_r = 0.1\)</span></p>
+</section>
+<section id="variational-inference">
+<h2>Variational Inference<a class="headerlink" href="#variational-inference" title="Link to this heading"></a></h2>
+<p>The model uses stochastic variational inference with a mean-field variational
+family as the approximate posterior. The variational distributions are:</p>
+<p>For the success probability <span class="math notranslate nohighlight">\(p\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(p) = \text{Beta}(\hat{\alpha}_p, \hat{\beta}_p)
+\tag{15}\]</div>
+<p>For each gene’s dispersion parameter <span class="math notranslate nohighlight">\(r_g\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[q(r_g) = \text{Gamma}(\hat{\alpha}_{r,g}, \hat{\beta}_{r,g})
+\tag{16}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\hat{\alpha}_p\)</span>, <span class="math notranslate nohighlight">\(\hat{\beta}_p\)</span>, <span class="math notranslate nohighlight">\(\hat{\alpha}_{r,g}\)</span>,
+and <span class="math notranslate nohighlight">\(\hat{\beta}_{r,g}\)</span> are learnable variational parameters.</p>
+<p>The Evidence Lower Bound (ELBO) is:</p>
+<div class="math notranslate nohighlight">
+\[\mathcal{L} = \mathbb{E}_{q}[\log \pi(u,U,r,p)] - \mathbb{E}_{q}[\log q(r,p)]
+\tag{17}\]</div>
+<p>where:</p>
+<ul class="simple">
+<li><p><span class="math notranslate nohighlight">\(\pi(u,U,r,p)\)</span> is the joint probability of the model</p></li>
+<li><p><span class="math notranslate nohighlight">\(q(r,p)\)</span> is the variational distribution</p></li>
+</ul>
+</section>
+<section id="learning-algorithm">
+<h2>Learning Algorithm<a class="headerlink" href="#learning-algorithm" title="Link to this heading"></a></h2>
+<p>The model is trained using stochastic variational inference with the following
+steps:</p>
+<ol class="arabic simple">
+<li><p>Initialize variational parameters:</p>
+<ul class="simple">
+<li><p><span class="math notranslate nohighlight">\(\hat{\alpha}_p = \alpha_p\)</span>, <span class="math notranslate nohighlight">\(\hat{\beta}_p = \beta_p\)</span></p></li>
+<li><p><span class="math notranslate nohighlight">\(\hat{\alpha}_{r,g} = \alpha_r\)</span>, <span class="math notranslate nohighlight">\(\hat{\beta}_{r,g} = \beta_r\)</span>
+for all genes <span class="math notranslate nohighlight">\(g\)</span></p></li>
+</ul>
+</li>
+<li><p>For each iteration:</p>
+<ul class="simple">
+<li><p>Sample a mini-batch of cells</p></li>
+<li><p>Compute gradients of the ELBO with respect to variational parameters</p></li>
+<li><p>Update parameters (using the Adam optimizer as default)</p></li>
+</ul>
+</li>
+<li><p>Continue until maximum iterations reached</p></li>
+</ol>
+</section>
+<section id="posterior-inference">
+<h2>Posterior Inference<a class="headerlink" href="#posterior-inference" title="Link to this heading"></a></h2>
+<p>After training, we can:</p>
+<ol class="arabic simple">
+<li><p>Sample from the approximate posterior distributions:</p></li>
+</ol>
+<div class="math notranslate nohighlight">
+\[p^{(s)} \sim \text{Beta}(\hat{\alpha}_p, \hat{\beta}_p)
+\tag{18}\]</div>
+<div class="math notranslate nohighlight">
+\[r_g^{(s)} \sim \text{Gamma}(\hat{\alpha}_{r,g}, \hat{\beta}_{r,g})
+\tag{19}\]</div>
+<ol class="arabic simple" start="2">
+<li><p>Generate predictive samples:</p></li>
+</ol>
+<div class="math notranslate nohighlight">
+\[U^{(s)} \sim \text{NegativeBinomial}(\sum_g r_g^{(s)}, p^{(s)})
+\tag{20}\]</div>
+<div class="math notranslate nohighlight">
+\[u_g^{(s)} \sim \text{DirichletMultinomial}(r^{(s)}, U^{(s)})
+\tag{21}\]</div>
+</section>
+<section id="implementation-details">
+<h2>Implementation Details<a class="headerlink" href="#implementation-details" title="Link to this heading"></a></h2>
+<p>The model is implemented using the NumPyro probabilistic programming framework,
+which provides:</p>
+<ul class="simple">
+<li><p>Automatic differentiation for computing ELBO gradients</p></li>
+<li><p>Efficient sampling from variational distributions</p></li>
+<li><p>Mini-batch support for scalable inference</p></li>
+<li><p>GPU acceleration through JAX</p></li>
+</ul>
+</section>
+<section id="model-assumptions">
+<h2>Model Assumptions<a class="headerlink" href="#model-assumptions" title="Link to this heading"></a></h2>
+<p>The NBDM model makes several key assumptions:</p>
+<ul class="simple">
+<li><p>The total count per cell follows a Negative Binomial distribution</p></li>
+<li><p>Given the total count, gene proportions follow a Dirichlet-Multinomial
+distribution</p></li>
+<li><p>Gene-specific dispersion parameters capture biological variation</p></li>
+<li><p>A single global success probability applies to all cells</p></li>
+<li><p>Genes are conditionally independent given the total count</p></li>
+</ul>
+</section>
+<section id="usage-considerations">
+<h2>Usage Considerations<a class="headerlink" href="#usage-considerations" title="Link to this heading"></a></h2>
+<p>The model is particularly suitable when:</p>
+<ul class="simple">
+<li><p>The data exhibits overdispersion relative to a Poisson model</p></li>
+<li><p>The total count per cell varies moderately</p></li>
+<li><p>Gene-specific variation needs to be captured</p></li>
+</ul>
+<p>It may be less suitable when:</p>
+<ul class="simple">
+<li><p>Zero-inflation is a dominant feature (consider ZINB model instead)</p></li>
+<li><p>Cell-specific capture efficiencies vary significantly (consider NBVCP model),
+reflected on a large variation in the total UMI count per cell</p></li>
+<li><p>The data contains multiple distinct cell populations (consider mixture models)</p></li>
+</ul>
+</section>
+<section id="recap">
+<h2>Recap<a class="headerlink" href="#recap" title="Link to this heading"></a></h2>
+<p>The NBDM model posits that each cell’s total UMI count is governed by a negative
+binomial, and gene-level allocations come from a Dirichlet-multinomial. This
+captures both how many molecules each cell is estimated to have and how they are
+allocated across genes. Together, these assumptions yield a principled way to
+“normalize” the data by focusing on per-cell fractions in a probabilistic
+framework.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="Available Models" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="zinb.html" class="btn btn-neutral float-right" title="Zero-Inflated Negative Binomial Model (ZINB)" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

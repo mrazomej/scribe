@@ -1,0 +1,411 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>utils &mdash; SCRIBE  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+      <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="viz" href="viz.html" />
+    <link rel="prev" title="stats" href="stats.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            SCRIBE
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickoverview.html">Quick Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Available Models</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../models/index.html">Available Models</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../results.html">Results Class</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="models.html">models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models_mix.html">models_mix</a></li>
+<li class="toctree-l2"><a class="reference internal" href="svi.html">svi</a></li>
+<li class="toctree-l2"><a class="reference internal" href="results.html">results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="sampling.html">sampling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="stats.html">stats</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">utils</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.utils.ParameterCollector"><code class="docutils literal notranslate"><span class="pre">ParameterCollector</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.utils.ParameterCollector.collect_non_none"><code class="docutils literal notranslate"><span class="pre">ParameterCollector.collect_non_none()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.utils.ParameterCollector.collect_and_map_priors"><code class="docutils literal notranslate"><span class="pre">ParameterCollector.collect_and_map_priors()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#scribe.utils.ParameterCollector.collect_vae_params"><code class="docutils literal notranslate"><span class="pre">ParameterCollector.collect_vae_params()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.utils.numpyro_to_scipy"><code class="docutils literal notranslate"><span class="pre">numpyro_to_scipy()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.utils.git_root"><code class="docutils literal notranslate"><span class="pre">git_root()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scribe.utils.use_cpu"><code class="docutils literal notranslate"><span class="pre">use_cpu()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="viz.html">viz</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">SCRIBE</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Reference</a></li>
+      <li class="breadcrumb-item active">utils</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api/utils.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-scribe.utils">
+<span id="utils"></span><h1>utils<a class="headerlink" href="#module-scribe.utils" title="Link to this heading"></a></h1>
+<p>Utility modules for SCRIBE.</p>
+<p>This package contains various utility classes and functions used throughout
+the SCRIBE codebase for parameter collection, data processing, and other
+common operations.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="scribe.utils.ParameterCollector">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">scribe.utils.</span></span><span class="sig-name descname"><span class="pre">ParameterCollector</span></span><a class="reference internal" href="../_modules/scribe/utils/parameter_collector.html#ParameterCollector"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.utils.ParameterCollector" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/library/functions.html#object" title="(in Python v3.14)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
+<p>Utility class for collecting and mapping optional parameters.</p>
+<p>This class provides static methods to collect non-None parameters and map
+them to the appropriate ModelConfig attribute names based on the model
+parameterization and constraint settings.</p>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Collect only non-None parameters</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">params</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_non_none</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">r_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">p_prior</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">gate_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">params</span><span class="p">)</span>
+<span class="go">{&#39;r_prior&#39;: (1.0, 1.0), &#39;gate_prior&#39;: (2.0, 0.5)}</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Collect and map prior parameters for standard parameterization</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">prior_config</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_and_map_priors</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">r_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">p_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">prior_config</span><span class="p">)</span>
+<span class="go">{&#39;r_param_prior&#39;: (1.0, 1.0), &#39;p_param_prior&#39;: (2.0, 0.5)}</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Collect VAE parameters</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">vae_config</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_vae_params</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">vae_latent_dim</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">vae_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">256</span><span class="p">,</span> <span class="mi">128</span><span class="p">],</span>
+<span class="gp">... </span>    <span class="n">vae_activation</span><span class="o">=</span><span class="s2">&quot;gelu&quot;</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">vae_config</span><span class="p">)</span>
+<span class="go">{</span>
+<span class="go">    &#39;vae_latent_dim&#39;: 5,</span>
+<span class="go">    &#39;vae_hidden_dims&#39;: [256, 128],</span>
+<span class="go">    &#39;vae_activation&#39;: &#39;gelu&#39;</span>
+<span class="go">}</span>
+</pre></div>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.utils.ParameterCollector.collect_non_none">
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">collect_non_none</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/utils/parameter_collector.html#ParameterCollector.collect_non_none"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.utils.ParameterCollector.collect_non_none" title="Link to this definition"></a></dt>
+<dd><p>Return only non-None keyword arguments.</p>
+<p>This is a simple utility to filter out None values from a dictionary
+of keyword arguments, useful for collecting only the parameters that
+were explicitly provided by the user.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>**kwargs</strong> – Keyword arguments to filter</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dictionary containing only non-None values</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, Any]</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">params</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_non_none</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">a</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">b</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="kc">None</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">params</span><span class="p">)</span>
+<span class="go">{&#39;a&#39;: 1, &#39;c&#39;: &#39;hello&#39;}</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.utils.ParameterCollector.collect_and_map_priors">
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">collect_and_map_priors</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">unconstrained</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parameterization</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">p_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gate_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">p_capture_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mixing_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mu_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">phi_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">phi_capture_prior</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/utils/parameter_collector.html#ParameterCollector.collect_and_map_priors"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.utils.ParameterCollector.collect_and_map_priors" title="Link to this definition"></a></dt>
+<dd><p>Collect and map prior parameters to ModelConfig attribute names.</p>
+<p>This method collects all non-None prior parameters and maps them to
+the correct ModelConfig attribute names based on whether the model
+uses unconstrained parameterization and the specific parameterization
+type (standard, linked, odds_ratio).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>unconstrained</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>) – Whether the model uses unconstrained parameterization</p></li>
+<li><p><strong>parameterization</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Model parameterization type (“standard”, “linked”, “odds_ratio”)</p></li>
+<li><p><strong>r_prior</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for dispersion parameter (r)</p></li>
+<li><p><strong>p_prior</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for success probability (p)</p></li>
+<li><p><strong>gate_prior</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for zero-inflation gate</p></li>
+<li><p><strong>p_capture_prior</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for variable capture probability</p></li>
+<li><p><strong>mixing_prior</strong> (<em>Optional</em><em>[</em><em>Any</em><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for mixture components</p></li>
+<li><p><strong>mu_prior</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for mean parameter (used in linked/odds_ratio)</p></li>
+<li><p><strong>phi_prior</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for odds ratio parameter (used in odds_ratio)</p></li>
+<li><p><strong>phi_capture_prior</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>]</em><em>, </em><em>default=None</em>) – Prior parameters for variable capture odds ratio</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dictionary mapping ModelConfig attribute names to prior values</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, Any]</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Standard parameterization (constrained)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">config</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_and_map_priors</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">r_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">p_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+<span class="go">{&#39;r_param_prior&#39;: (1.0, 1.0), &#39;p_param_prior&#39;: (2.0, 0.5)}</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Unconstrained standard parameterization</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">config</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_and_map_priors</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">r_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">p_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+<span class="go">{</span>
+<span class="go">    &#39;r_unconstrained_prior&#39;: (0.0, 1.0),</span>
+<span class="go">    &#39;p_unconstrained_prior&#39;: (0.0, 1.0)</span>
+<span class="go">}</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Linked parameterization with mu parameter</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">config</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_and_map_priors</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">unconstrained</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">parameterization</span><span class="o">=</span><span class="s2">&quot;linked&quot;</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">p_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">mu_prior</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+<span class="go">{&#39;p_param_prior&#39;: (1.0, 1.0), &#39;mu_param_prior&#39;: (0.0, 1.0)}</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="scribe.utils.ParameterCollector.collect_vae_params">
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">collect_vae_params</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">vae_latent_dim</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_hidden_dims</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_activation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_input_transformation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_vcp_hidden_dims</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_vcp_activation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_prior_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'standard'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_prior_num_layers</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_prior_hidden_dims</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_prior_activation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_prior_mask_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'alternating'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vae_standardize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/utils/parameter_collector.html#ParameterCollector.collect_vae_params"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.utils.ParameterCollector.collect_vae_params" title="Link to this definition"></a></dt>
+<dd><p>Collect VAE-specific parameters for ModelConfig.</p>
+<p>This method collects all VAE-related parameters and returns them as
+a dictionary ready to be merged into ModelConfig kwargs. Only non-None
+values are included in the returned dictionary.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>vae_latent_dim</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=3</em>) – Dimension of the VAE latent space</p></li>
+<li><p><strong>vae_hidden_dims</strong> (<em>Optional</em><em>[</em><em>List</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>]</em><em>, </em><em>default=None</em>) – List of hidden layer dimensions for the VAE encoder/decoder</p></li>
+<li><p><strong>vae_activation</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – Activation function name for VAE layers</p></li>
+<li><p><strong>vae_input_transformation</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – Input transformation for VAE</p></li>
+<li><p><strong>vae_vcp_hidden_dims</strong> (<em>Optional</em><em>[</em><em>List</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>]</em><em>, </em><em>default=None</em>) – Hidden layer dimensions for VCP encoder (variable capture models)</p></li>
+<li><p><strong>vae_vcp_activation</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – Activation function for VCP encoder</p></li>
+<li><p><strong>vae_prior_type</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default=&quot;standard&quot;</em>) – Type of VAE prior (“standard” or “decoupled”)</p></li>
+<li><p><strong>vae_prior_num_layers</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>default=None</em>) – Number of coupling layers for decoupled prior</p></li>
+<li><p><strong>vae_prior_hidden_dims</strong> (<em>Optional</em><em>[</em><em>List</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>]</em><em>, </em><em>default=None</em>) – Hidden layer dimensions for decoupled prior coupling layers</p></li>
+<li><p><strong>vae_prior_activation</strong> (<em>Optional</em><em>[</em><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>]</em><em>, </em><em>default=None</em>) – Activation function for decoupled prior coupling layers</p></li>
+<li><p><strong>vae_prior_mask_type</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>default=&quot;alternating&quot;</em>) – Mask type for decoupled prior coupling layers</p></li>
+<li><p><strong>vae_standardize</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to standardize input data for VAE models</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dictionary of VAE parameters ready for ModelConfig</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Dict[<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a>, Any]</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Basic VAE configuration</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">vae_config</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_vae_params</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">vae_latent_dim</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">vae_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">256</span><span class="p">,</span> <span class="mi">128</span><span class="p">],</span>
+<span class="gp">... </span>    <span class="n">vae_activation</span><span class="o">=</span><span class="s2">&quot;gelu&quot;</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">vae_config</span><span class="p">)</span>
+<span class="go">{&#39;vae_latent_dim&#39;: 5, &#39;vae_hidden_dims&#39;: [256, 128], &#39;vae_activation&#39;: &#39;gelu&#39;}</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># VAE with decoupled prior</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">vae_config</span> <span class="o">=</span> <span class="n">ParameterCollector</span><span class="o">.</span><span class="n">collect_vae_params</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">vae_latent_dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">vae_prior_type</span><span class="o">=</span><span class="s2">&quot;decoupled&quot;</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">vae_prior_num_layers</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">vae_prior_hidden_dims</span><span class="o">=</span><span class="p">[</span><span class="mi">64</span><span class="p">,</span> <span class="mi">64</span><span class="p">]</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">vae_config</span><span class="p">)</span>
+<span class="go">{</span>
+<span class="go">    &#39;vae_latent_dim&#39;: 3,</span>
+<span class="go">    &#39;vae_prior_type&#39;: &#39;decoupled&#39;,</span>
+<span class="go">    &#39;vae_prior_num_layers&#39;: 3,</span>
+<span class="go">    &#39;vae_prior_hidden_dims&#39;: [64, 64]</span>
+<span class="go">}</span>
+</pre></div>
+</div>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.utils.numpyro_to_scipy">
+<span class="sig-prename descclassname"><span class="pre">scribe.utils.</span></span><span class="sig-name descname"><span class="pre">numpyro_to_scipy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">distribution</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/utils/core.html#numpyro_to_scipy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.utils.numpyro_to_scipy" title="Link to this definition"></a></dt>
+<dd><p>Get the corresponding scipy.stats distribution for a
+numpyro.distributions.Distribution.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>distribution</strong> (<em>numpyro.distributions.Distribution</em>) – The numpyro distribution to convert</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The corresponding scipy.stats distribution</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.rv_continuous.html#scipy.stats.rv_continuous" title="(in SciPy v1.17.0)">scipy.stats.rv_continuous</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.utils.git_root">
+<span class="sig-prename descclassname"><span class="pre">scribe.utils.</span></span><span class="sig-name descname"><span class="pre">git_root</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">current_path</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/utils/core.html#git_root"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.utils.git_root" title="Link to this definition"></a></dt>
+<dd><p>Finds the root directory of a Git repository.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>current_path</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>optional</em>) – The starting path. If None, uses the current working directory.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The path to the Git root directory, or None if not found.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)">str</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="scribe.utils.use_cpu">
+<span class="sig-prename descclassname"><span class="pre">scribe.utils.</span></span><span class="sig-name descname"><span class="pre">use_cpu</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/scribe/utils/core.html#use_cpu"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#scribe.utils.use_cpu" title="Link to this definition"></a></dt>
+<dd><p>Context manager to temporarily force JAX computations to run on CPU.</p>
+<p>This is useful when you want to ensure specific computations run on CPU
+rather than GPU/TPU, for example when running out of GPU memory.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Yields control back to the context block</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Example</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Force posterior sampling to run on CPU</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">with</span> <span class="n">use_cpu</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">results</span><span class="o">.</span><span class="n">get_ppc_samples</span><span class="p">(</span><span class="n">n_samples</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="stats.html" class="btn btn-neutral float-left" title="stats" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="viz.html" class="btn btn-neutral float-right" title="viz" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Manuel Razo.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
