@@ -843,30 +843,88 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
 # ------------------------------------------------------------------------------
 
 
+def _compute_correlation_matrix(samples, n_samples):
+    """
+    Compute pairwise Pearson correlation matrix from posterior samples.
+
+    Centres and standardises the samples (z-scores) and then computes the
+    sample Pearson correlation as :math:`(Z^T Z) / (n - 1)`.  Genes with
+    zero standard deviation across samples are assigned unit self-correlation
+    and zero cross-correlation.
+
+    Parameters
+    ----------
+    samples : jnp.ndarray
+        Posterior samples with shape ``(n_samples, n_genes)``.
+    n_samples : int
+        Number of posterior samples (must equal ``samples.shape[0]``).
+
+    Returns
+    -------
+    jnp.ndarray
+        Pearson correlation matrix with shape ``(n_genes, n_genes)``.
+    """
+    import jax.numpy as jnp
+
+    # Centre (subtract column means)
+    samples_centered = samples - jnp.mean(samples, axis=0, keepdims=True)
+
+    # Standard deviations (avoid division by zero for constant genes)
+    samples_std = jnp.std(samples, axis=0, keepdims=True)
+    samples_std = jnp.where(samples_std == 0, 1.0, samples_std)
+
+    # Standardise (z-scores)
+    samples_standardized = samples_centered / samples_std
+
+    # Correlation: (Z^T @ Z) / (n - 1)
+    correlation_matrix = (samples_standardized.T @ samples_standardized) / (
+        n_samples - 1
+    )
+    return correlation_matrix
+
+
+# ------------------------------------------------------------------------------
+
+
 def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
     """
     Plot clustered correlation heatmap of gene parameters from posterior
     samples.
 
-    This function computes pairwise Pearson correlations between genes based on
-    posterior samples of the gene expression parameter (mu for linked/odds_ratio
-    parameterization, r for standard parameterization). It then selects the top
-    genes by correlation variance and displays them as a hierarchically
+    Computes pairwise Pearson correlations between genes based on posterior
+    samples of the gene expression parameter (``mu`` for linked / odds_ratio
+    parameterizations, ``r`` for standard / canonical).  The top genes by
+    correlation variance are selected and displayed as a hierarchically
     clustered heatmap with dendrograms.
+
+    For **mixture models** (posterior samples with shape
+    ``(n_samples, n_components, n_genes)``), a separate heatmap is produced
+    for every mixture component.  Gene selection uses the *union* of the
+    top-variance genes across all components so that every heatmap shares
+    the same gene set, enabling direct visual comparison of the per-component
+    correlation structures.
 
     Parameters
     ----------
     results : ScribeSVIResults
-        Results object containing model parameters and posterior samples
-    counts : array-like
-        Observed count matrix (n_cells, n_genes). Required for amortized capture
-        probability when generating posterior samples.
+        Results object containing model parameters and posterior samples.
+    counts : array-like, shape (n_cells, n_genes)
+        Observed count matrix.  Required for amortized capture probability
+        when generating posterior samples.
     figs_dir : str
-        Directory to save the figure
+        Directory in which to save the figure(s).
     cfg : DictConfig
-        Original inference configuration
+        Original Hydra inference configuration.
     viz_cfg : DictConfig
-        Visualization configuration containing heatmap_opts
+        Visualization configuration.  Recognised keys inside
+        ``viz_cfg.heatmap_opts``:
+
+        * ``n_genes`` (int, default 1500) – number of genes to select per
+          component (union may be larger).
+        * ``n_samples`` (int, default 512) – number of posterior samples to
+          draw when none exist yet.
+        * ``figsize`` (int, default 12) – side length of the square heatmap.
+        * ``cmap`` (str, default ``'RdBu_r'``) – colour map.
     """
     from jax import random
     import jax.numpy as jnp
@@ -875,8 +933,8 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
 
     # Get options from config
     heatmap_opts = viz_cfg.get("heatmap_opts", {})
-    n_genes_to_plot = heatmap_opts.get("n_genes", 500)
-    n_samples = heatmap_opts.get("n_samples", 256)
+    n_genes_to_plot = heatmap_opts.get("n_genes", 1500)
+    n_samples = heatmap_opts.get("n_samples", 512)
     figsize = heatmap_opts.get("figsize", 12)
     cmap = heatmap_opts.get("cmap", "RdBu_r")
 
@@ -924,124 +982,202 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
         return
 
     samples = results.posterior_samples[param_name]
-
-    # Handle mixture models - samples may have shape
-    # (n_samples, n_components, n_genes)
-    # For now, take the first component or flatten
-    if samples.ndim == 3:
-        console.print(
-            f"[dim]Detected mixture model with {samples.shape[1]} components[/dim]"
-        )
-        console.print(
-            "[dim]Using first component for correlation heatmap...[/dim]"
-        )
-        samples = samples[:, 0, :]
-
     console.print(f"[dim]Sample shape:[/dim] {samples.shape}")
-    n_genes = samples.shape[1]
 
-    # Ensure we don't try to plot more genes than available
-    n_genes_to_plot = min(n_genes_to_plot, n_genes)
-
-    console.print("[dim]Computing pairwise Pearson correlations...[/dim]")
-
-    # Center the data (subtract column means)
-    samples_centered = samples - jnp.mean(samples, axis=0, keepdims=True)
-
-    # Compute standard deviations
-    samples_std = jnp.std(samples, axis=0, keepdims=True)
-
-    # Avoid division by zero for constant genes
-    samples_std = jnp.where(samples_std == 0, 1.0, samples_std)
-
-    # Standardize the data (z-scores)
-    samples_standardized = samples_centered / samples_std
-
-    # Compute correlation matrix: (X^T @ X) / (n_samples - 1)
-    correlation_matrix = (samples_standardized.T @ samples_standardized) / (
-        n_samples - 1
-    )
-
-    console.print(
-        f"[dim]Correlation matrix shape:[/dim] {correlation_matrix.shape}"
-    )
-    console.print(
-        f"[dim]Correlation range:[/dim] [{float(jnp.min(correlation_matrix)):.3f}, "
-        f"{float(jnp.max(correlation_matrix)):.3f}]"
-    )
-
-    console.print(
-        f"[dim]Selecting top {n_genes_to_plot} genes by correlation variance...[/dim]"
-    )
-
-    # Compute variance of each gene's correlation pattern
-    correlation_variance = jnp.var(correlation_matrix, axis=1)
-
-    # Get indices of top genes by variance
-    top_var_indices = jnp.argsort(correlation_variance)[-n_genes_to_plot:]
-    top_var_indices = jnp.sort(
-        top_var_indices
-    )  # Sort for easier interpretation
-
-    # Subset the correlation matrix
-    correlation_subset = correlation_matrix[top_var_indices, :][
-        :, top_var_indices
-    ]
-
-    console.print(
-        f"[dim]Selected {n_genes_to_plot} genes with highest correlation variance[/dim]"
-    )
-    console.print(
-        f"[dim]Subset correlation matrix shape:[/dim] {correlation_subset.shape}"
-    )
-
-    # Convert to numpy for seaborn
-    correlation_subset_np = np.array(correlation_subset)
-
-    console.print("[dim]Creating clustered heatmap...[/dim]")
-
-    # Create clustered heatmap with dendrograms
-    fig = sns.clustermap(
-        correlation_subset_np,
-        cmap=cmap,
-        center=0,
-        vmin=-1,
-        vmax=1,
-        figsize=(figsize, figsize),
-        dendrogram_ratio=0.15,
-        cbar_pos=(0.02, 0.83, 0.03, 0.15),
-        linewidths=0,
-        xticklabels=False,
-        yticklabels=False,
-        cbar_kws={"label": "Pearson Correlation"},
-    )
-
-    # Add title
-    fig.fig.suptitle(
-        f"Gene Correlation Structure (Top {n_genes_to_plot} by Variance)\n"
-        f"Parameter: {param_name} | Samples: {n_samples}",
-        y=1.02,
-        fontsize=12,
-    )
-
-    # Get output format
+    # Common naming components
     output_format = viz_cfg.get("format", "png")
-
-    # Construct filename
     config_vals = _get_config_values(cfg, results=results)
-    fname = (
-        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+    base_fname = (
+        f"{config_vals['method']}_"
+        f"{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps_correlation_heatmap.{output_format}"
+        f"{config_vals['n_steps']}steps"
     )
 
-    output_path = os.path.join(figs_dir, fname)
-    fig.savefig(output_path, bbox_inches="tight")
-    console.print(
-        f"[green]✓[/green] [dim]Saved correlation heatmap to[/dim] [cyan]{output_path}[/cyan]"
-    )
-    plt.close(fig.fig)
+    # ------------------------------------------------------------------
+    # Mixture models: one heatmap per component, shared gene set
+    # ------------------------------------------------------------------
+    if samples.ndim == 3:
+        n_components = samples.shape[1]
+        n_genes = samples.shape[2]
+        n_genes_capped = min(n_genes_to_plot, n_genes)
+        console.print(
+            f"[dim]Detected mixture model with {n_components} components "
+            f"– generating per-component heatmaps[/dim]"
+        )
+
+        # Compute correlation matrix and row-variance for each component
+        console.print(
+            "[dim]Computing per-component correlation matrices...[/dim]"
+        )
+        correlation_matrices = []
+        variance_per_component = []
+
+        for k in range(n_components):
+            comp_samples = samples[:, k, :]  # (n_samples, n_genes)
+            corr_matrix = _compute_correlation_matrix(
+                comp_samples, n_samples
+            )
+            correlation_matrices.append(corr_matrix)
+            corr_var = jnp.var(corr_matrix, axis=1)
+            variance_per_component.append(corr_var)
+
+            console.print(
+                f"[dim]  Component {k + 1}: correlation range "
+                f"[{float(jnp.min(corr_matrix)):.3f}, "
+                f"{float(jnp.max(corr_matrix)):.3f}][/dim]"
+            )
+
+        # Union of top-variance genes across all components
+        selected_genes_set: set[int] = set()
+        for k in range(n_components):
+            top_indices = jnp.argsort(variance_per_component[k])[
+                -n_genes_capped:
+            ]
+            selected_genes_set.update(np.array(top_indices).tolist())
+
+        selected_genes = np.sort(np.array(list(selected_genes_set)))
+        console.print(
+            f"[dim]Union of top {n_genes_capped} genes per component: "
+            f"{len(selected_genes)} unique genes[/dim]"
+        )
+
+        # Plot one heatmap per component using the shared gene set
+        for k in range(n_components):
+            corr_subset_np = np.array(
+                correlation_matrices[k][
+                    jnp.ix_(selected_genes, selected_genes)
+                ]
+            )
+            console.print(
+                f"[dim]Creating clustered heatmap for component "
+                f"{k + 1}/{n_components}...[/dim]"
+            )
+
+            fig = sns.clustermap(
+                corr_subset_np,
+                cmap=cmap,
+                center=0,
+                vmin=-1,
+                vmax=1,
+                figsize=(figsize, figsize),
+                dendrogram_ratio=0.15,
+                cbar_pos=(0.02, 0.83, 0.03, 0.15),
+                linewidths=0,
+                xticklabels=False,
+                yticklabels=False,
+                cbar_kws={"label": "Pearson Correlation"},
+            )
+
+            fig.fig.suptitle(
+                f"Gene Correlation Structure – Component "
+                f"{k + 1}/{n_components}\n"
+                f"Top {len(selected_genes)} Genes by Variance "
+                f"(Union Across Components)\n"
+                f"Parameter: {param_name} | Samples: {n_samples}",
+                y=1.02,
+                fontsize=12,
+            )
+
+            fname = (
+                f"{base_fname}_correlation_heatmap_"
+                f"component{k + 1}.{output_format}"
+            )
+            output_path = os.path.join(figs_dir, fname)
+            fig.savefig(output_path, bbox_inches="tight")
+            console.print(
+                f"[green]✓[/green] [dim]Saved component {k + 1} heatmap "
+                f"to[/dim] [cyan]{output_path}[/cyan]"
+            )
+            plt.close(fig.fig)
+
+    # ------------------------------------------------------------------
+    # Single-component models: original behaviour
+    # ------------------------------------------------------------------
+    else:
+        n_genes = samples.shape[1]
+        n_genes_to_plot = min(n_genes_to_plot, n_genes)
+
+        console.print(
+            "[dim]Computing pairwise Pearson correlations...[/dim]"
+        )
+        correlation_matrix = _compute_correlation_matrix(samples, n_samples)
+
+        console.print(
+            f"[dim]Correlation matrix shape:[/dim] "
+            f"{correlation_matrix.shape}"
+        )
+        console.print(
+            f"[dim]Correlation range:[/dim] "
+            f"[{float(jnp.min(correlation_matrix)):.3f}, "
+            f"{float(jnp.max(correlation_matrix)):.3f}]"
+        )
+
+        console.print(
+            f"[dim]Selecting top {n_genes_to_plot} genes by correlation "
+            f"variance...[/dim]"
+        )
+
+        # Compute variance of each gene's correlation pattern
+        correlation_variance = jnp.var(correlation_matrix, axis=1)
+
+        # Get indices of top genes by variance
+        top_var_indices = jnp.argsort(correlation_variance)[
+            -n_genes_to_plot:
+        ]
+        top_var_indices = jnp.sort(top_var_indices)
+
+        # Subset the correlation matrix
+        correlation_subset = correlation_matrix[top_var_indices, :][
+            :, top_var_indices
+        ]
+
+        console.print(
+            f"[dim]Selected {n_genes_to_plot} genes with highest "
+            f"correlation variance[/dim]"
+        )
+        console.print(
+            f"[dim]Subset correlation matrix shape:[/dim] "
+            f"{correlation_subset.shape}"
+        )
+
+        # Convert to numpy for seaborn
+        correlation_subset_np = np.array(correlation_subset)
+
+        console.print("[dim]Creating clustered heatmap...[/dim]")
+
+        fig = sns.clustermap(
+            correlation_subset_np,
+            cmap=cmap,
+            center=0,
+            vmin=-1,
+            vmax=1,
+            figsize=(figsize, figsize),
+            dendrogram_ratio=0.15,
+            cbar_pos=(0.02, 0.83, 0.03, 0.15),
+            linewidths=0,
+            xticklabels=False,
+            yticklabels=False,
+            cbar_kws={"label": "Pearson Correlation"},
+        )
+
+        fig.fig.suptitle(
+            f"Gene Correlation Structure "
+            f"(Top {n_genes_to_plot} by Variance)\n"
+            f"Parameter: {param_name} | Samples: {n_samples}",
+            y=1.02,
+            fontsize=12,
+        )
+
+        fname = f"{base_fname}_correlation_heatmap.{output_format}"
+        output_path = os.path.join(figs_dir, fname)
+        fig.savefig(output_path, bbox_inches="tight")
+        console.print(
+            f"[green]✓[/green] [dim]Saved correlation heatmap to[/dim] "
+            f"[cyan]{output_path}[/cyan]"
+        )
+        plt.close(fig.fig)
 
 
 # ------------------------------------------------------------------------------
