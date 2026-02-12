@@ -2041,3 +2041,237 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
     # Clean up
     del results_subset
+
+
+# ------------------------------------------------------------------------------
+
+
+def _reconstruct_label_map(cell_labels, component_order=None):
+    """
+    Reconstruct the label-to-component-index mapping used during inference.
+
+    This must match the logic in
+    ``scribe.core.annotation_prior.build_annotation_prior_logits``: when no
+    explicit *component_order* is given, unique labels are sorted
+    alphabetically; otherwise the supplied order defines the mapping.
+
+    Parameters
+    ----------
+    cell_labels : array-like, shape (n_cells,)
+        Annotation label for every cell (strings).  ``NaN`` / ``None``
+        entries are treated as unlabelled and excluded from the mapping.
+    component_order : list of str or None, optional
+        Explicit label ordering.  Position *i* in the list maps to
+        component index *i*.
+
+    Returns
+    -------
+    dict[str, int]
+        Mapping from label string to component index.
+    """
+    import pandas as pd
+
+    annotations = pd.Series(cell_labels)
+    labels = annotations.dropna()
+
+    if component_order is not None:
+        label_map = {
+            str(label): idx
+            for idx, label in enumerate(component_order)
+        }
+    else:
+        unique_sorted = sorted(str(l) for l in labels.unique())
+        label_map = {
+            label: idx for idx, label in enumerate(unique_sorted)
+        }
+    return label_map
+
+
+# ------------------------------------------------------------------------------
+
+
+def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
+    """
+    Plot per-annotation posterior predictive checks.
+
+    For each unique annotation label, a PPC figure is generated that compares
+    the observed count distribution of cells belonging to that annotation
+    against the posterior predictive distribution of the corresponding mixture
+    component.  This enables visual assessment of how well each component
+    captures the expression profile of its assigned cell population.
+
+    Component ordering follows the same convention used during inference:
+    labels are sorted alphabetically by default, or according to
+    ``annotation_component_order`` if provided in the configuration.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults
+        Inference results for a mixture model.
+    counts : np.ndarray, shape (n_cells, n_genes)
+        Observed count matrix.
+    cell_labels : np.ndarray or pd.Series, shape (n_cells,)
+        Annotation label for each cell.  Must match the labels used during
+        inference (same column(s) and same ordering convention).
+    figs_dir : str
+        Directory in which to save the figure(s).
+    cfg : DictConfig
+        Original Hydra inference configuration.
+    viz_cfg : DictConfig
+        Visualization configuration.  Recognised keys inside
+        ``viz_cfg.annotation_ppc_opts`` (falls back to ``ppc_opts``):
+
+        * ``n_rows`` (int) – number of expression bins.
+        * ``n_cols`` (int) – number of genes per bin.
+        * ``n_samples`` (int) – number of PPC samples per component.
+    """
+    from jax import random
+
+    console.print("[dim]Plotting annotation PPC...[/dim]")
+
+    # Validate mixture model
+    n_components = results.n_components
+    if n_components is None or n_components <= 1:
+        console.print(
+            "[yellow]Not a mixture model, skipping annotation "
+            "PPC...[/yellow]"
+        )
+        return
+
+    # ------------------------------------------------------------------
+    # Options
+    # ------------------------------------------------------------------
+    ppc_opts = viz_cfg.get("ppc_opts", {})
+    ann_opts = viz_cfg.get("annotation_ppc_opts", {})
+    n_rows = ann_opts.get("n_rows", ppc_opts.get("n_rows", 5))
+    n_cols = ann_opts.get("n_cols", ppc_opts.get("n_cols", 5))
+    n_samples = ann_opts.get("n_samples", ppc_opts.get("n_samples", 1500))
+
+    # ------------------------------------------------------------------
+    # Reconstruct label → component mapping
+    # ------------------------------------------------------------------
+    component_order = cfg.get("annotation_component_order", None)
+    label_map = _reconstruct_label_map(cell_labels, component_order)
+
+    import pandas as pd
+
+    annotations = pd.Series(cell_labels)
+
+    console.print(
+        f"[dim]Label → component mapping ({len(label_map)} labels, "
+        f"{n_components} components):[/dim]"
+    )
+    for label, idx in label_map.items():
+        n_cells_label = int((annotations.astype(str) == label).sum())
+        console.print(
+            f"[dim]  {label} → component {idx} "
+            f"({n_cells_label} cells)[/dim]"
+        )
+
+    # ------------------------------------------------------------------
+    # Gene selection (standard expression-based)
+    # ------------------------------------------------------------------
+    selected_idx, _mean_counts = _select_genes(counts, n_rows, n_cols)
+    n_genes_selected = len(selected_idx)
+    console.print(
+        f"[dim]Selected {n_genes_selected} genes across {n_rows} "
+        f"expression bins[/dim]"
+    )
+
+    # ------------------------------------------------------------------
+    # Filename components
+    # ------------------------------------------------------------------
+    output_format = viz_cfg.get("format", "png")
+    config_vals = _get_config_values(cfg, results=results)
+    base_fname = (
+        f"{config_vals['method']}_"
+        f"{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['model_type'].replace('_', '-')}_"
+        f"{config_vals['n_components']:02d}components_"
+        f"{config_vals['n_steps']}steps"
+    )
+
+    # ------------------------------------------------------------------
+    # Per-annotation PPC
+    # ------------------------------------------------------------------
+    component_cmaps = [
+        "Blues", "Greens", "Purples", "Reds", "Oranges", "YlOrBr", "BuGn",
+    ]
+    rng_key = random.PRNGKey(42)
+
+    for label, component_idx in label_map.items():
+        console.print(
+            f"[dim]Processing annotation '{label}' "
+            f"(component {component_idx})...[/dim]"
+        )
+
+        # Cell mask for this annotation
+        cell_mask = np.array(annotations.astype(str) == label)
+        n_cells_label = int(cell_mask.sum())
+        if n_cells_label == 0:
+            console.print(
+                f"[yellow]  Skipping '{label}' (no cells)[/yellow]"
+            )
+            continue
+
+        console.print(
+            f"[dim]  {n_cells_label} cells with this annotation[/dim]"
+        )
+
+        # Extract single-component view and subset to selected genes
+        component_results = results.get_component(component_idx)
+        component_subset = component_results[selected_idx]
+
+        # Generate PPC samples for this component (all cells)
+        rng_key, subkey = random.split(rng_key)
+        console.print(
+            f"[dim]  Generating {n_samples} PPC samples...[/dim]"
+        )
+        component_samples = component_subset.get_map_ppc_samples(
+            rng_key=subkey,
+            n_samples=n_samples,
+            cell_batch_size=500,
+            store_samples=False,
+            verbose=True,
+            counts=counts,
+        )
+
+        # Subset PPC samples and observed counts to this annotation's cells
+        component_samples_np = np.array(
+            component_samples[:, cell_mask, :]
+        )
+        counts_label = counts[cell_mask, :]
+
+        # Sanitize label for safe filenames
+        safe_label = (
+            str(label)
+            .replace(" ", "_")
+            .replace("/", "-")
+            .replace("\\", "-")
+        )
+
+        cmap = component_cmaps[component_idx % len(component_cmaps)]
+
+        _plot_ppc_figure(
+            predictive_samples=component_samples_np,
+            counts=counts_label,
+            selected_idx=selected_idx,
+            n_rows=n_rows,
+            n_cols=n_cols,
+            title=(
+                f"Annotation PPC: {label} "
+                f"(Component {component_idx}, "
+                f"{n_cells_label} cells)"
+            ),
+            figs_dir=figs_dir,
+            fname=f"{base_fname}_annotation_ppc_{safe_label}",
+            output_format=output_format,
+            cmap=cmap,
+        )
+
+        del component_samples, component_samples_np
+
+    console.print(
+        f"[green]✓[/green] [dim]Generated {len(label_map)} annotation "
+        f"PPC plots[/dim]"
+    )
