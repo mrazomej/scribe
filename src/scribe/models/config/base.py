@@ -53,8 +53,8 @@ class ModelConfig(BaseModel):
         Number of mixture components, if mixture modeling is enabled.
     mixture_params : List[str], optional
         List of parameter names that should be mixture-specific. If None and
-        n_components is set, all gene-specific parameters will be
-        mixture-specific by default.
+        n_components is set, all sampled core parameters for the selected
+        parameterization will be mixture-specific by default.
     guide_families : GuideFamilyConfig, optional
         Per-parameter guide family configuration. Allows specifying different
         variational families (MeanField, LowRank, Amortized) for each parameter.

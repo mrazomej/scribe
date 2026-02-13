@@ -241,7 +241,8 @@ def fit(
 
     mixture_params : List[str], optional
         Which parameters should be component-specific in mixture models. If None
-        and n_components is set, defaults to all gene-specific parameters.
+        and n_components is set, defaults to all sampled core parameters for
+        the chosen parameterization.
         Example: ["r"] makes only r component-specific while p is shared.
 
     guide_rank : int, optional

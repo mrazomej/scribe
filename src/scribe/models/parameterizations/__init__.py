@@ -106,8 +106,8 @@ class Parameterization(ABC):
             mixture_params will be marked as mixture-specific.
         mixture_params : Optional[List[str]], default=None
             List of parameter names to mark as mixture-specific.
-            If None and n_components is set, defaults to all gene-specific
-            parameters.
+            If None and n_components is set, defaults to all sampled core
+            parameters for the selected parameterization.
 
         Returns
         -------
@@ -217,8 +217,8 @@ class CanonicalParameterization(Parameterization):
         # Determine which parameters are mixture-specific
         if n_components is not None:
             if mixture_params is None:
-                # Default: make all gene-specific params mixture-specific
-                mixture_params = ["r"]
+                # Default: make all sampled core params mixture-specific
+                mixture_params = ["p", "r"]
             is_p_mixture = "p" in mixture_params
             is_r_mixture = "r" in mixture_params
         else:
@@ -319,8 +319,8 @@ class MeanProbParameterization(Parameterization):
         # Determine which parameters are mixture-specific
         if n_components is not None:
             if mixture_params is None:
-                # Default: make all gene-specific params mixture-specific
-                mixture_params = ["mu"]
+                # Default: make all sampled core params mixture-specific
+                mixture_params = ["p", "mu"]
             is_p_mixture = "p" in mixture_params
             is_mu_mixture = "mu" in mixture_params
         else:
@@ -426,8 +426,8 @@ class MeanOddsParameterization(Parameterization):
         # Determine which parameters are mixture-specific
         if n_components is not None:
             if mixture_params is None:
-                # Default: make all gene-specific params mixture-specific
-                mixture_params = ["mu"]
+                # Default: make all sampled core params mixture-specific
+                mixture_params = ["phi", "mu"]
             is_phi_mixture = "phi" in mixture_params
             is_mu_mixture = "mu" in mixture_params
         else:
