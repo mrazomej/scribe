@@ -326,19 +326,36 @@ $${#eq-diffexp-sigma-delta-ilr-i}
 
 with $\underline{v}_i$ denoting the $i$-th row of $\underline{\underline{V}}$.
 
-**Computational advantage.** Because $\underline{\underline{V}}$ is orthonormal,
-the ILR coordinates are uncorrelated:
+**Important note on correlation structure.** Although the rows of
+$\underline{\underline{V}}$ form an orthonormal set, this does *not* imply that
+the ILR coordinates are uncorrelated. The ILR covariance matrix is
 
 $$
-\text{Cov}(\Delta_{\text{ILR},i}, \Delta_{\text{ILR},j}) = 0 \quad 
-\text{for } i \neq j.
-$${#eq-diffexp-ilr-uncorrelated}
+\underline{\underline{\Sigma}}_{\Delta,\text{ILR}} = 
+\underline{\underline{V}} \underline{\underline{\Sigma}}_{\Delta} 
+\underline{\underline{V}}^{\top},
+$${#eq-diffexp-ilr-covariance}
 
-This orthogonality simplifies interpretation: testing whether
-$\Delta_{\text{ILR},i}$ is non-zero is independent of the values of other ILR
-coordinates. In contrast, testing individual gene-level effects
-$\Delta_{\text{CLR},g}$ in CLR space involves correlated variables, which can
-complicate multiple testing adjustments.
+which is diagonal if and only if the rows of $\underline{\underline{V}}$ are
+eigenvectors of $\underline{\underline{\Sigma}}_{\Delta}$. For a fixed basis
+such as the Helmert basis and a general low-rank plus diagonal covariance, this
+will not hold, and the ILR coordinates will in general be correlated. The ILR
+coordinates would be uncorrelated only in the special case where
+$\underline{\underline{\Sigma}}_{\Delta}$ is proportional to the centering
+matrix $\underline{\underline{C}}$ (i.e., isotropic within the CLR subspace).
+
+Nevertheless, the *marginal* distribution of each ILR coordinate remains
+correctly specified by @eq-diffexp-delta-ilr-marginal, so individual balance
+tests are valid. What changes is the joint interpretation: tests on different
+ILR coordinates are not independent, and multiple testing corrections across
+ILR coordinates should account for this dependence structure.
+
+**Computational advantage.** Despite the correlations, the ILR representation
+offers a computational advantage: each balance statistic
+$\Delta_{\text{ILR},i}$ is a linear contrast of the CLR coordinates, and its
+posterior mean and variance can be computed in $O(kD)$ time using the low-rank
+structure, exactly as described for general contrasts in
+@eq-diffexp-contrast-variance-final.
 
 **Interpretational advantage.** Each ILR coordinate has a direct compositional
 interpretation as a balance. Saying "$\Delta_{\text{ILR},i} > 0$" means "the

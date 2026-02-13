@@ -339,35 +339,42 @@ $${#eq-diffexp-prob-effect-tau}
 
 #### Modified local false sign rate
 
-We can define a modified lfsr that accounts for practical significance:
-
-$$
-\text{lfsr}_g(\tau) = 1 - P(|\Delta_g| > \tau \mid \text{data}) = 
-1 - P(\Delta_g > \tau \mid \text{data}) - P(\Delta_g < -\tau \mid \text{data}).
-$${#eq-diffexp-lfsr-tau}
-
-Alternatively, we can define it as the minimum of the two tail probabilities
-beyond $\pm \tau$:
+To incorporate practical significance into the lfsr framework, we define a
+modified lfsr as the minimum of the two tail probabilities beyond $\pm \tau$:
 
 $$
 \text{lfsr}_g(\tau) = \min\left(P(\Delta_g > \tau \mid \text{data}), 
 P(\Delta_g < -\tau \mid \text{data})\right).
-$${#eq-diffexp-lfsr-tau-min}
+$${#eq-diffexp-lfsr-tau}
 
-The second definition is more aligned with the interpretation of lfsr as the
+This definition preserves the interpretation of the lfsr as the posterior
 probability of making a sign error, now restricted to the region of practical
-significance.
+significance. Specifically, if we declare gene $g$ as up-regulated with
+magnitude exceeding $\tau$ (because $\mu_{\Delta,g} > \tau$), then
+$\text{lfsr}_g(\tau) = P(\Delta_g < -\tau \mid \text{data})$ quantifies the
+posterior probability that the gene is instead down-regulated by at least
+$\tau$.
 
-**Relationship to standard lfsr.** When $\tau = 0$, both definitions reduce to
-the standard lfsr:
+Note that the quantity $P(|\Delta_g| \leq \tau \mid \text{data}) = 1 -
+P(\Delta_g > \tau \mid \text{data}) - P(\Delta_g < -\tau \mid \text{data})$
+is a related but distinct measure: it gives the posterior probability that
+the gene's differential expression magnitude falls below the practical
+significance threshold. While useful, this quantity does not reduce to the
+standard lfsr when $\tau = 0$ (since $P(|\Delta_g| \leq 0) = 0$ for a
+continuous distribution), and therefore should not be conflated with the
+modified lfsr.
+
+**Relationship to standard lfsr.** When $\tau = 0$, the modified lfsr reduces
+to the standard lfsr:
 
 $$
-\text{lfsr}_g(0) = \text{lfsr}_g.
+\text{lfsr}_g(0) = \min\left(P(\Delta_g > 0 \mid \text{data}), 
+P(\Delta_g < 0 \mid \text{data})\right) = \text{lfsr}_g.
 $${#eq-diffexp-lfsr-tau-zero}
 
-As $\tau$ increases, $\text{lfsr}_g(\tau)$ increases (becomes more conservative),
-reflecting the stronger requirement that differential expression exceed a
-non-trivial threshold.
+As $\tau$ increases, $\text{lfsr}_g(\tau)$ decreases because both tail
+probabilities beyond $\pm\tau$ become smaller. This makes the quantity more
+stringent as evidence for practically significant, direction-specific effects.
 
 #### PEFP control with practical significance
 
