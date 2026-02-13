@@ -107,6 +107,7 @@ from .api import fit
 from .mcmc import ScribeMCMCResults
 from .svi import ScribeSVIResults
 from .vae import ScribeVAEResults
+from .de import ScribeDEResults, compare
 
 __version__ = "0.1.0"
 
@@ -126,6 +127,8 @@ __all__ = [
     "ScribeSVIResults",
     "ScribeMCMCResults",
     "ScribeVAEResults",
+    "ScribeDEResults",
+    "compare",
     # Experiment management
     "ExperimentCatalog",
     # Other modules

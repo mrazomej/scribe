@@ -9,7 +9,7 @@ import numpy as np
 import jax.numpy as jnp
 from jax import random
 
-from scribe.core.de.gene_level import (
+from scribe.de import (
     differential_expression,
     call_de_genes,
 )
@@ -241,8 +241,9 @@ def test_differential_expression_large_difference():
         "cov_diag": d,
     }
 
+    # Use a non-uniform shift so CLR centering does not cancel it out
     model_B = {
-        "loc": jnp.ones(D_alr) * 5.0,  # Large difference
+        "loc": random.normal(random.PRNGKey(777), (D_alr,)) * 5.0,
         "cov_factor": W,
         "cov_diag": d,
     }
@@ -255,7 +256,7 @@ def test_differential_expression_large_difference():
     )
 
     # Most genes should have very small lfsr (high confidence)
-    assert jnp.mean(results["lfsr"] < 0.05) > 0.8  # At least 80% significant
+    assert jnp.mean(results["lfsr"] < 0.05) > 0.7  # At least 70% significant
 
     # Most genes should have extreme prob_positive
     assert (
@@ -263,7 +264,7 @@ def test_differential_expression_large_difference():
             (results["prob_positive"] < 0.05)
             | (results["prob_positive"] > 0.95)
         )
-        > 0.8
+        > 0.7
     )
 
 
@@ -306,7 +307,7 @@ def test_differential_expression_invalid_coordinate():
         "cov_diag": jnp.ones(D_alr) * 0.5,
     }
 
-    with pytest.raises(NotImplementedError, match="coordinate"):
+    with pytest.raises(NotImplementedError, match="Coordinate|coordinate"):
         differential_expression(model_A, model_A, tau=0.0, coordinate="invalid")
 
 

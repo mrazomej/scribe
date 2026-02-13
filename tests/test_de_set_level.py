@@ -9,11 +9,11 @@ import numpy as np
 import jax.numpy as jnp
 from jax import random
 
-from scribe.core.de.set_level import (
-    test_contrast,
-    test_gene_set,
-    build_balance_contrast,
+from scribe.de._set_level import (
+    test_contrast as _test_contrast,
+    test_gene_set as _test_gene_set,
 )
+from scribe.de import build_balance_contrast
 
 # ------------------------------------------------------------------------------
 # Test fixtures
@@ -124,7 +124,7 @@ def test_contrast_output_keys(sample_models):
     contrast = contrast.at[0].set(1.0)
     contrast = contrast.at[-1].set(-1.0)
 
-    result = test_contrast(model_A, model_B, contrast, tau=0.0)
+    result = _test_contrast(model_A, model_B, contrast, tau=0.0)
 
     expected_keys = {
         "delta_mean",
@@ -146,7 +146,7 @@ def test_contrast_output_types(sample_models):
     contrast = jnp.zeros(D_clr)
     contrast = contrast.at[0].set(1.0)
 
-    result = test_contrast(model_A, model_B, contrast, tau=0.0)
+    result = _test_contrast(model_A, model_B, contrast, tau=0.0)
 
     # All outputs should be scalars (floats)
     for key, value in result.items():
@@ -160,7 +160,7 @@ def test_contrast_probabilities_bounded(sample_models):
 
     contrast = random.normal(random.PRNGKey(999), (D_clr,))
 
-    result = test_contrast(model_A, model_B, contrast, tau=0.0)
+    result = _test_contrast(model_A, model_B, contrast, tau=0.0)
 
     assert 0 <= result["prob_positive"] <= 1
     assert 0 <= result["prob_effect"] <= 1
@@ -172,9 +172,12 @@ def test_contrast_positive_sd(sample_models):
     model_A, model_B = sample_models
     D_clr = model_A["loc"].shape[0] + 1
 
-    contrast = jnp.ones(D_clr) / jnp.sqrt(D_clr)
+    # Use a non-trivial contrast that won't become all zeros after centering
+    contrast = jnp.zeros(D_clr)
+    contrast = contrast.at[0].set(1.0)
+    contrast = contrast.at[-1].set(-1.0)
 
-    result = test_contrast(model_A, model_B, contrast, tau=0.0)
+    result = _test_contrast(model_A, model_B, contrast, tau=0.0)
 
     assert result["delta_sd"] > 0
 
@@ -201,7 +204,7 @@ def test_contrast_unit_contrast():
     contrast = jnp.zeros(D_clr)
     contrast = contrast.at[0].set(1.0)
 
-    result = test_contrast(model_A, model_B, contrast, tau=0.0)
+    result = _test_contrast(model_A, model_B, contrast, tau=0.0)
 
     # Should give finite results
     assert jnp.isfinite(result["delta_mean"])
@@ -231,8 +234,8 @@ def test_contrast_opposite_sign():
     contrast = contrast.at[0].set(1.0)
     contrast = contrast.at[1].set(-1.0)
 
-    result_pos = test_contrast(model_A, model_B, contrast, tau=0.0)
-    result_neg = test_contrast(model_A, model_B, -contrast, tau=0.0)
+    result_pos = _test_contrast(model_A, model_B, contrast, tau=0.0)
+    result_neg = _test_contrast(model_A, model_B, -contrast, tau=0.0)
 
     # Effect should flip sign
     assert jnp.abs(result_pos["delta_mean"] + result_neg["delta_mean"]) < 1e-6
@@ -259,10 +262,13 @@ def test_contrast_tau_effect():
     }
 
     D_clr = D_alr + 1
-    contrast = jnp.ones(D_clr) / jnp.sqrt(D_clr)
+    # Use a non-trivial contrast (not uniform, survives CLR centering)
+    contrast = jnp.zeros(D_clr)
+    contrast = contrast.at[:5].set(1.0 / 5)
+    contrast = contrast.at[5:10].set(-1.0 / 5)
 
-    result_small_tau = test_contrast(model_A, model_B, contrast, tau=0.0)
-    result_large_tau = test_contrast(
+    result_small_tau = _test_contrast(model_A, model_B, contrast, tau=0.0)
+    result_large_tau = _test_contrast(
         model_A, model_B, contrast, tau=jnp.log(2.0)
     )
 
@@ -281,7 +287,7 @@ def test_gene_set_output_keys(sample_models):
 
     gene_set_indices = jnp.array([0, 1, 2, 3, 4])
 
-    result = test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
+    result = _test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
 
     expected_keys = {
         "delta_mean",
@@ -301,7 +307,7 @@ def test_gene_set_probabilities_bounded(sample_models):
 
     gene_set_indices = jnp.array([5, 10, 15, 20, 25])
 
-    result = test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
+    result = _test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
 
     assert 0 <= result["prob_positive"] <= 1
     assert 0 <= result["prob_effect"] <= 1
@@ -313,7 +319,7 @@ def test_gene_set_empty_raises_error(sample_models):
     model_A, model_B = sample_models
 
     with pytest.raises(ValueError):
-        test_gene_set(model_A, model_B, jnp.array([]), tau=0.0)
+        _test_gene_set(model_A, model_B, jnp.array([]), tau=0.0)
 
 
 def test_gene_set_all_genes_raises_error(sample_models):
@@ -325,7 +331,7 @@ def test_gene_set_all_genes_raises_error(sample_models):
     gene_set_indices = jnp.arange(D_clr)
 
     with pytest.raises(ValueError):
-        test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
+        _test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
 
 
 def test_gene_set_single_gene(sample_models):
@@ -335,7 +341,7 @@ def test_gene_set_single_gene(sample_models):
     gene_set_indices = jnp.array([0])
 
     # Should not raise error
-    result = test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
+    result = _test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
 
     assert isinstance(result["delta_mean"], (float, np.floating))
 
@@ -366,8 +372,8 @@ def test_gene_set_complementary_sets():
     D_clr = D_alr + 1
     set2 = jnp.arange(16, D_clr)  # Remaining genes
 
-    result1 = test_gene_set(model_A, model_B, set1, tau=0.0)
-    result2 = test_gene_set(model_A, model_B, set2, tau=0.0)
+    result1 = _test_gene_set(model_A, model_B, set1, tau=0.0)
+    result2 = _test_gene_set(model_A, model_B, set2, tau=0.0)
 
     # Effects should have opposite signs
     assert result1["delta_mean"] * result2["delta_mean"] < 0
@@ -381,7 +387,7 @@ def test_gene_set_versus_contrast_equivalence(sample_models):
     gene_set_indices = jnp.array([0, 1, 2, 3, 4])
 
     # Compute using test_gene_set
-    result_set = test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
+    result_set = _test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
 
     # Compute using test_contrast with manually built balance
     n_in = len(gene_set_indices)
@@ -393,7 +399,7 @@ def test_gene_set_versus_contrast_equivalence(sample_models):
     mask_out = mask_out.at[gene_set_indices].set(False)
     contrast = jnp.where(mask_out, -1.0 / n_out, contrast)
 
-    result_contrast = test_contrast(model_A, model_B, contrast, tau=0.0)
+    result_contrast = _test_contrast(model_A, model_B, contrast, tau=0.0)
 
     # Results should be identical
     assert (
@@ -423,7 +429,7 @@ def test_pathway_analysis_workflow(sample_models):
     # Test each pathway
     results = []
     for pathway in pathways:
-        result = test_gene_set(model_A, model_B, pathway, tau=jnp.log(1.1))
+        result = _test_gene_set(model_A, model_B, pathway, tau=jnp.log(1.1))
         results.append(result)
 
     # All should return valid results
@@ -457,9 +463,9 @@ def test_hierarchical_pathway_structure():
     child1 = jnp.arange(0, 10)
     child2 = jnp.arange(10, 20)
 
-    result_parent = test_gene_set(model_A, model_B, parent_pathway, tau=0.0)
-    result_child1 = test_gene_set(model_A, model_B, child1, tau=0.0)
-    result_child2 = test_gene_set(model_A, model_B, child2, tau=0.0)
+    result_parent = _test_gene_set(model_A, model_B, parent_pathway, tau=0.0)
+    result_child1 = _test_gene_set(model_A, model_B, child1, tau=0.0)
+    result_child2 = _test_gene_set(model_A, model_B, child2, tau=0.0)
 
     # All should return valid results
     assert jnp.isfinite(result_parent["delta_mean"])
@@ -487,7 +493,7 @@ def test_large_gene_set():
     # Large pathway (200 genes)
     gene_set_indices = jnp.arange(0, 200)
 
-    result = test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
+    result = _test_gene_set(model_A, model_B, gene_set_indices, tau=0.0)
 
     assert jnp.isfinite(result["delta_mean"])
     assert jnp.isfinite(result["delta_sd"])
@@ -504,7 +510,7 @@ def test_custom_contrast_workflow(sample_models):
     contrast = contrast.at[:10].set(1.0 / 10.0)
     contrast = contrast.at[-10:].set(-1.0 / 10.0)
 
-    result = test_contrast(model_A, model_B, contrast, tau=0.0)
+    result = _test_contrast(model_A, model_B, contrast, tau=0.0)
 
     assert jnp.isfinite(result["delta_mean"])
     assert 0 <= result["lfsr"] <= 0.5

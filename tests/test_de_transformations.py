@@ -9,7 +9,7 @@ import numpy as np
 import jax.numpy as jnp
 from jax import random
 
-from scribe.core.de.transformations import (
+from scribe.de import (
     alr_to_clr,
     transform_gaussian_alr_to_clr,
     build_ilr_basis,
