@@ -495,7 +495,11 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     layer = orig_cfg.data.get("layer", orig_cfg.get("layer", None))
 
     adata = scribe.data_loader.load_and_preprocess_anndata(
-        data_path, orig_cfg.data.get("preprocessing"), return_jax=False
+        data_path,
+        orig_cfg.data.get("preprocessing"),
+        return_jax=False,
+        subset_column=orig_cfg.data.get("subset_column"),
+        subset_value=orig_cfg.data.get("subset_value"),
     )
 
     # Extract the correct count matrix (from layer or .X)
