@@ -1,3 +1,10 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
 ## Bayesian Error Control
 
 In the previous sections, we developed methods for computing local false sign

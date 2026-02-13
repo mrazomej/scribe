@@ -1,3 +1,10 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
 ## Transforming Gaussian Parameters Between Coordinate Systems
 
 In @sec-normalization, we showed that the posterior predictive distribution of
@@ -505,12 +512,12 @@ The Woodbury identity and matrix determinant lemma ensure that all operations
 on low-rank plus diagonal covariance matrices have complexity $O(k^2 D)$ rather
 than $O(D^3)$:
 
-| **Operation** | **Naïve Complexity** | **Low-Rank Complexity** |
-|---------------|---------------------|------------------------|
-| Matrix inversion | $O(D^3)$ | $O(k^2 D)$ |
-| Determinant | $O(D^3)$ | $O(k^2 D)$ |
-| Quadratic form $\underline{v}^{\top}\underline{\underline{\Sigma}}^{-1}\underline{v}$ | $O(D^2)$ | $O(kD)$ |
-| Sampling | $O(D^2)$ | $O(kD)$ |
+| **Operation**                                                                         | **Naïve Complexity** | **Low-Rank Complexity** |
+| ------------------------------------------------------------------------------------- | -------------------- | ----------------------- |
+| Matrix inversion                                                                      | $O(D^3)$             | $O(k^2 D)$              |
+| Determinant                                                                           | $O(D^3)$             | $O(k^2 D)$              |
+| Quadratic form $\underline{v}^{\top}\underline{\underline{\Sigma}}^{-1}\underline{v}$ | $O(D^2)$             | $O(kD)$                 |
+| Sampling                                                                              | $O(D^2)$             | $O(kD)$                 |
 
 For typical single-cell datasets with $D = 30{,}000$ and $k = 50$, the speedup
 factor is $(D/k)^2 = 360{,}000$, making the difference between intractable and
