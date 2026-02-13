@@ -115,6 +115,7 @@ class NormalizationMixin:
         distribution_type: str = "softmax",
         remove_mean: bool = False,
         batch_size: int = 2048,
+        svd_method: str = "randomized",
         verbose: bool = True,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
@@ -159,6 +160,15 @@ class NormalizationMixin:
             ``n_samples_dirichlet=1``, each batch of 2048 requires ~160 MB.
             Reduce if you encounter OOM errors; increase on large-memory
             GPUs for maximum throughput.
+        svd_method : str, default="randomized"
+            SVD algorithm used for the low-rank covariance fit.  One of:
+
+            - ``"randomized"``: Halko et al. (2011) randomized truncated
+              SVD.  O(N * D * k) cost — ~300x faster than full SVD for
+              typical single-cell dimensions.  Default.
+            - ``"full"``: Standard ``jnp.linalg.svd`` thin decomposition.
+              O(N^2 * D) cost.  Useful when the full eigenvalue spectrum
+              is needed for diagnostics.
         verbose : bool, default=True
             If True, prints progress messages and shows progress bars.
 
@@ -259,5 +269,6 @@ class NormalizationMixin:
             distribution_class=distribution_class,
             remove_mean=remove_mean,
             batch_size=batch_size,
+            svd_method=svd_method,
             verbose=verbose,
         )

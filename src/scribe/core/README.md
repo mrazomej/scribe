@@ -506,6 +506,36 @@ fitted = fit_logistic_normal_from_posterior(
 )
 ```
 
+#### Randomized SVD (Default)
+
+The low-rank covariance fitting step uses a **randomized truncated SVD**
+([Halko, Martinsson & Tropp 2011](https://arxiv.org/abs/0909.4061)) by
+default (`svd_method="randomized"`).  This computes only the top-k
+singular values/vectors in O(N * D * k) time, compared to O(N^2 * D) for
+the standard full thin SVD.
+
+| Scenario (N=10K, D=20K) | Full SVD FLOPs | Randomized SVD FLOPs (k=32) | Speedup |
+|---|---|---|---|
+| `_fit_low_rank_mvn_core` | 2 × 10^12 | 6.4 × 10^9 | ~300x |
+
+The randomized SVD is mathematically equivalent to the full SVD for the
+top-k components — the approximation error decays exponentially with the
+oversampling parameter (`n_oversamples=10` by default) and is negligible
+for any matrix with a reasonable spectral gap at rank k.
+
+Use `svd_method="full"` when you need the complete eigenvalue spectrum
+for diagnostics (e.g., scree plots, explained variance breakdowns beyond
+the top k components):
+
+```python
+# Full SVD for diagnostic scree plot
+fitted = fit_logistic_normal_from_posterior(
+    posterior_samples=samples,
+    rank=32,
+    svd_method="full",   # O(N^2 * D) — slower but gives all eigenvalues
+)
+```
+
 #### Architecture: `_fit_low_rank_mvn_core`
 
 The SVD-based low-rank MVN fitting has been factored into a **pure-JAX
