@@ -32,7 +32,7 @@ class NormalizationMixin:
         sample_axis: int = 0,
         return_concentrations: bool = False,
         backend: str = "numpyro",
-        batch_size: int = 256,
+        batch_size: int = 2048,
         verbose: bool = True,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
@@ -58,7 +58,7 @@ class NormalizationMixin:
             If True, returns the original r parameter samples.
         backend : str, default="numpyro"
             ``"numpyro"`` or ``"scipy"`` for distribution objects.
-        batch_size : int, default=256
+        batch_size : int, default=2048
             Number of posterior samples per batched Dirichlet sampling call.
             Larger values use more GPU memory but fewer dispatches.
         verbose : bool, default=True
@@ -114,7 +114,7 @@ class NormalizationMixin:
         rank: Optional[int] = None,
         distribution_type: str = "softmax",
         remove_mean: bool = False,
-        batch_size: int = 256,
+        batch_size: int = 2048,
         verbose: bool = True,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
@@ -152,11 +152,11 @@ class NormalizationMixin:
             If True, removes the grand mean from ALR-transformed samples
             before fitting, focusing on co-variation patterns rather than
             mean composition.
-        batch_size : int, default=256
+        batch_size : int, default=2048
             Number of posterior samples to process in each batched Dirichlet
             sampling call.  Larger values use more GPU memory but require
             fewer Python-to-JAX dispatches.  At D=20 000 and
-            ``n_samples_dirichlet=1``, each batch of 256 requires ~20 MB.
+            ``n_samples_dirichlet=1``, each batch of 2048 requires ~160 MB.
             Reduce if you encounter OOM errors; increase on large-memory
             GPUs for maximum throughput.
         verbose : bool, default=True

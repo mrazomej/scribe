@@ -403,8 +403,8 @@ ScribeSVIResults
 9. **NormalizationMixin** (`_normalization.py`)
    - Purpose: Count normalization methods
    - Methods:
-     - `normalize_counts(batch_size=256)`: Dirichlet-based normalization
-     - `fit_logistic_normal(batch_size=256)`: Logistic-Normal distribution
+     - `normalize_counts(batch_size=2048)`: Dirichlet-based normalization
+     - `fit_logistic_normal(batch_size=2048)`: Logistic-Normal distribution
        fitting
    - Both methods use **batched Dirichlet sampling** to process posterior
      samples in configurable chunks, reducing Python→JAX dispatches from
