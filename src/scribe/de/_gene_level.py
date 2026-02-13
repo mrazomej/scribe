@@ -82,6 +82,15 @@ def differential_expression(
         - **lfsr** : ndarray, shape ``(D,)``
             Local false sign rate = ``min(P(Delta <= 0), P(Delta >= 0))``.
             This is the Bayesian error rate (NOT FDR).
+        - **lfsr_tau** : ndarray, shape ``(D,)``
+            Modified local false sign rate incorporating practical
+            significance, as defined in the paper::
+
+                lfsr_g(tau) = 1 - max(P(Delta_g > tau), P(Delta_g < -tau))
+
+            When ``tau=0`` this equals ``lfsr``.  Use this with
+            ``compute_pefp(use_lfsr_tau=True)`` for the paper's
+            practical-significance-aware error control.
         - **gene_names** : list of str
             Gene names (input or generated).
 
@@ -130,19 +139,32 @@ def differential_expression(
     var_B = jnp.sum(W_B_clr**2, axis=-1) + d_B_clr
     delta_sd = jnp.sqrt(var_A + var_B)
 
+    # Guard against near-zero SD (can happen when both models have
+    # negligible variance for a gene, e.g. near-constant expression).
+    # Without this, z_scores and probabilities become inf/NaN.
+    delta_sd = jnp.maximum(delta_sd, 1e-30)
+
     # 5. Compute posterior probabilities (exact under Gaussian assumption)
     z_scores = delta_mean / delta_sd
     # P(Delta > 0 | data) via standard normal CDF
     prob_positive = norm.cdf(z_scores)
 
+    # P(Delta > tau | data) and P(Delta < -tau | data)
+    prob_up = 1 - norm.cdf(tau, loc=delta_mean, scale=delta_sd)
+    prob_down = norm.cdf(-tau, loc=delta_mean, scale=delta_sd)
+
     # P(|Delta| > tau | data) = P(Delta > tau) + P(Delta < -tau)
-    prob_effect = (
-        1 - norm.cdf(tau, loc=delta_mean, scale=delta_sd)
-    ) + norm.cdf(-tau, loc=delta_mean, scale=delta_sd)
+    prob_effect = prob_up + prob_down
 
     # Local false sign rate (Bayesian error rate)
     # lfsr = posterior probability of wrong sign
     lfsr = jnp.minimum(prob_positive, 1 - prob_positive)
+
+    # Modified local false sign rate incorporating practical significance
+    # (paper Eq. from _diffexp06.qmd, lines 333-394):
+    #   lfsr_g(tau) = 1 - max(P(Delta_g > tau | data), P(Delta_g < -tau | data))
+    # When tau=0 this reduces to standard lfsr.
+    lfsr_tau = 1.0 - jnp.maximum(prob_up, prob_down)
 
     # Generate gene names if not provided
     if gene_names is None:
@@ -155,6 +177,7 @@ def differential_expression(
         "prob_positive": prob_positive,
         "prob_effect": prob_effect,
         "lfsr": lfsr,
+        "lfsr_tau": lfsr_tau,
         "gene_names": gene_names,
     }
 

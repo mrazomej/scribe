@@ -19,6 +19,13 @@ from typing import Optional
 import jax.numpy as jnp
 from jax.scipy.stats import norm
 
+# Column-name aliases so users can sort by the internal name (e.g.
+# ``"delta_mean"``) even though the pandas DataFrame uses ``"log_fc"``.
+_SORT_ALIASES = {
+    "delta_mean": "log_fc",
+    "delta_sd": "sd",
+}
+
 
 # --------------------------------------------------------------------------
 # Compute local false discovery rate (lfdr)
@@ -158,6 +165,10 @@ def find_lfsr_threshold(
     This is the Bayesian version of FDR control: find the threshold such
     that the posterior expected FDP is at most the target.
 
+    The algorithm sorts the lfsr values and computes PEFP via cumulative
+    sum in O(D log D) time (dominated by the sort), rather than calling
+    ``compute_pefp`` in a loop which would be O(D^2).
+
     Parameters
     ----------
     lfsr : ndarray
@@ -175,23 +186,31 @@ def find_lfsr_threshold(
     This finds the largest threshold such that PEFP <= target.
     If no valid threshold exists, returns ``0.0``.
 
+    The PEFP when the threshold is ``sorted_lfsr[k]`` (i.e. we call
+    the first ``k+1`` genes) equals ``cumsum(sorted_lfsr)[:k+1] / (k+1)``.
+    We find the largest ``k`` where this is still ``<= target_pefp``.
+
     Examples
     --------
     >>> lfsr = jnp.array([0.01, 0.03, 0.05, 0.1, 0.2, 0.5])
     >>> threshold = find_lfsr_threshold(lfsr, target_pefp=0.05)
     """
-    # Sort lfsr values
+    # Sort lfsr values (ascending)
     sorted_lfsr = jnp.sort(lfsr)
+    D = len(sorted_lfsr)
 
-    # Compute PEFP for each possible threshold
-    pefps = jnp.array(
-        [compute_pefp(lfsr, threshold=float(t)) for t in sorted_lfsr]
-    )
+    # Build PEFP vector aligned with the old loop semantics.
+    # For threshold = sorted_lfsr[k], ``compute_pefp`` calls genes with
+    # ``lfsr < sorted_lfsr[k]`` (strict <).  Without ties this is the
+    # first k genes, so PEFP = cumsum[k-1] / k for k >= 1, and 0 for k=0.
+    cumsum = jnp.cumsum(sorted_lfsr)
+    # pefps[0] = 0 (no genes called at the minimum threshold)
+    pefps = jnp.zeros(D)
+    pefps = pefps.at[1:].set(cumsum[:-1] / jnp.arange(1, D))
 
-    # Find largest threshold with PEFP <= target
+    # Find the largest threshold with PEFP <= target
     valid = pefps <= target_pefp
     if jnp.any(valid):
-        # Get the maximum threshold among valid ones
         valid_thresholds = sorted_lfsr[valid]
         return float(jnp.max(valid_thresholds))
     else:
@@ -215,8 +234,9 @@ def format_de_table(
     de_results : dict
         Output from ``differential_expression()``.
     sort_by : str, default='lfsr'
-        Column to sort by.  Options: ``'lfsr'``, ``'delta_mean'``,
-        ``'prob_effect'``.
+        Column to sort by.  Options: ``'lfsr'``, ``'delta_mean'``
+        (alias for ``'log_fc'``), ``'delta_sd'`` (alias for ``'sd'``),
+        ``'prob_effect'``, ``'prob_positive'``.
     top_n : int, optional
         Number of top genes to display.  If ``None``, shows all genes.
 
@@ -255,9 +275,10 @@ def format_de_table(
         }
     )
 
-    # Sort by requested column
+    # Map user-facing sort names to DataFrame column names
+    col = _SORT_ALIASES.get(sort_by, sort_by)
     ascending = sort_by == "lfsr"  # Lower lfsr is better
-    df = df.sort_values(sort_by, ascending=ascending)
+    df = df.sort_values(col, ascending=ascending)
 
     # Limit number of rows if requested
     if top_n is not None:
@@ -309,10 +330,16 @@ def _format_de_table_simple(
         )
     )
 
-    # Sort by requested column
-    sort_idx = {"delta_mean": 1, "prob_effect": 4, "lfsr": 5}[sort_by]
-    ascending = sort_by == "lfsr"
-    data.sort(key=lambda x: x[sort_idx], reverse=not ascending)
+    # Map user-facing sort names to tuple indices
+    sort_idx = {
+        "delta_mean": 1, "log_fc": 1,
+        "delta_sd": 2, "sd": 2,
+        "prob_positive": 3,
+        "prob_effect": 4,
+        "lfsr": 5,
+    }.get(sort_by, 5)
+    ascending = sort_by in ("lfsr",)
+    data.sort(key=lambda x: float(x[sort_idx]), reverse=not ascending)
 
     # Limit rows
     if top_n is not None:

@@ -113,6 +113,9 @@ def test_contrast(
     ) + quadratic_form(contrast, W_B_clr, d_B_clr)
     delta_sd = jnp.sqrt(var_delta)
 
+    # Guard against near-zero SD to avoid inf/NaN in z_score
+    delta_sd = jnp.maximum(delta_sd, 1e-30)
+
     # Posterior probabilities
     z_score = delta_mean / delta_sd
     prob_positive = norm.cdf(z_score)
@@ -260,8 +263,20 @@ def build_balance_contrast(
     if n_num == 0 or n_den == 0:
         raise ValueError("Both numerator and denominator must be non-empty")
 
+    # Validate that numerator and denominator are disjoint -- overlapping
+    # indices would silently produce incorrect coefficients since the
+    # second ``at[].set`` would overwrite the first.
+    num_set = set(int(i) for i in numerator_indices)
+    den_set = set(int(i) for i in denominator_indices)
+    overlap = num_set & den_set
+    if overlap:
+        raise ValueError(
+            f"Numerator and denominator must be disjoint. "
+            f"Found {len(overlap)} overlapping indices."
+        )
+
     contrast = jnp.zeros(D)
-    contrast = contrast.at[numerator_indices].set(1.0 / n_num)
-    contrast = contrast.at[denominator_indices].set(-1.0 / n_den)
+    contrast = contrast.at[jnp.asarray(numerator_indices)].set(1.0 / n_num)
+    contrast = contrast.at[jnp.asarray(denominator_indices)].set(-1.0 / n_den)
 
     return contrast

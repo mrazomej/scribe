@@ -92,9 +92,10 @@ class ScribeDEResults:
     label_B: str = "B"
 
     # --- Cached gene-level results (computed lazily) ---
-    _gene_results: Optional[dict] = field(
-        default=None, repr=False, init=False
-    )
+    _gene_results: Optional[dict] = field(default=None, repr=False, init=False)
+    # Track which tau was used for the cached results so that a call with
+    # a different tau correctly invalidates the stale cache.
+    _cached_tau: Optional[float] = field(default=None, repr=False, init=False)
 
     # ------------------------------------------------------------------
     # Properties
@@ -114,6 +115,22 @@ class ScribeDEResults:
     # Core analysis methods
     # ------------------------------------------------------------------
 
+    def _ensure_gene_results(self, tau: float = 0.0) -> None:
+        """Recompute gene-level results if cache is missing or stale.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold.  If this differs from the
+            tau used to compute the currently cached results, the cache
+            is invalidated and results are recomputed.
+        """
+        # Recompute when cache is empty or when tau has changed
+        if self._gene_results is None or self._cached_tau != tau:
+            self.gene_level(tau=tau)
+
+    # --------------------------------------------------------------------------
+
     def gene_level(
         self,
         tau: float = 0.0,
@@ -122,8 +139,8 @@ class ScribeDEResults:
         """Compute gene-level differential expression.
 
         Wraps ``differential_expression()`` using the stored ALR parameters.
-        Results are cached so that repeated calls with the same arguments
-        are free.
+        Results are cached and keyed by ``tau``; calling with a different
+        ``tau`` automatically recomputes.
 
         Parameters
         ----------
@@ -150,7 +167,8 @@ class ScribeDEResults:
             "cov_diag": self.d_B,
         }
 
-        # Compute and cache
+        # Compute, record the tau that was used, and cache the results
+        self._cached_tau = tau
         self._gene_results = differential_expression(
             model_A_dict,
             model_B_dict,
@@ -171,8 +189,9 @@ class ScribeDEResults:
         Parameters
         ----------
         tau : float, default=0.0
-            Practical significance threshold (used if gene-level results
-            have not yet been computed).
+            Practical significance threshold.  If this differs from the
+            tau used for cached gene-level results, the results are
+            recomputed automatically.
         lfsr_threshold : float, default=0.05
             Maximum acceptable local false sign rate.
         prob_effect_threshold : float, default=0.95
@@ -183,9 +202,8 @@ class ScribeDEResults:
         ndarray of bool, shape ``(D,)``
             Boolean mask of DE genes.
         """
-        # Ensure gene-level results are computed
-        if self._gene_results is None:
-            self.gene_level(tau=tau)
+        # Ensure gene-level results are computed (and not stale w.r.t. tau)
+        self._ensure_gene_results(tau=tau)
 
         return call_de_genes(
             self._gene_results,
@@ -226,9 +244,7 @@ class ScribeDEResults:
             "cov_factor": self.W_B,
             "cov_diag": self.d_B,
         }
-        return test_gene_set(
-            model_A_dict, model_B_dict, gene_set_indices, tau
-        )
+        return test_gene_set(model_A_dict, model_B_dict, gene_set_indices, tau)
 
     def test_contrast(
         self,
@@ -265,40 +281,61 @@ class ScribeDEResults:
     # Error control
     # ------------------------------------------------------------------
 
-    def compute_pefp(self, threshold: float = 0.05) -> float:
+    def compute_pefp(
+        self,
+        threshold: float = 0.05,
+        tau: float = 0.0,
+        use_lfsr_tau: bool = False,
+    ) -> float:
         """Compute posterior expected false discovery proportion.
 
         Parameters
         ----------
         threshold : float, default=0.05
             lfsr threshold for calling genes DE.
+        tau : float, default=0.0
+            Practical significance threshold.  Ensures the cache is
+            computed with this tau before reading lfsr values.
+        use_lfsr_tau : bool, default=False
+            If ``True``, use ``lfsr_tau`` (the paper's practical-
+            significance-aware lfsr) instead of the standard ``lfsr``.
 
         Returns
         -------
         float
             Expected false discovery proportion.
         """
-        if self._gene_results is None:
-            self.gene_level()
-        return compute_pefp(self._gene_results["lfsr"], threshold=threshold)
+        self._ensure_gene_results(tau=tau)
+        lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
+        return compute_pefp(self._gene_results[lfsr_key], threshold=threshold)
 
-    def find_threshold(self, target_pefp: float = 0.05) -> float:
+    def find_threshold(
+        self,
+        target_pefp: float = 0.05,
+        tau: float = 0.0,
+        use_lfsr_tau: bool = False,
+    ) -> float:
         """Find lfsr threshold controlling PEFP at target level.
 
         Parameters
         ----------
         target_pefp : float, default=0.05
             Target PEFP level.
+        tau : float, default=0.0
+            Practical significance threshold.  Ensures the cache is
+            computed with this tau before reading lfsr values.
+        use_lfsr_tau : bool, default=False
+            If ``True``, use ``lfsr_tau`` instead of standard ``lfsr``.
 
         Returns
         -------
         float
             lfsr threshold.
         """
-        if self._gene_results is None:
-            self.gene_level()
+        self._ensure_gene_results(tau=tau)
+        lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
         return find_lfsr_threshold(
-            self._gene_results["lfsr"], target_pefp=target_pefp
+            self._gene_results[lfsr_key], target_pefp=target_pefp
         )
 
     # ------------------------------------------------------------------
@@ -316,7 +353,8 @@ class ScribeDEResults:
         Parameters
         ----------
         tau : float, default=0.0
-            Practical significance threshold.
+            Practical significance threshold.  Ensures the cache is
+            computed with this tau before formatting.
         sort_by : str, default='lfsr'
             Column to sort by.
         top_n : int, optional
@@ -327,11 +365,8 @@ class ScribeDEResults:
         str
             Formatted table.
         """
-        if self._gene_results is None:
-            self.gene_level(tau=tau)
-        return format_de_table(
-            self._gene_results, sort_by=sort_by, top_n=top_n
-        )
+        self._ensure_gene_results(tau=tau)
+        return format_de_table(self._gene_results, sort_by=sort_by, top_n=top_n)
 
     def __repr__(self) -> str:
         """Concise representation of the DE comparison."""

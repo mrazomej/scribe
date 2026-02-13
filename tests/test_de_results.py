@@ -143,7 +143,7 @@ def test_gene_level_returns_dict(de_results):
     results = de_results.gene_level(tau=0.0)
     expected_keys = {
         "delta_mean", "delta_sd", "prob_positive",
-        "prob_effect", "lfsr", "gene_names",
+        "prob_effect", "lfsr", "lfsr_tau", "gene_names",
     }
     assert set(results.keys()) == expected_keys
 
@@ -243,3 +243,110 @@ def test_repr(de_results):
     assert "D=" in r
     assert "WT" in r
     assert "KO" in r
+
+
+# --------------------------------------------------------------------------
+# Fix 1: stale tau cache invalidation
+# --------------------------------------------------------------------------
+
+
+def test_call_genes_different_tau_invalidates_cache(de_results):
+    """call_genes with different tau values should produce different results.
+
+    Regression test for the stale-cache bug: previously, call_genes(tau=X)
+    would silently re-use results computed with a different tau.
+    """
+    # Compute with tau=0
+    is_de_0 = de_results.call_genes(tau=0.0)
+    assert de_results._cached_tau == 0.0
+
+    # Compute with a large tau -- should recompute, not reuse cache
+    is_de_large = de_results.call_genes(tau=5.0)
+    assert de_results._cached_tau == 5.0
+
+    # A large tau should yield fewer (or equal) DE genes
+    assert int(is_de_large.sum()) <= int(is_de_0.sum())
+
+
+def test_gene_level_caching_with_tau(de_results):
+    """gene_level() should update cached_tau and recompute on change."""
+    r1 = de_results.gene_level(tau=0.0)
+    assert de_results._cached_tau == 0.0
+    assert de_results._gene_results is r1
+
+    r2 = de_results.gene_level(tau=1.0)
+    assert de_results._cached_tau == 1.0
+    assert de_results._gene_results is r2
+    assert r2 is not r1  # should be a new dict
+
+
+def test_compute_pefp_tau_propagation(de_results):
+    """compute_pefp(tau=...) should recompute when tau differs."""
+    # First call with tau=0
+    pefp_0 = de_results.compute_pefp(threshold=0.05, tau=0.0)
+    assert de_results._cached_tau == 0.0
+
+    # Second call with a different tau
+    pefp_1 = de_results.compute_pefp(threshold=0.05, tau=2.0)
+    assert de_results._cached_tau == 2.0
+
+    # Results may or may not differ, but the cache must have been refreshed
+    assert isinstance(pefp_0, float)
+    assert isinstance(pefp_1, float)
+
+
+def test_find_threshold_tau_propagation(de_results):
+    """find_threshold(tau=...) should recompute when tau differs."""
+    t0 = de_results.find_threshold(target_pefp=0.05, tau=0.0)
+    assert de_results._cached_tau == 0.0
+
+    t1 = de_results.find_threshold(target_pefp=0.05, tau=2.0)
+    assert de_results._cached_tau == 2.0
+
+    assert isinstance(t0, float)
+    assert isinstance(t1, float)
+
+
+def test_summary_tau_propagation(de_results):
+    """summary(tau=...) should recompute when tau differs."""
+    s0 = de_results.summary(tau=0.0)
+    assert de_results._cached_tau == 0.0
+
+    s1 = de_results.summary(tau=2.0)
+    assert de_results._cached_tau == 2.0
+
+    # Both should be valid non-empty strings
+    assert isinstance(s0, str) and len(s0) > 0
+    assert isinstance(s1, str) and len(s1) > 0
+
+
+# --------------------------------------------------------------------------
+# Fix 2 (exposed): lfsr_tau via results class
+# --------------------------------------------------------------------------
+
+
+def test_compute_pefp_use_lfsr_tau(de_results):
+    """compute_pefp(use_lfsr_tau=True) should use lfsr_tau from results."""
+    # Standard lfsr-based PEFP
+    pefp_std = de_results.compute_pefp(threshold=0.05, tau=0.1)
+
+    # lfsr_tau-based PEFP
+    pefp_tau = de_results.compute_pefp(
+        threshold=0.5, tau=0.1, use_lfsr_tau=True
+    )
+
+    assert isinstance(pefp_std, float)
+    assert isinstance(pefp_tau, float)
+    assert 0 <= pefp_std <= 1
+    assert 0 <= pefp_tau <= 1
+
+
+def test_find_threshold_use_lfsr_tau(de_results):
+    """find_threshold(use_lfsr_tau=True) should use lfsr_tau."""
+    t_std = de_results.find_threshold(target_pefp=0.05, tau=0.0)
+    t_tau = de_results.find_threshold(
+        target_pefp=0.05, tau=0.0, use_lfsr_tau=True
+    )
+
+    # At tau=0 they should be identical (lfsr_tau == lfsr when tau=0)
+    assert abs(t_std - t_tau) < 1e-6
