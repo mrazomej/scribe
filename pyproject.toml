@@ -60,6 +60,7 @@ dev = [
     "datashader>=0.18.2",
     "holoviews>=1.21.0",
     "scikit-image>=0.25.2",
+    "marimo>=0.19.11",
 ]
 
 [build-system]
