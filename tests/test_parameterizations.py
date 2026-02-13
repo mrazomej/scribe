@@ -239,6 +239,49 @@ class TestMixtureBroadcastingIntegration:
     def n_genes(self):
         return 20
 
+    @pytest.mark.parametrize(
+        "parameterization,mixture_scalar_param,mixture_gene_param",
+        [
+            ("canonical", "p", "r"),
+            ("mean_prob", "p", "mu"),
+            ("mean_odds", "phi", "mu"),
+        ],
+    )
+    def test_default_mixture_params_include_all_core_parameters(
+        self,
+        n_cells,
+        n_genes,
+        parameterization,
+        mixture_scalar_param,
+        mixture_gene_param,
+    ):
+        """Test default mixture params include both sampled core parameters."""
+        import numpyro
+
+        from scribe.models.config import ModelConfigBuilder
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization(parameterization)
+            .as_mixture(2)
+            .build()
+        )
+        model, _, _ = create_model(config, validate=False)
+
+        with numpyro.handlers.seed(rng_seed=42):
+            with numpyro.handlers.trace() as trace:
+                model(
+                    n_cells=n_cells,
+                    n_genes=n_genes,
+                    model_config=config,
+                    counts=None,
+                )
+
+        assert trace[mixture_scalar_param]["value"].shape == (2,)
+        assert trace[mixture_gene_param]["value"].shape == (2, n_genes)
+
     def test_mean_odds_mixture_model_runs(self, n_cells, n_genes):
         """Test mean_odds mixture model with phi mixture-specific runs without error."""
         import numpyro

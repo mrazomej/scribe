@@ -110,7 +110,8 @@ def build_config_from_preset(
         Number of mixture components. If provided, creates a mixture model.
     mixture_params : Optional[List[str]], default=None
         List of parameter names to make mixture-specific. If None and
-        n_components is set, defaults to all gene-specific parameters.
+        n_components is set, defaults to all sampled core parameters for the
+        selected parameterization.
     priors : Optional[Dict[str, Any]], default=None
         Dictionary of prior parameters keyed by parameter name.
         Values should be tuples of prior hyperparameters.

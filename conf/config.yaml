@@ -41,7 +41,7 @@ unconstrained: false
 n_components: null
 
 # Which parameters should be component-specific in mixture models
-# null = default (all gene-specific params), or list like ["r", "gate"]
+# null = default (all sampled core params), or explicit list like ["r", "gate"]
 mixture_params: null
 
 # Guide configuration

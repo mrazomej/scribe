@@ -170,8 +170,8 @@ class ModelConfigBuilder:
             Number of mixture components (must be >= 2)
         mixture_params : List[str], optional
             List of parameter names that should be mixture-specific.
-            If None, all gene-specific parameters will be mixture-specific
-            by default.
+            If None, all sampled core parameters for the selected
+            parameterization will be mixture-specific by default.
         """
         if n_components < 2:
             raise ValueError("n_components must be >= 2 for mixture models")
