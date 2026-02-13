@@ -70,5 +70,8 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 include = ["scribe*"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.black]
 line-length = 80

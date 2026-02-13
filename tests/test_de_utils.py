@@ -9,7 +9,7 @@ import numpy as np
 import jax.numpy as jnp
 from jax import random
 
-from scribe.core.de.utils import (
+from scribe.de import (
     compute_lfdr,
     compute_pefp,
     find_lfsr_threshold,

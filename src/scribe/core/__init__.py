@@ -12,8 +12,7 @@ from .annotation_prior import (
     validate_annotation_prior_logits,
 )
 
-# Differential expression module
-from . import de
+# Differential expression module has moved to scribe.de (top-level)
 
 # from .cell_type_assignment import (
 #     compute_cell_type_probabilities,
@@ -30,7 +29,7 @@ __all__ = [
     "fit_logistic_normal_from_posterior",
     "build_annotation_prior_logits",
     "validate_annotation_prior_logits",
-    "de",
+    # "de" has moved to scribe.de (top-level)
     "compute_cell_type_probabilities",
     "compute_cell_type_probabilities_map",
     "temperature_scaling",
