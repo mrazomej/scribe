@@ -83,20 +83,34 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # ---------------------------------------------------------------------------
 
 
-def _detect_n_gpus() -> int:
-    """Detect the number of CUDA GPUs visible to the current process.
+def _detect_gpu_ids() -> list[str]:
+    """Detect the physical CUDA GPU IDs visible to the current process.
+
+    If ``CUDA_VISIBLE_DEVICES`` is set in the environment, its value is
+    parsed to obtain the physical device IDs.  Otherwise JAX is queried
+    for the number of GPUs and IDs ``["0", "1", ...]`` are returned.
 
     Returns
     -------
-    int
-        Number of GPUs, or 0 if none are available.
+    list[str]
+        Physical GPU ID strings (e.g. ``["2", "3"]``), or an empty list
+        if no GPUs are available.
     """
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cvd is not None:
+        # Respect the user's explicit GPU selection
+        ids = [x.strip() for x in cvd.split(",") if x.strip()]
+        if ids:
+            return ids
+
+    # Fall back to JAX device enumeration
     try:
         import jax  # noqa: E402 – import only when needed
 
-        return len(jax.devices("gpu"))
+        n = len(jax.devices("gpu"))
+        return [str(i) for i in range(n)]
     except Exception:
-        return 0
+        return []
 
 
 def _parse_args(argv: list[str]) -> tuple[str, dict, list[str]]:
@@ -236,7 +250,7 @@ def _generate_tmp_yamls(
     data_cfg: dict,
     split_by: str,
     covariate_values: list[str],
-    n_gpus: int,
+    gpu_ids: list[str],
 ) -> list[str]:
     """Write temporary data YAML configs for each covariate value.
 
@@ -248,9 +262,10 @@ def _generate_tmp_yamls(
         The covariate column name.
     covariate_values : list[str]
         Unique values of the covariate column.
-    n_gpus : int
-        Number of available GPUs (used for round-robin ``gpu_id``
-        assignment).  If 0, all configs get ``gpu_id: "0"``.
+    gpu_ids : list[str]
+        Physical GPU ID strings (e.g. ``["0", "1"]`` or ``["2", "3"]``).
+        Jobs are assigned round-robin.  If empty, all configs get
+        ``gpu_id: "0"``.
 
     Returns
     -------
@@ -273,7 +288,7 @@ def _generate_tmp_yamls(
     )
 
     tmp_names: list[str] = []
-    effective_n_gpus = max(n_gpus, 1)
+    effective_gpu_ids = gpu_ids if gpu_ids else ["0"]
 
     for idx, value in enumerate(covariate_values):
         safe_value = _sanitize_value(value)
@@ -286,7 +301,7 @@ def _generate_tmp_yamls(
             "path": abs_path,
             "subset_column": split_by,
             "subset_value": value,
-            "gpu_id": str(idx % effective_n_gpus),
+            "gpu_id": effective_gpu_ids[idx % len(effective_gpu_ids)],
         }
 
         # Carry over preprocessing and any other fields from the original
@@ -375,8 +390,12 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 4. Determine parallelism settings
     # ------------------------------------------------------------------
-    n_gpus = _detect_n_gpus()
-    console.print(f"[dim]GPUs detected:[/dim] [cyan]{n_gpus}[/cyan]")
+    gpu_ids = _detect_gpu_ids()
+    n_gpus = len(gpu_ids)
+    console.print(
+        f"[dim]GPUs detected:[/dim] [cyan]{n_gpus}[/cyan]"
+        + (f" (IDs: {', '.join(gpu_ids)})" if gpu_ids else "")
+    )
 
     # n_jobs: user override > data config > number of GPUs > 1
     n_jobs_raw = data_overrides.get("n_jobs", data_cfg.get("n_jobs"))
@@ -398,7 +417,7 @@ def main() -> None:
     )
 
     tmp_names = _generate_tmp_yamls(
-        data_cfg, split_by, covariate_values, n_gpus
+        data_cfg, split_by, covariate_values, gpu_ids
     )
     for name in tmp_names:
         console.print(f"  [dim]Created:[/dim] conf/data/_tmp_split/{name}.yaml")
