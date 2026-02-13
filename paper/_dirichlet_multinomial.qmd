@@ -101,13 +101,13 @@ As we will prove later, the resulting distribution takes the form of a negative
 binomial distribution,
 
 $$
-u_g \mid r_g, \hat{p}, \sim \text{NB}(r_g, \hat{p}),
+u_g \mid r_g, \hat{p} \sim \text{NB}(r_g, \hat{p}),
 $${#eq-umicounts-marginal-nb}
 
 where
 
 $$
-\hat{p} = \frac{\nu (1 - p)}{\nu + (1 - \nu) p},
+\hat{p} = \frac{p}{\nu + p(1 - \nu)},
 $${#eq-umicounts-marginal-nb-p}
 
 is an effective probability of success that depends on the probability of
@@ -236,7 +236,7 @@ $$
 \prod_{c=1}^C \left[
     \pi(u_{T,c} \mid r_T, \hat{p})
     \pi(\underline{u}_c \mid u_{T,c}, \underline{r})
-\right] \cdot \left[\pi(r_g)\right]^G \cdot \pi(\hat{p}).
+\right] \cdot \prod_{g=1}^G \pi(r_g) \cdot \pi(\hat{p}).
 $${#eq-bayes-model}
 
 To justify this functional form, there are two main steps we need to prove:
@@ -466,13 +466,13 @@ $${#eq-pgf-binomial-dist-simplified-5}
 By the binomial theorem, we can rewrite this sum as:
 
 $$
-\sum_{u=0}^m\binom{m}{u}(\nu z)^u(1-\nu)^{m-u} = (1 - (1 - \nu)z)^m.
+\sum_{u=0}^m\binom{m}{u}(\nu z)^u(1-\nu)^{m-u} = (1 - \nu + \nu z)^m = (1 - \nu(1-z))^m.
 $${#eq-pgf-binomial-dist-simplified-2}
 
 Therefore, the PGF of the binomial distribution is given by
 
 $$
-\mathcal{P}_{u \mid m}(z) = (1 - (1 - \nu)z)^m.
+\mathcal{P}_{u \mid m}(z) = (1 - \nu(1-z))^m.
 $${#eq-pgf-binomial-dist-simplified-3}
 
 ### Composition of PGFs
@@ -630,7 +630,7 @@ $${#eq-pgf-composition-7}
 We expand the expression further
 
 $$
-P_u(z) = \left[\frac{p}{1-\nu+z\nu+p-\nu p+z\nu p}\right]^r
+P_u(z) = \left[\frac{p}{p+\nu-\nu p-z\nu+z\nu p}\right]^r
 $${#eq-pgf-composition-8}
 
 Next, we group terms with and without $z$
@@ -741,7 +741,7 @@ $$
 \frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)},
 $${#eq-gamma-dist}
 
-where $\Gamma(\cdot)$ is the gamma function, and $\theta$ is the scale parameter
+where $\Gamma(\cdot)$ is the gamma function, and $\theta$ is the rate parameter
 of the gamma distribution. This parameter relates to the original $\hat{p}$
 parameter of the negative binomial distribution via
 
@@ -777,7 +777,7 @@ Taking out terms that do not depend on $\lambda$ and grouping the remaining
 terms, we obtain
 
 $$
-\pi(u \mid r, p) =
+\pi(u \mid r, \hat{p}) =
 \frac{1}{u!\Gamma(r)}
 \left(\frac{\hat{p}}{1-\hat{p}}\right)^r 
 \int_0^{\infty} d \lambda \,
@@ -796,7 +796,7 @@ $$
 dx = \left(\frac{1}{1-\hat{p}}\right) d\lambda.
 $${#eq-nb-poisson-gamma-6}
 
-Furthermore, the integraiton limits upon this change of variables are
+Furthermore, the integration limits upon this change of variables are
 
 $$
 \lambda = 0 \implies x = 0,
@@ -833,10 +833,10 @@ $$
 $${#eq-nb-poisson-gamma-9}
 
 Now we can substitute the result from @eq-nb-poisson-gamma-9 back into our
-original expression for $\pi(u \mid r, p)$,
+original expression for $\pi(u \mid r, \hat{p})$,
 
 $$
-\pi(u \mid r, p) = 
+\pi(u \mid r, \hat{p}) = 
 \frac{1}{u!\Gamma(r)}
 \left(\frac{\hat{p}}{1-\hat{p}}\right)^r
 (1-\hat{p})^{u+r} \Gamma(u+r).
@@ -845,22 +845,27 @@ $${#eq-nb-poisson-gamma-11}
 Rearranging the terms and simplifying, we get
 
 $$
-\pi(u \mid r, p) = \frac{\Gamma(u+r)}{u!\Gamma(r)}(1-\hat{p})^u \, \hat{p}^r,
+\pi(u \mid r, \hat{p}) = \frac{\Gamma(u+r)}{u!\Gamma(r)}(1-\hat{p})^u \, \hat{p}^r,
 $${#eq-nb-poisson-gamma-12}
 
-We can express the Gamma functions in terms of factorials using the relationship
-$\Gamma(x) = (x-1)!$. This allows us to rewrite @eq-nb-poisson-gamma-12 as
+When $r$ is a positive integer, we can express the Gamma functions in terms of
+factorials using the relationship $\Gamma(x) = (x-1)!$. This allows us to
+rewrite @eq-nb-poisson-gamma-12 as
 
 $$
-\pi(u \mid r, p) = \frac{(u+r-1)!}{(r-1)!u!}(1-\hat{p})^u \hat{p}^r,
+\pi(u \mid r, \hat{p}) = \frac{(u+r-1)!}{(r-1)!u!}(1-\hat{p})^u \hat{p}^r,
 $${#eq-nb-poisson-gamma-13}
 
-Finally, we recognize that the ratio of factorials is equivalent to a binomial
-coefficient, giving us the final form of the negative binomial distribution
+which we recognize as a binomial coefficient, giving us the familiar form of
+the negative binomial distribution
 
 $$
-\pi(u \mid r, p) = \binom{u+r-1}{u}(1-\hat{p})^u \hat{p}^r.
+\pi(u \mid r, \hat{p}) = \binom{u+r-1}{u}(1-\hat{p})^u \hat{p}^r.
 $${#eq-nb-poisson-gamma-14}
+
+For general real-valued $r > 0$, the result still holds with the generalized
+binomial coefficient defined in terms of Gamma functions as in
+@eq-nb-poisson-gamma-12.
 
 This shows that a negative binomial distribution can be expressed as a compound
 distribution of a Poisson and a gamma distribution. Furthermore, this result
@@ -875,9 +880,9 @@ can be expressed as
 
 $$
 \pi(\underline{u} \mid \underline{r}, \hat{p}) = \prod_{g=1}^G 
-\int_0^{\infty} d \lambda \, 
+\int_0^{\infty} d \lambda_g \, 
 \overbrace{
-\pi\left(u_g \mid \lambda\right) 
+\pi\left(u_g \mid \lambda_g\right) 
 }^{\text{Poisson}}
 \times
 \underbrace{
@@ -940,7 +945,7 @@ $$
 \pi(\underline{u} \mid \underline{\lambda}) =
 \prod_{g=1}^G
 \pi\left(u_g \mid \lambda_g\right) =
-\prod_{g=1}^G \frac{\lambda_g}{u_{g}!} e^{-\lambda_g}.
+\prod_{g=1}^G \frac{\lambda_g^{u_g}}{u_{g}!} e^{-\lambda_g}.
 $${#eq-joint-poisson}
 
 Next, we define the sum of the Poisson random variables as $u_T = \sum_g u_g$.
@@ -952,8 +957,8 @@ $$
 \left[
     \left(u_T! \prod_{g=1}^G \frac{\rho_g^{u_g}}{u_g!} \right)
 \left(
-    \frac{\left(\sum_{j=1}^G \lambda_g\right)^{u_T}}{u_T!} 
-    e^{-\sum_{j=1}^G \lambda_g}
+    \frac{\left(\sum_{j=1}^G \lambda_j\right)^{u_T}}{u_T!} 
+    e^{-\sum_{j=1}^G \lambda_j}
 \right)
 \right]
 $${#eq-poisson-multinomial-1}
@@ -1424,7 +1429,7 @@ $$
 \pi\left(\underline{V} \mid \underline{r}, \theta\right) =
 \prod_{g=1}^G 
 \frac{
-    \lambda_g^{r-1} e^{-\theta \lambda_g} \theta^r
+    \lambda_g^{r_g-1} e^{-\theta \lambda_g} \theta^{r_g}
 }{\Gamma\left(r_g\right)} 
 \cdot\left(\Lambda^{G-1}\right).
 $${#eq-jacobian-4}
@@ -1437,14 +1442,14 @@ $$
 \left[
     \prod_{g=1}^{G-1} 
     \frac{
-        \lambda_g^{r-1} e^{-\theta \lambda_g} \theta^r
+        \lambda_g^{r_g-1} e^{-\theta \lambda_g} \theta^{r_g}
     }{
         \Gamma\left(r_g\right)
     }
 \right]
 \left[
     \frac{
-        \lambda_G^{r_0-1} e^{-\theta \lambda_G} \theta^{r_G}
+        \lambda_G^{r_G-1} e^{-\theta \lambda_G} \theta^{r_G}
     }{
         \Gamma\left(r_G\right)
     }
@@ -1469,9 +1474,9 @@ $$
 \left[
     \frac{
         \left[
-            \Lambda\left(1-\rho_1, \ldots-\rho_{0-1}\right)
-        \right]^{r_{G-1}} 
-        e^{-\theta \Lambda\left(1-\rho_1 \ldots \rho_{G-1}\right)} \theta^{r_G}
+            \Lambda\left(1-\rho_1-\cdots-\rho_{G-1}\right)
+        \right]^{r_G-1} 
+        e^{-\theta \Lambda\left(1-\rho_1-\cdots-\rho_{G-1}\right)} \theta^{r_G}
     }{
         \Gamma\left(r_G\right)
     }
@@ -1489,7 +1494,7 @@ $$
 }{
     \prod_{g=1}^G \Gamma\left(r_g\right)
 }
-\prod_{g=1}^G \rho_g^{r_{g-1}}.
+\prod_{g=1}^G \rho_g^{r_g-1}.
 $${#eq-jacobian-7}
 
 simplifying further, we find
@@ -1506,7 +1511,7 @@ $$
     } 
 \right]
 \left[ 
-    \prod_{g=1}^G \rho_g^{r_{g-1}} 
+    \prod_{g=1}^G \rho_g^{r_g-1} 
 \right].
 $${#eq-jacobian-8}
 
@@ -1597,7 +1602,7 @@ $${#eq-int-lambda-def}
 
 Furthermore, we know that the product of Poissons can be written as the product
 of a Poisson distribution with rate parameter $\lambda_T =\sum_{g=1}^G
-\lambda_g$ and a multinomial distribution with parameters $r_T$ and
+\lambda_g$ and a multinomial distribution with parameters $u_T$ and
 $\underline{\rho}$
 
 $$
