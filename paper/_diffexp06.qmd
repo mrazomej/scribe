@@ -205,6 +205,10 @@ $$
 \text{PEFP}(S(t_1)).
 $${#eq-diffexp-pefp-monotone-proof-step3}
 
+The right-hand strict inequality holds because $A$ is finite and every
+$\text{lfsr}_{g'} < t_1$, so the average of finitely many values each
+strictly less than $t_1$ is itself strictly less than $t_1$.
+
 Now, we can write
 
 $$
