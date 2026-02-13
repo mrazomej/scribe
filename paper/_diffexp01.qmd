@@ -5,8 +5,7 @@ bibliography: references.bib
 csl: ieee.csl
 ---
 
-# Bayesian Differential Expression for Compositional Data
-{#sec-diffexp}
+# Bayesian Differential Expression for Compositional Data {#sec-diffexp}
 
 In @sec-normalization, we developed a low-rank logistic-normal approximation for
 modeling normalized gene expression proportions on the simplex. We showed that
@@ -16,11 +15,11 @@ logistic-normal distribution in additive log-ratio (ALR) space,
 
 $$
 \underline{z}_{\text{ALR}} \sim \mathcal{N}(\underline{\mu}_{\text{ALR}}, 
-\underline{\underline{\Sigma}}_{\text{ALR}}),
+\underline{\underline{\Sigma}}_{\operatorname{ALR}}),
 $${#eq-diffexp-alr-distribution}
 
-where $\underline{\underline{\Sigma}}_{\text{ALR}} = 
-\underline{\underline{W}}_{\text{ALR}}\underline{\underline{W}}_{\text{ALR}}^{\top} 
+where $\underline{\underline{\Sigma}}_{\text{ALR}} =
+\underline{\underline{W}}_{\text{ALR}}\underline{\underline{W}}_{\text{ALR}}^{\top}
 + \text{diag}(\underline{d}_{\text{ALR}})$ is a low-rank plus diagonal
 covariance matrix. This representation captures both the mean composition and
 the correlation structure induced by posterior uncertainty in the underlying
@@ -49,27 +48,26 @@ the constraint $\rho_1 + \rho_2 + \rho_3 = 1$. In a compositional analysis,
 these genes would appear to be differentially expressed, even though their
 absolute expression levels are unchanged.
 
-This phenomenon, known as the *closure problem* [@aitchison1986], illustrates
-that compositional data do not carry information about absolute quantities—only
-about relative quantities. The mathematical structure of the simplex
-$\Delta^{D-1}$ fundamentally differs from Euclidean space $\mathbb{R}^{D}$, and
-statistical methods that ignore this distinction can produce misleading results
-[@pawlowsky2015].
+This phenomenon, known as the *closure problem*, illustrates that compositional
+data do not carry information about absolute quantities—only about relative
+quantities. The mathematical structure of the simplex $\Delta^{D-1}$
+fundamentally differs from Euclidean space $\mathbb{R}^{D}$, and statistical
+methods that ignore this distinction can produce misleading results.
 
 ### Challenges with standard differential expression methods
 
 Traditional differential expression methods for RNA-seq data, such as those
-based on the negative binomial distribution [@robinson2010; @love2014], operate
-on count data and model absolute transcript abundances. When applied to
-normalized proportions, these methods encounter several difficulties:
+based on the negative binomial distribution, operate on count data and model
+absolute transcript abundances. When applied to normalized proportions, these
+methods encounter several difficulties:
 
 1. **Violation of independence**: In compositional data, an increase in one
 component necessarily induces decreases in others, creating spurious negative
 correlations that are purely artifacts of the closure constraint.
 
 2. **Reference dependence**: Methods that work with log-ratios relative to a
-single reference gene [@aitchison1986] produce results that depend on the
-arbitrary choice of reference, complicating interpretation.
+single reference gene produce results that depend on the arbitrary choice of
+reference, complicating interpretation.
 
 3. **Loss of multivariate structure**: Testing each gene independently ignores
 the correlation structure captured by the low-rank covariance matrix, reducing
@@ -91,10 +89,9 @@ proportions directly on the simplex, we transform to log-ratio coordinate
 systems where standard multivariate Gaussian methods apply. We employ two
 complementary systems:
 
-- The *centered log-ratio* (CLR) transformation [@aitchison1986] provides a
-reference-free representation suitable for gene-level inference, where each
-coordinate has a natural interpretation as a log-ratio relative to the
-geometric mean.
+- The *centered log-ratio* (CLR) transformation provides a reference-free
+representation suitable for gene-level inference, where each coordinate has a
+natural interpretation as a log-ratio relative to the geometric mean.
 
 - The *isometric log-ratio* (ILR) transformation [@egozcue2003] provides an
 orthonormal basis suitable for gene-set and pathway analysis, where each
@@ -111,8 +108,7 @@ and false discovery rate (FDR) control from frequentist hypothesis testing, we
 employ fully Bayesian measures of evidence. The *local false sign rate* (lfsr)
 quantifies the posterior probability of incorrectly signing a gene's
 differential expression [@stephens2016], and the *posterior expected false
-discovery proportion* (PEFP) provides a Bayesian analog of the FDR
-[@newton2004].
+discovery proportion* (PEFP) provides a Bayesian analog of the FDR.
 
 ### Preview of key results
 
