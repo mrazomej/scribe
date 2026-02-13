@@ -3,6 +3,12 @@ Shared normalization utilities for SCRIBE inference results.
 
 This module provides count normalization functionality that can be used by both
 SVI and MCMC inference results classes.
+
+Performance
+-----------
+Dirichlet sampling is performed in batches of ``batch_size`` posterior samples
+(default 256) to balance GPU throughput against memory usage.  See
+``core.normalization_logistic`` for the batched sampling helpers.
 """
 
 from typing import Dict, Optional, Union
@@ -13,6 +19,13 @@ import warnings
 import numpyro.distributions as dist
 from ..stats import sample_dirichlet_from_parameters, fit_dirichlet_minka
 from ..utils import numpyro_to_scipy
+
+# Re-use the same batched sampling helpers from the logistic-normal module
+from .normalization_logistic import (
+    _batched_dirichlet_sample,
+    _batched_dirichlet_sample_raw,
+    _DEFAULT_BATCH_SIZE,
+)
 
 
 def normalize_counts_from_posterior(
@@ -25,6 +38,7 @@ def normalize_counts_from_posterior(
     sample_axis: int = 0,
     return_concentrations: bool = False,
     backend: str = "numpyro",
+    batch_size: int = _DEFAULT_BATCH_SIZE,
     verbose: bool = True,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """
@@ -32,73 +46,50 @@ def normalize_counts_from_posterior(
 
     This function takes posterior samples of the dispersion parameter (r) and
     uses them as concentration parameters for Dirichlet distributions to
-    generate normalized expression profiles. For mixture models, normalization
-    is performed per component.
+    generate normalized expression profiles.  For mixture models,
+    normalization is performed per component.
 
     Parameters
     ----------
     posterior_samples : Dict[str, jnp.ndarray]
-        Dictionary containing posterior samples, must include 'r' parameter
+        Dictionary containing posterior samples, must include 'r' parameter.
     n_components : Optional[int], default=None
         Number of mixture components. If None, assumes non-mixture model.
     rng_key : random.PRNGKey, optional
-        JAX random number generator key. Defaults to random.PRNGKey(42) if None
-    n_samples_dirichlet : int, default=1000
-        Number of samples to draw from each Dirichlet distribution
+        JAX random number generator key. Defaults to random.PRNGKey(42) if
+        None.
+    n_samples_dirichlet : int, default=1
+        Number of samples to draw from each Dirichlet distribution.
     fit_distribution : bool, default=True
         If True, fits a Dirichlet distribution to the generated samples using
-        fit_dirichlet_minka
+        ``fit_dirichlet_minka``.
     store_samples : bool, default=False
-        If True, includes the raw Dirichlet samples in the output
+        If True, includes the raw Dirichlet samples in the output.
     sample_axis : int, default=0
         Axis containing samples in the Dirichlet fitting (passed to
-        fit_dirichlet_minka)
+        ``fit_dirichlet_minka``).
     return_concentrations : bool, default=False
-        If True, returns the original r parameter samples used as concentrations
+        If True, returns the original r parameter samples used as
+        concentrations.
     backend : str, default="numpyro"
-        Statistical package to use for distributions when fit_distribution=True.
-        Must be one of: - "numpyro": Returns numpyro.distributions.Dirichlet
-        objects - "scipy": Returns scipy.stats distributions via
-        numpyro_to_scipy conversion
+        Statistical package to use for distributions when
+        ``fit_distribution=True``.  Must be ``"numpyro"`` or ``"scipy"``.
+    batch_size : int, default=256
+        Number of posterior samples to process in each batched Dirichlet
+        sampling call.  Larger values use more GPU memory but require fewer
+        Python-to-JAX dispatches.
     verbose : bool, default=True
-        If True, prints progress messages
+        If True, prints progress messages.
 
     Returns
     -------
     Dict[str, Union[jnp.ndarray, object]]
-        Dictionary containing normalized expression profiles. Keys depend on
-        input arguments:
-            - 'samples': Raw Dirichlet samples (if store_samples=True)
-            - 'concentrations': Fitted concentration parameters (if
-              fit_distribution=True)
-            - 'mean_probabilities': Mean probabilities from fitted distribution
-              (if fit_distribution=True)
-            - 'distributions': Dirichlet distribution objects (if
-              fit_distribution=True)
-            - 'original_concentrations': Original r parameter samples (if
-              return_concentrations=True)
-
-        For non-mixture models:
-            - samples: shape (n_posterior_samples, n_genes, n_samples_dirichlet)
-              or (n_posterior_samples, n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_genes,) - single fitted distribution
-            - mean_probabilities: shape (n_genes,) - single fitted distribution
-            - distributions: single Dirichlet distribution object
-
-        For mixture models:
-            - samples: shape (n_posterior_samples, n_components, n_genes,
-              n_samples_dirichlet) or (n_posterior_samples, n_components,
-              n_genes) if n_samples_dirichlet=1
-            - concentrations: shape (n_components, n_genes) - one fitted
-              distribution per component
-            - mean_probabilities: shape (n_components, n_genes) - one fitted
-              distribution per component
-            - distributions: list of n_components Dirichlet distribution objects
+        Dictionary containing normalized expression profiles.
 
     Raises
     ------
     ValueError
-        If 'r' parameter is not found in posterior_samples
+        If 'r' parameter is not found in posterior_samples.
     """
     # Create default RNG key if not provided (lazy initialization)
     if rng_key is None:
@@ -130,8 +121,6 @@ def normalize_counts_from_posterior(
     if is_mixture:
         if verbose:
             print(f"Processing mixture model with {n_components} components")
-        # n_components is guaranteed to be not None here due to the is_mixture
-        # condition
         assert n_components is not None  # Type assertion for linter
         return _normalize_mixture_model(
             r_samples,
@@ -143,6 +132,7 @@ def normalize_counts_from_posterior(
             sample_axis,
             return_concentrations,
             backend,
+            batch_size,
             verbose,
         )
     # Process non-mixture model
@@ -158,6 +148,7 @@ def normalize_counts_from_posterior(
             sample_axis,
             return_concentrations,
             backend,
+            batch_size,
             verbose,
         )
 
@@ -176,56 +167,68 @@ def _normalize_non_mixture_model(
     sample_axis: int,
     return_concentrations: bool,
     backend: str,
+    batch_size: int,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
-    """Handle normalization for non-mixture models."""
-    # r_samples shape: (n_posterior_samples, n_genes)
+    """
+    Handle normalization for non-mixture models.
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape (n_posterior_samples, n_genes)
+        Posterior samples of concentration parameters.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    n_samples_dirichlet : int
+        Dirichlet draws per posterior sample.
+    fit_distribution : bool
+        Whether to fit a summary Dirichlet.
+    store_samples : bool
+        Whether to return the raw Dirichlet samples.
+    sample_axis : int
+        Axis for ``fit_dirichlet_minka``.
+    return_concentrations : bool
+        Whether to return original r samples.
+    backend : str
+        ``"numpyro"`` or ``"scipy"``.
+    batch_size : int
+        Posterior samples per batched JAX call.
+    verbose : bool
+        Print progress messages.
+
+    Returns
+    -------
+    Dict[str, Union[jnp.ndarray, object]]
+        Normalized expression results.
+    """
     n_posterior_samples, n_genes = r_samples.shape
 
     if verbose:
+        n_batches = (n_posterior_samples + batch_size - 1) // batch_size
         print(
-            f"Generating {n_samples_dirichlet} Dirichlet samples for each of "
-            f"{n_posterior_samples} posterior samples"
+            f"Generating {n_samples_dirichlet} Dirichlet sample(s) for each "
+            f"of {n_posterior_samples} posterior samples "
+            f"(batch_size={batch_size}, {n_batches} batches)"
         )
+
+    # ------------------------------------------------------------------
+    # Batched Dirichlet sampling  (replaces per-sample Python loop)
+    # ------------------------------------------------------------------
+    # _batched_dirichlet_sample_raw preserves the original per-posterior-sample
+    # shape so that store_samples=True returns the expected output layout.
+    dirichlet_samples = _batched_dirichlet_sample_raw(
+        r_samples,
+        n_samples_dirichlet=n_samples_dirichlet,
+        rng_key=rng_key,
+        batch_size=batch_size,
+        verbose=verbose,
+    )
+    # dirichlet_samples shape:
+    #   n_samples_dirichlet == 1  →  (N, D)
+    #   n_samples_dirichlet  > 1  →  (N, D, S)
 
     # Initialize results dictionary
     results = {}
-
-    # Generate Dirichlet samples for each posterior sample
-    if n_samples_dirichlet == 1:
-        # Single sample case - more efficient
-        dirichlet_samples = jnp.zeros((n_posterior_samples, n_genes))
-        for i in range(n_posterior_samples):
-            if verbose and i % 100 == 0:
-                print(
-                    f"    Processing posterior sample {i}/{n_posterior_samples}"
-                )
-
-            # Use r values as concentration parameters
-            key_i = random.fold_in(rng_key, i)
-            sample_i = sample_dirichlet_from_parameters(
-                r_samples[i : i + 1], n_samples_dirichlet=1, rng_key=key_i
-            )
-            dirichlet_samples = dirichlet_samples.at[i].set(sample_i[0])
-    else:
-        # Multiple samples case
-        dirichlet_samples = jnp.zeros(
-            (n_posterior_samples, n_genes, n_samples_dirichlet)
-        )
-        for i in range(n_posterior_samples):
-            if verbose and i % 100 == 0:
-                print(
-                    f"    Processing posterior sample {i}/{n_posterior_samples}"
-                )
-
-            # Use r values as concentration parameters
-            key_i = random.fold_in(rng_key, i)
-            sample_i = sample_dirichlet_from_parameters(
-                r_samples[i : i + 1],
-                n_samples_dirichlet=n_samples_dirichlet,
-                rng_key=key_i,
-            )
-            dirichlet_samples = dirichlet_samples.at[i].set(sample_i[0])
 
     # Store samples if requested
     if store_samples:
@@ -237,19 +240,15 @@ def _normalize_non_mixture_model(
             print("Fitting Dirichlet distributions to samples")
 
         if n_samples_dirichlet == 1:
+            # Already (N, D) — use directly for fitting
             all_samples = dirichlet_samples
         else:
-            # Reshape samples: (n_posterior_samples, n_genes,
-            # n_samples_dirichlet) -> (n_posterior_samples *
-            # n_samples_dirichlet, n_genes)
-            # First transpose to (n_posterior_samples, n_samples_dirichlet,
-            # n_genes) so that each row after reshape represents a valid
-            # Dirichlet sample
+            # (N, D, S) → (N, S, D) → (N*S, D)
             all_samples = dirichlet_samples.transpose(0, 2, 1).reshape(
                 -1, n_genes
             )
 
-        # Fit single Dirichlet distribution to all samples
+        # Fit single Dirichlet distribution to all pooled samples
         fitted_concentrations = fit_dirichlet_minka(
             all_samples, sample_axis=sample_axis
         )
@@ -263,18 +262,15 @@ def _normalize_non_mixture_model(
             fitted_concentrations / concentration_sum
         )
 
-        # Create single distribution object
+        # Create distribution object
         if verbose:
             print(
-                f"Creating Dirichlet distribution object with {backend} backend"
+                f"Creating Dirichlet distribution object with {backend} "
+                "backend"
             )
-        # Create numpyro distribution object
         dirichlet_dist = dist.Dirichlet(fitted_concentrations)
-        # Check if backend is scipy and convert to scipy distribution
         if backend == "scipy":
-            # Convert to scipy distribution
             dirichlet_dist = numpyro_to_scipy(dirichlet_dist)
-        # Store distribution object
         results["distributions"] = dirichlet_dist
 
     # Return original concentrations if requested
@@ -297,10 +293,42 @@ def _normalize_mixture_model(
     sample_axis: int,
     return_concentrations: bool,
     backend: str,
+    batch_size: int,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
-    """Handle normalization for mixture models."""
-    # r_samples shape: (n_posterior_samples, n_components, n_genes)
+    """
+    Handle normalization for mixture models.
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape (n_posterior_samples, n_components, n_genes)
+        Posterior samples of concentration parameters per component.
+    n_components : int
+        Number of mixture components.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    n_samples_dirichlet : int
+        Dirichlet draws per posterior sample.
+    fit_distribution : bool
+        Whether to fit a summary Dirichlet per component.
+    store_samples : bool
+        Whether to return raw Dirichlet samples.
+    sample_axis : int
+        Axis for ``fit_dirichlet_minka``.
+    return_concentrations : bool
+        Whether to return original r samples.
+    backend : str
+        ``"numpyro"`` or ``"scipy"``.
+    batch_size : int
+        Posterior samples per batched JAX call.
+    verbose : bool
+        Print progress messages.
+
+    Returns
+    -------
+    Dict[str, Union[jnp.ndarray, object]]
+        Normalized expression results per component.
+    """
     n_posterior_samples, n_components_check, n_genes = r_samples.shape
 
     if n_components_check != n_components:
@@ -310,59 +338,48 @@ def _normalize_mixture_model(
         )
 
     if verbose:
+        n_batches = (n_posterior_samples + batch_size - 1) // batch_size
         print(
-            f"Generating {n_samples_dirichlet} Dirichlet samples for each of "
-            f"{n_posterior_samples} posterior samples and {n_components} components"
+            f"Generating {n_samples_dirichlet} Dirichlet sample(s) for each "
+            f"of {n_posterior_samples} posterior samples and {n_components} "
+            f"components (batch_size={batch_size}, {n_batches} batches/comp)"
         )
 
-    # Initialize results dictionary
-    results = {}
+    # ------------------------------------------------------------------
+    # Batched Dirichlet sampling per component
+    # ------------------------------------------------------------------
+    # Build per-component sample arrays, then stack.
+    component_samples_list = []
+    for c in range(n_components):
+        # Slice concentrations for component c: (n_posterior, n_genes)
+        r_component = r_samples[:, c, :]
 
-    # Generate Dirichlet samples for each posterior sample and component
+        # Per-component sub-key for reproducibility
+        key_c = random.fold_in(rng_key, c)
+
+        # Batched sampling preserving per-posterior-sample structure
+        comp_samples = _batched_dirichlet_sample_raw(
+            r_component,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=key_c,
+            batch_size=batch_size,
+            verbose=verbose and c == 0,  # progress bar for first component
+        )
+        # comp_samples shape:
+        #   n_samples_dirichlet == 1  →  (N, D)
+        #   n_samples_dirichlet  > 1  →  (N, D, S)
+        component_samples_list.append(comp_samples)
+
+    # Stack into (N, K, D) or (N, K, D, S)
     if n_samples_dirichlet == 1:
-        # Single sample case - more efficient
-        dirichlet_samples = jnp.zeros(
-            (n_posterior_samples, n_components, n_genes)
-        )
-        for i in range(n_posterior_samples):
-            if verbose and i % 100 == 0:
-                print(
-                    f"    Processing posterior sample {i}/{n_posterior_samples}"
-                )
-
-            for c in range(n_components):
-                # Use r values as concentration parameters for this component
-                key_i_c = random.fold_in(rng_key, i * n_components + c)
-                sample_i_c = sample_dirichlet_from_parameters(
-                    r_samples[i, c : c + 1],
-                    n_samples_dirichlet=1,
-                    rng_key=key_i_c,
-                )
-                dirichlet_samples = dirichlet_samples.at[i, c].set(
-                    sample_i_c[0]
-                )
+        dirichlet_samples = jnp.stack(component_samples_list, axis=1)
     else:
-        # Multiple samples case
-        dirichlet_samples = jnp.zeros(
-            (n_posterior_samples, n_components, n_genes, n_samples_dirichlet)
-        )
-        for i in range(n_posterior_samples):
-            if verbose and i % 100 == 0:
-                print(
-                    f"    Processing posterior sample {i}/{n_posterior_samples}"
-                )
+        dirichlet_samples = jnp.stack(component_samples_list, axis=1)
 
-            for c in range(n_components):
-                # Use r values as concentration parameters for this component
-                key_i_c = random.fold_in(rng_key, i * n_components + c)
-                sample_i_c = sample_dirichlet_from_parameters(
-                    r_samples[i, c : c + 1],
-                    n_samples_dirichlet=n_samples_dirichlet,
-                    rng_key=key_i_c,
-                )
-                dirichlet_samples = dirichlet_samples.at[i, c].set(
-                    sample_i_c[0]
-                )
+    # ------------------------------------------------------------------
+    # Build results
+    # ------------------------------------------------------------------
+    results = {}
 
     # Store samples if requested
     if store_samples:
@@ -373,117 +390,50 @@ def _normalize_mixture_model(
         if verbose:
             print("Fitting Dirichlet distributions to samples")
 
-        if n_samples_dirichlet == 1:
-            # Even with single samples, fit single Dirichlet distribution per
-            # component using all posterior samples
+        # Initialise concentrations for each component
+        concentrations = jnp.zeros((n_components, n_genes))
+
+        for c in range(n_components):
             if verbose:
-                print(
-                    f"    Collecting all {n_posterior_samples} samples per "
-                    f"component to fit single Dirichlet per component"
-                )
+                print(f"    Fitting single Dirichlet for component {c}")
 
-            # Initialize concentrations for each component
-            concentrations = jnp.zeros((n_components, n_genes))
-
-            # Fit single Dirichlet distribution per component
-            for c in range(n_components):
-                if verbose:
-                    print(f"    Fitting single Dirichlet for component {c}")
-
-                # Collect all samples for this component from all posterior
-                # samples
-                # Shape: (n_posterior_samples, n_genes)
+            if n_samples_dirichlet == 1:
+                # (N, D) slice for this component
                 component_samples = dirichlet_samples[:, c, :]
-
-                # Fit single Dirichlet distribution to all samples for this
-                # component
-                fitted_concentrations = fit_dirichlet_minka(
-                    component_samples, sample_axis=sample_axis
-                )
-                concentrations = concentrations.at[c].set(fitted_concentrations)
-
-            # Store concentrations
-            results["concentrations"] = concentrations
-
-            # Compute mean probabilities (Dirichlet mean)
-            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
-            results["mean_probabilities"] = concentrations / concentration_sums
-
-            # Create distribution objects per component
-            if verbose:
-                print(
-                    f"Creating single Dirichlet distribution object per "
-                    f"component with {backend} backend"
-                )
-
-            distributions = []
-            for c in range(n_components):
-                # Create Dirichlet distribution for this component
-                dirichlet_dist = dist.Dirichlet(concentrations[c])
-                if backend == "scipy":
-                    dirichlet_dist = numpyro_to_scipy(dirichlet_dist)
-                distributions.append(dirichlet_dist)
-            results["distributions"] = distributions
-        else:
-            # Fit single Dirichlet distribution per component using all
-            # posterior samples
-            if verbose:
-                print(
-                    f"    Collecting all "
-                    f"{n_posterior_samples * n_samples_dirichlet} samples per "
-                    f"component to fit single Dirichlet per component"
-                )
-
-            # Initialize concentrations for each component
-            concentrations = jnp.zeros((n_components, n_genes))
-
-            # Fit single Dirichlet distribution per component
-            for c in range(n_components):
-                if verbose:
-                    print(f"    Fitting single Dirichlet for component {c}")
-
-                # Collect all samples for this component from all posterior
-                # samples
-                # Shape: (n_posterior_samples, n_genes, n_samples_dirichlet)
-                # -> (n_posterior_samples * n_samples_dirichlet, n_genes)
-                # First transpose to (n_posterior_samples, n_samples_dirichlet,
-                # n_genes) so that each row after reshape represents a valid
-                # Dirichlet sample
+            else:
+                # (N, D, S) → (N, S, D) → (N*S, D)
                 component_samples = (
                     dirichlet_samples[:, c, :, :]
                     .transpose(0, 2, 1)
                     .reshape(-1, n_genes)
                 )
 
-                # Fit single Dirichlet distribution to all samples for this
-                # component
-                fitted_concentrations = fit_dirichlet_minka(
-                    component_samples, sample_axis=sample_axis
-                )
-                concentrations = concentrations.at[c].set(fitted_concentrations)
+            fitted_concentrations = fit_dirichlet_minka(
+                component_samples, sample_axis=sample_axis
+            )
+            concentrations = concentrations.at[c].set(fitted_concentrations)
 
-            # Store concentrations
-            results["concentrations"] = concentrations
+        # Store concentrations
+        results["concentrations"] = concentrations
 
-            # Compute mean probabilities (Dirichlet mean)
-            concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
-            results["mean_probabilities"] = concentrations / concentration_sums
+        # Compute mean probabilities (Dirichlet mean)
+        concentration_sums = jnp.sum(concentrations, axis=1, keepdims=True)
+        results["mean_probabilities"] = concentrations / concentration_sums
 
-            # Create distribution objects per component
-            if verbose:
-                print(
-                    f"Creating single Dirichlet distribution object per "
-                    f"component with {backend} backend"
-                )
+        # Create distribution objects per component
+        if verbose:
+            print(
+                f"Creating Dirichlet distribution objects per component "
+                f"with {backend} backend"
+            )
 
-            distributions = []
-            for c in range(n_components):
-                # Create Dirichlet distribution for this component
-                dirichlet_dist = dist.Dirichlet(concentrations[c])
-                if backend == "scipy":
-                    dirichlet_dist = numpyro_to_scipy(dirichlet_dist)
-                distributions.append(dirichlet_dist)
-            results["distributions"] = distributions
+        distributions = []
+        for c in range(n_components):
+            dirichlet_dist = dist.Dirichlet(concentrations[c])
+            if backend == "scipy":
+                dirichlet_dist = numpyro_to_scipy(dirichlet_dist)
+            distributions.append(dirichlet_dist)
+        results["distributions"] = distributions
 
     # Return original concentrations if requested
     if return_concentrations:

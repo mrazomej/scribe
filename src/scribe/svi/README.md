@@ -403,8 +403,12 @@ ScribeSVIResults
 9. **NormalizationMixin** (`_normalization.py`)
    - Purpose: Count normalization methods
    - Methods:
-     - `normalize_counts()`: Dirichlet-based normalization
-     - `fit_logistic_normal()`: Logistic-Normal distribution fitting
+     - `normalize_counts(batch_size=256)`: Dirichlet-based normalization
+     - `fit_logistic_normal(batch_size=256)`: Logistic-Normal distribution
+       fitting
+   - Both methods use **batched Dirichlet sampling** to process posterior
+     samples in configurable chunks, reducing Python→JAX dispatches from
+     O(N) to O(ceil(N/batch_size)) for efficient GPU utilisation.
    - Dependencies: Uses `ParameterExtractionMixin` (for canonical conversion)
 
 **Benefits of Mixin Architecture:**
