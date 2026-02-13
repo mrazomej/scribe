@@ -26,6 +26,12 @@ _SORT_ALIASES = {
     "delta_sd": "sd",
 }
 
+# All accepted values for the ``sort_by`` parameter in ``format_de_table``.
+_VALID_SORT_COLUMNS = {
+    "lfsr", "delta_mean", "log_fc", "delta_sd", "sd",
+    "prob_effect", "prob_positive",
+}
+
 
 # --------------------------------------------------------------------------
 # Compute local false discovery rate (lfdr)
@@ -183,12 +189,14 @@ def find_lfsr_threshold(
 
     Notes
     -----
-    This finds the largest threshold such that PEFP <= target.
+    This finds the largest set of genes such that PEFP <= target.
     If no valid threshold exists, returns ``0.0``.
 
-    The PEFP when the threshold is ``sorted_lfsr[k]`` (i.e. we call
-    the first ``k+1`` genes) equals ``cumsum(sorted_lfsr)[:k+1] / (k+1)``.
-    We find the largest ``k`` where this is still ``<= target_pefp``.
+    The PEFP when selecting the top ``k`` genes (sorted by ascending lfsr)
+    equals ``mean(sorted_lfsr[:k])``.  We find the largest ``k`` where
+    this is still ``<= target_pefp``, then return a threshold that
+    causes ``compute_pefp`` (which uses strict ``<``) to select exactly
+    those ``k`` genes.
 
     Examples
     --------
@@ -199,20 +207,31 @@ def find_lfsr_threshold(
     sorted_lfsr = jnp.sort(lfsr)
     D = len(sorted_lfsr)
 
-    # Build PEFP vector aligned with the old loop semantics.
-    # For threshold = sorted_lfsr[k], ``compute_pefp`` calls genes with
-    # ``lfsr < sorted_lfsr[k]`` (strict <).  Without ties this is the
-    # first k genes, so PEFP = cumsum[k-1] / k for k >= 1, and 0 for k=0.
+    # Compute PEFP for selecting the top k genes, k = 1 .. D.
+    # pefps[i] = mean(sorted_lfsr[0:i+1]) = cumsum[i] / (i+1),
+    # which is the PEFP when we include genes 0 .. i.
     cumsum = jnp.cumsum(sorted_lfsr)
-    # pefps[0] = 0 (no genes called at the minimum threshold)
-    pefps = jnp.zeros(D)
-    pefps = pefps.at[1:].set(cumsum[:-1] / jnp.arange(1, D))
+    pefps = cumsum / jnp.arange(1, D + 1)
 
-    # Find the largest threshold with PEFP <= target
+    # Find the largest k (number of genes) with PEFP <= target.
+    # valid[i] is True when including genes 0..i keeps PEFP within target.
     valid = pefps <= target_pefp
     if jnp.any(valid):
-        valid_thresholds = sorted_lfsr[valid]
-        return float(jnp.max(valid_thresholds))
+        # k_star = number of genes to select (1-indexed)
+        k_star = int(jnp.max(jnp.where(valid, jnp.arange(D), -1))) + 1
+
+        if k_star == D:
+            # All D genes are valid.  Since ``compute_pefp`` uses strict
+            # ``<``, the threshold must be above max(lfsr) to include
+            # the last gene.  Use a relative epsilon that is large enough
+            # to survive float32 rounding (float32 eps ~ 1.2e-7).
+            max_lfsr = float(sorted_lfsr[-1])
+            return max_lfsr + max(abs(max_lfsr) * 1e-6, 1e-10)
+        else:
+            # Return sorted_lfsr[k_star] as the threshold.
+            # With strict ``<``, genes 0 .. k_star-1 will be called
+            # (those with lfsr < sorted_lfsr[k_star]).
+            return float(sorted_lfsr[k_star])
     else:
         return 0.0  # No valid threshold
 
@@ -251,6 +270,14 @@ def format_de_table(
     >>> table = format_de_table(results, sort_by='lfsr', top_n=20)
     >>> print(table)
     """
+    # Validate sort_by upfront so both the pandas and fallback paths
+    # raise the same clear error on invalid input.
+    if sort_by not in _VALID_SORT_COLUMNS:
+        raise ValueError(
+            f"Invalid sort_by='{sort_by}'. "
+            f"Valid options: {sorted(_VALID_SORT_COLUMNS)}"
+        )
+
     try:
         import pandas as pd
     except ImportError:

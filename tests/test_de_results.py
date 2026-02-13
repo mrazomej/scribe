@@ -99,6 +99,33 @@ def test_compare_dimension_mismatch_raises():
         compare(model_A, model_B)
 
 
+def test_compare_wrong_length_gene_names_raises():
+    """compare() should raise if gene_names has wrong length."""
+    D_alr = 10
+    model = {
+        "loc": jnp.zeros(D_alr),
+        "cov_factor": jnp.ones((D_alr, 2)),
+        "cov_diag": jnp.ones(D_alr),
+    }
+    # D = D_alr + 1 = 11, but we pass 5 names
+    with pytest.raises(ValueError, match="gene_names has length 5"):
+        compare(model, model, gene_names=[f"g{i}" for i in range(5)])
+
+
+def test_compare_correct_length_gene_names_passes():
+    """compare() should accept gene_names with correct length."""
+    D_alr = 10
+    model = {
+        "loc": jnp.zeros(D_alr),
+        "cov_factor": jnp.ones((D_alr, 2)),
+        "cov_diag": jnp.ones(D_alr),
+    }
+    D = D_alr + 1
+    names = [f"g{i}" for i in range(D)]
+    de = compare(model, model, gene_names=names)
+    assert de.gene_names == names
+
+
 def test_compare_with_embedded_alr():
     """compare() should handle D-dimensional embedded ALR dicts."""
     D_alr = 10

@@ -440,10 +440,15 @@ def compare(
             f"Both models must be fitted on the same gene set."
         )
 
-    # Generate gene names if not provided (D = D_alr + 1 for CLR space)
+    # Validate or generate gene names (D = D_alr + 1 for CLR space)
+    D = mu_A.shape[-1] + 1
     if gene_names is None:
-        D = mu_A.shape[-1] + 1
         gene_names = [f"gene_{i}" for i in range(D)]
+    elif len(gene_names) != D:
+        raise ValueError(
+            f"gene_names has length {len(gene_names)} but models have "
+            f"D={D} genes in CLR space."
+        )
 
     return ScribeDEResults(
         mu_A=mu_A,

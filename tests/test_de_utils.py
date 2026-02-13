@@ -536,11 +536,16 @@ def test_find_lfsr_threshold_regression_known():
 
 
 def test_find_lfsr_threshold_regression_uniform():
-    """Regression: uniform lfsr should still produce a valid threshold."""
+    """Regression: uniform lfsr below target should select ALL genes."""
     lfsr = jnp.ones(50) * 0.02
     threshold = find_lfsr_threshold(lfsr, target_pefp=0.05)
     pefp = compute_pefp(lfsr, threshold=threshold)
+    n_called = int(jnp.sum(lfsr < threshold))
+
+    # PEFP must be within target
     assert pefp <= 0.05 + 1e-6
+    # All 50 genes should be called (lfsr=0.02 << target=0.05)
+    assert n_called == 50
 
 
 def test_find_lfsr_threshold_regression_large_scale():
@@ -556,3 +561,47 @@ def test_find_lfsr_threshold_regression_large_scale():
     assert pefp <= target + 1e-6
     # Must find some valid threshold (not degenerate 0)
     assert threshold > 0
+
+
+def test_find_lfsr_threshold_all_genes_valid():
+    """When all genes have lfsr below target, ALL should be selected."""
+    # Mixed low values, all well below target
+    lfsr = jnp.concatenate([jnp.ones(80) * 0.01, jnp.ones(20) * 0.04])
+    target = 0.05
+
+    threshold = find_lfsr_threshold(lfsr, target_pefp=target)
+    pefp = compute_pefp(lfsr, threshold=threshold)
+    n_called = int(jnp.sum(lfsr < threshold))
+
+    # All 100 genes should be called
+    assert n_called == 100
+    # PEFP = mean(lfsr) = (80*0.01 + 20*0.04) / 100 = 0.016
+    assert pefp <= target + 1e-6
+    assert pefp > 0  # should be non-trivial
+
+
+def test_find_lfsr_threshold_single_gene():
+    """Threshold finding should work with a single gene."""
+    lfsr = jnp.array([0.02])
+    threshold = find_lfsr_threshold(lfsr, target_pefp=0.05)
+    n_called = int(jnp.sum(lfsr < threshold))
+
+    # The single gene should be called (0.02 < 0.05)
+    assert n_called == 1
+
+
+# ------------------------------------------------------------------------------
+# Validation: format_de_table invalid sort_by
+# ------------------------------------------------------------------------------
+
+
+def test_format_de_table_invalid_sort_by_raises(sample_de_results):
+    """format_de_table with invalid sort_by should raise ValueError."""
+    with pytest.raises(ValueError, match="Invalid sort_by"):
+        format_de_table(sample_de_results, sort_by="nonexistent_column")
+
+
+def test_format_de_table_invalid_sort_by_message(sample_de_results):
+    """Error message should list valid options."""
+    with pytest.raises(ValueError, match="Valid options"):
+        format_de_table(sample_de_results, sort_by="banana")
