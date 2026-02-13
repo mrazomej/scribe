@@ -340,20 +340,28 @@ $${#eq-diffexp-prob-effect-tau}
 #### Modified local false sign rate
 
 To incorporate practical significance into the lfsr framework, we define a
-modified lfsr as the minimum of the two tail probabilities beyond $\pm \tau$:
+modified lfsr as the posterior error probability after assigning the most
+probable practical-significance direction:
 
 $$
-\text{lfsr}_g(\tau) = \min\left(P(\Delta_g > \tau \mid \text{data}), 
+\text{lfsr}_g(\tau) =
+1 - \max\left(P(\Delta_g > \tau \mid \text{data}), 
 P(\Delta_g < -\tau \mid \text{data})\right).
 $${#eq-diffexp-lfsr-tau}
 
-This definition preserves the interpretation of the lfsr as the posterior
-probability of making a sign error, now restricted to the region of practical
-significance. Specifically, if we declare gene $g$ as up-regulated with
-magnitude exceeding $\tau$ (because $\mu_{\Delta,g} > \tau$), then
-$\text{lfsr}_g(\tau) = P(\Delta_g < -\tau \mid \text{data})$ quantifies the
-posterior probability that the gene is instead down-regulated by at least
-$\tau$.
+Equivalently, if we declare the direction with larger practical-significance
+posterior probability, then:
+
+$$
+\text{lfsr}_g(\tau)=
+\begin{cases}
+P(\Delta_g \le \tau \mid \text{data}), & \text{if } P(\Delta_g > \tau \mid \text{data}) \ge P(\Delta_g < -\tau \mid \text{data}), \\
+P(\Delta_g \ge -\tau \mid \text{data}), & \text{otherwise}.
+\end{cases}
+$${#eq-diffexp-lfsr-tau-piecewise}
+
+This preserves the interpretation of the lfsr as a posterior probability of an
+incorrect directional practical-significance call.
 
 Note that the quantity $P(|\Delta_g| \leq \tau \mid \text{data}) = 1 -
 P(\Delta_g > \tau \mid \text{data}) - P(\Delta_g < -\tau \mid \text{data})$
@@ -368,13 +376,17 @@ modified lfsr.
 to the standard lfsr:
 
 $$
-\text{lfsr}_g(0) = \min\left(P(\Delta_g > 0 \mid \text{data}), 
+\text{lfsr}_g(0) =
+1 - \max\left(P(\Delta_g > 0 \mid \text{data}), 
+P(\Delta_g < 0 \mid \text{data})\right) =
+\min\left(P(\Delta_g > 0 \mid \text{data}),
 P(\Delta_g < 0 \mid \text{data})\right) = \text{lfsr}_g.
 $${#eq-diffexp-lfsr-tau-zero}
 
-As $\tau$ increases, $\text{lfsr}_g(\tau)$ decreases because both tail
-probabilities beyond $\pm\tau$ become smaller. This makes the quantity more
-stringent as evidence for practically significant, direction-specific effects.
+As $\tau$ increases, both practical-significance tail probabilities decrease, so
+$\max(P(\Delta_g > \tau), P(\Delta_g < -\tau))$ decreases and
+$\text{lfsr}_g(\tau)$ increases. This makes the criterion more conservative and
+typically reduces the number of discoveries at fixed threshold $t$.
 
 #### PEFP control with practical significance
 
