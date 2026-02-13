@@ -1,3 +1,10 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
 ## Computational Considerations
 
 The methods developed in this work are designed for scalability to
@@ -13,17 +20,17 @@ performance in practice.
 The following table summarizes the computational complexity of key operations in
 our differential expression framework:
 
-| **Operation** | **Complexity** | **Description** |
-|--------------|----------------|-----------------|
-| ALR → CLR mean | $O(D)$ | Centering the ALR mean vector |
-| ALR → CLR low-rank factor | $O(kD)$ | Applying centering matrix to factor matrix |
-| ALR → CLR diagonal (exact) | $O(D)$ | Exact diagonal formula @eq-diffexp-d-exact-final |
-| CLR → ILR mean | $O(D)$ to $O(D^2)$ | Applying ILR basis (depends on sparsity) |
-| CLR → ILR low-rank factor | $O(kD)$ to $O(kD^2)$ | Matrix-matrix multiplication (depends on sparsity) |
-| Per-gene statistics (all genes) | $O(D)$ | Marginal means, variances, lfsr for $D$ genes |
-| Contrast statistic | $O(kD)$ | Quadratic form using low-rank structure |
-| Sorting for PEFP control | $O(D \log D)$ | Sorting lfsr values |
-| PEFP threshold finding | $O(D)$ | Single pass after sorting |
+| **Operation**                   | **Complexity**       | **Description**                                    |
+| ------------------------------- | -------------------- | -------------------------------------------------- |
+| ALR → CLR mean                  | $O(D)$               | Centering the ALR mean vector                      |
+| ALR → CLR low-rank factor       | $O(kD)$              | Applying centering matrix to factor matrix         |
+| ALR → CLR diagonal (exact)      | $O(D)$               | Exact diagonal formula @eq-diffexp-d-exact-final   |
+| CLR → ILR mean                  | $O(D)$ to $O(D^2)$   | Applying ILR basis (depends on sparsity)           |
+| CLR → ILR low-rank factor       | $O(kD)$ to $O(kD^2)$ | Matrix-matrix multiplication (depends on sparsity) |
+| Per-gene statistics (all genes) | $O(D)$               | Marginal means, variances, lfsr for $D$ genes      |
+| Contrast statistic              | $O(kD)$              | Quadratic form using low-rank structure            |
+| Sorting for PEFP control        | $O(D \log D)$        | Sorting lfsr values                                |
+| PEFP threshold finding          | $O(D)$               | Single pass after sorting                          |
 
 The key observation is that **all operations scale linearly or near-linearly
 with the number of genes $D$**, with the exception of sorting (which is

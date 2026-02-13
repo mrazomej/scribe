@@ -1,3 +1,10 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
 ## Gene-Level Differential Expression
 
 Having developed the machinery for transforming Gaussian distributions between

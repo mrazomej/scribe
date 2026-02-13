@@ -1,3 +1,10 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
 ## Log-Ratio Coordinate Systems
 
 The simplex $\Delta^{D-1}$ is a $(D-1)$-dimensional manifold embedded in
@@ -21,10 +28,10 @@ pathway analysis.
 
 #### Definition and basic properties
 
-The centered log-ratio transformation, introduced by @aitchison1986, maps a
-composition $\underline{\rho} \in \Delta^{D-1}$ to coordinates
-$\underline{z}_{\text{CLR}} \in \mathbb{R}^{D}$ by taking logarithms and
-centering relative to the geometric mean. Specifically, we define
+The centered log-ratio transformation maps a composition $\underline{\rho} \in
+\Delta^{D-1}$ to coordinates $\underline{z}_{\text{CLR}} \in \mathbb{R}^{D}$ by
+taking logarithms and centering relative to the geometric mean. Specifically, we
+define
 
 $$
 z_{\text{CLR},g} = \log(\rho_g) - \frac{1}{D} \sum_{j=1}^{D} \log(\rho_j), 
@@ -87,7 +94,7 @@ matrix* $\underline{\underline{C}} \in \mathbb{R}^{D \times D}$ as
 
 $$
 \underline{\underline{C}} = \underline{\underline{I}}_D - 
-\frac{1}{D} \underline{1}\underline{1}^{\top},
+\frac{1}{D} \underline{1}\;\underline{1}^{\top},
 $${#eq-diffexp-centering-matrix}
 
 where $\underline{\underline{I}}_D$ is the $D \times D$ identity matrix and
@@ -111,36 +118,37 @@ where $\log(\underline{\rho})$ denotes element-wise logarithm.
 
 The centering matrix has several useful properties. First, it is symmetric:
 $\underline{\underline{C}}^{\top} = \underline{\underline{C}}$. Second, it is
-idempotent:
+idempotent. This property is better understood with the following computation:
+First, we compute the square of the centering matrix
 
 $$
 \underline{\underline{C}}^2 = \left(\underline{\underline{I}}_D - 
-\frac{1}{D} \underline{1}\underline{1}^{\top}\right)^2.
+\frac{1}{D} \underline{1}\;\underline{1}^{\top}\right)^2.
 $${#eq-diffexp-centering-idempotent-step1}
 
 Expanding the square gives
 
 $$
 \underline{\underline{C}}^2 = \underline{\underline{I}}_D - 
-\frac{2}{D} \underline{1}\underline{1}^{\top} + 
-\frac{1}{D^2} \underline{1}\underline{1}^{\top}\underline{1}\underline{1}^{\top}.
+\frac{2}{D} \underline{1}\;\underline{1}^{\top} + 
+\frac{1}{D^2} \underline{1}\;\underline{1}^{\top}\underline{1}\;\underline{1}^{\top}.
 $${#eq-diffexp-centering-idempotent-step2}
 
 Since $\underline{1}^{\top}\underline{1} = D$, we have
 
 $$
-\underline{1}\underline{1}^{\top}\underline{1}\underline{1}^{\top} = 
+\underline{1}\;\underline{1}^{\top}\underline{1}\;\underline{1}^{\top} = 
 \underline{1}(\underline{1}^{\top}\underline{1})\underline{1}^{\top} = 
-D \underline{1}\underline{1}^{\top}.
+D \underline{1}\;\underline{1}^{\top}.
 $${#eq-diffexp-centering-idempotent-step3}
 
 Substituting this result gives
 
 $$
 \underline{\underline{C}}^2 = \underline{\underline{I}}_D - 
-\frac{2}{D} \underline{1}\underline{1}^{\top} + 
-\frac{1}{D^2} \cdot D \underline{1}\underline{1}^{\top} = 
-\underline{\underline{I}}_D - \frac{1}{D} \underline{1}\underline{1}^{\top} = 
+\frac{2}{D} \underline{1}\;\underline{1}^{\top} + 
+\frac{1}{D^2} \cdot D \underline{1}\;\underline{1}^{\top} = 
+\underline{\underline{I}}_D - \frac{1}{D} \underline{1}\;\underline{1}^{\top} = 
 \underline{\underline{C}}.
 $${#eq-diffexp-centering-idempotent}
 
@@ -152,14 +160,19 @@ Third, the centering matrix is a projection onto the subspace orthogonal to
 $\underline{1}$:
 
 $$
-\underline{\underline{C}} \underline{1} = \underline{1} - 
-\frac{1}{D} \underline{1}\underline{1}^{\top}\underline{1} = 
+\underline{\underline{C}}\;\underline{1} = \underline{1} - 
+\frac{1}{D} \underline{1}\;\underline{1}^{\top}\underline{1} = 
 \underline{1} - \frac{1}{D} \cdot D \cdot \underline{1} = 
 \underline{0}.
 $${#eq-diffexp-centering-orthogonal}
 
 This confirms that the range of $\underline{\underline{C}}$ is the $(D-1)$-
 dimensional subspace $\{\underline{v} \in \mathbb{R}^{D} : \sum_i v_i = 0\}$.
+The geometric intuition is that The centering matrix "centers" any vector by subtracting its mean from each component. This operation:
+
+- Projects vectors onto the hyperplane where the sum of components equals zero.
+- Removes one dimension (the "mean direction" $\underline{1}$).
+- Leaves you in a $(D-1)$-dimensional subspace.
 
 #### Relationship between ALR and CLR transformations
 
@@ -193,14 +206,15 @@ We claim that applying the centering matrix to this embedded vector yields the
 CLR coordinates:
 
 $$
-\underline{z}_{\text{CLR}} = \underline{\underline{C}} \underline{z}_{\text{full}}.
+\underline{z}_{\text{CLR}} = 
+\underline{\underline{C}}\;\underline{z}_{\text{full}}.
 $${#eq-diffexp-alr-to-clr-claim}
 
 To verify this claim, we compute the $g$-th component of
-$\underline{\underline{C}} \underline{z}_{\text{full}}$. For $g < D$:
+$\underline{\underline{C}}\;\underline{z}_{\text{full}}$. For $g < D$:
 
 $$
-\left(\underline{\underline{C}} \underline{z}_{\text{full}}\right)_g = 
+\left(\underline{\underline{C}}\;\underline{z}_{\text{full}}\right)_g = 
 \left(1 - \frac{1}{D}\right) z_{\text{full},g} - 
 \frac{1}{D} \sum_{j \neq g} z_{\text{full},j}.
 $${#eq-diffexp-alr-to-clr-component-g}
@@ -209,46 +223,48 @@ Substituting $z_{\text{full},j} = \log(\rho_j) - \log(\rho_D)$ for $j < D$ and
 $z_{\text{full},D} = 0$:
 
 $$
-\left(\underline{\underline{C}} \underline{z}_{\text{full}}\right)_g = 
+\left(\underline{\underline{C}}\;\underline{z}_{\text{full}}\right)_g = 
 \left(1 - \frac{1}{D}\right) [\log(\rho_g) - \log(\rho_D)] - 
-\frac{1}{D} \sum_{j=1}^{D-1} [\log(\rho_j) - \log(\rho_D)].
+\frac{1}{D} 
+\sum_{\substack{j=1 \\ j \neq g}}^{D-1} [\log(\rho_j) - \log(\rho_D)].
 $${#eq-diffexp-alr-to-clr-component-g-step1}
 
 Expanding the sum:
 
 $$
-\left(\underline{\underline{C}} \underline{z}_{\text{full}}\right)_g = 
+\left(\underline{\underline{C}}\;\underline{z}_{\text{full}}\right)_g = 
 \log(\rho_g) - \log(\rho_D) - \frac{1}{D} \log(\rho_g) + 
 \frac{1}{D} \log(\rho_D) - \frac{1}{D} \sum_{j=1}^{D-1} \log(\rho_j) + 
-\frac{D-1}{D} \log(\rho_D).
+\frac{1}{D} \log(\rho_g) + \frac{D-2}{D} \log(\rho_D).
 $${#eq-diffexp-alr-to-clr-component-g-step2}
 
 Collecting terms with $\log(\rho_g)$:
 
 $$
-\log(\rho_g) - \frac{1}{D} \log(\rho_g) = \frac{D-1}{D} \log(\rho_g).
+\log(\rho_g) - \frac{1}{D} \log(\rho_g) + \frac{1}{D} \log(\rho_g) = 
+\log(\rho_g).
 $${#eq-diffexp-alr-to-clr-component-g-step3a}
 
 Collecting terms with $\log(\rho_D)$:
 
 $$
--\log(\rho_D) + \frac{1}{D} \log(\rho_D) + \frac{D-1}{D} \log(\rho_D) = 
-\frac{-D + 1 + D - 1}{D} \log(\rho_D) = 0.
+-\log(\rho_D) + \frac{1}{D} \log(\rho_D) + \frac{D-2}{D} \log(\rho_D) = 
+\frac{-D + 1 + D - 2}{D} \log(\rho_D) = -\frac{1}{D} \log(\rho_D).
 $${#eq-diffexp-alr-to-clr-component-g-step3b}
 
 Therefore:
 
 $$
-\left(\underline{\underline{C}} \underline{z}_{\text{full}}\right)_g = 
-\frac{D-1}{D} \log(\rho_g) - \frac{1}{D} \sum_{j=1}^{D-1} \log(\rho_j).
+\left(\underline{\underline{C}}\;\underline{z}_{\text{full}}\right)_g = 
+\log(\rho_g) - \frac{1}{D} \sum_{j=1}^{D-1} \log(\rho_j) - \frac{1}{D} \log(\rho_D).
 $${#eq-diffexp-alr-to-clr-component-g-step4}
 
-We can rewrite this by adding and subtracting $\frac{1}{D} \log(\rho_D)$:
+We can rewrite this as:
 
 $$
-\left(\underline{\underline{C}} \underline{z}_{\text{full}}\right)_g = 
-\log(\rho_g) - \frac{1}{D} \log(\rho_g) - 
-\frac{1}{D} \sum_{j=1}^{D-1} \log(\rho_j) = 
+\left(\underline{\underline{C}}\;\underline{z}_{\text{full}}\right)_g = 
+\log(\rho_g) - 
+\frac{1}{D} \left[\sum_{j=1}^{D-1} \log(\rho_j) + \log(\rho_D)\right] = 
 \log(\rho_g) - \frac{1}{D} \sum_{j=1}^{D} \log(\rho_j).
 $${#eq-diffexp-alr-to-clr-component-g-final}
 
@@ -279,7 +295,7 @@ coordinates. Specifically, we seek a $(D-1) \times D$ matrix
 $\underline{\underline{V}}$ such that:
 
 1. **Orthonormality**: The rows of $\underline{\underline{V}}$ form an
-orthonormal set, i.e., $\underline{\underline{V}}
+orthonormal set, i.e., $\underline{\underline{V}}\;
 \underline{\underline{V}}^{\top} = \underline{\underline{I}}_{D-1}$.
 
 2. **CLR subspace**: Each row of $\underline{\underline{V}}$ sums to zero,
@@ -288,7 +304,8 @@ ensuring that $\underline{\underline{V}}$ maps into the CLR subspace.
 Given such a matrix, the ILR transformation is defined as
 
 $$
-\underline{z}_{\text{ILR}} = \underline{\underline{V}} \underline{z}_{\text{CLR}}.
+\underline{z}_{\text{ILR}} = 
+\underline{\underline{V}}\;\underline{z}_{\text{CLR}}.
 $${#eq-diffexp-ilr-definition}
 
 The key advantage of this representation is that $\underline{z}_{\text{ILR}}
@@ -385,6 +402,7 @@ V_{ik+1} V_{k,k+1} + \sum_{j=k+2}^{D} V_{ij} V_{kj}.
 $${#eq-diffexp-helmert-orthog-step1}
 
 Since $i < k$, we have:
+
 - For $j \leq i$: $V_{ij} = \sqrt{\frac{i}{i+1}} \cdot \frac{1}{i}$ and
 $V_{kj} = \sqrt{\frac{k}{k+1}} \cdot \frac{1}{k}$.
 - For $j = i+1$: $V_{i,i+1} = -\sqrt{\frac{i}{i+1}}$ and $V_{k,i+1} =
@@ -426,9 +444,9 @@ Combining @eq-diffexp-helmert-sum-zero, @eq-diffexp-helmert-norm-one, and
 satisfies all required properties:
 
 $$
-\underline{\underline{V}} \underline{\underline{V}}^{\top} = 
+\underline{\underline{V}}\;\underline{\underline{V}}^{\top} = 
 \underline{\underline{I}}_{D-1}, \quad 
-\underline{\underline{V}} \underline{1} = \underline{0}.
+\underline{\underline{V}}\;\underline{1} = \underline{0}.
 $${#eq-diffexp-helmert-properties}
 
 #### Explicit examples
@@ -449,7 +467,7 @@ The first row contrasts gene 2 vs gene 1. The second row contrasts gene 3 vs
 the average of genes 1 and 2. We verify orthonormality:
 
 $$
-\underline{\underline{V}} \underline{\underline{V}}^{\top} = \begin{bmatrix}
+\underline{\underline{V}}\;\underline{\underline{V}}^{\top} = \begin{bmatrix}
 \frac{1}{2} + \frac{1}{2} + 0 & 
 \frac{1}{\sqrt{12}} - \frac{1}{\sqrt{12}} + 0 \\
 \frac{1}{\sqrt{12}} - \frac{1}{\sqrt{12}} + 0 & 
