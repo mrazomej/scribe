@@ -1,3 +1,10 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
 ## Gene-Set and Pathway Analysis
 
 While gene-level differential expression identifies individual genes with
