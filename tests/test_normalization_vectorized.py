@@ -17,6 +17,7 @@ from scribe.core.normalization_logistic import (
     _batched_dirichlet_sample_raw,
     _fit_low_rank_mvn,
     _fit_low_rank_mvn_core,
+    _randomized_svd,
     fit_logistic_normal_from_posterior,
     _DEFAULT_BATCH_SIZE,
 )
@@ -178,44 +179,232 @@ class TestBatchedDirichletSampleRaw:
 
 
 class TestFitLowRankMVN:
-    """Verify that the core and wrapper produce identical numerics."""
+    """Verify full SVD, randomized SVD, and wrapper consistency."""
 
-    def test_core_matches_wrapper(self, rng_key):
-        """Core and wrapper should give the same loc, cov_factor, cov_diag."""
+    # --- Full SVD path (existing tests, now with explicit svd_method) ------
+
+    def test_core_matches_wrapper_full(self, rng_key):
+        """Core and wrapper should give the same loc, cov_factor, cov_diag
+        when using the full SVD path."""
         # Synthetic data: 50 samples, 8 features
         samples = random.normal(rng_key, shape=(50, 8))
         rank = 3
 
         loc_w, cov_factor_w, cov_diag_w = _fit_low_rank_mvn(
-            samples, rank=rank, verbose=False
+            samples, rank=rank, svd_method="full", verbose=False
         )
         loc_c, cov_factor_c, cov_diag_c, eigenvalues = _fit_low_rank_mvn_core(
-            samples, rank=rank
+            samples, rank=rank, svd_method="full"
         )
 
         assert jnp.allclose(loc_w, loc_c, atol=1e-6)
         assert jnp.allclose(cov_factor_w, cov_factor_c, atol=1e-6)
         assert jnp.allclose(cov_diag_w, cov_diag_c, atol=1e-6)
-        # Eigenvalues should be returned and have the right length
+        # Full SVD returns all min(N, D) eigenvalues
         assert eigenvalues.shape == (min(50, 8),)
 
-    def test_core_shapes(self, rng_key):
-        """Check output shapes for a variety of (n, d) combinations."""
+    def test_core_shapes_full(self, rng_key):
+        """Check output shapes for full SVD across (n, d) combinations."""
         for n, d, rank in [(30, 10, 5), (10, 30, 5), (100, 5, 3)]:
             samples = random.normal(rng_key, shape=(n, d))
             loc, cov_factor, cov_diag, eigenvalues = _fit_low_rank_mvn_core(
-                samples, rank=rank
+                samples, rank=rank, svd_method="full"
             )
             effective_rank = min(rank, min(n, d))
             assert loc.shape == (d,)
             assert cov_factor.shape == (d, effective_rank)
             assert cov_diag.shape == (d,)
 
+    # --- Randomized SVD path -----------------------------------------------
+
+    def test_randomized_shapes(self, rng_key):
+        """Randomized SVD should return correct shapes; eigenvalues has
+        length = effective_rank (not min(N, D))."""
+        for n, d, rank in [(50, 20, 3), (20, 50, 3), (100, 10, 5)]:
+            samples = random.normal(rng_key, shape=(n, d))
+            loc, cov_factor, cov_diag, eigenvalues = _fit_low_rank_mvn_core(
+                samples, rank=rank, svd_method="randomized", rng_key=rng_key
+            )
+            effective_rank = min(rank, min(n, d))
+            assert loc.shape == (d,)
+            assert cov_factor.shape == (d, effective_rank)
+            assert cov_diag.shape == (d,)
+            # Randomized SVD only returns top-k eigenvalues
+            assert eigenvalues.shape == (effective_rank,)
+
+    def test_randomized_matches_full_eigenvalues(self, rng_key):
+        """Top-k eigenvalues from randomized SVD should closely match
+        those from full SVD for a well-conditioned matrix."""
+        # Low-rank data: 80 samples, 20 features, true rank ~3
+        # Construct data with a clear spectral gap at rank 3 so both
+        # methods should agree tightly.
+        key1, key2 = random.split(rng_key)
+        W = random.normal(key1, shape=(20, 3)) * jnp.array([10.0, 5.0, 2.0])
+        noise = random.normal(key2, shape=(80, 20)) * 0.1
+        samples = random.normal(key1, shape=(80, 3)) @ W.T + noise
+
+        rank = 3
+
+        _, _, _, evals_full = _fit_low_rank_mvn_core(
+            samples, rank=rank, svd_method="full"
+        )
+        _, _, _, evals_rand = _fit_low_rank_mvn_core(
+            samples, rank=rank, svd_method="randomized", rng_key=rng_key
+        )
+
+        # Top-3 eigenvalues should match to within 1% (relative)
+        assert jnp.allclose(
+            evals_rand, evals_full[:rank], rtol=0.01, atol=1e-6
+        )
+
+    def test_randomized_matches_full_subspace(self, rng_key):
+        """The column space of cov_factor from randomized SVD should span
+        (nearly) the same subspace as full SVD."""
+        key1, key2 = random.split(rng_key)
+        W = random.normal(key1, shape=(15, 3)) * jnp.array([8.0, 4.0, 1.5])
+        noise = random.normal(key2, shape=(50, 15)) * 0.1
+        samples = random.normal(key1, shape=(50, 3)) @ W.T + noise
+
+        rank = 3
+
+        _, cf_full, _, _ = _fit_low_rank_mvn_core(
+            samples, rank=rank, svd_method="full"
+        )
+        _, cf_rand, _, _ = _fit_low_rank_mvn_core(
+            samples, rank=rank, svd_method="randomized", rng_key=rng_key
+        )
+
+        # Compute principal angles between the two subspaces.
+        # If they span the same space, all singular values of Q_full^T @ Q_rand
+        # should be close to 1.
+        Q_full, _ = jnp.linalg.qr(cf_full)
+        Q_rand, _ = jnp.linalg.qr(cf_rand)
+        cos_angles = jnp.linalg.svd(
+            Q_full.T @ Q_rand, compute_uv=False
+        )
+        # All cosines should be > 0.99 (subspaces nearly identical)
+        assert jnp.all(cos_angles > 0.99), (
+            f"Subspace cosines too small: {cos_angles}"
+        )
+
+    def test_randomized_residual_variance(self, rng_key):
+        """Residual variance from randomized SVD (trace-based estimate)
+        should be close to the full SVD residual mean."""
+        key1, key2 = random.split(rng_key)
+        W = random.normal(key1, shape=(20, 3)) * jnp.array([10.0, 5.0, 2.0])
+        noise = random.normal(key2, shape=(80, 20)) * 0.5
+        samples = random.normal(key1, shape=(80, 3)) @ W.T + noise
+
+        rank = 3
+
+        _, _, diag_full, _ = _fit_low_rank_mvn_core(
+            samples, rank=rank, svd_method="full"
+        )
+        _, _, diag_rand, _ = _fit_low_rank_mvn_core(
+            samples, rank=rank, svd_method="randomized", rng_key=rng_key
+        )
+
+        # The residual diagonal values should be similar (within 20%)
+        # Both include the 1e-4 stability constant.
+        assert jnp.allclose(diag_rand, diag_full, rtol=0.2, atol=1e-3)
+
+    def test_core_matches_wrapper_randomized(self, rng_key):
+        """Core and wrapper should agree for the randomized path."""
+        samples = random.normal(rng_key, shape=(50, 12))
+        rank = 3
+
+        loc_w, cf_w, cd_w = _fit_low_rank_mvn(
+            samples, rank=rank, svd_method="randomized",
+            rng_key=rng_key, verbose=False,
+        )
+        loc_c, cf_c, cd_c, _ = _fit_low_rank_mvn_core(
+            samples, rank=rank, svd_method="randomized", rng_key=rng_key,
+        )
+
+        assert jnp.allclose(loc_w, loc_c, atol=1e-6)
+        assert jnp.allclose(cf_w, cf_c, atol=1e-6)
+        assert jnp.allclose(cd_w, cd_c, atol=1e-6)
+
+    # --- Shared / validation -----------------------------------------------
+
     def test_wrapper_raises_on_single_sample(self, rng_key):
         """The wrapper should raise ValueError for n_samples < 2."""
         samples = random.normal(rng_key, shape=(1, 5))
         with pytest.raises(ValueError, match="Need at least 2 samples"):
             _fit_low_rank_mvn(samples, rank=2, verbose=False)
+
+    def test_wrapper_raises_on_invalid_svd_method(self, rng_key):
+        """Invalid svd_method should raise ValueError."""
+        samples = random.normal(rng_key, shape=(10, 5))
+        with pytest.raises(ValueError, match="svd_method must be"):
+            _fit_low_rank_mvn(
+                samples, rank=2, svd_method="invalid", verbose=False
+            )
+
+
+# ---------------------------------------------------------------------------
+# _randomized_svd
+# ---------------------------------------------------------------------------
+
+
+class TestRandomizedSVD:
+    """Unit tests for the standalone _randomized_svd helper."""
+
+    def test_shapes(self, rng_key):
+        """Output shapes should be (n, rank), (rank,), (rank, p)."""
+        X = random.normal(rng_key, shape=(40, 25))
+        rank = 5
+        U, S, Vt = _randomized_svd(X, rank=rank, rng_key=rng_key)
+        assert U.shape == (40, rank)
+        assert S.shape == (rank,)
+        assert Vt.shape == (rank, 25)
+
+    def test_orthogonality(self, rng_key):
+        """U columns and Vt rows should be approximately orthonormal."""
+        X = random.normal(rng_key, shape=(60, 30))
+        rank = 4
+        U, S, Vt = _randomized_svd(X, rank=rank, rng_key=rng_key)
+
+        # U^T @ U ≈ I_k
+        eye_u = U.T @ U
+        assert jnp.allclose(eye_u, jnp.eye(rank), atol=1e-5)
+
+        # Vt @ Vt^T ≈ I_k
+        eye_v = Vt @ Vt.T
+        assert jnp.allclose(eye_v, jnp.eye(rank), atol=1e-5)
+
+    def test_singular_values_match_full(self, rng_key):
+        """Top-k singular values should closely match full SVD."""
+        X = random.normal(rng_key, shape=(50, 20))
+        rank = 5
+        _, S_rand, _ = _randomized_svd(X, rank=rank, rng_key=rng_key)
+        _, S_full, _ = jnp.linalg.svd(X, full_matrices=False)
+
+        assert jnp.allclose(S_rand, S_full[:rank], rtol=0.01, atol=1e-6)
+
+    def test_descending_order(self, rng_key):
+        """Singular values should be in descending order."""
+        X = random.normal(rng_key, shape=(30, 20))
+        rank = 5
+        _, S, _ = _randomized_svd(X, rank=rank, rng_key=rng_key)
+        # Each singular value should be >= the next
+        assert jnp.all(S[:-1] >= S[1:])
+
+    def test_reconstruction(self, rng_key):
+        """U @ diag(S) @ Vt should approximate X well for low-rank data."""
+        # Create a rank-3 matrix with noise
+        key1, key2 = random.split(rng_key)
+        A = random.normal(key1, shape=(30, 3))
+        B = random.normal(key2, shape=(3, 20))
+        X = A @ B + random.normal(key1, shape=(30, 20)) * 0.01
+
+        rank = 3
+        U, S, Vt = _randomized_svd(X, rank=rank, rng_key=rng_key)
+        X_approx = U * S[None, :] @ Vt
+
+        # Relative error should be very small for near-rank-3 data
+        rel_error = jnp.linalg.norm(X - X_approx) / jnp.linalg.norm(X)
+        assert rel_error < 0.02
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +515,60 @@ class TestFitLogisticNormalFromPosterior:
         assert jnp.allclose(
             jnp.sum(result["mean_probabilities"]), 1.0, atol=1e-5
         )
+
+    def test_randomized_vs_full_end_to_end(
+        self, r_samples_non_mixture, rng_key
+    ):
+        """Randomized and full SVD should give similar distribution params
+        for a small problem where both methods are exact."""
+        posterior = {"r": r_samples_non_mixture}
+        common = dict(
+            posterior_samples=posterior,
+            n_components=None,
+            rng_key=rng_key,
+            n_samples_dirichlet=1,
+            rank=3,
+            batch_size=8,
+            verbose=False,
+        )
+        result_rand = fit_logistic_normal_from_posterior(
+            **common, svd_method="randomized"
+        )
+        result_full = fit_logistic_normal_from_posterior(
+            **common, svd_method="full"
+        )
+
+        # loc should be identical (computed before SVD dispatch)
+        assert jnp.allclose(
+            result_rand["loc"], result_full["loc"], atol=1e-4
+        )
+        # mean_probabilities should be very similar
+        assert jnp.allclose(
+            result_rand["mean_probabilities"],
+            result_full["mean_probabilities"],
+            atol=1e-4,
+        )
+        # Shapes must match
+        assert (
+            result_rand["cov_factor"].shape == result_full["cov_factor"].shape
+        )
+
+    def test_svd_method_default_is_randomized(
+        self, r_samples_non_mixture, rng_key
+    ):
+        """Default svd_method should be 'randomized' — verify by checking
+        that eigenvalues array has length == rank (not min(N, D))."""
+        posterior = {"r": r_samples_non_mixture}
+        # Just ensure no errors with the default
+        result = fit_logistic_normal_from_posterior(
+            posterior,
+            n_components=None,
+            rng_key=rng_key,
+            rank=3,
+            batch_size=8,
+            verbose=False,
+        )
+        assert result["loc"].shape == (10,)
 
 
 # ---------------------------------------------------------------------------

@@ -404,11 +404,14 @@ ScribeSVIResults
    - Purpose: Count normalization methods
    - Methods:
      - `normalize_counts(batch_size=2048)`: Dirichlet-based normalization
-     - `fit_logistic_normal(batch_size=2048)`: Logistic-Normal distribution
-       fitting
+     - `fit_logistic_normal(batch_size=2048, svd_method="randomized")`:
+       Logistic-Normal distribution fitting
    - Both methods use **batched Dirichlet sampling** to process posterior
-     samples in configurable chunks, reducing Python→JAX dispatches from
+     samples in configurable chunks, reducing Python-to-JAX dispatches from
      O(N) to O(ceil(N/batch_size)) for efficient GPU utilisation.
+   - `fit_logistic_normal` uses **randomized SVD** by default for the
+     low-rank covariance fit (O(NDk) instead of O(N^2 D)).  Pass
+     `svd_method="full"` for the complete eigenvalue spectrum.
    - Dependencies: Uses `ParameterExtractionMixin` (for canonical conversion)
 
 **Benefits of Mixin Architecture:**
