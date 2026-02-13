@@ -516,6 +516,92 @@ def test_custom_contrast_workflow(sample_models):
     assert 0 <= result["lfsr"] <= 0.5
 
 
+# ------------------------------------------------------------------------------
+# Fix 5: epsilon guard for near-zero SD in test_contrast
+# ------------------------------------------------------------------------------
+
+
+def test_contrast_near_zero_variance():
+    """Near-zero variance should not produce NaN or Inf in test_contrast.
+
+    Uses 1e-8 diagonal (above the 1e-10 embedded-ALR detection threshold
+    in ``extract_alr_params``) so the model is treated as raw ALR.
+    """
+    D_alr = 10
+    k = 2
+
+    # Use 1e-8: small enough for near-zero variance, large enough to
+    # avoid false-positive embedded-ALR detection (threshold = 1e-10).
+    model_A = {
+        "loc": jnp.zeros(D_alr),
+        "cov_factor": jnp.zeros((D_alr, k)),
+        "cov_diag": jnp.ones(D_alr) * 1e-8,
+    }
+    model_B = {
+        "loc": jnp.ones(D_alr) * 0.1,
+        "cov_factor": jnp.zeros((D_alr, k)),
+        "cov_diag": jnp.ones(D_alr) * 1e-8,
+    }
+
+    D_clr = D_alr + 1
+    contrast = jnp.zeros(D_clr)
+    contrast = contrast.at[0].set(1.0)
+    contrast = contrast.at[-1].set(-1.0)
+
+    result = _test_contrast(model_A, model_B, contrast, tau=0.0)
+
+    # Should be finite (no NaN from division by near-zero SD)
+    assert jnp.isfinite(result["delta_mean"])
+    assert jnp.isfinite(result["delta_sd"])
+    assert jnp.isfinite(result["z_score"])
+    assert jnp.isfinite(result["lfsr"])
+
+
+# ------------------------------------------------------------------------------
+# Fix 6: disjoint-set validation in build_balance_contrast
+# ------------------------------------------------------------------------------
+
+
+def test_build_balance_contrast_overlapping_raises():
+    """Overlapping numerator and denominator should raise ValueError."""
+    D = 100
+    num_indices = jnp.array([0, 1, 2, 3, 4])
+    den_indices = jnp.array([3, 4, 5, 6, 7])  # overlaps at 3, 4
+
+    with pytest.raises(ValueError, match="disjoint"):
+        build_balance_contrast(num_indices, den_indices, D)
+
+
+def test_build_balance_contrast_overlapping_single():
+    """Single overlapping index should also raise ValueError."""
+    D = 100
+    num_indices = jnp.array([0, 1, 2])
+    den_indices = jnp.array([2, 3, 4])  # overlaps at 2
+
+    with pytest.raises(ValueError, match="disjoint"):
+        build_balance_contrast(num_indices, den_indices, D)
+
+
+def test_build_balance_contrast_identical_raises():
+    """Identical numerator and denominator should raise ValueError."""
+    D = 100
+    indices = jnp.array([0, 1, 2])
+
+    with pytest.raises(ValueError, match="disjoint"):
+        build_balance_contrast(indices, indices, D)
+
+
+def test_build_balance_contrast_disjoint_passes():
+    """Properly disjoint indices should not raise."""
+    D = 100
+    num_indices = jnp.array([0, 1, 2])
+    den_indices = jnp.array([3, 4, 5])
+
+    # Should not raise
+    contrast = build_balance_contrast(num_indices, den_indices, D)
+    assert contrast.shape == (D,)
+
+
 def test_balance_contrast_properties():
     """Test that balance contrasts have desired mathematical properties."""
     D = 100

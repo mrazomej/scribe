@@ -62,13 +62,19 @@ de = compare(model_A, model_B, gene_names=names)
 
 | Method | Description |
 |--------|-------------|
-| `de.gene_level(tau)` | Per-gene posterior summaries |
-| `de.call_genes(lfsr_threshold, prob_effect_threshold)` | Bayesian gene calling |
+| `de.gene_level(tau)` | Per-gene posterior summaries (returns `lfsr` and `lfsr_tau`) |
+| `de.call_genes(tau, lfsr_threshold, prob_effect_threshold)` | Bayesian gene calling (tau-aware caching) |
 | `de.test_gene_set(indices, tau)` | Pathway enrichment via balances |
 | `de.test_contrast(contrast, tau)` | Custom linear contrast |
-| `de.compute_pefp(threshold)` | Posterior expected FDP |
-| `de.find_threshold(target_pefp)` | Find lfsr threshold for PEFP control |
-| `de.summary(sort_by, top_n)` | Formatted results table |
+| `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
+| `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
+| `de.summary(tau, sort_by, top_n)` | Formatted results table |
+
+> **Note on `tau`-aware caching**: All methods that depend on gene-level results
+> accept a `tau` parameter. Results are cached and automatically recomputed when
+> `tau` changes. This prevents the stale-cache bug where calling
+> `de.call_genes(tau=0.5)` after `de.gene_level(tau=0.1)` would silently use
+> results from the wrong tau.
 
 ### Full Pipeline Example
 
@@ -127,8 +133,20 @@ uses:
 
 - **lfsr (Local False Sign Rate)**: Posterior probability of having the wrong
   sign for each gene. Exact under the Gaussian assumption.
+- **lfsr_tau (Modified Local False Sign Rate)**: Incorporates practical
+  significance as defined in the paper:
+
+  ```
+  lfsr_g(tau) = 1 - max(P(Delta_g > tau | data), P(Delta_g < -tau | data))
+  ```
+
+  When `tau=0` this reduces to the standard `lfsr`. Use
+  `de.compute_pefp(use_lfsr_tau=True)` or
+  `de.find_threshold(use_lfsr_tau=True)` to base error control on `lfsr_tau`.
+  The default remains the standard `lfsr` with a separate two-threshold decision
+  rule (lfsr + prob_effect).
 - **PEFP (Posterior Expected False Discovery Proportion)**: Bayesian analogue of
-  FDR. Computed as the average lfsr of called genes.
+  FDR. Computed as the average lfsr (or lfsr_tau) of called genes.
 
 These are true posterior probabilities computed from the data, not frequentist
 error rates.
@@ -192,6 +210,30 @@ de/
 └── README.md            # This file
 ```
 
+## Practical Significance
+
+There are two approaches to incorporating practical significance thresholds:
+
+1. **Two-threshold approach (default)**: Gene-level results include both `lfsr`
+   (sign confidence) and `prob_effect` (probability that `|Delta| > tau`).
+   `call_de_genes` requires both `lfsr < lfsr_threshold` AND
+   `prob_effect > prob_effect_threshold`.
+
+2. **Paper-aligned `lfsr_tau`**: The `lfsr_tau` field implements the paper's
+   modified local false sign rate that directly incorporates `tau`:
+
+   ```python
+   # Use lfsr_tau for error control
+   results = de.gene_level(tau=jnp.log(1.1))
+   threshold = de.find_threshold(target_pefp=0.05, tau=jnp.log(1.1),
+                                  use_lfsr_tau=True)
+   pefp = de.compute_pefp(threshold=threshold, tau=jnp.log(1.1),
+                           use_lfsr_tau=True)
+   ```
+
+Both approaches are valid; the two-threshold method is more conservative and
+is the default.
+
 ## Performance Notes
 
 All operations are memory-efficient:
@@ -208,7 +250,14 @@ All operations are memory-efficient:
 
 ## Notes
 
-The lfdr function (`compute_lfdr`) is an empirical Bayes approximation. For
-production use, consider fitting a proper two-group mixture model. The lfsr
-(local false sign rate) is exact under the Gaussian assumption and is the
-recommended primary error measure.
+- The lfdr function (`compute_lfdr`) is an empirical Bayes approximation. For
+  production use, consider fitting a proper two-group mixture model. The lfsr
+  (local false sign rate) is exact under the Gaussian assumption and is the
+  recommended primary error measure.
+- `find_lfsr_threshold` uses a cumulative-sum algorithm that runs in O(D log D)
+  time, making it efficient for large gene sets.
+- `build_balance_contrast` validates that numerator and denominator indices are
+  disjoint, raising `ValueError` if they overlap.
+- An epsilon guard (`1e-30` floor) is applied to `delta_sd` in both gene-level
+  and contrast-level computations to prevent `NaN`/`Inf` from near-zero
+  variance genes.

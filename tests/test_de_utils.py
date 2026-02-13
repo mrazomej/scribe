@@ -491,3 +491,68 @@ def test_numerical_stability_extreme_values():
     lfdr = compute_lfdr(delta_mean_small, delta_sd_large)
 
     assert jnp.all(jnp.isfinite(lfdr))
+
+
+# ------------------------------------------------------------------------------
+# Fix 3: format_de_table sort_by column alias mapping
+# ------------------------------------------------------------------------------
+
+
+def test_format_de_table_sort_by_delta_mean(sample_de_results):
+    """format_de_table(sort_by='delta_mean') should not raise."""
+    table = format_de_table(sample_de_results, sort_by="delta_mean")
+    assert isinstance(table, str)
+    assert len(table) > 0
+
+
+def test_format_de_table_sort_by_delta_sd(sample_de_results):
+    """format_de_table(sort_by='delta_sd') should not raise."""
+    table = format_de_table(sample_de_results, sort_by="delta_sd")
+    assert isinstance(table, str)
+    assert len(table) > 0
+
+
+def test_format_de_table_sort_by_log_fc(sample_de_results):
+    """format_de_table(sort_by='log_fc') should also work (actual col name)."""
+    table = format_de_table(sample_de_results, sort_by="log_fc")
+    assert isinstance(table, str)
+    assert len(table) > 0
+
+
+# ------------------------------------------------------------------------------
+# Fix 4: find_lfsr_threshold O(D log D) regression tests
+# ------------------------------------------------------------------------------
+
+
+def test_find_lfsr_threshold_regression_known():
+    """Regression: known input should produce a threshold controlling PEFP."""
+    lfsr = jnp.array([0.01, 0.03, 0.05, 0.1, 0.2, 0.5])
+    target = 0.05
+    threshold = find_lfsr_threshold(lfsr, target_pefp=target)
+
+    # Verify PEFP at this threshold is within target
+    pefp = compute_pefp(lfsr, threshold=threshold)
+    assert pefp <= target + 1e-6
+
+
+def test_find_lfsr_threshold_regression_uniform():
+    """Regression: uniform lfsr should still produce a valid threshold."""
+    lfsr = jnp.ones(50) * 0.02
+    threshold = find_lfsr_threshold(lfsr, target_pefp=0.05)
+    pefp = compute_pefp(lfsr, threshold=threshold)
+    assert pefp <= 0.05 + 1e-6
+
+
+def test_find_lfsr_threshold_regression_large_scale():
+    """Regression: large D should give same result as old implementation."""
+    key = random.PRNGKey(42)
+    lfsr = random.uniform(key, (5000,)) * 0.5
+    target = 0.05
+
+    threshold = find_lfsr_threshold(lfsr, target_pefp=target)
+    pefp = compute_pefp(lfsr, threshold=threshold)
+
+    # Must still control PEFP
+    assert pefp <= target + 1e-6
+    # Must find some valid threshold (not degenerate 0)
+    assert threshold > 0

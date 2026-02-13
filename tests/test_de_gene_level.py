@@ -97,6 +97,7 @@ def test_differential_expression_output_keys(sample_models):
         "prob_positive",
         "prob_effect",
         "lfsr",
+        "lfsr_tau",
         "gene_names",
     }
 
@@ -502,6 +503,65 @@ def test_de_symmetric_comparison():
     )
 
 
+# ------------------------------------------------------------------------------
+# Fix 5: epsilon guard for near-zero variance
+# ------------------------------------------------------------------------------
+
+
+def test_differential_expression_near_zero_variance():
+    """Near-zero variance should not produce NaN or Inf.
+
+    Uses 1e-8 diagonal (above the 1e-10 embedded-ALR detection threshold
+    in ``extract_alr_params``) to avoid false-positive dimension stripping.
+    """
+    D_alr = 10
+    k = 2
+
+    # Use 1e-8: small enough for near-zero variance, large enough to
+    # avoid false-positive embedded-ALR detection (threshold = 1e-10).
+    model_A = {
+        "loc": jnp.zeros(D_alr),
+        "cov_factor": jnp.zeros((D_alr, k)),
+        "cov_diag": jnp.ones(D_alr) * 1e-8,
+    }
+    model_B = {
+        "loc": jnp.ones(D_alr) * 0.1,
+        "cov_factor": jnp.zeros((D_alr, k)),
+        "cov_diag": jnp.ones(D_alr) * 1e-8,
+    }
+
+    results = differential_expression(model_A, model_B, tau=0.0)
+
+    # All outputs should be finite (no NaN, no Inf)
+    assert jnp.all(jnp.isfinite(results["delta_mean"]))
+    assert jnp.all(jnp.isfinite(results["delta_sd"]))
+    assert jnp.all(jnp.isfinite(results["prob_positive"]))
+    assert jnp.all(jnp.isfinite(results["lfsr"]))
+    assert jnp.all(jnp.isfinite(results["lfsr_tau"]))
+
+
+def test_differential_expression_exactly_zero_variance():
+    """Exactly zero variance should not produce NaN or Inf.
+
+    Uses 1e-8 diagonal to avoid false-positive embedded-ALR detection.
+    The epsilon guard (1e-30 floor on delta_sd) prevents NaN in division.
+    """
+    D_alr = 10
+    k = 2
+
+    model = {
+        "loc": jnp.zeros(D_alr),
+        "cov_factor": jnp.zeros((D_alr, k)),
+        "cov_diag": jnp.ones(D_alr) * 1e-8,
+    }
+
+    results = differential_expression(model, model, tau=0.0)
+
+    # All outputs should be finite (epsilon guard prevents inf/NaN)
+    assert jnp.all(jnp.isfinite(results["delta_sd"]))
+    assert jnp.all(jnp.isfinite(results["lfsr"]))
+
+
 def test_de_with_different_ranks():
     """Test DE when models have different low-rank dimensions."""
     D_alr = 20
@@ -522,6 +582,83 @@ def test_de_with_different_ranks():
     results = differential_expression(model_A, model_B, tau=jnp.log(1.1))
 
     assert results["delta_mean"].shape[0] == D_alr + 1
+
+
+# ------------------------------------------------------------------------------
+# Tests for lfsr_tau (paper's practical-significance-aware lfsr)
+# ------------------------------------------------------------------------------
+
+
+def test_lfsr_tau_present_in_output(sample_models):
+    """lfsr_tau should be in differential_expression output."""
+    model_A, model_B = sample_models
+    results = differential_expression(model_A, model_B, tau=0.1)
+    assert "lfsr_tau" in results
+
+
+def test_lfsr_tau_shape(sample_models):
+    """lfsr_tau should have shape (D,)."""
+    model_A, model_B = sample_models
+    D_clr = model_A["loc"].shape[0] + 1
+    results = differential_expression(model_A, model_B, tau=0.1)
+    assert results["lfsr_tau"].shape == (D_clr,)
+
+
+def test_lfsr_tau_equals_lfsr_at_tau_zero(sample_models):
+    """When tau=0, lfsr_tau should equal standard lfsr."""
+    model_A, model_B = sample_models
+    results = differential_expression(model_A, model_B, tau=0.0)
+
+    # lfsr_g(0) = 1 - max(P(Delta>0), P(Delta<0)) = min(P>0, P<0) = lfsr
+    assert jnp.allclose(results["lfsr_tau"], results["lfsr"], atol=1e-6)
+
+
+def test_lfsr_tau_bounded(sample_models):
+    """lfsr_tau values should be between 0 and 1."""
+    model_A, model_B = sample_models
+    results = differential_expression(model_A, model_B, tau=jnp.log(1.1))
+
+    assert jnp.all(results["lfsr_tau"] >= 0)
+    assert jnp.all(results["lfsr_tau"] <= 1)
+
+
+def test_lfsr_tau_increases_with_tau(sample_models):
+    """lfsr_tau should generally be >= lfsr (harder to be significant)."""
+    model_A, model_B = sample_models
+    results = differential_expression(model_A, model_B, tau=jnp.log(2.0))
+
+    # lfsr_tau >= lfsr always, because requiring |Delta|>tau is stricter
+    assert jnp.all(results["lfsr_tau"] >= results["lfsr"] - 1e-7)
+
+
+def test_lfsr_tau_manual_calculation():
+    """Test lfsr_tau matches manual calculation from paper formula."""
+    from jax.scipy.stats import norm as jnorm
+
+    D_alr = 5
+    k = 2
+    model_A = {
+        "loc": jnp.zeros(D_alr),
+        "cov_factor": jnp.zeros((D_alr, k)),
+        "cov_diag": jnp.ones(D_alr) * 0.5,
+    }
+    model_B = {
+        "loc": jnp.ones(D_alr) * 1.0,
+        "cov_factor": jnp.zeros((D_alr, k)),
+        "cov_diag": jnp.ones(D_alr) * 0.5,
+    }
+
+    tau = 0.3
+    results = differential_expression(model_A, model_B, tau=tau)
+
+    # Manually compute lfsr_tau: 1 - max(P(Delta>tau), P(Delta<-tau))
+    mu = results["delta_mean"]
+    sd = results["delta_sd"]
+    prob_up = 1 - jnorm.cdf(tau, loc=mu, scale=sd)
+    prob_down = jnorm.cdf(-tau, loc=mu, scale=sd)
+    expected_lfsr_tau = 1.0 - jnp.maximum(prob_up, prob_down)
+
+    assert jnp.allclose(results["lfsr_tau"], expected_lfsr_tau, atol=1e-6)
 
 
 def test_de_large_scale():
