@@ -4,6 +4,21 @@ Low-rank Logistic-Normal fitting for normalized gene expression.
 This module provides functionality to fit low-rank Logistic-Normal distributions
 to normalized expression profiles, preserving correlation structure from the
 posterior.
+
+Performance
+-----------
+Dirichlet sampling is performed in batches of ``batch_size`` posterior samples
+(default 256) to balance GPU throughput against memory usage.  The batch size is
+user-configurable all the way from the public API
+(``ScribeSVIResults.fit_logistic_normal``) down to the internal helpers.
+
+Future work
+~~~~~~~~~~~
+The pure-JAX helper ``_fit_low_rank_mvn_core`` is deliberately free of Python
+side-effects so that it can be wrapped in ``jax.vmap`` across mixture
+components.  A follow-up optimisation could vmap the entire per-component
+pipeline (Dirichlet sampling → ALR → SVD → embedding) to run all components
+in parallel on GPU.
 """
 
 from typing import Dict, Optional, Union, Tuple
@@ -22,6 +37,11 @@ except ImportError:
     # Fallback if tqdm is not available
     def tqdm(iterable, **kwargs):
         return iterable
+
+
+# Default batch size for Dirichlet sampling.  256 posterior samples × 20 000
+# genes × 4 bytes ≈ 20 MB per batch — safe on virtually any GPU.
+_DEFAULT_BATCH_SIZE: int = 256
 
 
 # ------------------------------------------------------------------------------
@@ -159,6 +179,170 @@ DISTRIBUTION_FACTORY = {
 
 
 # ------------------------------------------------------------------------------
+# Batched Dirichlet Sampling
+# ------------------------------------------------------------------------------
+
+
+def _batched_dirichlet_sample(
+    r_samples: jnp.ndarray,
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int = _DEFAULT_BATCH_SIZE,
+    verbose: bool = False,
+) -> jnp.ndarray:
+    """
+    Sample from Dirichlet distributions in batches to balance speed and memory.
+
+    Instead of calling ``sample_dirichlet_from_parameters`` once per posterior
+    sample (O(N) Python→JAX round-trips), this helper processes posterior
+    samples in chunks of ``batch_size``, reducing dispatches to
+    O(ceil(N / batch_size)).
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape (N, D)
+        Concentration parameters for N Dirichlet distributions over D genes.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    batch_size : int, default=256
+        Number of posterior samples to process in a single batched JAX call.
+        Larger values use more memory but fewer dispatches.  At D=20 000 and
+        ``n_samples_dirichlet=1``, each batch of 256 requires ~20 MB.
+    verbose : bool, default=False
+        If True, show a tqdm progress bar over batches.
+
+    Returns
+    -------
+    jnp.ndarray
+        If ``n_samples_dirichlet == 1``:
+            shape (N, D) — one simplex sample per posterior sample.
+        If ``n_samples_dirichlet > 1``:
+            shape (N * n_samples_dirichlet, D) — all draws flattened along the
+            first axis so the output is ready for ALR → SVD fitting.
+    """
+    N, D = r_samples.shape
+
+    # Collect chunks of Dirichlet samples
+    chunks = []
+
+    # Build an iterator over batch start indices
+    starts = range(0, N, batch_size)
+    if verbose:
+        starts = tqdm(
+            starts,
+            desc="Batched Dirichlet sampling",
+            unit="batch",
+            total=(N + batch_size - 1) // batch_size,
+        )
+
+    for start in starts:
+        # Slice out the current batch of concentration parameters
+        end = min(start + batch_size, N)
+        r_batch = r_samples[start:end]  # (B, D)
+
+        # Derive a deterministic sub-key for this batch
+        key_batch = random.fold_in(rng_key, start)
+
+        # Single batched JAX call: Dirichlet(r_batch).sample(...)
+        batch_samples = sample_dirichlet_from_parameters(
+            r_batch,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=key_batch,
+        )
+        # batch_samples shape:
+        #   n_samples_dirichlet == 1  →  (B, D)
+        #   n_samples_dirichlet  > 1  →  (B, D, S)
+
+        if n_samples_dirichlet == 1:
+            # Already (B, D) — append directly
+            chunks.append(batch_samples)
+        else:
+            # (B, D, S) → transpose to (B, S, D) → flatten to (B*S, D)
+            chunks.append(
+                batch_samples.transpose(0, 2, 1).reshape(-1, D)
+            )
+
+    # Concatenate all batches along the sample axis
+    return jnp.concatenate(chunks, axis=0)
+
+
+def _batched_dirichlet_sample_raw(
+    r_samples: jnp.ndarray,
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int = _DEFAULT_BATCH_SIZE,
+    verbose: bool = False,
+) -> jnp.ndarray:
+    """
+    Sample from Dirichlet distributions in batches, preserving original shape.
+
+    Unlike ``_batched_dirichlet_sample`` (which flattens the
+    ``n_samples_dirichlet`` axis for fitting), this variant keeps the
+    per-posterior-sample structure intact so that raw samples can be returned
+    to the caller (e.g. for ``store_samples=True`` in ``normalize_counts``).
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape (N, D)
+        Concentration parameters for N Dirichlet distributions over D genes.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    batch_size : int, default=256
+        Number of posterior samples per batched JAX call.
+    verbose : bool, default=False
+        If True, show a tqdm progress bar over batches.
+
+    Returns
+    -------
+    jnp.ndarray
+        If ``n_samples_dirichlet == 1``:
+            shape (N, D).
+        If ``n_samples_dirichlet > 1``:
+            shape (N, D, n_samples_dirichlet).
+    """
+    N, D = r_samples.shape
+
+    # Collect chunks of Dirichlet samples
+    chunks = []
+
+    # Build an iterator over batch start indices
+    starts = range(0, N, batch_size)
+    if verbose:
+        starts = tqdm(
+            starts,
+            desc="Batched Dirichlet sampling",
+            unit="batch",
+            total=(N + batch_size - 1) // batch_size,
+        )
+
+    for start in starts:
+        # Slice out the current batch of concentration parameters
+        end = min(start + batch_size, N)
+        r_batch = r_samples[start:end]  # (B, D)
+
+        # Derive a deterministic sub-key for this batch
+        key_batch = random.fold_in(rng_key, start)
+
+        # Single batched JAX call
+        batch_samples = sample_dirichlet_from_parameters(
+            r_batch,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=key_batch,
+        )
+        # batch_samples shape:
+        #   n_samples_dirichlet == 1  →  (B, D)
+        #   n_samples_dirichlet  > 1  →  (B, D, S)
+        chunks.append(batch_samples)
+
+    # Concatenate all batches along the first (posterior-sample) axis
+    return jnp.concatenate(chunks, axis=0)
+
+
+# ------------------------------------------------------------------------------
 # Logistic-Normal Fitting from Posterior Samples
 # ------------------------------------------------------------------------------
 
@@ -171,6 +355,7 @@ def fit_logistic_normal_from_posterior(
     rank: Optional[int] = None,
     distribution_class: type = SoftmaxNormal,
     remove_mean: bool = False,
+    batch_size: int = _DEFAULT_BATCH_SIZE,
     verbose: bool = True,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """
@@ -190,65 +375,76 @@ def fit_logistic_normal_from_posterior(
     Parameters
     ----------
     posterior_samples : Dict[str, jnp.ndarray]
-        Dictionary containing posterior samples, must include 'r' parameter
+        Dictionary containing posterior samples, must include 'r' parameter.
     n_components : Optional[int], default=None
         Number of mixture components. If None, assumes non-mixture model.
     rng_key : random.PRNGKey, optional
-        JAX random number generator key. Defaults to random.PRNGKey(42) if None
-    n_samples_dirichlet : int, default=100
-        Number of Dirichlet samples to draw per posterior sample for fitting
+        JAX random number generator key. Defaults to random.PRNGKey(42) if
+        None.
+    n_samples_dirichlet : int, default=1
+        Number of Dirichlet samples to draw per posterior sample for fitting.
     rank : Optional[int], default=None
         Rank of the low-rank covariance approximation. If None, uses
-        min(n_genes, 50)
+        min(n_genes, 50).
     distribution_class : type, default=SoftmaxNormal
-        Type of compositional distribution to fit. Can be: - SoftmaxNormal:
-        Symmetric distribution for sampling - LowRankLogisticNormal: ALR-based
-        for log_prob evaluation
+        Type of compositional distribution to fit. Can be:
+
+        - SoftmaxNormal: Symmetric distribution for sampling
+        - LowRankLogisticNormal: ALR-based for log_prob evaluation
     remove_mean : bool, default=False
         If True, removes the grand mean from ALR-transformed samples before
-        fitting, focusing on co-variation patterns rather than mean composition.
-        Recommended for single cell type data where PC1 >> PC2 (dominant mean
-        effect).
+        fitting, focusing on co-variation patterns rather than mean
+        composition. Recommended for single cell type data where PC1 >> PC2
+        (dominant mean effect).
+    batch_size : int, default=256
+        Number of posterior samples to process in each batched Dirichlet
+        sampling call.  Larger values use more GPU memory but require fewer
+        Python→JAX dispatches.  At D=20 000 and ``n_samples_dirichlet=1``,
+        each batch of 256 requires ~20 MB.  Reduce if you encounter OOM
+        errors; increase on large-memory GPUs for maximum throughput.
     verbose : bool, default=True
-        If True, prints progress messages and shows progress bars
+        If True, prints progress messages and shows progress bars.
 
     Returns
     -------
     Dict[str, Union[jnp.ndarray, object]]
         Dictionary containing fitted Logistic-Normal parameters:
-            - 'loc': Location parameter (mean in log-space)
-            - 'cov_factor': Low-rank covariance factor W
-            - 'cov_diag': Diagonal component of covariance D
-            - 'mean_probabilities': Mean probabilities on the simplex
-            - 'distribution': SoftmaxNormal distribution (symmetric, for
-              sampling)
-            - 'distribution_alr': LowRankLogisticNormal distribution (ALR-based,
-              for log_prob evaluation)
-            - 'base_distribution': Underlying LowRankMultivariateNormal in
-              log-space (for backward compatibility)
+
+        - 'loc': Location parameter (mean in log-space)
+        - 'cov_factor': Low-rank covariance factor W
+        - 'cov_diag': Diagonal component of covariance D
+        - 'mean_probabilities': Mean probabilities on the simplex
+        - 'distribution': SoftmaxNormal distribution (symmetric, for
+          sampling)
+        - 'distribution_alr': LowRankLogisticNormal distribution (ALR-based,
+          for log_prob evaluation)
+        - 'base_distribution': Underlying LowRankMultivariateNormal in
+          log-space (for backward compatibility)
 
         For non-mixture models:
-            - loc: shape (n_genes,)
-            - cov_factor: shape (n_genes, rank)
-            - cov_diag: shape (n_genes,)
-            - mean_probabilities: shape (n_genes,)
-            - distribution: SoftmaxNormal object (symmetric, D-dimensional)
-            - distribution_alr: LowRankLogisticNormal object (ALR,
-              (D-1)-dimensional)
+
+        - loc: shape (n_genes,)
+        - cov_factor: shape (n_genes, rank)
+        - cov_diag: shape (n_genes,)
+        - mean_probabilities: shape (n_genes,)
+        - distribution: SoftmaxNormal object (symmetric, D-dimensional)
+        - distribution_alr: LowRankLogisticNormal object (ALR,
+          (D-1)-dimensional)
 
         For mixture models:
-            - loc: shape (n_components, n_genes)
-            - cov_factor: shape (n_components, n_genes, rank)
-            - cov_diag: shape (n_components, n_genes)
-            - mean_probabilities: shape (n_components, n_genes)
-            - distributions: list of n_components SoftmaxNormal objects
-            - distributions_alr: list of n_components LowRankLogisticNormal
-              objects
+
+        - loc: shape (n_components, n_genes)
+        - cov_factor: shape (n_components, n_genes, rank)
+        - cov_diag: shape (n_components, n_genes)
+        - mean_probabilities: shape (n_components, n_genes)
+        - distributions: list of n_components SoftmaxNormal objects
+        - distributions_alr: list of n_components LowRankLogisticNormal
+          objects
 
     Raises
     ------
     ValueError
-        If 'r' parameter is not found in posterior_samples
+        If 'r' parameter is not found in posterior_samples.
 
     Notes
     -----
@@ -258,33 +454,30 @@ def fit_logistic_normal_from_posterior(
     parameters.
 
     Two Types of Distributions Returned
-    ------------------------------------
-    1. **SoftmaxNormal** (symmetric): - All genes treated equally (no reference
-       gene) - Use for sampling and visualization - Cannot evaluate log_prob
-       (softmax transform is singular)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    1. **SoftmaxNormal** (symmetric): All genes treated equally (no reference
+       gene). Use for sampling and visualization. Cannot evaluate log_prob
+       (softmax transform is singular).
 
-    2. **LowRankLogisticNormal** (ALR-based): - Uses last gene as reference
-       (asymmetric) - Can evaluate log_prob for observed data - Use for Bayesian
-       inference or likelihood evaluation
+    2. **LowRankLogisticNormal** (ALR-based): Uses last gene as reference
+       (asymmetric). Can evaluate log_prob for observed data. Use for Bayesian
+       inference or likelihood evaluation.
 
     Examples
     --------
     Sampling from the distribution:
 
         >>> from jax import random
-        >>> result = fit_logistic_normal_from_posterior(...)
+        >>> result = fit_logistic_normal_from_posterior(
+        ...     posterior_samples, batch_size=512
+        ... )
         >>> # Sample from SoftmaxNormal (symmetric)
         >>> samples = result['distribution'].sample(random.PRNGKey(0), (100,))
-        >>> # Samples are on the simplex (sum to 1)
-        >>> assert samples.sum(axis=-1).allclose(1.0)
 
     Evaluating log probability:
 
         >>> # Use LowRankLogisticNormal for log_prob
         >>> log_prob = result['distribution_alr'].log_prob(samples[0])
-
-    Note: For backward compatibility, `base_distribution` provides access to the
-    underlying LowRankMultivariateNormal in log-space.
     """
     # Create default RNG key if not provided (lazy initialization)
     if rng_key is None:
@@ -322,6 +515,7 @@ def fit_logistic_normal_from_posterior(
             rank,
             distribution_class,
             remove_mean,
+            batch_size,
             verbose,
         )
     # Process non-mixture model
@@ -335,6 +529,7 @@ def fit_logistic_normal_from_posterior(
             rank,
             distribution_class,
             remove_mean,
+            batch_size,
             verbose,
         )
 
@@ -349,9 +544,36 @@ def _fit_logistic_normal_non_mixture(
     rank: Optional[int],
     distribution_class: type,
     remove_mean: bool,
+    batch_size: int,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
-    """Fit Logistic-Normal distribution for non-mixture models."""
+    """
+    Fit Logistic-Normal distribution for non-mixture models.
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape (n_posterior_samples, n_genes)
+        Posterior samples of the Dirichlet concentration parameter.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rank : Optional[int]
+        Rank of the low-rank covariance approximation.
+    distribution_class : type
+        SoftmaxNormal or LowRankLogisticNormal.
+    remove_mean : bool
+        Whether to centre ALR samples before fitting.
+    batch_size : int
+        Posterior samples processed per batched Dirichlet call.
+    verbose : bool
+        Whether to print progress messages.
+
+    Returns
+    -------
+    Dict[str, Union[jnp.ndarray, object]]
+        Fitted Logistic-Normal parameters and distribution object(s).
+    """
     # r_samples shape: (n_posterior_samples, n_genes)
     n_posterior_samples, n_genes = r_samples.shape
 
@@ -361,54 +583,29 @@ def _fit_logistic_normal_non_mixture(
 
     if verbose:
         print(f"Using rank {rank} for low-rank covariance approximation")
+        n_batches = (n_posterior_samples + batch_size - 1) // batch_size
         print(
-            f"Generating {n_samples_dirichlet} Dirichlet samples for each of "
-            f"{n_posterior_samples} posterior samples"
+            f"Generating {n_samples_dirichlet} Dirichlet sample(s) for each "
+            f"of {n_posterior_samples} posterior samples "
+            f"(batch_size={batch_size}, {n_batches} batches)"
         )
 
-    # Step 1: Sample from Dirichlet for each posterior sample
-    all_log_samples = []
+    # ------------------------------------------------------------------
+    # Step 1: Batched Dirichlet sampling
+    # ------------------------------------------------------------------
+    # _batched_dirichlet_sample returns:
+    #   n_samples_dirichlet == 1  →  (N, D)
+    #   n_samples_dirichlet  > 1  →  (N * S, D)   (flattened for fitting)
+    all_simplex_samples = _batched_dirichlet_sample(
+        r_samples,
+        n_samples_dirichlet=n_samples_dirichlet,
+        rng_key=rng_key,
+        batch_size=batch_size,
+        verbose=verbose,
+    )
 
-    iterator = range(n_posterior_samples)
-    if verbose:
-        iterator = tqdm(iterator, desc="Sampling from Dirichlet", unit="sample")
-
-    for i in iterator:
-        # Use r values as concentration parameters
-        key_i = random.fold_in(rng_key, i)
-        dirichlet_samples = sample_dirichlet_from_parameters(
-            r_samples[i : i + 1],
-            n_samples_dirichlet=n_samples_dirichlet,
-            rng_key=key_i,
-        )
-        # Debug: check shape
-        if i == 0 and verbose:
-            print(f"  dirichlet_samples shape: {dirichlet_samples.shape}")
-
-        # dirichlet_samples shape: (1, n_genes, n_samples_dirichlet)
-        # Take log and reshape
-        log_samples = jnp.log(
-            dirichlet_samples[0]
-        )  # (n_genes, n_samples_dirichlet)
-
-        if i == 0 and verbose:
-            print(f"  log_samples shape after indexing: {log_samples.shape}")
-            print(f"  log_samples.T shape: {log_samples.T.shape}")
-
-        # When n_samples_dirichlet=1, need to ensure we keep the sample
-        # dimension
-        if log_samples.ndim == 1:
-            log_samples = log_samples.reshape(-1, 1)  # (n_genes, 1)
-
-        all_log_samples.append(log_samples.T)  # (n_samples_dirichlet, n_genes)
-
-    # Concatenate all samples:
-    # (n_posterior_samples * n_samples_dirichlet, n_genes)
-    all_log_samples = jnp.concatenate(all_log_samples, axis=0)
-
-    # Ensure 2D shape (handle case when n_samples_dirichlet=1)
-    if all_log_samples.ndim == 1:
-        all_log_samples = all_log_samples.reshape(1, -1)
+    # Take the log (element-wise) to move to log-simplex space
+    all_log_samples = jnp.log(all_simplex_samples)
 
     if verbose:
         print(
@@ -416,19 +613,18 @@ def _fit_logistic_normal_non_mixture(
             f"with {all_log_samples.shape[1]} features"
         )
 
-    # Step 2: Apply ALR transformation before fitting
-    # This is critical! We must transform to ALR space BEFORE fitting the MVN
-    # Otherwise we're fitting in the wrong space (D-dimensional vs
-    # (D-1)-dimensional)
+    # ------------------------------------------------------------------
+    # Step 2: ALR transformation  (D → D-1 dimensions)
+    # ------------------------------------------------------------------
     if verbose:
         print(
-            f"Applying ALR transformation to map to (D-1)-dimensional space..."
+            "Applying ALR transformation to map to (D-1)-dimensional space..."
         )
 
-    # Use memory-efficient ALR transform (no matrix materialization)
+    # Memory-efficient ALR transform (no matrix materialisation)
     alr_samples = _apply_alr_transform(
         all_log_samples, reference_index=None
-    )  # (n_samples, n_genes-1)
+    )  # (n_total, n_genes - 1)
 
     # Step 2b: Optionally remove grand mean to focus on co-variation
     if remove_mean:
@@ -436,8 +632,8 @@ def _fit_logistic_normal_non_mixture(
         alr_samples_centered = alr_samples - alr_grand_mean
         if verbose:
             print(
-                f"Removed grand mean from ALR samples "
-                f"(focusing on co-variation patterns)"
+                "Removed grand mean from ALR samples "
+                "(focusing on co-variation patterns)"
             )
     else:
         alr_samples_centered = alr_samples
@@ -450,7 +646,9 @@ def _fit_logistic_normal_non_mixture(
             f"{alr_samples_centered.shape[1]} ALR dimensions"
         )
 
-    # Step 3: Fit low-rank MVN in ALR space
+    # ------------------------------------------------------------------
+    # Step 3: Fit low-rank MVN in ALR space via SVD
+    # ------------------------------------------------------------------
     alr_loc, alr_cov_factor, alr_cov_diag = _fit_low_rank_mvn(
         alr_samples_centered, rank=rank, verbose=verbose
     )
@@ -460,18 +658,24 @@ def _fit_logistic_normal_non_mixture(
     if remove_mean and alr_grand_mean is not None:
         alr_loc = alr_loc + alr_grand_mean.squeeze()
 
-    # Step 4: Embed ALR parameters back to D dimensions for SoftmaxNormal
-    # Insert 0 at reference position (last component) to get D-dimensional params
+    # ------------------------------------------------------------------
+    # Step 4: Embed ALR parameters back to D dimensions
+    # ------------------------------------------------------------------
+    # Insert 0 at reference position (last component) for D-dimensional params
     loc = jnp.concatenate([alr_loc, jnp.array([0.0])], axis=0)
     cov_factor = jnp.concatenate(
         [alr_cov_factor, jnp.zeros((1, alr_cov_factor.shape[1]))], axis=0
     )
     cov_diag = jnp.concatenate([alr_cov_diag, jnp.array([0.0])], axis=0)
 
-    # Step 5: Compute mean probabilities on the simplex using inverse ALR
+    # ------------------------------------------------------------------
+    # Step 5: Compute mean probabilities on the simplex via inverse ALR
+    # ------------------------------------------------------------------
     mean_probabilities = _inverse_alr(alr_loc, reference_index=None)
 
-    # Step 4: Create distribution objects
+    # ------------------------------------------------------------------
+    # Step 6: Create distribution objects and package results
+    # ------------------------------------------------------------------
     results = {
         "loc": loc,
         "cov_factor": cov_factor,
@@ -490,9 +694,8 @@ def _fit_logistic_normal_non_mixture(
     # Store in results with appropriate key
     if distribution_class == SoftmaxNormal:
         results["distribution"] = distribution
-        results["base_distribution"] = (
-            distribution.base_dist
-        )  # Backward compatibility
+        # Backward compatibility
+        results["base_distribution"] = distribution.base_dist
     else:  # LowRankLogisticNormal
         results["distribution_alr"] = distribution
 
@@ -510,9 +713,40 @@ def _fit_logistic_normal_mixture(
     rank: Optional[int],
     distribution_class: type,
     remove_mean: bool,
+    batch_size: int,
     verbose: bool,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
-    """Fit Logistic-Normal distribution for mixture models."""
+    """
+    Fit Logistic-Normal distribution for mixture models.
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape (n_posterior_samples, n_components, n_genes)
+        Posterior samples of the Dirichlet concentration parameter per
+        component.
+    n_components : int
+        Number of mixture components.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rank : Optional[int]
+        Rank of the low-rank covariance approximation.
+    distribution_class : type
+        SoftmaxNormal or LowRankLogisticNormal.
+    remove_mean : bool
+        Whether to centre ALR samples before fitting.
+    batch_size : int
+        Posterior samples processed per batched Dirichlet call.
+    verbose : bool
+        Whether to print progress messages.
+
+    Returns
+    -------
+    Dict[str, Union[jnp.ndarray, object]]
+        Fitted Logistic-Normal parameters and distribution object(s) for
+        each component.
+    """
     # r_samples shape: (n_posterior_samples, n_components, n_genes)
     n_posterior_samples, n_components_check, n_genes = r_samples.shape
 
@@ -527,14 +761,15 @@ def _fit_logistic_normal_mixture(
         rank = min(n_genes, 50)
 
     if verbose:
+        n_batches = (n_posterior_samples + batch_size - 1) // batch_size
         print(f"Using rank {rank} for low-rank covariance approximation")
         print(
-            f"Generating {n_samples_dirichlet} Dirichlet samples for each of "
-            f"{n_posterior_samples} posterior samples and {n_components} "
-            f"components"
+            f"Generating {n_samples_dirichlet} Dirichlet sample(s) for each "
+            f"of {n_posterior_samples} posterior samples and {n_components} "
+            f"components (batch_size={batch_size}, {n_batches} batches/comp)"
         )
 
-    # Initialize storage for fitted parameters
+    # Storage for per-component fitted parameters
     locs = []
     cov_factors = []
     cov_diags = []
@@ -542,7 +777,9 @@ def _fit_logistic_normal_mixture(
     distributions = []
     distributions_alr = []
 
+    # ------------------------------------------------------------------
     # Fit one Logistic-Normal per component
+    # ------------------------------------------------------------------
     for c in range(n_components):
         if verbose:
             print(
@@ -550,54 +787,33 @@ def _fit_logistic_normal_mixture(
                 f"{c + 1}/{n_components}"
             )
 
-        # Step 1: Sample from Dirichlet for this component
-        all_log_samples = []
+        # --- Step 1: Batched Dirichlet sampling for this component --------
+        # Slice out concentrations for component c: (n_posterior, n_genes)
+        r_component = r_samples[:, c, :]
 
-        iterator = range(n_posterior_samples)
-        if verbose:
-            iterator = tqdm(
-                iterator, desc=f"Component {c + 1} - Sampling", unit="sample"
-            )
+        # Use a per-component sub-key for reproducibility
+        key_c = random.fold_in(rng_key, c)
 
-        for i in iterator:
-            # Use r values for this component as concentration parameters
-            key_i_c = random.fold_in(rng_key, i * n_components + c)
-            dirichlet_samples = sample_dirichlet_from_parameters(
-                r_samples[i, c : c + 1],
-                n_samples_dirichlet=n_samples_dirichlet,
-                rng_key=key_i_c,
-            )
-            # dirichlet_samples shape: (1, n_genes, n_samples_dirichlet)
-            # Take log and reshape
-            log_samples = jnp.log(
-                dirichlet_samples[0]
-            )  # (n_genes, n_samples_dirichlet)
+        all_simplex = _batched_dirichlet_sample(
+            r_component,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=key_c,
+            batch_size=batch_size,
+            verbose=verbose,
+        )
 
-            # When n_samples_dirichlet=1, need to ensure we keep the sample
-            # dimension
-            if log_samples.ndim == 1:
-                log_samples = log_samples.reshape(-1, 1)  # (n_genes, 1)
-
-            all_log_samples.append(
-                log_samples.T
-            )  # (n_samples_dirichlet, n_genes)
-
-        # Concatenate: (n_posterior_samples * n_samples_dirichlet, n_genes)
-        all_log_samples = jnp.concatenate(all_log_samples, axis=0)
-
-        # Ensure 2D shape (handle case when n_samples_dirichlet=1)
-        if all_log_samples.ndim == 1:
-            all_log_samples = all_log_samples.reshape(1, -1)
+        # Move to log-simplex space
+        all_log_samples = jnp.log(all_simplex)
 
         if verbose:
             print(
                 f"  Collected {all_log_samples.shape[0]} log-Dirichlet samples"
             )
 
-        # Step 2: Apply ALR transformation before fitting
+        # --- Step 2: ALR transformation -----------------------------------
         alr_samples = _apply_alr_transform(
             all_log_samples, reference_index=None
-        )  # (n_samples, n_genes-1)
+        )  # (n_total, n_genes - 1)
 
         if verbose:
             print(
@@ -610,12 +826,12 @@ def _fit_logistic_normal_mixture(
             alr_grand_mean = jnp.mean(alr_samples, axis=0, keepdims=True)
             alr_samples_centered = alr_samples - alr_grand_mean
             if verbose:
-                print(f"  Removed grand mean (focusing on co-variation)")
+                print("  Removed grand mean (focusing on co-variation)")
         else:
             alr_samples_centered = alr_samples
             alr_grand_mean = None
 
-        # Step 3: Fit low-rank MVN in ALR space
+        # --- Step 3: Fit low-rank MVN in ALR space -------------------------
         alr_loc, alr_cov_factor, alr_cov_diag = _fit_low_rank_mvn(
             alr_samples_centered, rank=rank, verbose=False
         )
@@ -624,42 +840,42 @@ def _fit_logistic_normal_mixture(
         if remove_mean and alr_grand_mean is not None:
             alr_loc = alr_loc + alr_grand_mean.squeeze()
 
-        # Step 4: Embed ALR parameters back to D dimensions
+        # --- Step 4: Embed ALR parameters back to D dimensions -------------
         loc = jnp.concatenate([alr_loc, jnp.array([0.0])], axis=0)
         cov_factor = jnp.concatenate(
-            [alr_cov_factor, jnp.zeros((1, alr_cov_factor.shape[1]))], axis=0
+            [alr_cov_factor, jnp.zeros((1, alr_cov_factor.shape[1]))],
+            axis=0,
         )
-        cov_diag = jnp.concatenate([alr_cov_diag, jnp.array([0.0])], axis=0)
+        cov_diag = jnp.concatenate(
+            [alr_cov_diag, jnp.array([0.0])], axis=0
+        )
 
         locs.append(loc)
         cov_factors.append(cov_factor)
         cov_diags.append(cov_diag)
 
-        # Step 5: Compute mean probabilities on the simplex using inverse ALR
+        # --- Step 5: Mean probabilities on the simplex ---------------------
         mean_prob = _inverse_alr(alr_loc, reference_index=None)
         mean_probs.append(mean_prob)
 
-        # Step 4: Create distribution for this component using factory
+        # --- Step 6: Create distribution for this component ----------------
         distribution = DISTRIBUTION_FACTORY[distribution_class](
             loc, cov_factor, cov_diag
         )
 
-        # Append to appropriate list
         if distribution_class == SoftmaxNormal:
             distributions.append(distribution)
         else:  # LowRankLogisticNormal
             distributions_alr.append(distribution)
 
-    # Stack results
+    # ------------------------------------------------------------------
+    # Stack per-component results
+    # ------------------------------------------------------------------
     results = {
-        "loc": jnp.stack(locs, axis=0),  # (n_components, n_genes)
-        "cov_factor": jnp.stack(
-            cov_factors, axis=0
-        ),  # (n_components, n_genes, rank)
-        "cov_diag": jnp.stack(cov_diags, axis=0),  # (n_components, n_genes)
-        "mean_probabilities": jnp.stack(
-            mean_probs, axis=0
-        ),  # (n_components, n_genes)
+        "loc": jnp.stack(locs, axis=0),  # (K, D)
+        "cov_factor": jnp.stack(cov_factors, axis=0),  # (K, D, rank)
+        "cov_diag": jnp.stack(cov_diags, axis=0),  # (K, D)
+        "mean_probabilities": jnp.stack(mean_probs, axis=0),  # (K, D)
     }
 
     # Add appropriate distribution key
@@ -685,6 +901,94 @@ def _fit_logistic_normal_mixture(
 # ------------------------------------------------------------------------------
 
 
+def _fit_low_rank_mvn_core(
+    samples: jnp.ndarray,
+    rank: int,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """
+    Pure-JAX low-rank MVN fit via truncated SVD.
+
+    This function contains **no** Python side-effects (no prints, no tqdm),
+    making it safe to use inside ``jax.jit`` or ``jax.vmap``.  All diagnostics
+    are returned as arrays so that a caller can inspect them if needed.
+
+    Parameters
+    ----------
+    samples : jnp.ndarray, shape (n_samples, n_features)
+        Centred (or un-centred) data matrix.  The mean is computed internally.
+    rank : int
+        Target rank for the low-rank covariance factor.  Clamped to
+        ``min(rank, min(n_samples, n_features))``.
+
+    Returns
+    -------
+    loc : jnp.ndarray, shape (n_features,)
+        Sample mean.
+    cov_factor : jnp.ndarray, shape (n_features, effective_rank)
+        Low-rank covariance factor W such that
+        ``Sigma ≈ W @ W.T + diag(cov_diag)``.
+    cov_diag : jnp.ndarray, shape (n_features,)
+        Diagonal residual variance + 1e-4 stability constant.
+    eigenvalues : jnp.ndarray, shape (min(n_samples, n_features),)
+        All eigenvalues of the sample covariance (for diagnostics).
+
+    Notes
+    -----
+    This helper is deliberately kept free of Python control-flow on JAX
+    values so that it can later be wrapped in ``jax.vmap`` across mixture
+    components for fully-parallel GPU execution.
+    """
+    n_samples, n_features = samples.shape
+
+    # Compute mean
+    loc = jnp.mean(samples, axis=0)
+
+    # Centre the data
+    centered = samples - loc
+
+    # SVD on the centred data matrix (memory-efficient when n_samples << D)
+    # X = U @ diag(S) @ Vt  →  Cov = V @ diag(S²/(n-1)) @ V.T
+    _U, singular_values, Vt = jnp.linalg.svd(
+        centered, full_matrices=False
+    )
+    # singular_values: (min(n_samples, n_features),)
+    # Vt: (min(n_samples, n_features), n_features)
+
+    # Convert singular values to eigenvalues of the covariance
+    eigenvalues = (singular_values ** 2) / (n_samples - 1)
+
+    # Eigenvectors as columns
+    eigenvectors = Vt.T  # (n_features, min(n_samples, n_features))
+
+    # Sort in descending order (SVD already descending, but be explicit)
+    idx = jnp.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Clamp rank to available components
+    effective_rank = min(rank, len(eigenvalues))
+
+    # Top-k eigenvalues and eigenvectors for the low-rank factor
+    top_k_eigenvalues = eigenvalues[:effective_rank]
+    top_k_eigenvectors = eigenvectors[:, :effective_rank]
+
+    # W = V_k @ diag(sqrt(lambda_k))   →   W @ W.T ≈ Sigma_top
+    cov_factor = top_k_eigenvectors * jnp.sqrt(
+        jnp.maximum(top_k_eigenvalues, 0.0)
+    )
+
+    # Residual variance: mean of remaining eigenvalues + stability constant
+    residual_eigenvalues = eigenvalues[effective_rank:]
+    diag_value = (
+        jnp.mean(residual_eigenvalues)
+        if len(residual_eigenvalues) > 0
+        else 0.0
+    )
+    cov_diag = jnp.full(n_features, diag_value) + 1e-4
+
+    return loc, cov_factor, cov_diag, eigenvalues
+
+
 def _fit_low_rank_mvn(
     samples: jnp.ndarray,
     rank: int,
@@ -693,103 +997,56 @@ def _fit_low_rank_mvn(
     """
     Fit a low-rank multivariate normal distribution to samples using PCA.
 
+    This is a thin wrapper around ``_fit_low_rank_mvn_core`` that adds
+    validation, progress messages and diagnostic printing.
+
     Parameters
     ----------
-    samples : jnp.ndarray
-        Samples to fit, shape (n_samples, n_features)
+    samples : jnp.ndarray, shape (n_samples, n_features)
+        Samples to fit.
     rank : int
-        Rank of the low-rank approximation
-    verbose : bool
-        Whether to print progress
+        Rank of the low-rank approximation.
+    verbose : bool, default=False
+        Whether to print progress and diagnostic messages.
 
     Returns
     -------
-    loc : jnp.ndarray
-        Mean vector, shape (n_features,)
-    cov_factor : jnp.ndarray
-        Low-rank covariance factor W, shape (n_features, rank)
-    cov_diag : jnp.ndarray
-        Diagonal component D, shape (n_features,)
+    loc : jnp.ndarray, shape (n_features,)
+        Mean vector.
+    cov_factor : jnp.ndarray, shape (n_features, effective_rank)
+        Low-rank covariance factor W.
+    cov_diag : jnp.ndarray, shape (n_features,)
+        Diagonal component D.
     """
     n_samples, n_features = samples.shape
 
-    # Check if we have enough samples
+    # --- Validation (not safe inside jit/vmap, so kept in the wrapper) ---
     if n_samples < 2:
         raise ValueError(
-            f"Need at least 2 samples to fit low-rank MVN, but got {n_samples}. "
-            f"Make sure you have multiple posterior samples of r, or increase "
-            f"n_samples_dirichlet to > 1."
+            f"Need at least 2 samples to fit low-rank MVN, but got "
+            f"{n_samples}. Make sure you have multiple posterior samples of r, "
+            f"or increase n_samples_dirichlet to > 1."
         )
-
-    # Compute mean
-    loc = jnp.mean(samples, axis=0)
-
-    # Center the data
-    centered = samples - loc
 
     if verbose:
         print(
             f"  Computing SVD of centered data ({n_samples} x {n_features})..."
         )
 
-    # Use SVD on the centered data matrix directly (more memory efficient)
-    # For X (n_samples x n_features): X = U @ S @ V.T
-    # Then: Cov(X) = (1/(n-1)) * X.T @ X = V @ (S^2/(n-1)) @ V.T
-    # So V contains the eigenvectors of the covariance, and S^2/(n-1) are the
-    # eigenvalues
+    # --- Delegate to the pure-JAX core ---
+    loc, cov_factor, cov_diag, eigenvalues = _fit_low_rank_mvn_core(
+        samples, rank
+    )
 
-    # This is much more memory efficient when n_samples << n_features (e.g., 100
-    # << 32K) because we only compute SVD of (n_samples x n_features) matrix
-    # rather than eigendecomposition of (n_features x n_features) covariance
-    # matrix
-
-    U, singular_values, Vt = jnp.linalg.svd(centered, full_matrices=False)
-    # U: (n_samples, min(n_samples, n_features))
-    # singular_values: (min(n_samples, n_features),)
-    # Vt: (min(n_samples, n_features), n_features)
-
-    # Convert singular values to eigenvalues of covariance
-    eigenvalues = (singular_values**2) / (n_samples - 1)
-    # Eigenvectors are rows of Vt, we want columns, so transpose
-    eigenvectors = Vt.T  # (n_features, min(n_samples, n_features))
-
-    # Sort in descending order (SVD already returns in descending order, but be
-    # explicit)
-    idx = jnp.argsort(eigenvalues)[::-1]
-    eigenvalues = eigenvalues[idx]
-    eigenvectors = eigenvectors[:, idx]
-
-    # Clamp rank to available components
-    # (can't extract more components than min(n_samples, n_features))
-    effective_rank = min(rank, len(eigenvalues))
+    # --- Diagnostics (verbose only) ---
+    effective_rank = cov_factor.shape[1]
     if verbose and effective_rank < rank:
         print(
             f"  Clamping rank from {rank} to {effective_rank} (max available)"
         )
 
-    # Take top k eigenvalues/eigenvectors for low-rank part
-    top_k_eigenvalues = eigenvalues[:effective_rank]
-    top_k_eigenvectors = eigenvectors[:, :effective_rank]
-
-    # Construct W = U_k @ sqrt(S_k)
-    # This gives W @ W.T = U_k @ S_k @ U_k.T
-    cov_factor = top_k_eigenvectors * jnp.sqrt(
-        jnp.maximum(top_k_eigenvalues, 0.0)
-    )
-
-    # Construct D as residual variance (remaining eigenvalues averaged)
-    # Plus a small constant for numerical stability
-    residual_eigenvalues = eigenvalues[effective_rank:]
-    if len(residual_eigenvalues) > 0:
-        # Use mean of residual eigenvalues for diagonal
-        diag_value = jnp.mean(residual_eigenvalues)
-    else:
-        diag_value = 0.0
-
-    # Add small constant for numerical stability
-    cov_diag = jnp.full(n_features, diag_value) + 1e-4
-
     if verbose:
+        top_k_eigenvalues = eigenvalues[:effective_rank]
         total_var = jnp.sum(eigenvalues)
         explained_var = jnp.sum(top_k_eigenvalues)
         print(
@@ -802,7 +1059,7 @@ def _fit_low_rank_mvn(
         if len(eigenvalues) >= 2 and eigenvalues[0] > 10 * eigenvalues[1]:
             ratio = float(eigenvalues[0] / eigenvalues[1])
             print(
-                f"  ⚠️  First eigenvalue is {ratio:.1f}× larger than second "
+                f"  First eigenvalue is {ratio:.1f}x larger than second "
                 f"(may indicate strong mean effect)"
             )
 

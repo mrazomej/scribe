@@ -1096,110 +1096,48 @@ class ScribeMCMCResults(MCMC):
         sample_axis: int = 0,
         return_concentrations: bool = False,
         backend: str = "numpyro",
+        batch_size: int = 256,
         verbose: bool = True,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
         Normalize counts using posterior samples of the r parameter.
 
-        This method takes posterior samples of the dispersion parameter (r) and
-        uses them as concentration parameters for Dirichlet distributions to generate
-        normalized expression profiles. For mixture models, normalization is performed
-        per component, resulting in an extra dimension in the output.
-
-        Based on the insights from the Dirichlet-multinomial model derivation, the
-        r parameters represent the concentration parameters of a Dirichlet distribution
-        that can be used to generate normalized expression profiles.
-
-        The method generates Dirichlet samples using all posterior samples of r, then
-        fits a single Dirichlet distribution to all these samples (or one per component
-        for mixture models).
-
         Parameters
         ----------
         rng_key : random.PRNGKey, optional
-            JAX random number generator key. Defaults to random.PRNGKey(42) if None
+            JAX random number generator key. Defaults to random.PRNGKey(42).
         n_samples_dirichlet : int, default=1000
-            Number of samples to draw from each Dirichlet distribution
+            Number of samples to draw from each Dirichlet distribution.
         fit_distribution : bool, default=True
-            If True, fits a Dirichlet distribution to the generated samples using
-            fit_dirichlet_minka from stats.py
+            If True, fits a Dirichlet distribution to the generated samples.
         store_samples : bool, default=False
-            If True, includes the raw Dirichlet samples in the output
+            If True, includes the raw Dirichlet samples in the output.
         sample_axis : int, default=0
-            Axis containing samples in the Dirichlet fitting (passed to fit_dirichlet_minka)
+            Axis for Dirichlet fitting.
         return_concentrations : bool, default=False
-            If True, returns the original r parameter samples used as concentrations
+            If True, returns the original r parameter samples.
         backend : str, default="numpyro"
-            Statistical package to use for distributions when fit_distribution=True.
-            Must be one of:
-            - "numpyro": Returns numpyro.distributions.Dirichlet objects
-            - "scipy": Returns scipy.stats distributions via numpyro_to_scipy conversion
+            ``"numpyro"`` or ``"scipy"`` for distribution objects.
+        batch_size : int, default=256
+            Number of posterior samples per batched Dirichlet sampling call.
+            Larger values use more GPU memory but fewer dispatches.
         verbose : bool, default=True
-            If True, prints progress messages
+            If True, prints progress messages.
 
         Returns
         -------
         Dict[str, Union[jnp.ndarray, object]]
-            Dictionary containing normalized expression profiles. Keys depend on
-            input arguments:
-                - 'samples': Raw Dirichlet samples (if store_samples=True)
-                - 'concentrations': Fitted concentration parameters (if
-                  fit_distribution=True)
-                - 'mean_probabilities': Mean probabilities from fitted
-                  distribution (if fit_distribution=True)
-                - 'distributions': Dirichlet distribution objects (if
-                  fit_distribution=True)
-                - 'original_concentrations': Original r parameter samples (if
-                  return_concentrations=True)
-
-            For non-mixture models:
-                - samples: shape (n_posterior_samples, n_genes,
-                  n_samples_dirichlet) or (n_posterior_samples, n_genes) if
-                  n_samples_dirichlet=1
-                - concentrations: shape (n_genes,) - single fitted distribution
-                - mean_probabilities: shape (n_genes,) - single fitted
-                  distribution
-                - distributions: single Dirichlet distribution object
-
-            For mixture models:
-                - samples: shape (n_posterior_samples, n_components, n_genes,
-                  n_samples_dirichlet) or (n_posterior_samples, n_components,
-                  n_genes) if n_samples_dirichlet=1
-                - concentrations: shape (n_components, n_genes) - one fitted
-                  distribution per component
-                - mean_probabilities: shape (n_components, n_genes) - one fitted
-                  distribution per component
-                - distributions: list of n_components Dirichlet distribution
-                  objects
+            Normalized expression results.
 
         Raises
         ------
         ValueError
-            If posterior samples have not been generated yet, or if 'r'
-            parameter is not found in posterior samples
-
-        Examples
-        --------
-        >>> # For a non-mixture model
-        >>> normalized = results.normalize_counts(
-        ...     n_samples_dirichlet=100,
-        ...     fit_distribution=True
-        ... )
-        >>> print(normalized['mean_probabilities'].shape)  # (n_genes,)
-        >>> print(type(normalized['distributions']))  # Single Dirichlet distribution
-
-        >>> # For a mixture model
-        >>> normalized = results.normalize_counts(
-        ...     n_samples_dirichlet=100,
-        ...     fit_distribution=True
-        ... )
-        >>> print(normalized['mean_probabilities'].shape)  # (n_components, n_genes)
-        >>> print(len(normalized['distributions']))  # n_components
+            If posterior samples have not been generated yet.
         """
         # Create default RNG key if not provided (lazy initialization)
         if rng_key is None:
             rng_key = random.PRNGKey(42)
-        
+
         # Get canonical samples using the new method
         posterior_samples = self.get_samples(canonical=True)
 
@@ -1214,6 +1152,7 @@ class ScribeMCMCResults(MCMC):
             sample_axis=sample_axis,
             return_concentrations=return_concentrations,
             backend=backend,
+            batch_size=batch_size,
             verbose=verbose,
         )
 

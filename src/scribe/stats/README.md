@@ -48,7 +48,11 @@ Functions for working with Dirichlet distributions:
 
 - **`sample_dirichlet_from_parameters(parameter_samples, n_samples_dirichlet,
   rng_key)`**: Samples from a Dirichlet distribution given an array of parameter
-  samples.
+  samples.  This function already supports batched input: passing an
+  `(N, D)` array of concentration parameters creates `N` Dirichlet distributions
+  and draws from all of them in a single JAX dispatch.  The
+  `core.normalization_logistic._batched_dirichlet_sample` helper wraps this
+  with chunked iteration for memory-safe processing of very large `N`.
 
 - **`fit_dirichlet_mle(samples, max_iter, tol, sample_axis)`**: Fit a Dirichlet
   distribution to samples using Maximum Likelihood Estimation (Newton's method).

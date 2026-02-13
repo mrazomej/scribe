@@ -454,17 +454,73 @@ scipy_normalized = normalize_counts_from_posterior(
 )
 ```
 
-### Performance Optimization
+### Logistic-Normal Fitting (`normalization_logistic.py`)
+
+Fits a low-rank Logistic-Normal distribution to posterior samples of the
+concentration parameter `r`.  This preserves the gene-gene correlation
+structure discovered during inference that is lost when fitting a single
+Dirichlet distribution.
 
 ```python
-# For large datasets, use efficient sampling
-large_dataset_normalized = normalize_counts_from_posterior(
+from scribe.core.normalization_logistic import fit_logistic_normal_from_posterior
+
+fitted = fit_logistic_normal_from_posterior(
+    posterior_samples={"r": r_samples},
+    n_components=3,              # None for non-mixture models
+    rank=32,                     # Low-rank covariance rank
+    n_samples_dirichlet=1,       # Draws per posterior sample
+    batch_size=256,              # Posterior samples per GPU batch
+    verbose=True,
+)
+
+# Returns: loc, cov_factor, cov_diag, mean_probabilities, distribution(s)
+```
+
+### Performance Optimization
+
+Both `normalize_counts_from_posterior` and `fit_logistic_normal_from_posterior`
+use **batched Dirichlet sampling** to balance GPU throughput against memory
+usage.  The `batch_size` parameter (default 256) controls how many posterior
+samples are processed in each JAX dispatch.  This is critical for large-scale
+runs:
+
+| Scenario | Python→JAX dispatches (before) | Dispatches (after, batch_size=256) |
+|---|---|---|
+| 10 000 posterior samples, 1 component | 10 000 | 40 |
+| 10 000 posterior samples, 5 components | 50 000 | 200 |
+
+```python
+# Memory-constrained GPU: reduce batch_size
+normalized = normalize_counts_from_posterior(
     posterior_samples=samples,
-    n_samples_dirichlet=100,  # Fewer samples for speed
-    fit_distribution=False,   # Skip distribution fitting
-    store_samples=True       # Just store raw samples
+    n_samples_dirichlet=1,
+    batch_size=64,       # ~5 MB per batch at D=20 000
+    store_samples=True,
+)
+
+# Large-memory GPU: increase batch_size for maximum throughput
+fitted = fit_logistic_normal_from_posterior(
+    posterior_samples=samples,
+    rank=32,
+    batch_size=1024,     # ~80 MB per batch at D=20 000
 )
 ```
+
+#### Architecture: `_fit_low_rank_mvn_core`
+
+The SVD-based low-rank MVN fitting has been factored into a **pure-JAX
+core** (`_fit_low_rank_mvn_core`) that contains no Python side-effects.
+This makes it suitable for use inside `jax.jit` or `jax.vmap`.  The
+verbose wrapper (`_fit_low_rank_mvn`) delegates to the core and adds
+diagnostic printing.
+
+#### Future Work: Component-Level `vmap`
+
+For mixture models, the current implementation loops over components
+sequentially.  With `_fit_low_rank_mvn_core` in place, a future
+optimisation could `jax.vmap` the entire per-component pipeline
+(Dirichlet sampling → ALR → SVD → embedding) to run all components
+in parallel on GPU, eliminating the component loop entirely.
 
 ## Annotation Priors (`annotation_prior.py`)
 
