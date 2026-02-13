@@ -469,7 +469,7 @@ fitted = fit_logistic_normal_from_posterior(
     n_components=3,              # None for non-mixture models
     rank=32,                     # Low-rank covariance rank
     n_samples_dirichlet=1,       # Draws per posterior sample
-    batch_size=256,              # Posterior samples per GPU batch
+    batch_size=2048,             # Posterior samples per GPU batch
     verbose=True,
 )
 
@@ -480,14 +480,14 @@ fitted = fit_logistic_normal_from_posterior(
 
 Both `normalize_counts_from_posterior` and `fit_logistic_normal_from_posterior`
 use **batched Dirichlet sampling** to balance GPU throughput against memory
-usage.  The `batch_size` parameter (default 256) controls how many posterior
+usage.  The `batch_size` parameter (default 2048) controls how many posterior
 samples are processed in each JAX dispatch.  This is critical for large-scale
 runs:
 
-| Scenario | Python→JAX dispatches (before) | Dispatches (after, batch_size=256) |
+| Scenario | Python-to-JAX dispatches (before) | Dispatches (after, batch_size=2048) |
 |---|---|---|
-| 10 000 posterior samples, 1 component | 10 000 | 40 |
-| 10 000 posterior samples, 5 components | 50 000 | 200 |
+| 10 000 posterior samples, 1 component | 10 000 | 5 |
+| 10 000 posterior samples, 5 components | 50 000 | 25 |
 
 ```python
 # Memory-constrained GPU: reduce batch_size

@@ -39,9 +39,10 @@ except ImportError:
         return iterable
 
 
-# Default batch size for Dirichlet sampling.  256 posterior samples × 20 000
-# genes × 4 bytes ≈ 20 MB per batch — safe on virtually any GPU.
-_DEFAULT_BATCH_SIZE: int = 256
+# Default batch size for Dirichlet sampling.  2048 posterior samples × 20 000
+# genes × 4 bytes ≈ 160 MB per batch — comfortable on any modern GPU and
+# reduces 10 000 posterior samples to just 5 batched JAX dispatches.
+_DEFAULT_BATCH_SIZE: int = 2048
 
 
 # ------------------------------------------------------------------------------
@@ -206,10 +207,10 @@ def _batched_dirichlet_sample(
         Number of Dirichlet draws per posterior sample.
     rng_key : random.PRNGKey
         JAX PRNG key.
-    batch_size : int, default=256
+    batch_size : int, default=2048
         Number of posterior samples to process in a single batched JAX call.
         Larger values use more memory but fewer dispatches.  At D=20 000 and
-        ``n_samples_dirichlet=1``, each batch of 256 requires ~20 MB.
+        ``n_samples_dirichlet=1``, each batch of 2048 requires ~160 MB.
     verbose : bool, default=False
         If True, show a tqdm progress bar over batches.
 
@@ -291,7 +292,7 @@ def _batched_dirichlet_sample_raw(
         Number of Dirichlet draws per posterior sample.
     rng_key : random.PRNGKey
         JAX PRNG key.
-    batch_size : int, default=256
+    batch_size : int, default=2048
         Number of posterior samples per batched JAX call.
     verbose : bool, default=False
         If True, show a tqdm progress bar over batches.
@@ -396,11 +397,11 @@ def fit_logistic_normal_from_posterior(
         fitting, focusing on co-variation patterns rather than mean
         composition. Recommended for single cell type data where PC1 >> PC2
         (dominant mean effect).
-    batch_size : int, default=256
+    batch_size : int, default=2048
         Number of posterior samples to process in each batched Dirichlet
         sampling call.  Larger values use more GPU memory but require fewer
-        Python→JAX dispatches.  At D=20 000 and ``n_samples_dirichlet=1``,
-        each batch of 256 requires ~20 MB.  Reduce if you encounter OOM
+        Python-to-JAX dispatches.  At D=20 000 and ``n_samples_dirichlet=1``,
+        each batch of 2048 requires ~160 MB.  Reduce if you encounter OOM
         errors; increase on large-memory GPUs for maximum throughput.
     verbose : bool, default=True
         If True, prints progress messages and shows progress bars.

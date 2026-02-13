@@ -1096,7 +1096,7 @@ class ScribeMCMCResults(MCMC):
         sample_axis: int = 0,
         return_concentrations: bool = False,
         backend: str = "numpyro",
-        batch_size: int = 256,
+        batch_size: int = 2048,
         verbose: bool = True,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
@@ -1118,7 +1118,7 @@ class ScribeMCMCResults(MCMC):
             If True, returns the original r parameter samples.
         backend : str, default="numpyro"
             ``"numpyro"`` or ``"scipy"`` for distribution objects.
-        batch_size : int, default=256
+        batch_size : int, default=2048
             Number of posterior samples per batched Dirichlet sampling call.
             Larger values use more GPU memory but fewer dispatches.
         verbose : bool, default=True

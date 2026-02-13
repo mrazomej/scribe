@@ -74,7 +74,7 @@ def normalize_counts_from_posterior(
     backend : str, default="numpyro"
         Statistical package to use for distributions when
         ``fit_distribution=True``.  Must be ``"numpyro"`` or ``"scipy"``.
-    batch_size : int, default=256
+    batch_size : int, default=2048
         Number of posterior samples to process in each batched Dirichlet
         sampling call.  Larger values use more GPU memory but require fewer
         Python-to-JAX dispatches.
