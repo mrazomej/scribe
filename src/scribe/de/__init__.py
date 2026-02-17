@@ -95,6 +95,7 @@ from ._gaussianity import gaussianity_diagnostics
 from ._empirical import (
     compute_clr_differences,
     empirical_differential_expression,
+    compute_expression_mask,
 )
 
 __all__ = [
@@ -128,4 +129,5 @@ __all__ = [
     # Empirical (non-parametric) DE
     "compute_clr_differences",
     "empirical_differential_expression",
+    "compute_expression_mask",
 ]

@@ -35,9 +35,184 @@ References
 
 from typing import Optional, List
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import random
+
+
+# --------------------------------------------------------------------------
+# Gene aggregation for expression filtering
+# --------------------------------------------------------------------------
+
+
+def _aggregate_genes(
+    r_A: jnp.ndarray,
+    r_B: jnp.ndarray,
+    gene_mask: jnp.ndarray,
+) -> tuple:
+    """Pool filtered genes into a single "other" pseudo-gene.
+
+    Genes marked ``False`` in ``gene_mask`` are summed into a single
+    aggregate concentration that is appended as the last column.  This
+    preserves the total Dirichlet concentration exactly so that the
+    simplex constraint is maintained downstream.
+
+    Parameters
+    ----------
+    r_A : jnp.ndarray, shape ``(N, D)``
+        Dirichlet concentration samples for condition A.
+    r_B : jnp.ndarray, shape ``(N, D)``
+        Dirichlet concentration samples for condition B.
+    gene_mask : jnp.ndarray, shape ``(D,)``
+        Boolean mask.  ``True`` = keep the gene, ``False`` = pool into
+        "other".
+
+    Returns
+    -------
+    tuple of (jnp.ndarray, jnp.ndarray)
+        ``(r_A_agg, r_B_agg)`` each of shape ``(N, D_kept + 1)``, where
+        ``D_kept = gene_mask.sum()``.  The last column is the summed
+        concentration of all filtered genes.
+
+    Raises
+    ------
+    ValueError
+        If ``gene_mask`` has the wrong length or keeps no genes.
+    """
+    gene_mask = jnp.asarray(gene_mask, dtype=bool)
+
+    if gene_mask.ndim != 1 or gene_mask.shape[0] != r_A.shape[1]:
+        raise ValueError(
+            f"gene_mask must be a 1-D boolean array of length D={r_A.shape[1]}, "
+            f"got shape {gene_mask.shape}."
+        )
+
+    D_kept = int(gene_mask.sum())
+    if D_kept == 0:
+        raise ValueError("gene_mask must keep at least one gene (all False).")
+
+    # Split kept vs. filtered for each condition
+    r_A_kept = r_A[:, gene_mask]  # (N, D_kept)
+    r_A_other = r_A[:, ~gene_mask].sum(axis=1, keepdims=True)  # (N, 1)
+    r_A_agg = jnp.concatenate([r_A_kept, r_A_other], axis=1)
+
+    r_B_kept = r_B[:, gene_mask]
+    r_B_other = r_B[:, ~gene_mask].sum(axis=1, keepdims=True)
+    r_B_agg = jnp.concatenate([r_B_kept, r_B_other], axis=1)
+
+    return r_A_agg, r_B_agg
+
+
+# --------------------------------------------------------------------------
+# Expression mask helper
+# --------------------------------------------------------------------------
+
+
+def compute_expression_mask(
+    results_A,
+    results_B,
+    component_A: int,
+    component_B: int,
+    min_mean_expression: float = 1.0,
+    counts_A: Optional[jnp.ndarray] = None,
+    counts_B: Optional[jnp.ndarray] = None,
+) -> np.ndarray:
+    """Build a boolean gene mask from MAP mean-expression estimates.
+
+    A gene passes the filter if its MAP mean expression ``mu`` is at
+    least ``min_mean_expression`` in **either** condition.  This
+    preserves genes that are genuinely condition-specific (highly
+    expressed in one condition only).
+
+    The function works with any parameterization: if the MAP estimates
+    include ``mu`` directly (``linked`` / ``mean_prob`` / ``mean_odds``
+    / ``odds_ratio``), it is used as-is.  For the ``standard``
+    parameterization (which provides ``r`` and ``p`` but not ``mu``),
+    the mean expression is derived as ``mu = r * p / (1 - p)``.
+
+    Parameters
+    ----------
+    results_A : ScribeSVIResults
+        Fitted model for condition A.
+    results_B : ScribeSVIResults
+        Fitted model for condition B.
+    component_A : int
+        Mixture-component index for condition A.
+    component_B : int
+        Mixture-component index for condition B.
+    min_mean_expression : float, default=1.0
+        Minimum MAP mean expression (in count space) for a gene to pass
+        the filter.  Genes below this threshold in *both* conditions are
+        pooled into "other".
+    counts_A : jnp.ndarray, optional
+        Count matrix for condition A.  Required when the model uses
+        amortized capture probability.
+    counts_B : jnp.ndarray, optional
+        Count matrix for condition B.  Required when the model uses
+        amortized capture probability.
+
+    Returns
+    -------
+    np.ndarray, shape ``(D,)``
+        Boolean mask — ``True`` for genes that pass the expression
+        filter.
+    """
+    map_A = results_A.get_component(component_A).get_map(
+        use_mean=True, canonical=True, verbose=False, counts=counts_A
+    )
+    map_B = results_B.get_component(component_B).get_map(
+        use_mean=True, canonical=True, verbose=False, counts=counts_B
+    )
+
+    mu_A = np.asarray(_extract_mu(map_A))
+    mu_B = np.asarray(_extract_mu(map_B))
+
+    return (mu_A >= min_mean_expression) | (mu_B >= min_mean_expression)
+
+
+# ------------------------------------------------------------------------------
+
+
+def _extract_mu(map_estimates: dict) -> jnp.ndarray:
+    """Extract or derive mean expression ``mu`` from MAP estimates.
+
+    For parameterizations that include ``mu`` directly (``linked``,
+    ``mean_prob``, ``mean_odds``, ``odds_ratio``) the value is returned
+    as-is.  For the ``standard`` parameterization (``r`` and ``p`` only),
+    ``mu`` is computed as ``r * p / (1 - p)`` from the negative-binomial
+    mean formula.
+
+    Parameters
+    ----------
+    map_estimates : dict
+        MAP parameter dictionary returned by ``get_map(canonical=True)``.
+
+    Returns
+    -------
+    jnp.ndarray
+        Mean expression vector, shape ``(D,)`` (or ``(K, D)`` for
+        mixture models before component slicing).
+
+    Raises
+    ------
+    ValueError
+        If neither ``mu`` nor both ``r`` and ``p`` are present.
+    """
+    if "mu" in map_estimates:
+        return map_estimates["mu"]
+
+    if "r" in map_estimates and "p" in map_estimates:
+        r = map_estimates["r"]
+        p = map_estimates["p"]
+        return r * p / (1.0 - p)
+
+    available = sorted(map_estimates.keys())
+    raise ValueError(
+        "Cannot determine mean expression: MAP estimates contain neither "
+        "'mu' nor both 'r' and 'p'.  "
+        f"Available keys: {available}"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -54,6 +229,7 @@ def compute_clr_differences(
     n_samples_dirichlet: int = 1,
     rng_key=None,
     batch_size: int = 2048,
+    gene_mask: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """
     Compute CLR-space posterior differences from Dirichlet concentration samples.
@@ -90,11 +266,18 @@ def compute_clr_differences(
         JAX PRNG key.  If ``None``, uses ``jax.random.PRNGKey(0)``.
     batch_size : int, default=2048
         Number of posterior samples per batched Dirichlet sampling call.
+    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+        Boolean mask selecting genes to keep.  Genes marked ``False``
+        are aggregated into a single "other" pseudo-gene before
+        Dirichlet sampling.  The "other" column is dropped from the
+        returned differences, so the output has ``D_kept`` columns.
+        If ``None`` (default), all genes are kept.
 
     Returns
     -------
-    jnp.ndarray, shape ``(N_total, D)``
+    jnp.ndarray, shape ``(N_total, D)`` or ``(N_total, D_kept)``
         CLR-space differences.  ``N_total = N * n_samples_dirichlet``.
+        When ``gene_mask`` is provided, ``D_kept = gene_mask.sum()``.
 
     Raises
     ------
@@ -130,6 +313,10 @@ def compute_clr_differences(
     r_A = r_A[:N]
     r_B = r_B[:N]
 
+    # --- Gene aggregation (if requested) ---
+    if gene_mask is not None:
+        r_A, r_B = _aggregate_genes(r_A, r_B, gene_mask)
+
     # --- Dirichlet sampling ---
     if paired:
         # Same RNG sub-key per sample index preserves joint structure
@@ -153,6 +340,10 @@ def compute_clr_differences(
 
     # --- Paired differences ---
     delta = clr_A - clr_B
+
+    # --- Drop the "other" pseudo-gene column ---
+    if gene_mask is not None:
+        delta = delta[:, :-1]
 
     return delta
 
