@@ -21,11 +21,16 @@ Diagnostics computed
 - **Jarque-Bera p-value**: ``1 - chi2.cdf(JB, df=2)``.  Small values
   indicate departure from Gaussianity.
 
-Suggested thresholds (rules of thumb)
---------------------------------------
+Suggested descriptive thresholds
+---------------------------------
 - |skewness| > 0.5  : moderate skewness
 - |excess kurtosis| > 1.0  : moderate tail weight
-- JB p-value < 0.05 (after BH correction across genes): formal rejection
+- JB statistic : continuous score for ranking genes by non-Gaussianity
+
+Note: The JB p-value is retained for convenience but should **not** be
+thresholded with frequentist multiple-testing corrections (BH, Bonferroni,
+etc.) in a Bayesian workflow.  Use skewness/kurtosis directly as
+descriptive flags.
 
 References
 ----------
