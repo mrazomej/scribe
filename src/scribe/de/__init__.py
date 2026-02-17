@@ -6,27 +6,54 @@ expression analysis that is:
 - **Compositional**: Works in CLR/ILR space (reference-invariant).
 - **Correlation-aware**: Uses low-rank covariance structure.
 - **Fully Bayesian**: Provides exact posterior probabilities, not p-values.
+- **Assumption-free** (empirical path): Monte Carlo estimation from
+  posterior samples with no Gaussian assumption.
 
 Quick start
 -----------
+Parametric (analytic Gaussian):
+
 >>> from scribe.de import compare
 >>> de = compare(model_A, model_B, gene_names=gene_names)
 >>> results = de.gene_level(tau=jnp.log(1.1))
 >>> is_de = de.call_genes(lfsr_threshold=0.05)
->>> print(de.summary())
 
-Main components
+Empirical (non-parametric):
+
+>>> de = compare(
+...     r_samples_A, r_samples_B,
+...     method="empirical",
+...     component_A=0, component_B=0,
+...     gene_names=gene_names,
+... )
+>>> results = de.gene_level(tau=jnp.log(1.1))
+
+Class hierarchy
 ---------------
-- ``ScribeDEResults`` / ``compare()``: Structured pairwise comparison.
+- ``ScribeDEResults`` — abstract base with shared methods
+  (``call_genes``, ``compute_pefp``, ``find_threshold``, ``summary``).
+- ``ScribeParametricDEResults`` — analytic Gaussian path from low-rank
+  ALR parameters.
+- ``ScribeEmpiricalDEResults`` — Monte Carlo path from posterior CLR
+  difference samples.
+
+Other components
+----------------
 - Gene-level differential expression.
 - Gene-set / pathway analysis via compositional balances.
 - Bayesian error control (lfsr, PEFP).
 - Coordinate transformations (ALR, CLR, ILR).
 - Gaussianity diagnostics (skewness, kurtosis, Jarque-Bera).
+- Empirical DE from posterior samples (non-parametric).
 """
 
-# Results class and factory
-from .results import ScribeDEResults, compare
+# Results class hierarchy and factory
+from .results import (
+    ScribeDEResults,
+    ScribeParametricDEResults,
+    ScribeEmpiricalDEResults,
+    compare,
+)
 
 # Parameter extraction
 from ._extract import extract_alr_params
@@ -64,9 +91,17 @@ from ._error_control import (
 # Gaussianity diagnostics
 from ._gaussianity import gaussianity_diagnostics
 
+# Empirical (non-parametric) DE
+from ._empirical import (
+    compute_clr_differences,
+    empirical_differential_expression,
+)
+
 __all__ = [
-    # Results
+    # Results hierarchy
     "ScribeDEResults",
+    "ScribeParametricDEResults",
+    "ScribeEmpiricalDEResults",
     "compare",
     # Extraction
     "extract_alr_params",
@@ -90,4 +125,7 @@ __all__ = [
     "format_de_table",
     # Diagnostics
     "gaussianity_diagnostics",
+    # Empirical (non-parametric) DE
+    "compute_clr_differences",
+    "empirical_differential_expression",
 ]

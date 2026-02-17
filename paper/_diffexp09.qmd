@@ -1,0 +1,644 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+## Gaussianity Diagnostics and Non-Parametric Differential Expression {#sec-diffexp-nonparametric}
+
+The differential expression framework developed in Sections 1--8 rests on the
+assumption that the posterior predictive distribution of normalized gene
+expression, when transformed to additive log-ratio (ALR) or centered log-ratio
+(CLR) coordinates, is well-approximated by a multivariate Gaussian. Under this
+assumption, the difference distribution $\underline{\Delta}$ is Gaussian
+(@eq-diffexp-delta-distribution), and all downstream quantities---lfsr, tail
+probabilities, PEFP thresholds---follow from closed-form evaluation of the
+Gaussian CDF.
+
+In practice, however, the Gaussian approximation may fail for a non-trivial
+fraction of genes. Genes with very low expression, those exhibiting
+multimodality due to zero-inflation, or those with extreme sparsity across cells
+can produce posterior predictive distributions with pronounced skewness, heavy
+tails, or other departures from normality. When the Gaussian assumption breaks
+down, the analytic lfsr computed via $\Phi(-|z_g|)$
+(@eq-diffexp-lfsr-formula) may be miscalibrated, leading to either overly
+liberal or overly conservative gene calls.
+
+In this section, we develop two complementary tools to address this challenge:
+
+1. **Gaussianity diagnostics** (Sections 9.1--9.3) that quantify, for each
+gene, the degree to which the ALR marginals deviate from Gaussianity. These
+diagnostics serve as quality control, flagging genes for which the parametric
+framework may be unreliable.
+
+2. **Non-parametric empirical differential expression** (Sections 9.4--9.9) that
+computes all DE statistics by direct Monte Carlo counting over posterior
+samples---requiring no distributional assumptions whatsoever.
+
+Together, these tools provide a complete fallback strategy: diagnose which genes
+violate the Gaussian assumption, then route those genes (or the entire analysis)
+through the assumption-free empirical path.
+
+### Gaussianity Diagnostics
+
+#### Motivation and scope
+
+Recall that the parametric DE framework assumes
+
+$$
+z_{g,\text{ALR}}^{(s)} \sim \mathcal{N}(\mu_{g,\text{ALR}},
+\sigma_{g,\text{ALR}}^2) \quad \text{for each gene } g = 1, \ldots, D-1,
+$${#eq-diffexp-np-gaussian-assumption}
+
+where $z_{g,\text{ALR}}^{(s)}$ denotes the ALR coordinate of gene $g$ in
+posterior sample $s$. The key observation is that **non-Gaussianity in ALR space
+implies non-Gaussianity in CLR space**, because the CLR transformation is a
+linear (centering) operation applied to the ALR representation
+(@eq-diffexp-alr-to-clr-claim). Since linear transformations of non-Gaussian
+random variables are generally non-Gaussian, any departure from normality
+detected in the ALR marginals propagates to the CLR marginals that are used for
+gene-level inference.
+
+The converse, however, does not hold in general: centering can attenuate but not
+eliminate non-Gaussianity, so ALR diagnostics provide a conservative test. If
+the ALR marginal for gene $g$ passes the Gaussianity check, the corresponding
+CLR marginal is at least as well-behaved.
+
+We therefore compute all diagnostics in ALR space, which provides the most
+rigorous assessment.
+
+#### Per-gene diagnostic statistics
+
+Given $N$ posterior samples of the ALR coordinates, we compute three diagnostic
+statistics for each gene $g$. Let $z_g^{(1)}, z_g^{(2)}, \ldots, z_g^{(N)}$
+denote the $N$ ALR samples for gene $g$, with sample mean
+$\bar{z}_g = \frac{1}{N}\sum_{s=1}^{N} z_g^{(s)}$ and sample standard
+deviation
+$\hat{\sigma}_g = \sqrt{\frac{1}{N-1}\sum_{s=1}^{N}(z_g^{(s)} -
+\bar{z}_g)^2}$.
+
+**Sample skewness.** The sample skewness measures the asymmetry of the empirical
+distribution. For gene $g$, we define
+
+$$
+S_g = \frac{1}{N} \sum_{s=1}^{N} \left(
+\frac{z_g^{(s)} - \bar{z}_g}{\hat{\sigma}_g}
+\right)^3.
+$${#eq-diffexp-np-skewness}
+
+Under the null hypothesis that the samples are drawn from a Gaussian
+distribution, the population skewness is exactly zero. The sample skewness
+$S_g$ is asymptotically normal with
+
+$$
+\sqrt{N} \, S_g \xrightarrow{d} \mathcal{N}\!\left(0, 6\right)
+\quad \text{as } N \to \infty,
+$${#eq-diffexp-np-skewness-clt}
+
+which follows from the central limit theorem applied to the third standardized
+moment. Positive values of $S_g$ indicate a right-skewed distribution (heavy
+right tail), while negative values indicate left skew.
+
+**Excess kurtosis.** The excess kurtosis measures the heaviness of the tails
+relative to a Gaussian. For gene $g$:
+
+$$
+K_g = \frac{1}{N} \sum_{s=1}^{N} \left(
+\frac{z_g^{(s)} - \bar{z}_g}{\hat{\sigma}_g}
+\right)^4 - 3.
+$${#eq-diffexp-np-kurtosis}
+
+The subtraction of 3 ensures that the Gaussian distribution has excess kurtosis
+zero. The sample excess kurtosis is asymptotically normal:
+
+$$
+\sqrt{N} \, K_g \xrightarrow{d} \mathcal{N}\!\left(0, 24\right)
+\quad \text{as } N \to \infty.
+$${#eq-diffexp-np-kurtosis-clt}
+
+Positive values of $K_g$ indicate heavier tails than the Gaussian
+(*leptokurtic*), while negative values indicate lighter tails
+(*platykurtic*). For the purpose of DE calibration, heavy tails are
+particularly concerning because they inflate the probability mass in the
+extremes, which directly affects lfsr computation.
+
+**Jarque-Bera statistic.** The Jarque-Bera (JB) statistic [@jarque1987]
+combines skewness and kurtosis into a single omnibus test for Gaussianity:
+
+$$
+\text{JB}_g = \frac{N}{6}\left(S_g^2 + \frac{K_g^2}{4}\right).
+$${#eq-diffexp-np-jarque-bera}
+
+This statistic has a natural interpretation as a weighted sum of squared
+deviations from Gaussian moment conditions. The weight on $K_g^2$ is $1/4$
+because the asymptotic variance of $K_g$ under Gaussianity is $24/N$, which is
+four times the asymptotic variance $6/N$ of $S_g$; the factor $N/6$ normalizes
+by the variance of $S_g$.
+
+**Asymptotic distribution.** Under the null hypothesis that the $z_g^{(s)}$ are
+i.i.d. Gaussian, $S_g$ and $K_g$ are asymptotically independent (a classical
+result; see @jarque1987). Writing
+
+$$
+U_g = \sqrt{\frac{N}{6}} \, S_g, \qquad
+V_g = \sqrt{\frac{N}{24}} \, K_g,
+$${#eq-diffexp-np-jb-standardized}
+
+we have $U_g \xrightarrow{d} \mathcal{N}(0, 1)$ and
+$V_g \xrightarrow{d} \mathcal{N}(0, 1)$ independently
+(from @eq-diffexp-np-skewness-clt and @eq-diffexp-np-kurtosis-clt). Therefore,
+
+$$
+\text{JB}_g = U_g^2 + V_g^2 \xrightarrow{d} \chi^2(2)
+\quad \text{as } N \to \infty.
+$${#eq-diffexp-np-jb-asymptotic}
+
+The corresponding p-value is
+
+$$
+p_g^{\text{JB}} = 1 - F_{\chi^2(2)}(\text{JB}_g),
+$${#eq-diffexp-np-jb-pvalue}
+
+where $F_{\chi^2(2)}$ is the CDF of the chi-squared distribution with 2
+degrees of freedom. Small values of $p_g^{\text{JB}}$ indicate departure from
+Gaussianity.
+
+#### Descriptive thresholds versus formal testing
+
+In the Bayesian framework of our DE analysis, the JB p-value should be
+interpreted as a descriptive diagnostic rather than a formal frequentist test
+statistic. There are two reasons for this.
+
+First, applying frequentist multiple testing corrections (e.g.,
+Benjamini-Hochberg) to JB p-values across $D$ genes would be conceptually
+inconsistent with the Bayesian treatment of DE itself. We are not performing a
+hypothesis test about Gaussianity in the frequentist sense; rather, we are
+assessing the quality of an approximation that underlies our Bayesian
+inference.
+
+Second, the JB test has known limitations: it is not well-calibrated for small
+$N$, it has low power against certain non-Gaussian alternatives (e.g., symmetric
+heavy-tailed distributions for which $S_g \approx 0$), and it cannot detect
+multimodality when the modes are symmetric.
+
+We therefore recommend a pragmatic approach based on descriptive thresholds for
+the individual moment diagnostics:
+
+- $|S_g| > 0.5$: moderate skewness, suggesting asymmetric departure from
+Gaussianity.
+- $|K_g| > 1.0$: moderate excess kurtosis, suggesting heavy or light tails.
+
+These thresholds are conservative and reflect conventional guidelines in
+applied statistics. Genes failing either criterion are flagged as potentially
+non-Gaussian. The JB statistic itself serves as a useful continuous score for
+ranking genes by the severity of non-Gaussianity; the larger the JB value, the
+more suspect the Gaussian approximation.
+
+#### Computational complexity of diagnostics
+
+All three diagnostic statistics are computed from the same set of standardized
+residuals $\tilde{z}_g^{(s)} = (z_g^{(s)} - \bar{z}_g) / \hat{\sigma}_g$.
+The computation proceeds in a single pass over the $(N, D{-}1)$ sample matrix:
+
+1. **Mean and variance** ($O(ND)$): Compute $\bar{z}_g$ and $\hat{\sigma}_g^2$
+for each gene via streaming sums.
+
+2. **Standardization** ($O(ND)$): Compute $\tilde{z}_g^{(s)}$ for all
+$(s, g)$.
+
+3. **Powers** ($O(ND)$): Accumulate $\sum_s (\tilde{z}_g^{(s)})^3$ and
+$\sum_s (\tilde{z}_g^{(s)})^4$ simultaneously.
+
+4. **JB assembly** ($O(D)$): Combine $S_g$, $K_g$ into $\text{JB}_g$ and
+evaluate the chi-squared CDF.
+
+| **Operation**          | **Complexity** | **Memory** |
+| ---------------------- | -------------- | ---------- |
+| Mean and variance      | $O(ND)$        | $O(D)$     |
+| Standardized powers    | $O(ND)$        | $O(D)$     |
+| JB and p-value         | $O(D)$         | $O(D)$     |
+| **Total**              | $O(ND)$        | $O(D)$     |
+
+All operations are fully vectorized across the gene dimension and execute as a
+single fused computation on GPU hardware with no per-gene loops.
+
+### Non-Parametric Empirical Differential Expression
+
+When the Gaussianity diagnostics indicate that a substantial fraction of genes
+violate the Gaussian assumption---or when one wishes to avoid distributional
+assumptions entirely---we provide an alternative DE path based on direct Monte
+Carlo estimation from posterior samples. This approach requires no parametric
+form for the posterior predictive distribution; it only requires the ability to
+draw samples from it.
+
+#### From posterior samples to CLR differences
+
+The starting point is the fitted Dirichlet-Multinomial model, which yields
+posterior samples of the Dirichlet concentration parameters:
+
+$$
+\underline{r}^{(s)} \sim \pi(\underline{r} \mid \text{data}),
+\quad s = 1, 2, \ldots, N.
+$${#eq-diffexp-np-posterior-samples}
+
+For each posterior sample, we draw from the Dirichlet predictive distribution
+to obtain a composition on the simplex:
+
+$$
+\underline{\rho}^{(s)} \sim \text{Dir}(\underline{r}^{(s)}),
+\quad s = 1, 2, \ldots, N,
+$${#eq-diffexp-np-dirichlet-draw}
+
+where $\underline{\rho}^{(s)} = (\rho_1^{(s)}, \rho_2^{(s)}, \ldots,
+\rho_D^{(s)})$ lies on the $(D{-}1)$-simplex. This two-step
+sampling---posterior draw followed by predictive draw---correctly marginalizes
+over parameter uncertainty.
+
+We then apply the centered log-ratio transformation to map from the simplex to
+an unconstrained space:
+
+$$
+\underline{z}_{\text{CLR}}^{(s)} = \text{CLR}(\underline{\rho}^{(s)}) =
+\log \underline{\rho}^{(s)} -
+\frac{1}{D}\sum_{g=1}^{D} \log \rho_g^{(s)} \cdot \underline{1},
+$${#eq-diffexp-np-clr-transform}
+
+where $\underline{1}$ is the vector of ones. The CLR coordinates sum to zero
+by construction.
+
+For two conditions A and B with posterior samples
+$\underline{r}_A^{(s)}$ and $\underline{r}_B^{(s)}$, we form the CLR
+differences gene by gene:
+
+$$
+\Delta_g^{(s)} = z_{A,g,\text{CLR}}^{(s)} - z_{B,g,\text{CLR}}^{(s)},
+\quad g = 1, \ldots, D, \quad s = 1, \ldots, N.
+$${#eq-diffexp-np-delta-samples}
+
+The matrix $\underline{\underline{\Delta}} \in \mathbb{R}^{N \times D}$ of CLR
+differences constitutes the empirical posterior of the gene-level effect. All
+subsequent DE statistics are computed from this matrix by counting.
+
+#### Validity of sample pairing
+
+A critical question is whether the index-pairing used in
+@eq-diffexp-np-delta-samples---matching sample $s$ from condition A with sample
+$s$ from condition B---is valid. We now establish this rigorously for both the
+independent-model and within-mixture settings.
+
+**Case 1: Independent models.** When conditions A and B have been fitted with
+independent models on independent data, the joint posterior factorizes:
+
+$$
+\pi(\underline{r}_A, \underline{r}_B \mid \text{data}_A, \text{data}_B)
+= \pi(\underline{r}_A \mid \text{data}_A)
+\cdot \pi(\underline{r}_B \mid \text{data}_B).
+$${#eq-diffexp-np-posterior-independence}
+
+Let $f(\cdot)$ denote the composition of Dirichlet sampling and CLR
+transformation: $f(\underline{r}) = \text{CLR}(\text{Dir}(\underline{r}))$.
+The posterior of the difference $\Delta_g$ is defined by the induced measure:
+
+$$
+\pi(\Delta_g \mid \text{data}_A, \text{data}_B) =
+\int \delta\!\left(\Delta_g - [f(\underline{r}_A) -
+f(\underline{r}_B)]_g\right) \,
+\pi(\underline{r}_A \mid \text{data}_A) \,
+\pi(\underline{r}_B \mid \text{data}_B) \,
+d\underline{r}_A \, d\underline{r}_B,
+$${#eq-diffexp-np-delta-posterior}
+
+where $\delta(\cdot)$ is the Dirac delta. By @eq-diffexp-np-posterior-independence,
+this integral is over the product measure
+$\pi(\underline{r}_A \mid \text{data}_A) \otimes
+\pi(\underline{r}_B \mid \text{data}_B)$.
+
+Now, suppose we have $N$ i.i.d. samples from each marginal posterior:
+$\{\underline{r}_A^{(s)}\}_{s=1}^{N}$ and
+$\{\underline{r}_B^{(s)}\}_{s=1}^{N}$. For any permutation $\sigma$ of
+$\{1, \ldots, N\}$, the pairs
+$\{(\underline{r}_A^{(s)}, \underline{r}_B^{(\sigma(s))})\}_{s=1}^{N}$ are
+i.i.d. draws from the product measure, because $\underline{r}_A^{(s)}$ and
+$\underline{r}_B^{(\sigma(s))}$ are independent regardless of $\sigma$. By
+the strong law of large numbers applied to the product measure, the empirical
+distribution of
+
+$$
+\tilde{\Delta}_g^{(s)} = [f(\underline{r}_A^{(s)}) -
+f(\underline{r}_B^{(\sigma(s))})]_g, \quad s = 1, \ldots, N,
+$${#eq-diffexp-np-permuted-delta}
+
+converges almost surely to $\pi(\Delta_g \mid \text{data}_A, \text{data}_B)$
+as $N \to \infty$, for any fixed permutation $\sigma$.
+
+In particular, the identity permutation $\sigma(s) = s$ is a valid choice.
+Index-pairing is therefore an arbitrary but correct pairing strategy for
+independent models. $\square$
+
+**Case 2: Within-mixture comparisons.** When both conditions are components of
+a single mixture model, the posterior samples are drawn jointly:
+
+$$
+(\underline{r}_1^{(s)}, \underline{r}_2^{(s)}, \ldots,
+\underline{r}_K^{(s)}) \sim
+\pi(\underline{r}_1, \ldots, \underline{r}_K \mid \text{data}),
+$${#eq-diffexp-np-joint-posterior}
+
+where $K$ is the number of mixture components. In this setting, the parameters
+for different components within the same posterior draw are generally
+**not independent**: they share information through the likelihood (all
+components explain the same observed cells) and through the prior.
+
+For comparing components $k$ and $k'$, we must preserve the sample-index
+pairing:
+
+$$
+\Delta_g^{(s)} = z_{k,g,\text{CLR}}^{(s)} - z_{k',g,\text{CLR}}^{(s)},
+$${#eq-diffexp-np-within-mixture-delta}
+
+because the joint posterior structure between components $k$ and $k'$ is only
+correctly represented when both are drawn from the same posterior sample $s$.
+Permuting the samples would destroy the correlation structure and produce
+incorrect posterior estimates of the difference.
+
+In our implementation, this is enforced by the ``paired=True`` flag, which uses
+the same per-sample RNG sub-key for both components when drawing from the
+Dirichlet predictive, ensuring that the joint structure is preserved throughout
+the sampling pipeline.
+
+#### Empirical gene-level statistics
+
+Given $N$ samples $\Delta_g^{(1)}, \Delta_g^{(2)}, \ldots, \Delta_g^{(N)}$ of
+the CLR difference for gene $g$, we compute all DE statistics by direct
+counting. No distributional assumption is required.
+
+**Posterior mean.** The posterior mean of the CLR difference is estimated by the
+sample mean:
+
+$$
+\hat{\mu}_{\Delta,g} = \frac{1}{N}\sum_{s=1}^{N} \Delta_g^{(s)}.
+$${#eq-diffexp-np-mean}
+
+**Posterior standard deviation.** The posterior standard deviation is estimated
+by the sample standard deviation with Bessel's correction:
+
+$$
+\hat{\sigma}_{\Delta,g} = \sqrt{
+\frac{1}{N-1}\sum_{s=1}^{N}
+\left(\Delta_g^{(s)} - \hat{\mu}_{\Delta,g}\right)^2
+}.
+$${#eq-diffexp-np-sd}
+
+**Probability of positive effect.** The posterior probability that gene $g$ is
+up-regulated in condition A relative to B is estimated by the empirical
+frequency:
+
+$$
+\hat{P}(\Delta_g > 0 \mid \text{data}) = \frac{1}{N}\sum_{s=1}^{N}
+\mathbf{1}\!\left[\Delta_g^{(s)} > 0\right].
+$${#eq-diffexp-np-prob-positive}
+
+**Empirical local false sign rate.** The lfsr, defined in
+@eq-diffexp-lfsr-definition as the posterior probability of the minority sign,
+is estimated by
+
+$$
+\widehat{\text{lfsr}}_g = \min\!\left(
+\hat{P}(\Delta_g > 0 \mid \text{data}), \;
+1 - \hat{P}(\Delta_g > 0 \mid \text{data})
+\right).
+$${#eq-diffexp-np-lfsr}
+
+This is precisely the smaller of the empirical probabilities of positive and
+negative effects. Note that no Gaussian CDF evaluation is involved.
+
+**Probability of practical significance.** For a practical significance
+threshold $\tau \geq 0$, the probabilities of upward and downward practical
+effects are
+
+$$
+\hat{P}(\Delta_g > \tau \mid \text{data}) = \frac{1}{N}\sum_{s=1}^{N}
+\mathbf{1}\!\left[\Delta_g^{(s)} > \tau\right],
+$${#eq-diffexp-np-prob-above-tau}
+
+$$
+\hat{P}(\Delta_g < -\tau \mid \text{data}) = \frac{1}{N}\sum_{s=1}^{N}
+\mathbf{1}\!\left[\Delta_g^{(s)} < -\tau\right],
+$${#eq-diffexp-np-prob-below-tau}
+
+and the total probability of practical significance is
+
+$$
+\hat{P}(|\Delta_g| > \tau \mid \text{data}) =
+\hat{P}(\Delta_g > \tau \mid \text{data}) +
+\hat{P}(\Delta_g < -\tau \mid \text{data}).
+$${#eq-diffexp-np-prob-effect}
+
+**Empirical lfsr with practical significance.** Analogous to the parametric
+$\text{lfsr}_g(\tau)$ defined in @eq-diffexp-lfsr-tau, the empirical
+practical-significance lfsr is
+
+$$
+\widehat{\text{lfsr}}_g(\tau) = 1 - \max\!\left(
+\hat{P}(\Delta_g > \tau \mid \text{data}), \;
+\hat{P}(\Delta_g < -\tau \mid \text{data})
+\right).
+$${#eq-diffexp-np-lfsr-tau}
+
+When $\tau = 0$, this reduces to the standard empirical lfsr
+(@eq-diffexp-np-lfsr), since
+$\max(P(\Delta_g > 0), P(\Delta_g < 0)) = 1 - \text{lfsr}_g$.
+
+**Consistency with the parametric framework.** The empirical lfsr
+$\widehat{\text{lfsr}}_g$ estimates the same quantity as the parametric lfsr
+$\text{lfsr}_g$---namely, the posterior probability of the minority sign. When
+the Gaussian assumption holds, the two estimates converge to the same value as
+$N \to \infty$. When it does not hold, the empirical estimate is correct while
+the parametric estimate may be biased.
+
+#### Monte Carlo resolution and standard errors
+
+The empirical lfsr estimator $\widehat{\text{lfsr}}_g$ is a sample proportion.
+Its precision is governed by the binomial standard error.
+
+**Standard error of the empirical lfsr.** Define $p_g = P(\Delta_g > 0 \mid
+\text{data})$ (the true posterior probability of positive effect). The
+empirical estimator $\hat{p}_g = \frac{1}{N}\sum_s \mathbf{1}[\Delta_g^{(s)}
+> 0]$ has variance $\text{Var}(\hat{p}_g) = p_g(1 - p_g)/N$. The lfsr is
+$\ell_g = \min(p_g, 1 - p_g)$, and its estimator
+$\hat{\ell}_g = \min(\hat{p}_g, 1 - \hat{p}_g)$. By the delta method (since
+$\ell_g$ is a differentiable function of $p_g$ away from $p_g = 1/2$), the
+standard error of $\hat{\ell}_g$ is
+
+$$
+\text{SE}(\widehat{\text{lfsr}}_g) \approx
+\sqrt{\frac{\ell_g (1 - \ell_g)}{N}}.
+$${#eq-diffexp-np-lfsr-se}
+
+This expression is exact for $p_g \neq 1/2$ and provides an upper bound at
+$p_g = 1/2$ (where $\ell_g = 1/2$ and $\text{SE} = 1/(2\sqrt{N})$).
+
+**Numerical examples.** For $N = 10{,}000$ posterior samples:
+
+| True lfsr | SE of empirical lfsr | Relative SE |
+| --------- | -------------------- | ----------- |
+| 0.50      | 0.005                | 1.0%        |
+| 0.10      | 0.003                | 3.0%        |
+| 0.05      | 0.0022               | 4.3%        |
+| 0.01      | 0.001                | 10%         |
+| 0.001     | 0.0003               | 32%         |
+
+For most practical purposes, $N = 10{,}000$ provides sufficient resolution to
+distinguish truly significant genes (lfsr $\lesssim 0.01$) from non-significant
+ones. The standard error for lfsr $= 0.01$ is approximately 0.001, which is
+well below the typical PEFP threshold of $\alpha = 0.05$.
+
+**Minimum detectable lfsr.** The smallest non-zero empirical lfsr is $1/N$,
+achieved when all $N$ samples agree on the sign. For $N = 10{,}000$, this gives
+a resolution floor of $10^{-4}$. Genes with true lfsr smaller than $1/N$
+cannot be distinguished from lfsr $= 0$ by the empirical method. In contrast,
+the parametric lfsr can represent arbitrarily small values via the Gaussian CDF.
+This resolution difference is the fundamental tradeoff between the parametric
+and empirical approaches.
+
+**Confidence interval.** Using the normal approximation to the binomial, an
+approximate $(1-\alpha)$ confidence interval for the true lfsr is
+
+$$
+\widehat{\text{lfsr}}_g \pm z_{\alpha/2}
+\sqrt{\frac{\widehat{\text{lfsr}}_g
+(1 - \widehat{\text{lfsr}}_g)}{N}},
+$${#eq-diffexp-np-lfsr-ci}
+
+where $z_{\alpha/2}$ is the $(1 - \alpha/2)$-quantile of the standard normal.
+
+#### Compatibility with PEFP error control
+
+A key design property of the empirical DE approach is that the lfsr values it
+produces are **fully compatible** with the PEFP error control machinery
+developed in Section 6. The PEFP (@eq-diffexp-pefp-lfsr) is defined as
+
+$$
+\text{PEFP}(S) = \frac{1}{|S|} \sum_{g \in S} \text{lfsr}_g,
+$$
+
+which depends only on the numerical lfsr values, not on how they were computed.
+The threshold-finding algorithm (@eq-diffexp-algorithm-step1 through
+@eq-diffexp-algorithm-step4) and the monotonicity proof
+(@eq-diffexp-pefp-monotone) are purely algebraic properties of the sorted lfsr
+vector and apply identically to empirical lfsr values.
+
+Therefore, the same ``call_de_genes``, ``compute_pefp``, and
+``find_lfsr_threshold`` functions can be used with either parametric or
+empirical lfsr values, with no modification.
+
+#### Multiple Dirichlet draws per posterior sample
+
+In certain settings, one may wish to draw multiple compositions from the
+Dirichlet predictive for each posterior sample of $\underline{r}$. If we draw
+$M$ compositions per posterior sample, the total number of CLR difference
+samples becomes $N_{\text{total}} = N \times M$, and all the statistics in
+this section are computed over the expanded sample.
+
+This strategy can improve the resolution of the empirical lfsr without
+requiring additional (computationally expensive) posterior samples. However, the
+$M$ Dirichlet draws from a single posterior sample $\underline{r}^{(s)}$ are
+conditionally independent given $\underline{r}^{(s)}$ but not marginally
+independent; they share the same parameter value. As a result, the effective
+sample size for posterior uncertainty quantification remains $N$ (the number of
+distinct posterior samples), even though the nominal sample count is $NM$.
+
+The primary benefit of $M > 1$ is in resolving the Dirichlet sampling noise
+(which is distinct from posterior uncertainty). For most applications with
+$N \geq 1{,}000$, $M = 1$ provides sufficient resolution, and we recommend
+this as the default.
+
+#### Computational complexity
+
+The computational cost of the empirical DE pipeline consists of three stages:
+
+**Stage 1: Dirichlet sampling** ($O(ND)$ per batch). For each posterior sample
+$\underline{r}^{(s)} \in \mathbb{R}^D$, drawing from
+$\text{Dir}(\underline{r}^{(s)})$ requires $D$ gamma variates followed by
+normalization. With batched sampling (processing $B$ samples simultaneously),
+the memory footprint is $O(BD)$ and the total work is $O(ND)$.
+
+**Stage 2: CLR transformation** ($O(ND)$). Applying the CLR transform to the
+$N \times D$ matrix of simplex samples requires computing the geometric mean
+(one reduction per row) and subtracting it.
+
+**Stage 3: Counting statistics** ($O(ND)$). Computing means, standard
+deviations, and indicator sums over $N$ samples for $D$ genes.
+
+| **Stage**              | **Complexity** | **Memory** | **GPU-parallelizable** |
+| ---------------------- | -------------- | ---------- | ---------------------- |
+| Dirichlet sampling     | $O(ND)$        | $O(BD)$    | Yes (batched)          |
+| CLR transformation     | $O(ND)$        | $O(ND)$    | Yes                    |
+| Counting statistics    | $O(ND)$        | $O(D)$     | Yes                    |
+| **Total**              | $O(ND)$        | $O(BD)$    | Fully                  |
+
+where $B$ is the batch size for Dirichlet sampling (default: 2048).
+
+**Comparison to the parametric path.** The parametric DE requires fitting the
+logistic-normal approximation ($O(ND)$ for the SVD-based low-rank fit, done
+once) and then evaluates per-gene statistics in $O(kD)$ time, where $k$ is the
+low-rank dimension. The empirical path is $O(ND)$ throughout. For typical
+values of $N = 10{,}000$, $D = 20{,}000$, and $k = 32$:
+
+| **Method**   | **One-time cost**   | **Per-gene cost** | **Total for $D$ genes** | **Assumptions** |
+| ------------ | ------------------- | ----------------- | ----------------------- | --------------- |
+| Parametric   | $O(NDk)$ SVD fit    | $O(k)$            | $O(kD) \approx 6 \times 10^5$ | Gaussian marginals |
+| Empirical    | $O(ND)$ sampling    | $O(N)$            | $O(ND) \approx 2 \times 10^8$ | None            |
+
+The empirical approach is approximately $N/k \approx 300\times$ more expensive
+per analysis, but requires no distributional assumptions. On modern GPU
+hardware, the empirical analysis for $D = 20{,}000$ genes with $N = 10{,}000$
+samples completes in seconds, making the additional cost negligible in practice.
+
+### Recommended Workflow
+
+The parametric and empirical DE paths are complementary, and we recommend the
+following workflow for a thorough analysis:
+
+**Step 1: Fit models and extract parameters.** Perform variational inference
+(or MCMC) on each condition to obtain posterior samples of the Dirichlet
+concentration parameters $\underline{r}$.
+
+**Step 2: Fit logistic-normal approximation.** Use the low-rank logistic-normal
+fitting procedure (Section 1) to obtain Gaussian parameters $(\underline{\mu},
+\underline{\underline{W}}, \underline{d})$ for each condition. The Gaussianity
+diagnostics are computed automatically during this step.
+
+**Step 3: Assess Gaussianity.** Examine the per-gene Gaussianity diagnostics
+(skewness, excess kurtosis, JB statistic). Compute the fraction of genes
+passing the descriptive thresholds ($|S_g| \leq 0.5$ and $|K_g| \leq 1.0$).
+
+**Step 4: Route to appropriate DE method.**
+
+- If **most genes pass** the Gaussianity check (e.g., $>80\%$): use the
+parametric DE path for the full gene set. The parametric path is faster and
+provides finer lfsr resolution.
+
+- If a **substantial fraction fails** (e.g., $>30\%$): use the empirical DE
+path for the full gene set. The small additional computational cost is
+justified by the elimination of distributional assumptions.
+
+- **Hybrid strategy**: use the parametric path for well-behaved genes and the
+empirical path for flagged genes. Both paths produce lfsr values on the same
+scale, so they can be combined into a single vector for PEFP threshold finding.
+
+**Step 5: Call DE genes and control error.** Apply the PEFP algorithm (Section
+6) to the lfsr values---whether from the parametric path, the empirical path,
+or both---to identify the set of differentially expressed genes at the desired
+error level.
+
+The hybrid strategy deserves particular attention. Since both the parametric
+lfsr (@eq-diffexp-lfsr-formula) and the empirical lfsr
+(@eq-diffexp-np-lfsr) estimate the same underlying posterior probability, they
+can be freely mixed in the lfsr vector that feeds into the PEFP algorithm. The
+PEFP threshold-finding algorithm (@eq-diffexp-algorithm-step1 through
+@eq-diffexp-algorithm-step4) operates on the sorted lfsr values regardless of
+their provenance. This modularity is a deliberate design feature of the
+framework.
+

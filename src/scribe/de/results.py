@@ -1,13 +1,19 @@
 """ScribeDEResults: structured results for differential expression analysis.
 
-This module defines ``ScribeDEResults``, a dataclass that encapsulates a
-pairwise comparison of two fitted logistic-normal models and provides
-methods for gene-level analysis, gene-set testing, Bayesian error control,
-and result formatting.
+This module defines the DE results class hierarchy:
 
-The companion factory function ``compare()`` constructs a
-``ScribeDEResults`` from two models, handling parameter extraction and
-dimensional normalization internally via ``extract_alr_params()``.
+- ``ScribeDEResults`` — abstract base class with shared error-control and
+  formatting methods (``call_genes``, ``compute_pefp``, ``find_threshold``,
+  ``summary``).  Declares ``gene_level()`` as the method each subclass
+  must implement.
+- ``ScribeParametricDEResults`` — analytic Gaussian path using low-rank
+  ALR parameters (``mu``, ``W``, ``d``).
+- ``ScribeEmpiricalDEResults`` — non-parametric path using Monte Carlo
+  posterior samples (``delta_samples`` in CLR space).
+
+The companion factory function ``compare()`` constructs the appropriate
+subclass, handling parameter extraction, Dirichlet sampling, and CLR
+differencing internally.
 """
 
 from __future__ import annotations
@@ -19,9 +25,8 @@ import jax.numpy as jnp
 
 from ._extract import extract_alr_params
 from ._gene_level import differential_expression, call_de_genes
-from ._set_level import test_contrast, test_gene_set, build_balance_contrast
+from ._set_level import test_contrast, test_gene_set
 from ._error_control import (
-    compute_lfdr,
     compute_pefp,
     find_lfsr_threshold,
     format_de_table,
@@ -29,18 +34,235 @@ from ._error_control import (
 
 
 # --------------------------------------------------------------------------
-# ScribeDEResults dataclass
+# Base class
 # --------------------------------------------------------------------------
 
 
 @dataclass
 class ScribeDEResults:
-    """Structured results for Bayesian differential expression analysis.
+    """Abstract base class for Bayesian differential expression results.
 
-    This class encapsulates a pairwise comparison of two fitted
-    logistic-normal models (conditions A and B).  It stores the internal
-    (D-1)-dimensional ALR parameters and lazily computes gene-level results
-    when first requested.
+    Holds metadata shared by all DE methods (gene names, condition labels)
+    and provides common error-control and formatting methods that delegate
+    to the subclass-specific ``gene_level()`` implementation.
+
+    Subclasses must implement ``gene_level(tau, coordinate)`` which returns
+    a dict with at least the keys ``delta_mean``, ``delta_sd``,
+    ``prob_positive``, ``prob_effect``, ``lfsr``, ``lfsr_tau``,
+    ``gene_names``.
+
+    Parameters
+    ----------
+    gene_names : list of str, optional
+        Gene names.  If ``None``, generic names ``gene_0, gene_1, ...``
+        are generated.
+    label_A : str
+        Human-readable label for condition A.
+    label_B : str
+        Human-readable label for condition B.
+    method : str
+        Identifier for the DE method (``"parametric"`` or ``"empirical"``).
+    """
+
+    # --- Metadata ---
+    gene_names: Optional[List[str]] = None
+    label_A: str = "A"
+    label_B: str = "B"
+    method: str = "parametric"
+
+    # --- Cached gene-level results (computed lazily) ---
+    _gene_results: Optional[dict] = field(default=None, repr=False, init=False)
+    # Track which tau produced the cache so a different tau triggers recompute.
+    _cached_tau: Optional[float] = field(default=None, repr=False, init=False)
+
+    # ------------------------------------------------------------------
+    # Properties (subclasses may override)
+    # ------------------------------------------------------------------
+
+    @property
+    def D(self) -> int:
+        """Number of genes (CLR dimensionality)."""
+        raise NotImplementedError("Subclasses must implement D.")
+
+    @property
+    def D_alr(self) -> int:
+        """Dimensionality in ALR space (D - 1)."""
+        return self.D - 1
+
+    # ------------------------------------------------------------------
+    # Abstract method
+    # ------------------------------------------------------------------
+
+    def gene_level(
+        self,
+        tau: float = 0.0,
+        coordinate: str = "clr",
+    ) -> dict:
+        """Compute gene-level differential expression statistics.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold (log-scale).
+        coordinate : str, default='clr'
+            Coordinate system for results.
+
+        Returns
+        -------
+        dict
+            Gene-level DE results with keys ``delta_mean``, ``delta_sd``,
+            ``prob_positive``, ``prob_effect``, ``lfsr``, ``lfsr_tau``,
+            ``gene_names``.
+        """
+        raise NotImplementedError("Subclasses must implement gene_level().")
+
+    # ------------------------------------------------------------------
+    # Cache helper
+    # ------------------------------------------------------------------
+
+    def _ensure_gene_results(self, tau: float = 0.0) -> None:
+        """Recompute gene-level results if cache is missing or stale.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold.  If this differs from the
+            tau used to compute the currently cached results, the cache
+            is invalidated and results are recomputed.
+        """
+        if self._gene_results is None or self._cached_tau != tau:
+            self.gene_level(tau=tau)
+
+    # ------------------------------------------------------------------
+    # Shared methods (work on any subclass via gene_level())
+    # ------------------------------------------------------------------
+
+    def call_genes(
+        self,
+        tau: float = 0.0,
+        lfsr_threshold: float = 0.05,
+        prob_effect_threshold: float = 0.95,
+    ) -> jnp.ndarray:
+        """Call DE genes using Bayesian decision rules.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold.
+        lfsr_threshold : float, default=0.05
+            Maximum acceptable local false sign rate.
+        prob_effect_threshold : float, default=0.95
+            Minimum posterior probability of practical effect.
+
+        Returns
+        -------
+        ndarray of bool, shape ``(D,)``
+            Boolean mask of DE genes.
+        """
+        self._ensure_gene_results(tau=tau)
+        return call_de_genes(
+            self._gene_results,
+            lfsr_threshold=lfsr_threshold,
+            prob_effect_threshold=prob_effect_threshold,
+        )
+
+    # ------------------------------------------------------------------
+
+    def compute_pefp(
+        self,
+        threshold: float = 0.05,
+        tau: float = 0.0,
+        use_lfsr_tau: bool = False,
+    ) -> float:
+        """Compute posterior expected false discovery proportion.
+
+        Parameters
+        ----------
+        threshold : float, default=0.05
+            lfsr threshold for calling genes DE.
+        tau : float, default=0.0
+            Practical significance threshold.
+        use_lfsr_tau : bool, default=False
+            If ``True``, use ``lfsr_tau`` instead of standard ``lfsr``.
+
+        Returns
+        -------
+        float
+            Expected false discovery proportion.
+        """
+        self._ensure_gene_results(tau=tau)
+        lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
+        return compute_pefp(self._gene_results[lfsr_key], threshold=threshold)
+
+    # ------------------------------------------------------------------
+
+    def find_threshold(
+        self,
+        target_pefp: float = 0.05,
+        tau: float = 0.0,
+        use_lfsr_tau: bool = False,
+    ) -> float:
+        """Find lfsr threshold controlling PEFP at target level.
+
+        Parameters
+        ----------
+        target_pefp : float, default=0.05
+            Target PEFP level.
+        tau : float, default=0.0
+            Practical significance threshold.
+        use_lfsr_tau : bool, default=False
+            If ``True``, use ``lfsr_tau`` instead of standard ``lfsr``.
+
+        Returns
+        -------
+        float
+            lfsr threshold.
+        """
+        self._ensure_gene_results(tau=tau)
+        lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
+        return find_lfsr_threshold(
+            self._gene_results[lfsr_key], target_pefp=target_pefp
+        )
+
+    # ------------------------------------------------------------------
+
+    def summary(
+        self,
+        tau: float = 0.0,
+        sort_by: str = "lfsr",
+        top_n: Optional[int] = 20,
+    ) -> str:
+        """Format a summary table of DE results.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold.
+        sort_by : str, default='lfsr'
+            Column to sort by.
+        top_n : int, optional
+            Number of top genes to display.
+
+        Returns
+        -------
+        str
+            Formatted table.
+        """
+        self._ensure_gene_results(tau=tau)
+        return format_de_table(self._gene_results, sort_by=sort_by, top_n=top_n)
+
+
+# --------------------------------------------------------------------------
+# Parametric (Gaussian) subclass
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class ScribeParametricDEResults(ScribeDEResults):
+    """Parametric DE results using analytic Gaussian posteriors.
+
+    Stores low-rank ALR parameters ``(mu, W, d)`` for each condition and
+    computes gene-level statistics via exact closed-form Gaussian integrals.
 
     Parameters
     ----------
@@ -57,18 +279,11 @@ class ScribeDEResults:
     d_B : jnp.ndarray
         Diagonal covariance of model B, shape ``(D-1,)``.
     gene_names : list of str, optional
-        Gene names for output.  If ``None``, generic names are generated.
+        Gene names for output.
     label_A : str
         Human-readable label for condition A.
     label_B : str
         Human-readable label for condition B.
-
-    Attributes
-    ----------
-    D_alr : int
-        Dimensionality in ALR space (D-1).
-    D : int
-        Dimensionality in CLR space (number of genes).
 
     Examples
     --------
@@ -79,23 +294,16 @@ class ScribeDEResults:
     """
 
     # --- Internal ALR parameters (D-1 dimensional) ---
-    mu_A: jnp.ndarray
-    W_A: jnp.ndarray
-    d_A: jnp.ndarray
-    mu_B: jnp.ndarray
-    W_B: jnp.ndarray
-    d_B: jnp.ndarray
+    mu_A: jnp.ndarray = field(default=None)
+    W_A: jnp.ndarray = field(default=None)
+    d_A: jnp.ndarray = field(default=None)
+    mu_B: jnp.ndarray = field(default=None)
+    W_B: jnp.ndarray = field(default=None)
+    d_B: jnp.ndarray = field(default=None)
 
-    # --- Metadata ---
-    gene_names: Optional[List[str]] = None
-    label_A: str = "A"
-    label_B: str = "B"
-
-    # --- Cached gene-level results (computed lazily) ---
-    _gene_results: Optional[dict] = field(default=None, repr=False, init=False)
-    # Track which tau was used for the cached results so that a call with
-    # a different tau correctly invalidates the stale cache.
-    _cached_tau: Optional[float] = field(default=None, repr=False, init=False)
+    def __post_init__(self):
+        """Set method identifier."""
+        self.method = "parametric"
 
     # ------------------------------------------------------------------
     # Properties
@@ -108,35 +316,19 @@ class ScribeDEResults:
 
     @property
     def D(self) -> int:
-        """Dimensionality in CLR space (number of genes)."""
+        """Number of genes (CLR dimensionality)."""
         return self.D_alr + 1
 
     # ------------------------------------------------------------------
-    # Core analysis methods
+    # Gene-level analysis (analytic Gaussian)
     # ------------------------------------------------------------------
-
-    def _ensure_gene_results(self, tau: float = 0.0) -> None:
-        """Recompute gene-level results if cache is missing or stale.
-
-        Parameters
-        ----------
-        tau : float, default=0.0
-            Practical significance threshold.  If this differs from the
-            tau used to compute the currently cached results, the cache
-            is invalidated and results are recomputed.
-        """
-        # Recompute when cache is empty or when tau has changed
-        if self._gene_results is None or self._cached_tau != tau:
-            self.gene_level(tau=tau)
-
-    # --------------------------------------------------------------------------
 
     def gene_level(
         self,
         tau: float = 0.0,
         coordinate: str = "clr",
     ) -> dict:
-        """Compute gene-level differential expression.
+        """Compute gene-level DE via analytic Gaussian posteriors.
 
         Wraps ``differential_expression()`` using the stored ALR parameters.
         Results are cached and keyed by ``tau``; calling with a different
@@ -178,41 +370,8 @@ class ScribeDEResults:
         )
         return self._gene_results
 
-    def call_genes(
-        self,
-        tau: float = 0.0,
-        lfsr_threshold: float = 0.05,
-        prob_effect_threshold: float = 0.95,
-    ) -> jnp.ndarray:
-        """Call DE genes using Bayesian decision rules.
-
-        Parameters
-        ----------
-        tau : float, default=0.0
-            Practical significance threshold.  If this differs from the
-            tau used for cached gene-level results, the results are
-            recomputed automatically.
-        lfsr_threshold : float, default=0.05
-            Maximum acceptable local false sign rate.
-        prob_effect_threshold : float, default=0.95
-            Minimum posterior probability of practical effect.
-
-        Returns
-        -------
-        ndarray of bool, shape ``(D,)``
-            Boolean mask of DE genes.
-        """
-        # Ensure gene-level results are computed (and not stale w.r.t. tau)
-        self._ensure_gene_results(tau=tau)
-
-        return call_de_genes(
-            self._gene_results,
-            lfsr_threshold=lfsr_threshold,
-            prob_effect_threshold=prob_effect_threshold,
-        )
-
     # ------------------------------------------------------------------
-    # Set-level analysis
+    # Set-level analysis (analytic, covariance-based)
     # ------------------------------------------------------------------
 
     def test_gene_set(
@@ -246,12 +405,14 @@ class ScribeDEResults:
         }
         return test_gene_set(model_A_dict, model_B_dict, gene_set_indices, tau)
 
+    # ------------------------------------------------------------------
+
     def test_contrast(
         self,
         contrast: jnp.ndarray,
         tau: float = 0.0,
     ) -> dict:
-        """Test a linear contrast ``c^T Delta``.
+        """Test a linear contrast ``c^T Delta`` (analytic Gaussian).
 
         Parameters
         ----------
@@ -278,103 +439,188 @@ class ScribeDEResults:
         return test_contrast(model_A_dict, model_B_dict, contrast, tau)
 
     # ------------------------------------------------------------------
-    # Error control
-    # ------------------------------------------------------------------
-
-    def compute_pefp(
-        self,
-        threshold: float = 0.05,
-        tau: float = 0.0,
-        use_lfsr_tau: bool = False,
-    ) -> float:
-        """Compute posterior expected false discovery proportion.
-
-        Parameters
-        ----------
-        threshold : float, default=0.05
-            lfsr threshold for calling genes DE.
-        tau : float, default=0.0
-            Practical significance threshold.  Ensures the cache is
-            computed with this tau before reading lfsr values.
-        use_lfsr_tau : bool, default=False
-            If ``True``, use ``lfsr_tau`` (the paper's practical-
-            significance-aware lfsr) instead of the standard ``lfsr``.
-
-        Returns
-        -------
-        float
-            Expected false discovery proportion.
-        """
-        self._ensure_gene_results(tau=tau)
-        lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
-        return compute_pefp(self._gene_results[lfsr_key], threshold=threshold)
-
-    def find_threshold(
-        self,
-        target_pefp: float = 0.05,
-        tau: float = 0.0,
-        use_lfsr_tau: bool = False,
-    ) -> float:
-        """Find lfsr threshold controlling PEFP at target level.
-
-        Parameters
-        ----------
-        target_pefp : float, default=0.05
-            Target PEFP level.
-        tau : float, default=0.0
-            Practical significance threshold.  Ensures the cache is
-            computed with this tau before reading lfsr values.
-        use_lfsr_tau : bool, default=False
-            If ``True``, use ``lfsr_tau`` instead of standard ``lfsr``.
-
-        Returns
-        -------
-        float
-            lfsr threshold.
-        """
-        self._ensure_gene_results(tau=tau)
-        lfsr_key = "lfsr_tau" if use_lfsr_tau else "lfsr"
-        return find_lfsr_threshold(
-            self._gene_results[lfsr_key], target_pefp=target_pefp
-        )
-
-    # ------------------------------------------------------------------
-    # Formatting
-    # ------------------------------------------------------------------
-
-    def summary(
-        self,
-        tau: float = 0.0,
-        sort_by: str = "lfsr",
-        top_n: Optional[int] = 20,
-    ) -> str:
-        """Format a summary table of DE results.
-
-        Parameters
-        ----------
-        tau : float, default=0.0
-            Practical significance threshold.  Ensures the cache is
-            computed with this tau before formatting.
-        sort_by : str, default='lfsr'
-            Column to sort by.
-        top_n : int, optional
-            Number of top genes to display.
-
-        Returns
-        -------
-        str
-            Formatted table.
-        """
-        self._ensure_gene_results(tau=tau)
-        return format_de_table(self._gene_results, sort_by=sort_by, top_n=top_n)
 
     def __repr__(self) -> str:
-        """Concise representation of the DE comparison."""
+        """Concise representation of the parametric DE comparison."""
         return (
-            f"ScribeDEResults("
+            f"ScribeParametricDEResults("
             f"D={self.D}, "
             f"rank_A={self.W_A.shape[-1]}, "
             f"rank_B={self.W_B.shape[-1]}, "
+            f"labels='{self.label_A}' vs '{self.label_B}')"
+        )
+
+
+# --------------------------------------------------------------------------
+# Empirical (sample-based) subclass
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class ScribeEmpiricalDEResults(ScribeDEResults):
+    """Non-parametric DE results from posterior samples.
+
+    Stores Monte Carlo CLR differences ``delta_samples`` of shape ``(N, D)``
+    and computes gene-level statistics by counting (no Gaussian assumption).
+
+    Parameters
+    ----------
+    delta_samples : jnp.ndarray, shape ``(N, D)``
+        CLR-space posterior differences ``CLR(rho_A) - CLR(rho_B)`` for
+        N paired posterior draws and D genes.
+    gene_names : list of str, optional
+        Gene names for output.
+    label_A : str
+        Human-readable label for condition A.
+    label_B : str
+        Human-readable label for condition B.
+    n_samples : int
+        Number of posterior samples used (informational).
+
+    Attributes
+    ----------
+    D : int
+        Number of genes.
+    n_samples : int
+        Number of posterior samples.
+
+    Examples
+    --------
+    >>> from scribe.de import compare
+    >>> de = compare(
+    ...     r_samples_bleo, r_samples_ctrl,
+    ...     method="empirical",
+    ...     component_A=0, component_B=0,
+    ...     gene_names=gene_names,
+    ... )
+    >>> results = de.gene_level(tau=jnp.log(1.1))
+    >>> de.summary()
+    """
+
+    # --- Posterior CLR differences ---
+    delta_samples: jnp.ndarray = field(default=None, repr=False)
+
+    # --- Informational ---
+    n_samples: int = field(default=0, repr=True)
+
+    def __post_init__(self):
+        """Set method identifier and n_samples from delta_samples."""
+        self.method = "empirical"
+        if self.delta_samples is not None:
+            self.n_samples = self.delta_samples.shape[0]
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def D(self) -> int:
+        """Number of genes (CLR dimensionality)."""
+        return self.delta_samples.shape[1]
+
+    # ------------------------------------------------------------------
+    # Gene-level analysis (empirical counting)
+    # ------------------------------------------------------------------
+
+    def gene_level(
+        self,
+        tau: float = 0.0,
+        coordinate: str = "clr",
+    ) -> dict:
+        """Compute gene-level DE via empirical Monte Carlo estimation.
+
+        All statistics are computed by counting over the ``N`` posterior
+        CLR difference samples — no distributional assumptions.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold (log-scale).
+        coordinate : str, default='clr'
+            Coordinate system.  Only ``'clr'`` is supported (samples are
+            already in CLR space).
+
+        Returns
+        -------
+        dict
+            Gene-level DE results with the same keys as the parametric
+            path: ``delta_mean``, ``delta_sd``, ``prob_positive``,
+            ``prob_effect``, ``lfsr``, ``lfsr_tau``, ``gene_names``.
+        """
+        from ._empirical import empirical_differential_expression
+
+        # Compute, record the tau that was used, and cache the results
+        self._cached_tau = tau
+        self._gene_results = empirical_differential_expression(
+            self.delta_samples,
+            tau=tau,
+            gene_names=self.gene_names,
+        )
+        return self._gene_results
+
+    # ------------------------------------------------------------------
+    # Set-level analysis (empirical, sample-based)
+    # ------------------------------------------------------------------
+
+    def test_contrast(
+        self,
+        contrast: jnp.ndarray,
+        tau: float = 0.0,
+    ) -> dict:
+        """Test a linear contrast ``c^T Delta`` via posterior samples.
+
+        Projects each of the ``N`` CLR difference vectors onto the contrast
+        ``c`` and computes empirical statistics on the resulting scalar
+        posterior samples.
+
+        Parameters
+        ----------
+        contrast : ndarray, shape ``(D,)``
+            Contrast vector in CLR space.
+        tau : float, default=0.0
+            Practical significance threshold.
+
+        Returns
+        -------
+        dict
+            Posterior inference for the contrast with keys:
+            ``contrast_mean``, ``contrast_sd``, ``prob_positive``,
+            ``prob_effect``, ``lfsr``, ``lfsr_tau``.
+        """
+        # Project each posterior sample onto the contrast: (N,) = (N, D) @ (D,)
+        contrast_samples = self.delta_samples @ contrast
+
+        # Posterior mean and standard deviation
+        contrast_mean = float(jnp.mean(contrast_samples))
+        contrast_sd = float(jnp.std(contrast_samples, ddof=1))
+
+        # Posterior probabilities by counting
+        prob_positive = float(jnp.mean(contrast_samples > 0))
+        prob_up = float(jnp.mean(contrast_samples > tau))
+        prob_down = float(jnp.mean(contrast_samples < -tau))
+        prob_effect = prob_up + prob_down
+
+        # Local false sign rate
+        lfsr = min(prob_positive, 1.0 - prob_positive)
+        lfsr_tau = 1.0 - max(prob_up, prob_down)
+
+        return {
+            "contrast_mean": contrast_mean,
+            "contrast_sd": contrast_sd,
+            "prob_positive": prob_positive,
+            "prob_effect": prob_effect,
+            "lfsr": lfsr,
+            "lfsr_tau": lfsr_tau,
+        }
+
+    # ------------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        """Concise representation of the empirical DE comparison."""
+        return (
+            f"ScribeEmpiricalDEResults("
+            f"D={self.D}, "
+            f"n_samples={self.n_samples}, "
             f"labels='{self.label_A}' vs '{self.label_B}')"
         )
 
@@ -390,42 +636,146 @@ def compare(
     gene_names: Optional[List[str]] = None,
     label_A: str = "A",
     label_B: str = "B",
+    method: str = "parametric",
+    # --- Empirical-only parameters ---
+    component_A: Optional[int] = None,
+    component_B: Optional[int] = None,
+    paired: bool = False,
+    n_samples_dirichlet: int = 1,
+    rng_key=None,
+    batch_size: int = 2048,
 ) -> ScribeDEResults:
-    """Create a ``ScribeDEResults`` from two fitted models.
+    """Create a DE results object from two fitted models or posterior samples.
 
-    This factory function handles parameter extraction from various model
-    representations (dicts, ``LowRankLogisticNormal``, ``SoftmaxNormal``),
-    resolves the D vs (D-1) dimensional mismatch, and returns a structured
-    results object ready for analysis.
+    This factory function dispatches to either the parametric (Gaussian)
+    or empirical (sample-based) DE path depending on ``method``.
 
     Parameters
     ----------
-    model_A : dict or LowRankLogisticNormal or SoftmaxNormal
-        Fitted logistic-normal model for condition A.
-    model_B : dict or LowRankLogisticNormal or SoftmaxNormal
-        Fitted logistic-normal model for condition B.
+    model_A : dict, Distribution, or ndarray
+        For ``method="parametric"``: fitted logistic-normal model for
+        condition A (dict with ``loc``/``cov_factor``/``cov_diag``, or
+        a ``LowRankLogisticNormal`` / ``SoftmaxNormal`` distribution).
+        For ``method="empirical"``: posterior samples of Dirichlet
+        concentration parameters, shape ``(N, D)`` or ``(N, K, D)``
+        for mixture models.
+    model_B : dict, Distribution, or ndarray
+        Same as ``model_A`` for condition B.
     gene_names : list of str, optional
-        Gene names.  If ``None``, generic names are generated
-        (``gene_0, gene_1, ...``).
+        Gene names.  If ``None``, generic names are generated.
     label_A : str, default='A'
         Human-readable label for condition A.
     label_B : str, default='B'
         Human-readable label for condition B.
+    method : str, default='parametric'
+        DE method.  ``"parametric"`` uses analytic Gaussian posteriors;
+        ``"empirical"`` uses Monte Carlo counting on posterior samples.
+    component_A : int, optional
+        For ``method="empirical"`` with mixture models: index of the
+        component to use from model A.  Required if ``model_A`` is 3D.
+    component_B : int, optional
+        For ``method="empirical"`` with mixture models: index of the
+        component to use from model B.  Required if ``model_B`` is 3D.
+    paired : bool, default=False
+        For ``method="empirical"``: if ``True``, preserve sample pairing
+        (required for within-mixture comparisons where both conditions
+        come from the same posterior).  Uses the same RNG sub-key per
+        sample index for Dirichlet draws.
+    n_samples_dirichlet : int, default=1
+        For ``method="empirical"``: number of Dirichlet draws per
+        posterior sample.
+    rng_key : jax.random.PRNGKey, optional
+        For ``method="empirical"``: JAX PRNG key.  If ``None``, uses
+        ``jax.random.PRNGKey(0)``.
+    batch_size : int, default=2048
+        For ``method="empirical"``: batch size for Dirichlet sampling.
 
     Returns
     -------
     ScribeDEResults
-        Structured DE results ready for analysis.
+        Either ``ScribeParametricDEResults`` or
+        ``ScribeEmpiricalDEResults`` depending on ``method``.
 
     Examples
     --------
-    >>> from scribe.de import compare
-    >>> de = compare(results_A, results_B,
-    ...              gene_names=adata.var_names.tolist(),
-    ...              label_A="Treatment", label_B="Control")
-    >>> gene_results = de.gene_level(tau=jnp.log(1.1))
-    >>> is_de = de.call_genes(lfsr_threshold=0.05)
-    >>> print(de.summary())
+    Parametric (existing behaviour):
+
+    >>> de = compare(fitted_A, fitted_B, gene_names=names)
+    >>> de.gene_level(tau=0.1)
+
+    Empirical (independent models):
+
+    >>> de = compare(
+    ...     r_samples_A, r_samples_B,
+    ...     method="empirical",
+    ...     component_A=0, component_B=0,
+    ...     gene_names=names,
+    ... )
+
+    Empirical (within-mixture, paired):
+
+    >>> de = compare(
+    ...     r_samples, r_samples,
+    ...     method="empirical",
+    ...     component_A=0, component_B=1,
+    ...     paired=True,
+    ...     gene_names=names,
+    ... )
+    """
+    if method == "parametric":
+        return _compare_parametric(
+            model_A, model_B, gene_names, label_A, label_B
+        )
+    elif method == "empirical":
+        return _compare_empirical(
+            model_A,
+            model_B,
+            gene_names=gene_names,
+            label_A=label_A,
+            label_B=label_B,
+            component_A=component_A,
+            component_B=component_B,
+            paired=paired,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=rng_key,
+            batch_size=batch_size,
+        )
+    else:
+        raise ValueError(
+            f"Unknown method '{method}'. Use 'parametric' or 'empirical'."
+        )
+
+
+# --------------------------------------------------------------------------
+# Internal dispatchers
+# --------------------------------------------------------------------------
+
+
+def _compare_parametric(
+    model_A,
+    model_B,
+    gene_names: Optional[List[str]],
+    label_A: str,
+    label_B: str,
+) -> ScribeParametricDEResults:
+    """Build a parametric DE comparison from fitted ALR models.
+
+    Parameters
+    ----------
+    model_A : dict or Distribution
+        Fitted logistic-normal model for condition A.
+    model_B : dict or Distribution
+        Fitted logistic-normal model for condition B.
+    gene_names : list of str, optional
+        Gene names.
+    label_A : str
+        Label for condition A.
+    label_B : str
+        Label for condition B.
+
+    Returns
+    -------
+    ScribeParametricDEResults
     """
     # Extract consistent (D-1)-dimensional ALR parameters
     mu_A, W_A, d_A = extract_alr_params(model_A)
@@ -450,13 +800,94 @@ def compare(
             f"D={D} genes in CLR space."
         )
 
-    return ScribeDEResults(
+    return ScribeParametricDEResults(
         mu_A=mu_A,
         W_A=W_A,
         d_A=d_A,
         mu_B=mu_B,
         W_B=W_B,
         d_B=d_B,
+        gene_names=gene_names,
+        label_A=label_A,
+        label_B=label_B,
+    )
+
+
+# --------------------------------------------------------------------------
+# Empirical (sample-based) subclass
+# --------------------------------------------------------------------------
+
+
+def _compare_empirical(
+    r_samples_A: jnp.ndarray,
+    r_samples_B: jnp.ndarray,
+    gene_names: Optional[List[str]],
+    label_A: str,
+    label_B: str,
+    component_A: Optional[int],
+    component_B: Optional[int],
+    paired: bool,
+    n_samples_dirichlet: int,
+    rng_key,
+    batch_size: int,
+) -> ScribeEmpiricalDEResults:
+    """Build an empirical DE comparison from posterior r samples.
+
+    Parameters
+    ----------
+    r_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+        Dirichlet concentration samples for condition A.
+    r_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+        Dirichlet concentration samples for condition B.
+    gene_names : list of str, optional
+        Gene names.
+    label_A : str
+        Label for condition A.
+    label_B : str
+        Label for condition B.
+    component_A : int, optional
+        Mixture component index for condition A.
+    component_B : int, optional
+        Mixture component index for condition B.
+    paired : bool
+        Whether to preserve sample pairing (within-mixture).
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rng_key : jax.random.PRNGKey or None
+        JAX PRNG key.
+    batch_size : int
+        Batch size for Dirichlet sampling.
+
+    Returns
+    -------
+    ScribeEmpiricalDEResults
+    """
+    from ._empirical import compute_clr_differences
+
+    # Compute CLR differences from posterior r samples
+    delta_samples = compute_clr_differences(
+        r_samples_A=r_samples_A,
+        r_samples_B=r_samples_B,
+        component_A=component_A,
+        component_B=component_B,
+        paired=paired,
+        n_samples_dirichlet=n_samples_dirichlet,
+        rng_key=rng_key,
+        batch_size=batch_size,
+    )
+
+    # Number of genes is the last dimension
+    D = delta_samples.shape[1]
+    if gene_names is None:
+        gene_names = [f"gene_{i}" for i in range(D)]
+    elif len(gene_names) != D:
+        raise ValueError(
+            f"gene_names has length {len(gene_names)} but samples have "
+            f"D={D} genes."
+        )
+
+    return ScribeEmpiricalDEResults(
+        delta_samples=delta_samples,
         gene_names=gene_names,
         label_A=label_A,
         label_B=label_B,
