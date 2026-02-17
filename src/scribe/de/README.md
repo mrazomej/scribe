@@ -206,6 +206,58 @@ This gives exact analytic posteriors for:
 - Each gene: `Δ_g ~ N(μ_A[g] - μ_B[g], σ²_A[g] + σ²_B[g])`
 - Any contrast: `c^T Δ ~ N(c^T(μ_A - μ_B), c^T(Σ_A + Σ_B)c)`
 
+## Gene Expression Filter (`gene_mask`)
+
+Low-expression genes can appear spuriously DE due to compositional artefacts:
+when a dominant gene changes, the CLR geometric mean shifts, making every other
+gene look different.  Both DE paths support a `gene_mask` parameter that
+aggregates filtered genes into a single "other" pseudo-gene before Dirichlet
+sampling.
+
+### Quick start
+
+```python
+from scribe.de import compare, compute_expression_mask
+
+# Build a boolean mask from MAP mean expression (mu)
+mask = compute_expression_mask(
+    results_A, results_B,
+    component_A=0, component_B=0,
+    min_mean_expression=1.0,
+)
+
+# Empirical path — pass gene_mask to compare()
+de = compare(
+    r_A, r_B,
+    method="empirical",
+    component_A=0, component_B=0,
+    gene_names=gene_names,
+    gene_mask=mask,
+)
+
+# Parametric path — pass gene_mask at fit_logistic_normal time
+fitted_A = results_A.fit_logistic_normal(gene_mask=mask)
+fitted_B = results_B.fit_logistic_normal(gene_mask=mask)
+de = compare(fitted_A, fitted_B, gene_names=gene_names, gene_mask=mask)
+```
+
+### How it works
+
+1. Genes marked `False` in `gene_mask` have their Dirichlet concentrations
+   **summed** into a single "other" pseudo-gene, preserving total concentration.
+2. Dirichlet sampling, ALR/CLR transformation, and all DE statistics operate on
+   the reduced `(D_kept + 1)`-simplex.
+3. The "other" column is dropped from final results; only `D_kept` genes appear
+   in the output.
+
+### `compute_expression_mask()`
+
+Builds a mask from MAP mean expression (`mu`):
+- A gene passes if `mu >= threshold` in **either** condition (preserving
+  genuinely condition-specific genes).
+- Alternatively, users can pass any boolean mask (e.g. based on raw count
+  quantiles) directly to `compare()`.
+
 ## Empirical (Non-Parametric) DE
 
 When the Gaussian assumption fails (as indicated by Gaussianity diagnostics),

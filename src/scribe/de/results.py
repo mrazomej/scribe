@@ -301,6 +301,9 @@ class ScribeParametricDEResults(ScribeDEResults):
     W_B: jnp.ndarray = field(default=None)
     d_B: jnp.ndarray = field(default=None)
 
+    # --- Gene filtering ---
+    _drop_last_gene: bool = field(default=False, repr=False)
+
     def __post_init__(self):
         """Set method identifier."""
         self.method = "parametric"
@@ -312,12 +315,19 @@ class ScribeParametricDEResults(ScribeDEResults):
     @property
     def D_alr(self) -> int:
         """Dimensionality in ALR space (D-1)."""
+        if self._drop_last_gene:
+            return self.mu_A.shape[-1] - 1
         return self.mu_A.shape[-1]
 
     @property
     def D(self) -> int:
-        """Number of genes (CLR dimensionality)."""
+        """Number of genes (CLR dimensionality, excluding 'other')."""
         return self.D_alr + 1
+
+    @property
+    def D_full(self) -> int:
+        """Full CLR dimensionality including 'other' pseudo-gene."""
+        return self.mu_A.shape[-1] + 1
 
     # ------------------------------------------------------------------
     # Gene-level analysis (analytic Gaussian)
@@ -333,6 +343,10 @@ class ScribeParametricDEResults(ScribeDEResults):
         Wraps ``differential_expression()`` using the stored ALR parameters.
         Results are cached and keyed by ``tau``; calling with a different
         ``tau`` automatically recomputes.
+
+        When a ``gene_mask`` was used during model fitting (i.e. filtered
+        genes were pooled into an "other" pseudo-gene), the "other"
+        column is automatically dropped from the output.
 
         Parameters
         ----------
@@ -359,15 +373,29 @@ class ScribeParametricDEResults(ScribeDEResults):
             "cov_diag": self.d_B,
         }
 
-        # Compute, record the tau that was used, and cache the results
+        # Compute on the full (D_kept + 1) simplex (including "other")
         self._cached_tau = tau
-        self._gene_results = differential_expression(
+        results = differential_expression(
             model_A_dict,
             model_B_dict,
             tau=tau,
             coordinate=coordinate,
-            gene_names=self.gene_names,
+            gene_names=None,  # we manage names ourselves
         )
+
+        # Drop "other" pseudo-gene (last column) when gene_mask was used
+        if self._drop_last_gene:
+            for key in ("delta_mean", "delta_sd", "prob_positive",
+                        "prob_effect", "lfsr", "lfsr_tau"):
+                if key in results:
+                    results[key] = results[key][:-1]
+            # Drop the last auto-generated name
+            if "gene_names" in results:
+                results["gene_names"] = results["gene_names"][:-1]
+
+        # Overwrite gene_names with the stored names
+        results["gene_names"] = list(self.gene_names)
+        self._gene_results = results
         return self._gene_results
 
     # ------------------------------------------------------------------
@@ -644,6 +672,8 @@ def compare(
     n_samples_dirichlet: int = 1,
     rng_key=None,
     batch_size: int = 2048,
+    # --- Gene filtering ---
+    gene_mask: Optional[jnp.ndarray] = None,
 ) -> ScribeDEResults:
     """Create a DE results object from two fitted models or posterior samples.
 
@@ -689,6 +719,15 @@ def compare(
         ``jax.random.PRNGKey(0)``.
     batch_size : int, default=2048
         For ``method="empirical"``: batch size for Dirichlet sampling.
+    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+        Boolean mask selecting genes to keep.  Genes marked ``False``
+        are aggregated into a single "other" pseudo-gene before
+        Dirichlet sampling and CLR/ALR transformation.  For the
+        empirical path, aggregation happens inside
+        ``compute_clr_differences``; for the parametric path, the user
+        should pass ``gene_mask`` to ``fit_logistic_normal`` before
+        calling ``compare``.  Gene names are filtered to match the
+        kept genes.  If ``None`` (default), all genes are used.
 
     Returns
     -------
@@ -724,7 +763,8 @@ def compare(
     """
     if method == "parametric":
         return _compare_parametric(
-            model_A, model_B, gene_names, label_A, label_B
+            model_A, model_B, gene_names, label_A, label_B,
+            gene_mask=gene_mask,
         )
     elif method == "empirical":
         return _compare_empirical(
@@ -739,6 +779,7 @@ def compare(
             n_samples_dirichlet=n_samples_dirichlet,
             rng_key=rng_key,
             batch_size=batch_size,
+            gene_mask=gene_mask,
         )
     else:
         raise ValueError(
@@ -757,6 +798,7 @@ def _compare_parametric(
     gene_names: Optional[List[str]],
     label_A: str,
     label_B: str,
+    gene_mask: Optional[jnp.ndarray] = None,
 ) -> ScribeParametricDEResults:
     """Build a parametric DE comparison from fitted ALR models.
 
@@ -772,6 +814,11 @@ def _compare_parametric(
         Label for condition A.
     label_B : str
         Label for condition B.
+    gene_mask : jnp.ndarray, shape ``(D_original,)``, optional
+        Boolean gene mask.  For the parametric path the user is expected
+        to pass ``gene_mask`` to ``fit_logistic_normal`` so that the
+        models are already fitted on the reduced simplex.  When provided
+        here, ``gene_names`` are filtered to the kept genes.
 
     Returns
     -------
@@ -790,14 +837,29 @@ def _compare_parametric(
             f"Both models must be fitted on the same gene set."
         )
 
-    # Validate or generate gene names (D = D_alr + 1 for CLR space)
-    D = mu_A.shape[-1] + 1
+    # D_full = D_alr + 1 (including "other" when gene_mask was used)
+    D_full = mu_A.shape[-1] + 1
+    drop_last = gene_mask is not None
+
+    # When gene_mask is provided, the model was fitted on the aggregated
+    # simplex (D_kept + 1 genes, last is "other").  The user-visible
+    # gene count is D_kept = D_full - 1.
+    D_user = D_full - 1 if drop_last else D_full
+
+    # If gene_mask is provided, filter gene_names to kept genes
+    if gene_mask is not None and gene_names is not None:
+        import numpy as _np
+        gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
+        gene_names = [
+            n for n, m in zip(gene_names, gene_mask_arr) if m
+        ]
+
     if gene_names is None:
-        gene_names = [f"gene_{i}" for i in range(D)]
-    elif len(gene_names) != D:
+        gene_names = [f"gene_{i}" for i in range(D_user)]
+    elif len(gene_names) != D_user:
         raise ValueError(
             f"gene_names has length {len(gene_names)} but models have "
-            f"D={D} genes in CLR space."
+            f"D={D_user} genes (CLR space, excluding 'other')."
         )
 
     return ScribeParametricDEResults(
@@ -810,6 +872,7 @@ def _compare_parametric(
         gene_names=gene_names,
         label_A=label_A,
         label_B=label_B,
+        _drop_last_gene=drop_last,
     )
 
 
@@ -830,6 +893,7 @@ def _compare_empirical(
     n_samples_dirichlet: int,
     rng_key,
     batch_size: int,
+    gene_mask: Optional[jnp.ndarray] = None,
 ) -> ScribeEmpiricalDEResults:
     """Build an empirical DE comparison from posterior r samples.
 
@@ -857,6 +921,9 @@ def _compare_empirical(
         JAX PRNG key.
     batch_size : int
         Batch size for Dirichlet sampling.
+    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+        Boolean mask selecting genes to keep.  Passed through to
+        ``compute_clr_differences`` for compositional aggregation.
 
     Returns
     -------
@@ -874,9 +941,16 @@ def _compare_empirical(
         n_samples_dirichlet=n_samples_dirichlet,
         rng_key=rng_key,
         batch_size=batch_size,
+        gene_mask=gene_mask,
     )
 
-    # Number of genes is the last dimension
+    # Filter gene_names to match kept genes when gene_mask is provided
+    if gene_mask is not None and gene_names is not None:
+        import numpy as _np
+        gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
+        gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
+
+    # Number of genes is the last dimension (D_kept when mask is used)
     D = delta_samples.shape[1]
     if gene_names is None:
         gene_names = [f"gene_{i}" for i in range(D)]

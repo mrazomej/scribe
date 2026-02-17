@@ -24,6 +24,7 @@ from scribe.de import (
     compute_clr_differences,
     empirical_differential_expression,
 )
+from scribe.de._empirical import _aggregate_genes
 
 
 # --------------------------------------------------------------------------
@@ -537,3 +538,212 @@ class TestParametricBackwardCompat:
         r = repr(parametric_de)
         assert "ScribeParametricDEResults" in r
         assert "rank_A=" in r
+
+
+# --------------------------------------------------------------------------
+# Tests: _aggregate_genes
+# --------------------------------------------------------------------------
+
+
+class TestAggregateGenes:
+    """Tests for ``_aggregate_genes`` helper."""
+
+    def test_shapes(self, rng):
+        """Output shape is (N, D_kept + 1)."""
+        r_A = jnp.abs(random.normal(rng, (100, 8))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (100, 8))) + 1.0
+        mask = jnp.array([True, True, True, False, False, True, True, False])
+        r_A_agg, r_B_agg = _aggregate_genes(r_A, r_B, mask)
+        D_kept = int(mask.sum())
+        assert r_A_agg.shape == (100, D_kept + 1)
+        assert r_B_agg.shape == (100, D_kept + 1)
+
+    def test_concentration_preserved(self, rng):
+        """Total Dirichlet concentration must be preserved after aggregation."""
+        r_A = jnp.abs(random.normal(rng, (50, 6))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(2), (50, 6))) + 1.0
+        mask = jnp.array([True, False, True, False, True, True])
+        r_A_agg, r_B_agg = _aggregate_genes(r_A, r_B, mask)
+
+        np.testing.assert_allclose(
+            np.array(r_A.sum(axis=1)),
+            np.array(r_A_agg.sum(axis=1)),
+            rtol=1e-5,
+        )
+        np.testing.assert_allclose(
+            np.array(r_B.sum(axis=1)),
+            np.array(r_B_agg.sum(axis=1)),
+            rtol=1e-5,
+        )
+
+    def test_all_true_mask(self, rng):
+        """All-True mask keeps all genes plus a zero 'other' column."""
+        r_A = jnp.abs(random.normal(rng, (30, 4))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(3), (30, 4))) + 1.0
+        mask = jnp.ones(4, dtype=bool)
+        r_A_agg, r_B_agg = _aggregate_genes(r_A, r_B, mask)
+        assert r_A_agg.shape == (30, 5)
+        # The "other" column should be 0 when no genes are filtered
+        np.testing.assert_allclose(
+            np.array(r_A_agg[:, -1]), 0.0, atol=1e-7,
+        )
+
+    def test_all_false_raises(self, rng):
+        """All-False mask raises ValueError."""
+        r_A = jnp.ones((10, 4))
+        r_B = jnp.ones((10, 4))
+        mask = jnp.zeros(4, dtype=bool)
+        with pytest.raises(ValueError, match="at least one gene"):
+            _aggregate_genes(r_A, r_B, mask)
+
+    def test_wrong_mask_length_raises(self, rng):
+        """Mask with wrong length raises ValueError."""
+        r_A = jnp.ones((10, 4))
+        r_B = jnp.ones((10, 4))
+        mask = jnp.array([True, False])
+        with pytest.raises(ValueError, match="gene_mask"):
+            _aggregate_genes(r_A, r_B, mask)
+
+
+# --------------------------------------------------------------------------
+# Tests: compute_clr_differences with gene_mask
+# --------------------------------------------------------------------------
+
+
+class TestCLRDifferencesGeneMask:
+    """Tests for ``compute_clr_differences`` with ``gene_mask``."""
+
+    def test_output_shape_with_mask(self, rng):
+        """Output has D_kept columns when gene_mask is provided."""
+        D = 8
+        r_A = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (100, D))) + 1.0
+        mask = jnp.array([True, True, True, False, False, True, True, False])
+        D_kept = int(mask.sum())
+        delta = compute_clr_differences(r_A, r_B, rng_key=rng, gene_mask=mask)
+        assert delta.shape == (100, D_kept)
+
+    def test_no_mask_unchanged(self, rng):
+        """Without gene_mask, output has all D columns."""
+        D = 6
+        r_A = jnp.abs(random.normal(rng, (50, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (50, D))) + 1.0
+        delta = compute_clr_differences(r_A, r_B, rng_key=rng)
+        assert delta.shape == (50, D)
+
+    def test_clr_rows_sum_to_zero_with_mask(self, rng):
+        """CLR differences should NOT sum to zero when mask drops 'other'.
+
+        CLR on the aggregated simplex sums to zero across D_kept+1, but
+        we drop the 'other' column, so the kept columns do not sum to
+        zero exactly.  This test verifies the shape is D_kept, not
+        D_kept+1.
+        """
+        D = 6
+        r_A = jnp.abs(random.normal(rng, (80, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(5), (80, D))) + 1.0
+        mask = jnp.array([True, True, True, True, False, False])
+        delta = compute_clr_differences(r_A, r_B, rng_key=rng, gene_mask=mask)
+        assert delta.shape[1] == 4
+
+    def test_mixture_with_mask(self, rng):
+        """gene_mask works with 3D (mixture) inputs."""
+        D = 5
+        r_mix = jnp.abs(random.normal(rng, (100, 3, D))) + 1.0
+        mask = jnp.array([True, False, True, True, False])
+        delta = compute_clr_differences(
+            r_mix, r_mix,
+            component_A=0, component_B=1,
+            rng_key=rng,
+            gene_mask=mask,
+        )
+        assert delta.shape == (100, 3)
+
+
+# --------------------------------------------------------------------------
+# Tests: compare() with gene_mask
+# --------------------------------------------------------------------------
+
+
+class TestCompareGeneMask:
+    """Tests for ``compare()`` with ``gene_mask``."""
+
+    @pytest.fixture
+    def rng(self):
+        return random.PRNGKey(42)
+
+    def test_empirical_gene_names_filtered(self, rng):
+        """Empirical compare with gene_mask filters gene_names."""
+        D = 6
+        r_A = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (100, D))) + 1.0
+        names = ["g0", "g1", "g2", "g3", "g4", "g5"]
+        mask = jnp.array([True, False, True, True, False, True])
+        de = compare(
+            r_A, r_B,
+            method="empirical",
+            gene_names=names,
+            rng_key=rng,
+            gene_mask=mask,
+        )
+        assert de.gene_names == ["g0", "g2", "g3", "g5"]
+        assert de.D == 4
+
+    def test_empirical_no_mask_backward_compatible(self, rng):
+        """Empirical compare without mask works as before."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (50, D))) + 1.0
+        de = compare(r, r, method="empirical", rng_key=rng)
+        assert de.D == D
+
+    def test_parametric_gene_names_filtered(self):
+        """Parametric compare with gene_mask filters gene_names.
+
+        Simulates the workflow where fit_logistic_normal was called with
+        gene_mask: 5 original genes, mask keeps 4, model is fitted on
+        D_kept + 1 = 5 simplex (4 kept + "other"), so D_alr = 4.
+        """
+        # Original: 5 genes, mask keeps 4 → aggregated simplex has 5
+        # genes (4 kept + "other"), D_alr = 4
+        D_alr = 4
+        model = {
+            "loc": jnp.zeros(D_alr),
+            "cov_factor": jnp.eye(D_alr, 2),
+            "cov_diag": jnp.ones(D_alr),
+        }
+        names = ["g0", "g1", "g2", "g3", "g4"]
+        mask = np.array([True, True, False, True, True])
+        de = compare(
+            model, model,
+            method="parametric",
+            gene_names=names,
+            gene_mask=mask,
+        )
+        # gene_names should be filtered to the kept genes
+        assert de.gene_names == ["g0", "g1", "g3", "g4"]
+        # D should be D_kept=4, not D_full=5
+        assert de.D == 4
+        assert de.D_full == 5
+        # gene_level should return D_kept results
+        result = de.gene_level(tau=0.0)
+        assert result["lfsr"].shape == (4,)
+        assert len(result["gene_names"]) == 4
+
+    def test_empirical_gene_level_with_mask(self, rng):
+        """gene_level on a masked empirical result has correct shapes."""
+        D = 8
+        r_A = jnp.abs(random.normal(rng, (200, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (200, D))) + 2.0
+        mask = jnp.array([True, True, False, True, False, True, True, False])
+        D_kept = int(mask.sum())
+        de = compare(
+            r_A, r_B,
+            method="empirical",
+            gene_names=[f"g{i}" for i in range(D)],
+            rng_key=rng,
+            gene_mask=mask,
+        )
+        result = de.gene_level(tau=0.0)
+        assert result["delta_mean"].shape == (D_kept,)
+        assert result["lfsr"].shape == (D_kept,)
+        assert len(result["gene_names"]) == D_kept

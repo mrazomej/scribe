@@ -367,6 +367,7 @@ def fit_logistic_normal_from_posterior(
     batch_size: int = _DEFAULT_BATCH_SIZE,
     svd_method: str = "randomized",
     verbose: bool = True,
+    gene_mask: Optional[jnp.ndarray] = None,
 ) -> Dict[str, Union[jnp.ndarray, object]]:
     """
     Fit a low-rank Logistic-Normal distribution to normalized expression
@@ -425,6 +426,13 @@ def fit_logistic_normal_from_posterior(
           needed for diagnostics.
     verbose : bool, default=True
         If True, prints progress messages and shows progress bars.
+    gene_mask : jnp.ndarray, shape ``(D,)``, optional
+        Boolean mask selecting genes to keep.  Genes marked ``False``
+        are aggregated into a single "other" pseudo-gene (their
+        Dirichlet concentrations are summed) before Dirichlet sampling
+        and ALR fitting.  The fitted distribution then operates on the
+        reduced ``(D_kept + 1)``-simplex.  If ``None`` (default), all
+        genes are kept.
 
     Returns
     -------
@@ -520,6 +528,39 @@ def fit_logistic_normal_from_posterior(
 
     # Determine if this is a mixture model
     is_mixture = n_components is not None and n_components > 1
+
+    # --- Gene aggregation (if requested) ---
+    if gene_mask is not None:
+        gene_mask = jnp.asarray(gene_mask, dtype=bool)
+        D = r_samples.shape[-1]
+        if gene_mask.shape != (D,):
+            raise ValueError(
+                f"gene_mask must have shape ({D},), got {gene_mask.shape}."
+            )
+        D_kept = int(gene_mask.sum())
+        if D_kept == 0:
+            raise ValueError(
+                "gene_mask must keep at least one gene (all False)."
+            )
+        if verbose:
+            n_filtered = D - D_kept
+            print(
+                f"Gene mask: keeping {D_kept}/{D} genes, "
+                f"aggregating {n_filtered} into 'other'"
+            )
+        # Pool filtered genes into "other" pseudo-gene
+        if r_samples.ndim == 2:
+            # Non-mixture: (N, D) -> (N, D_kept + 1)
+            r_kept = r_samples[:, gene_mask]
+            r_other = r_samples[:, ~gene_mask].sum(axis=1, keepdims=True)
+            r_samples = jnp.concatenate([r_kept, r_other], axis=1)
+        elif r_samples.ndim == 3:
+            # Mixture: (N, K, D) -> (N, K, D_kept + 1)
+            r_kept = r_samples[:, :, gene_mask]
+            r_other = r_samples[:, :, ~gene_mask].sum(
+                axis=2, keepdims=True
+            )
+            r_samples = jnp.concatenate([r_kept, r_other], axis=2)
 
     # Process mixture model
     if is_mixture:

@@ -117,6 +117,7 @@ class NormalizationMixin:
         batch_size: int = 2048,
         svd_method: str = "randomized",
         verbose: bool = True,
+        gene_mask=None,
     ) -> Dict[str, Union[jnp.ndarray, object]]:
         """
         Fit a low-rank Logistic-Normal distribution to normalized expression.
@@ -171,6 +172,13 @@ class NormalizationMixin:
               is needed for diagnostics.
         verbose : bool, default=True
             If True, prints progress messages and shows progress bars.
+        gene_mask : array-like, shape ``(D,)``, optional
+            Boolean mask selecting genes to keep.  Genes marked ``False``
+            are aggregated into a single "other" pseudo-gene (Dirichlet
+            concentrations summed) before Dirichlet sampling and ALR
+            fitting.  The fitted distribution operates on the reduced
+            ``(D_kept + 1)``-simplex.  If ``None`` (default), all genes
+            are kept.
 
         Returns
         -------
@@ -271,4 +279,5 @@ class NormalizationMixin:
             batch_size=batch_size,
             svd_method=svd_method,
             verbose=verbose,
+            gene_mask=gene_mask,
         )
