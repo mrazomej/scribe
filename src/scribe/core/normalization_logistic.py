@@ -652,6 +652,12 @@ def _fit_logistic_normal_non_mixture(
         all_log_samples, reference_index=None
     )  # (n_total, n_genes - 1)
 
+    # Step 2a: Gaussianity diagnostics on the raw ALR marginals
+    # (computed before optional mean-removal so we test the actual
+    #  marginal distribution that the Gaussian will approximate)
+    from ..de._gaussianity import gaussianity_diagnostics
+    gauss_diag = gaussianity_diagnostics(alr_samples)
+
     # Step 2b: Optionally remove grand mean to focus on co-variation
     if remove_mean:
         alr_grand_mean = jnp.mean(alr_samples, axis=0, keepdims=True)
@@ -712,6 +718,7 @@ def _fit_logistic_normal_non_mixture(
         "cov_factor": cov_factor,
         "cov_diag": cov_diag,
         "mean_probabilities": mean_probabilities,
+        "gaussianity": gauss_diag,
     }
 
     if verbose:
@@ -810,6 +817,7 @@ def _fit_logistic_normal_mixture(
     mean_probs = []
     distributions = []
     distributions_alr = []
+    gauss_diags = []
 
     # ------------------------------------------------------------------
     # Fit one Logistic-Normal per component
@@ -855,6 +863,10 @@ def _fit_logistic_normal_mixture(
                 f"{alr_samples.shape[1]} ALR dimensions"
             )
 
+        # Step 2a: Gaussianity diagnostics on raw ALR marginals
+        from ..de._gaussianity import gaussianity_diagnostics
+        gauss_diag_c = gaussianity_diagnostics(alr_samples)
+
         # Step 2b: Optionally remove grand mean
         if remove_mean:
             alr_grand_mean = jnp.mean(alr_samples, axis=0, keepdims=True)
@@ -892,6 +904,7 @@ def _fit_logistic_normal_mixture(
         locs.append(loc)
         cov_factors.append(cov_factor)
         cov_diags.append(cov_diag)
+        gauss_diags.append(gauss_diag_c)
 
         # --- Step 5: Mean probabilities on the simplex ---------------------
         mean_prob = _inverse_alr(alr_loc, reference_index=None)
@@ -910,11 +923,18 @@ def _fit_logistic_normal_mixture(
     # ------------------------------------------------------------------
     # Stack per-component results
     # ------------------------------------------------------------------
+    # Stack per-component Gaussianity diagnostics into (K, D-1) arrays
+    gaussianity_stacked = {
+        key: jnp.stack([gd[key] for gd in gauss_diags], axis=0)
+        for key in gauss_diags[0]
+    }
+
     results = {
         "loc": jnp.stack(locs, axis=0),  # (K, D)
         "cov_factor": jnp.stack(cov_factors, axis=0),  # (K, D, rank)
         "cov_diag": jnp.stack(cov_diags, axis=0),  # (K, D)
         "mean_probabilities": jnp.stack(mean_probs, axis=0),  # (K, D)
+        "gaussianity": gaussianity_stacked,
     }
 
     # Add appropriate distribution key

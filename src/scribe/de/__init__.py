@@ -22,6 +22,7 @@ Main components
 - Gene-set / pathway analysis via compositional balances.
 - Bayesian error control (lfsr, PEFP).
 - Coordinate transformations (ALR, CLR, ILR).
+- Gaussianity diagnostics (skewness, kurtosis, Jarque-Bera).
 """
 
 # Results class and factory
@@ -60,6 +61,9 @@ from ._error_control import (
     format_de_table,
 )
 
+# Gaussianity diagnostics
+from ._gaussianity import gaussianity_diagnostics
+
 __all__ = [
     # Results
     "ScribeDEResults",
@@ -84,4 +88,6 @@ __all__ = [
     "compute_pefp",
     "find_lfsr_threshold",
     "format_de_table",
+    # Diagnostics
+    "gaussianity_diagnostics",
 ]
