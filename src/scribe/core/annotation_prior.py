@@ -27,6 +27,7 @@ validate_annotation_prior_logits
     Validate shape and finiteness of a logit-offset matrix.
 """
 
+import logging
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import jax.numpy as jnp
@@ -35,6 +36,8 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from anndata import AnnData
+
+logger = logging.getLogger(__name__)
 
 #: Separator used to join values from multiple ``.obs`` columns into a
 #: single composite label (e.g. ``"T_cell__ctrl"``).
@@ -120,6 +123,7 @@ def build_annotation_prior_logits(
     n_components: int,
     confidence: float = 3.0,
     component_order: Optional[List[str]] = None,
+    min_cells: int = 0,
 ) -> Tuple[jnp.ndarray, Dict[str, int]]:
     """
     Build cell-specific prior logits from categorical annotation columns.
@@ -163,6 +167,14 @@ def build_annotation_prior_logits(
         labels using ``"__"`` as separator (e.g.
         ``["T_cell__ctrl", "T_cell__stim", ...]``).  If ``None``, unique
         labels are sorted alphabetically.
+    min_cells : int, optional
+        Minimum number of cells required for an annotation label to be
+        considered.  Labels with fewer than ``min_cells`` cells are
+        treated as unlabeled (their logit rows are set to zero, i.e. no
+        bias toward any component).  Those labels are excluded from
+        ``label_map`` and do not occupy a component index.  A warning is
+        logged listing the filtered-out labels and their cell counts.
+        Default is ``0`` (no filtering).
 
     Returns
     -------
@@ -249,6 +261,25 @@ def build_annotation_prior_logits(
     # ------------------------------------------------------------------
     is_labeled = ~pd.isna(annotations)
     labels = annotations[is_labeled]
+
+    # ------------------------------------------------------------------
+    # Filter out rare labels (fewer than min_cells)
+    # ------------------------------------------------------------------
+    if min_cells > 0:
+        label_counts = labels.value_counts()
+        rare_labels = set(label_counts[label_counts < min_cells].index)
+        if rare_labels:
+            logger.warning(
+                "Annotation labels with fewer than %d cells will be "
+                "treated as unlabeled (zero bias): %s",
+                min_cells,
+                {
+                    str(l): int(label_counts[l])
+                    for l in sorted(rare_labels, key=str)
+                },
+            )
+            is_labeled = is_labeled & ~annotations.isin(rare_labels)
+            labels = annotations[is_labeled]
 
     # ------------------------------------------------------------------
     # Build label -> component index mapping

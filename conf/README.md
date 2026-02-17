@@ -305,6 +305,29 @@ python infer.py model=zinb n_components=5 inference.n_steps=100000
 python infer.py model=zinb n_components=3 parameterization=linked
 ```
 
+### Annotation Priors
+
+Use cell-type annotations as soft priors on mixture component assignments:
+
+```bash
+# Use annotation_key to bias components toward known cell types
+python infer.py model=nbvcp n_components=5 annotation_key=cell_type annotation_confidence=3.0
+
+# Filter rare annotations: labels with < 50 cells get zero bias (treated as unlabeled)
+python infer.py model=nbvcp annotation_key=subclass-l1 annotation_min_cells=50
+
+# Explicit component ordering
+python infer.py model=nbdm n_components=3 annotation_key=cell_type \
+  annotation_component_order='[T,B,Mono]'
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `annotation_key` | `str` or list | `null` | Column(s) in `adata.obs` with cell-type labels |
+| `annotation_confidence` | `float` | `3.0` | Prior strength (kappa); 3 ≈ 20x boost |
+| `annotation_component_order` | `list` | `null` | Explicit label-to-component index mapping |
+| `annotation_min_cells` | `int` | `null` | Min cells per label; rare labels get zero bias |
+
 ### Custom Priors
 
 ```bash

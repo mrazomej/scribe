@@ -358,6 +358,7 @@ def main(cfg: DictConfig) -> None:
         "annotation_key": annotation_key,
         "annotation_confidence": cfg.get("annotation_confidence", 3.0),
         "annotation_component_order": annotation_component_order,
+        "annotation_min_cells": cfg.get("annotation_min_cells"),
         # Inference configuration
         "inference_method": inference_method,
         # Data configuration

@@ -86,6 +86,9 @@ amortization:
 annotation_key: null
 annotation_confidence: 3.0
 annotation_component_order: null
+# Minimum number of cells for an annotation label to be used as a component
+# prior. Labels with fewer cells are treated as unlabeled (zero bias).
+annotation_min_cells: null
 
 # --- General Settings ---
 seed: 42
