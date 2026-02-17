@@ -473,8 +473,15 @@ fitted = fit_logistic_normal_from_posterior(
     verbose=True,
 )
 
-# Returns: loc, cov_factor, cov_diag, mean_probabilities, distribution(s)
+# Returns: loc, cov_factor, cov_diag, mean_probabilities, distribution(s),
+#          gaussianity (per-gene skewness, kurtosis, JB stat & p-value)
 ```
+
+The returned dict now includes a `"gaussianity"` key with per-gene
+Gaussianity diagnostics (skewness, excess kurtosis, Jarque-Bera statistic
+and p-value) computed on the ALR samples before the SVD fit.  For mixture
+models, shapes are `(K, D-1)`; for non-mixture, `(D-1,)`.  See
+`scribe.de.gaussianity_diagnostics` for details.
 
 ### Performance Optimization
 

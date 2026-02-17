@@ -22,6 +22,7 @@ from scribe.core.normalization_logistic import (
     _DEFAULT_BATCH_SIZE,
 )
 from scribe.core.normalization import normalize_counts_from_posterior
+from scribe.de._gaussianity import gaussianity_diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -661,3 +662,152 @@ class TestNormalizeCountsFromPosterior:
         )
         row_sums = jnp.sum(result["samples"], axis=-1)
         assert jnp.allclose(row_sums, 1.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# gaussianity_diagnostics (standalone)
+# ---------------------------------------------------------------------------
+
+
+class TestGaussianityDiagnostics:
+    """Unit tests for the per-feature Gaussianity diagnostic function."""
+
+    def test_shapes(self, rng_key):
+        """Output arrays should have shape (D,) for (N, D) input."""
+        samples = random.normal(rng_key, shape=(500, 12))
+        diag = gaussianity_diagnostics(samples)
+
+        assert diag["skewness"].shape == (12,)
+        assert diag["kurtosis"].shape == (12,)
+        assert diag["jarque_bera"].shape == (12,)
+        assert diag["jb_pvalue"].shape == (12,)
+
+    def test_gaussian_samples(self, rng_key):
+        """For truly Gaussian data, skewness/kurtosis should be near zero
+        and most JB p-values should be > 0.05."""
+        # Large N for tight estimates
+        samples = random.normal(rng_key, shape=(10_000, 50))
+        diag = gaussianity_diagnostics(samples)
+
+        # Skewness should be close to 0 for all features
+        assert jnp.all(jnp.abs(diag["skewness"]) < 0.15), (
+            f"Max |skewness| = {float(jnp.max(jnp.abs(diag['skewness'])))}"
+        )
+        # Excess kurtosis should be close to 0
+        assert jnp.all(jnp.abs(diag["kurtosis"]) < 0.3), (
+            f"Max |kurtosis| = {float(jnp.max(jnp.abs(diag['kurtosis'])))}"
+        )
+        # Most JB p-values should be > 0.05 (at least 85% to allow
+        # for random fluctuations)
+        frac_pass = float(jnp.mean(diag["jb_pvalue"] > 0.05))
+        assert frac_pass > 0.85, f"Only {frac_pass:.0%} features pass JB test"
+
+    def test_skewed_samples(self, rng_key):
+        """For clearly non-Gaussian data, skewness should be large and
+        JB p-values should be small."""
+        # Chi-squared(2) has skewness = 2, excess kurtosis = 6
+        # Simulate via sum of squared normals
+        key1, key2 = random.split(rng_key)
+        z1 = random.normal(key1, shape=(5000, 20))
+        z2 = random.normal(key2, shape=(5000, 20))
+        samples = z1 ** 2 + z2 ** 2  # chi2(2)
+
+        diag = gaussianity_diagnostics(samples)
+
+        # Skewness should be strongly positive (theoretical = 2)
+        assert jnp.all(diag["skewness"] > 1.0), (
+            f"Min skewness = {float(jnp.min(diag['skewness']))}"
+        )
+        # Excess kurtosis should be strongly positive (theoretical = 6)
+        assert jnp.all(diag["kurtosis"] > 3.0), (
+            f"Min kurtosis = {float(jnp.min(diag['kurtosis']))}"
+        )
+        # All JB p-values should be essentially zero
+        assert jnp.all(diag["jb_pvalue"] < 1e-10)
+
+    def test_constant_feature(self, rng_key):
+        """A constant column should produce skewness=0, kurtosis=-3
+        (or 0 depending on guard), and no NaN values."""
+        N, D = 100, 5
+        samples = random.normal(rng_key, shape=(N, D))
+        # Make one column constant
+        samples = samples.at[:, 2].set(3.14)
+
+        diag = gaussianity_diagnostics(samples)
+
+        # No NaN in any output
+        for key in ("skewness", "kurtosis", "jarque_bera", "jb_pvalue"):
+            assert not jnp.any(jnp.isnan(diag[key])), (
+                f"NaN found in {key}"
+            )
+
+    def test_jb_pvalue_range(self, rng_key):
+        """P-values should be in [0, 1]."""
+        samples = random.normal(rng_key, shape=(500, 20))
+        diag = gaussianity_diagnostics(samples)
+
+        assert jnp.all(diag["jb_pvalue"] >= 0.0)
+        assert jnp.all(diag["jb_pvalue"] <= 1.0)
+
+    def test_jarque_bera_nonnegative(self, rng_key):
+        """JB statistic should always be >= 0."""
+        samples = random.normal(rng_key, shape=(200, 15))
+        diag = gaussianity_diagnostics(samples)
+
+        assert jnp.all(diag["jarque_bera"] >= 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Gaussianity diagnostics in fit_logistic_normal_from_posterior
+# ---------------------------------------------------------------------------
+
+
+class TestGaussianityInFitLogisticNormal:
+    """Verify that fit_logistic_normal_from_posterior returns gaussianity
+    diagnostics as part of its results dict."""
+
+    def test_non_mixture_gaussianity_keys(
+        self, r_samples_non_mixture, rng_key
+    ):
+        """Non-mixture results should contain a 'gaussianity' dict with
+        the expected keys and shapes (D-1,)."""
+        posterior = {"r": r_samples_non_mixture}
+        result = fit_logistic_normal_from_posterior(
+            posterior,
+            n_components=None,
+            rng_key=rng_key,
+            rank=3,
+            batch_size=8,
+            verbose=False,
+        )
+
+        assert "gaussianity" in result
+        gd = result["gaussianity"]
+        D_alr = 10 - 1  # n_genes - 1
+        for key in ("skewness", "kurtosis", "jarque_bera", "jb_pvalue"):
+            assert key in gd, f"Missing key: {key}"
+            assert gd[key].shape == (D_alr,), (
+                f"{key} has shape {gd[key].shape}, expected ({D_alr},)"
+            )
+
+    def test_mixture_gaussianity_keys(self, r_samples_mixture, rng_key):
+        """Mixture results should contain a 'gaussianity' dict with
+        per-component arrays of shape (K, D-1)."""
+        posterior = {"r": r_samples_mixture}
+        result = fit_logistic_normal_from_posterior(
+            posterior,
+            n_components=3,
+            rng_key=rng_key,
+            rank=3,
+            batch_size=8,
+            verbose=False,
+        )
+
+        assert "gaussianity" in result
+        gd = result["gaussianity"]
+        K, D_alr = 3, 10 - 1  # n_components, n_genes - 1
+        for key in ("skewness", "kurtosis", "jarque_bera", "jb_pvalue"):
+            assert key in gd, f"Missing key: {key}"
+            assert gd[key].shape == (K, D_alr), (
+                f"{key} has shape {gd[key].shape}, expected ({K}, {D_alr})"
+            )

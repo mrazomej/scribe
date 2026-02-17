@@ -234,6 +234,49 @@ There are two approaches to incorporating practical significance thresholds:
 Both approaches are valid; the two-threshold method is more conservative and
 is the default.
 
+## Gaussianity Diagnostics
+
+The DE framework assumes that the marginal ALR distribution of each gene
+is well-approximated by a Gaussian.  The `gaussianity_diagnostics`
+function checks this assumption by computing per-feature (per-gene)
+summary statistics in a single vectorized GPU pass:
+
+```python
+from scribe.de import gaussianity_diagnostics
+
+# On any (N, D) sample matrix (e.g. ALR-transformed posterior samples)
+diag = gaussianity_diagnostics(alr_samples)
+# diag["skewness"]    : (D,)  — third standardised moment (Gaussian: 0)
+# diag["kurtosis"]    : (D,)  — excess kurtosis (Gaussian: 0)
+# diag["jarque_bera"] : (D,)  — JB test statistic
+# diag["jb_pvalue"]   : (D,)  — asymptotic chi2(2) p-value
+```
+
+### Automatic computation inside `fit_logistic_normal`
+
+When you call `results.fit_logistic_normal(...)`, the diagnostics are
+computed automatically on the ALR samples **before** the SVD fit and
+returned as `fitted["gaussianity"]`:
+
+```python
+fitted = results.fit_logistic_normal(rank=32)
+gd = fitted["gaussianity"]      # dict with skewness, kurtosis, etc.
+# For mixture models: gd["skewness"].shape == (K, D-1)
+# For non-mixture:    gd["skewness"].shape == (D-1,)
+```
+
+### Interpretation and suggested thresholds
+
+| Statistic | Gaussian value | Flag if |
+|---|---|---|
+| \|skewness\| | 0 | > 0.5 |
+| \|excess kurtosis\| | 0 | > 1.0 |
+| JB p-value | uniform on [0,1] | < 0.05 (after BH correction) |
+
+Genes that fail these thresholds may have poorly calibrated lfsr/PEFP
+values under the Gaussian assumption.  Consider filtering them from the
+DE results or using a non-parametric alternative for those genes.
+
 ## Performance Notes
 
 All operations are memory-efficient:
