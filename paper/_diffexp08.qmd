@@ -81,6 +81,22 @@ computations
 - For typical datasets ($D = 30{,}000$, $k = 50$), complete analyses run in
 seconds rather than hours
 
+**Gaussianity diagnostics and non-parametric DE** (Section 9). We developed
+tools to assess and address violations of the Gaussian assumption:
+
+- Per-gene Gaussianity diagnostics (skewness, excess kurtosis, Jarque-Bera
+statistic) computed in a single $O(ND)$ vectorized pass
+(@eq-diffexp-np-skewness through @eq-diffexp-np-jarque-bera)
+- A non-parametric empirical DE path that computes all gene-level statistics
+(lfsr, tail probabilities, practical significance) by direct Monte Carlo
+counting over posterior CLR difference samples, requiring no distributional
+assumptions (@eq-diffexp-np-lfsr and @eq-diffexp-np-lfsr-tau)
+- A rigorous proof that index-pairing of independent posterior samples yields
+valid posterior estimates of the difference distribution
+(@eq-diffexp-np-posterior-independence through @eq-diffexp-np-permuted-delta)
+- Full compatibility of empirical lfsr values with the existing PEFP error
+control framework, enabling a hybrid parametric/empirical workflow
+
 ### Comparison to Existing Approaches
 
 Our framework offers several advantages over existing differential expression
@@ -123,13 +139,16 @@ While our framework provides a rigorous foundation for compositional
 differential expression analysis, several limitations and potential extensions
 deserve mention.
 
-**Gaussian assumption.** Our entire framework rests on the Gaussian
-approximation to the posterior predictive distribution of normalized expression.
-As discussed in @sec-normalization, this approximation is justified when
-concentration parameters are moderate to large, but may be less accurate for
-genes with very low expression or in settings with extreme sparsity. Extensions
-to more flexible distributional families (e.g., mixtures of Gaussians or
-copula-based models) could address these cases.
+**Gaussian assumption.** The parametric DE framework (Sections 1--8) rests on
+the Gaussian approximation to the posterior predictive distribution of
+normalized expression. As discussed in @sec-normalization, this approximation is
+justified when concentration parameters are moderate to large, but may be less
+accurate for genes with very low expression or in settings with extreme
+sparsity. In @sec-diffexp-nonparametric, we address this limitation directly:
+per-gene Gaussianity diagnostics identify genes for which the approximation
+breaks down, and a non-parametric empirical DE path provides assumption-free
+inference for such genes. The two approaches can be combined in a hybrid
+workflow where each gene is analyzed by the most appropriate method.
 
 **Independence between conditions.** We assume that models for conditions A and
 B are independent. This is appropriate for independent biological replicates but
@@ -173,8 +192,17 @@ Key features of the software include:
 
 - **Modular design**: Transformations, divergences, gene-level tests, gene-set
 tests, and error control are implemented as separate, composable functions
+- **Dual DE paths**: A parametric path (`ScribeParametricDEResults`) for
+Gaussian-assumption analyses and an empirical path (`ScribeEmpiricalDEResults`)
+for assumption-free Monte Carlo analyses, unified under a single `compare()`
+factory function with method selection
+- **Gaussianity diagnostics**: Automatic per-gene quality control computed
+during logistic-normal fitting, with a standalone GPU-vectorized utility
 - **Numerical stability**: All recommendations from Section 7 are incorporated,
 including epsilon additions, contrast validation, and log-space computations
+- **GPU acceleration**: All core operations---Dirichlet sampling, CLR
+transformation, counting statistics, and Gaussianity diagnostics---are fully
+vectorized and run on GPU via JAX
 - **Extensive testing**: Unit tests verify mathematical correctness against
 known analytical results and numerical accuracy across a range of problem sizes
 - **Documentation**: Functions use NumPy-style docstrings with complete
@@ -182,7 +210,9 @@ mathematical specifications
 
 Users can perform a complete differential expression analysis with a few lines
 of code, while having full access to intermediate quantities (transformed
-parameters, contrast statistics, etc.) for custom analyses.
+parameters, contrast statistics, etc.) for custom analyses. The `compare()`
+function provides a single entry point that dispatches to either the parametric
+or empirical analysis path based on a `method` argument.
 
 ### Impact and Future Directions
 
@@ -214,8 +244,11 @@ other modalities (proteomics, chromatin accessibility) while respecting their
 respective compositional structures
 - **Bayesian meta-analysis**: Combining differential expression results across
 multiple studies using hierarchical Bayesian models
-- **Nonparametric extensions**: Relaxing the Gaussian assumption using
-Dirichlet process mixtures or other nonparametric priors
+- **Nonparametric refinements**: The empirical DE approach developed in
+@sec-diffexp-nonparametric computes lfsr by direct counting over posterior
+samples. Future refinements could include FFT-based kernel density estimation
+(KDE) for smoother density estimates with adaptive bandwidths, which would
+improve lfsr resolution without increasing the number of posterior samples
 
 The mathematical framework developed here—combining rigorous compositional data
 analysis with efficient computational methods—provides a template for addressing
@@ -308,6 +341,18 @@ loci." *Genetics*, 167(2), 989-999. [mBIC and Bayesian error control]
 - Scott, J. G., & Berger, J. O. (2010). "Bayes and empirical-Bayes multiplicity
 adjustment in the variable-selection problem." *The Annals of Statistics*,
 38(5), 2587-2619. [Bayesian multiplicity adjustment]
+
+### Gaussianity Diagnostics and Non-Parametric Methods
+
+**Normality testing:**
+
+- Jarque, C. M., & Bera, A. K. (1987). "A test for normality of observations
+and regression residuals." *International Statistical Review*, 55(2), 163-172.
+[Jarque-Bera test for normality]
+
+- D'Agostino, R. B., & Pearson, E. S. (1973). "Tests for departure from
+normality. Empirical results for the distributions of $b_2$ and
+$\sqrt{b_1}$." *Biometrika*, 60(3), 613-622. [Skewness and kurtosis tests]
 
 ### Differential Expression for RNA-Seq
 

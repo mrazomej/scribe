@@ -266,7 +266,7 @@ def test_summary_returns_string(de_results):
 def test_repr(de_results):
     """__repr__ should contain key information."""
     r = repr(de_results)
-    assert "ScribeDEResults" in r
+    assert "DEResults" in r
     assert "D=" in r
     assert "WT" in r
     assert "KO" in r

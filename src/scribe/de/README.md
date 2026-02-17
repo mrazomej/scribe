@@ -49,26 +49,36 @@ print(de.summary(sort_by='lfsr', top_n=20))
 
 ## API Reference
 
-### `ScribeDEResults` (via `compare()`)
+### `compare()` factory
 
-The recommended entry point. Creates a structured results object from two fitted
-models:
+The recommended entry point.  Returns a `ScribeParametricDEResults` or
+`ScribeEmpiricalDEResults` depending on `method=`:
 
 ```python
+# Parametric (default)
 de = compare(model_A, model_B, gene_names=names)
+
+# Empirical (non-parametric)
+de = compare(r_A, r_B, method="empirical", component_A=0, component_B=0,
+             gene_names=names)
 ```
 
-**Methods:**
+**Common methods (all subclasses):**
 
 | Method | Description |
 |--------|-------------|
 | `de.gene_level(tau)` | Per-gene posterior summaries (returns `lfsr` and `lfsr_tau`) |
 | `de.call_genes(tau, lfsr_threshold, prob_effect_threshold)` | Bayesian gene calling (tau-aware caching) |
-| `de.test_gene_set(indices, tau)` | Pathway enrichment via balances |
 | `de.test_contrast(contrast, tau)` | Custom linear contrast |
 | `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
 | `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
 | `de.summary(tau, sort_by, top_n)` | Formatted results table |
+
+**Parametric-only methods:**
+
+| Method | Description |
+|--------|-------------|
+| `de.test_gene_set(indices, tau)` | Pathway enrichment via balances |
 
 > **Note on `tau`-aware caching**: All methods that depend on gene-level results
 > accept a `tau` parameter. Results are cached and automatically recomputed when
@@ -196,17 +206,100 @@ This gives exact analytic posteriors for:
 - Each gene: `Δ_g ~ N(μ_A[g] - μ_B[g], σ²_A[g] + σ²_B[g])`
 - Any contrast: `c^T Δ ~ N(c^T(μ_A - μ_B), c^T(Σ_A + Σ_B)c)`
 
+## Empirical (Non-Parametric) DE
+
+When the Gaussian assumption fails (as indicated by Gaussianity diagnostics),
+the **empirical** DE path computes all statistics directly from posterior samples
+via Monte Carlo counting — no distributional assumptions required.
+
+### Quick start
+
+```python
+from scribe.de import compare
+
+# Independent models — empirical path
+de = compare(
+    posterior_samples_bleo["r"],   # (N, K, D) concentration samples
+    posterior_samples_ctrl["r"],
+    method="empirical",
+    component_A=0, component_B=0,  # which mixture component in each
+    gene_names=gene_names,
+    label_A="Bleomycin", label_B="Control",
+)
+
+# Same interface as parametric
+results = de.gene_level(tau=jnp.log(1.1))
+is_de = de.call_genes(lfsr_threshold=0.05)
+print(de.summary(sort_by="lfsr", top_n=20))
+```
+
+### Within-mixture comparison (paired)
+
+When comparing two components from the **same** mixture model, the posterior
+samples are correlated (they come from the same variational draw).  Use
+`paired=True` to preserve this correlation:
+
+```python
+de = compare(
+    posterior_samples["r"],        # same array for both
+    posterior_samples["r"],
+    method="empirical",
+    component_A=0, component_B=1,  # compare component 0 vs 1
+    paired=True,
+    gene_names=gene_names,
+)
+```
+
+### How it works
+
+1. **Dirichlet sampling**: Draw `rho ~ Dirichlet(r)` from the concentration
+   parameters in batches (GPU-friendly).
+2. **CLR transform**: `CLR(rho) = log(rho) - mean(log(rho))`.
+3. **Pair and difference**: `Delta = CLR(rho_A) - CLR(rho_B)`.
+4. **Count**: Estimate all statistics by vectorized counting:
+   - `lfsr_g = min(P(Delta_g > 0), P(Delta_g < 0))`
+   - `prob_effect_g = P(|Delta_g| > tau)`
+   - etc.
+
+### Validity of pairing
+
+For **independent models**, the joint posterior factorises:
+`pi(rho_A, rho_B | data_A, data_B) = pi(rho_A | data_A) * pi(rho_B | data_B)`,
+so any pairing of samples is valid.
+
+For **within-mixture**, paired indices preserve the joint posterior structure.
+
+### Resolution
+
+With N = 10,000 posterior samples, lfsr resolves to 1/N = 0.0001.  The
+standard error is `SE(lfsr) = sqrt(lfsr * (1 - lfsr) / N)` ≈ 0.001 for
+lfsr = 0.01.
+
+### Class hierarchy
+
+```
+ScribeDEResults (base)
+├── ScribeParametricDEResults  — analytic Gaussian (loc, W, d)
+└── ScribeEmpiricalDEResults   — Monte Carlo counting (delta_samples)
+```
+
+The `compare()` factory returns the appropriate subclass based on `method=`.
+All shared methods (`call_genes`, `compute_pefp`, `find_threshold`, `summary`)
+work identically on both.
+
 ## Module Layout
 
 ```
 de/
 ├── __init__.py          # Public API
-├── results.py           # ScribeDEResults dataclass + compare()
+├── results.py           # Class hierarchy + compare() factory
 ├── _extract.py          # Dimension-aware parameter extraction
 ├── _transforms.py       # ALR ↔ CLR ↔ ILR transformations
-├── _gene_level.py       # Per-gene differential expression
+├── _gene_level.py       # Per-gene DE (analytic Gaussian)
+├── _empirical.py        # Per-gene DE (empirical Monte Carlo)
 ├── _set_level.py        # Gene-set/pathway analysis
 ├── _error_control.py    # Bayesian error control, formatting
+├── _gaussianity.py      # Gaussianity diagnostics
 └── README.md            # This file
 ```
 
