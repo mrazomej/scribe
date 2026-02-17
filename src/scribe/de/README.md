@@ -271,11 +271,18 @@ gd = fitted["gaussianity"]      # dict with skewness, kurtosis, etc.
 |---|---|---|
 | \|skewness\| | 0 | > 0.5 |
 | \|excess kurtosis\| | 0 | > 1.0 |
-| JB p-value | uniform on [0,1] | < 0.05 (after BH correction) |
+| Jarque-Bera | 0 | continuous score (use for ranking) |
 
-Genes that fail these thresholds may have poorly calibrated lfsr/PEFP
-values under the Gaussian assumption.  Consider filtering them from the
-DE results or using a non-parametric alternative for those genes.
+The skewness and kurtosis thresholds are **descriptive flags** — not
+frequentist hypothesis tests.  Since the DE analysis is fully Bayesian,
+multiple-testing corrections (BH, Bonferroni, etc.) are not appropriate
+here.  The JB statistic combines skewness and kurtosis into a single
+continuous score useful for ranking genes by departure from Gaussianity.
+
+Genes that fail the skewness/kurtosis thresholds may have poorly
+calibrated lfsr/PEFP values under the Gaussian assumption.  Consider
+filtering them from the DE results or using a non-parametric alternative
+for those genes.
 
 ## Performance Notes
 
