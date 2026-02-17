@@ -577,6 +577,7 @@ logits, label_map = build_annotation_prior_logits(
     n_components=3,             # number of mixture components K
     confidence=3.0,             # kappa: prior strength
     component_order=None,       # optional list mapping labels to indices
+    min_cells=0,                # minimum cells per label (0 = no filtering)
 )
 # logits: jnp.ndarray, shape (n_cells, K) — additive logit offsets
 # label_map: dict, e.g. {"T": 0, "B": 1, "Mono": 2}
@@ -589,6 +590,16 @@ logits, label_map = build_annotation_prior_logits(
     confidence=3.0,
 )
 # label_map: e.g. {"B__ctrl": 0, "B__stim": 1, "T__ctrl": 2, "T__stim": 3}
+
+# Filter rare labels: labels with < 50 cells are treated as unlabeled
+logits, label_map = build_annotation_prior_logits(
+    adata,
+    obs_key="cell_type",
+    n_components=3,
+    confidence=3.0,
+    min_cells=50,
+)
+# Rare labels get all-zero rows (no bias) and are excluded from label_map
 ```
 
 When `obs_key` is a **list**, composite labels are formed by joining per-column
@@ -609,6 +620,23 @@ import pandas as pd
 adata.obs["cell_type"] = pd.Categorical(["T", "B", None, "T", "Mono", ...])
 adata.obs["treatment"] = pd.Categorical(["ctrl", "stim", "ctrl", None, ...])
 ```
+
+#### The `min_cells` parameter
+
+When an annotation label has very few cells, it may not meaningfully represent
+a mixture component.  The `min_cells` parameter (default `0`, no filtering)
+sets a minimum cell count threshold per label:
+
+- Labels with **fewer** than `min_cells` cells are treated as **unlabeled**:
+  their logit rows are set to zero (no bias toward any component).
+- Those labels are **excluded** from `label_map` and do **not** count toward
+  auto-inferred `n_components`.
+- A warning is logged listing the filtered-out labels and their cell counts.
+
+| `min_cells` | Effect |
+|-------------|--------|
+| `0` (default) | No filtering — all non-null labels are used |
+| `50` | Labels with < 50 cells are treated as unlabeled |
 
 #### The `confidence` parameter (kappa)
 
@@ -663,6 +691,16 @@ result = scribe.fit(
     annotation_component_order=[                # optional explicit order
         "T__ctrl", "T__stim", "B__ctrl", "B__stim", "Mono__ctrl", "Mono__stim"
     ],
+)
+
+# Filter rare annotations: labels with fewer than 50 cells get zero bias
+result = scribe.fit(
+    adata,
+    model="nbdm",
+    n_steps=50000,
+    annotation_key="cell_type",
+    annotation_confidence=3.0,
+    annotation_min_cells=50,          # rare labels → unlabeled (zero logits)
 )
 ```
 

@@ -98,6 +98,7 @@ VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae"}
 def _count_unique_labels(
     adata: "AnnData",
     annotation_key: Union[str, List[str]],
+    min_cells: int = 0,
 ) -> int:
     """
     Count the number of unique non-null annotation labels.
@@ -113,11 +114,16 @@ def _count_unique_labels(
         Annotated data matrix.
     annotation_key : str or list of str
         Column name(s) in ``adata.obs``.
+    min_cells : int, optional
+        Minimum number of cells for a label to be counted.  Labels with
+        fewer than ``min_cells`` cells are excluded from the count.
+        Default is ``0`` (no filtering).
 
     Returns
     -------
     int
-        Number of unique non-null labels (or composite labels).
+        Number of unique non-null labels (or composite labels) that meet
+        the ``min_cells`` threshold.
     """
     import pandas as pd
 
@@ -130,12 +136,17 @@ def _count_unique_labels(
         col = adata.obs[obs_keys[0]]
         if hasattr(col, "cat"):
             col = col.astype(object)
-        return int(len(col.dropna().unique()))
+        non_null = col.dropna()
     else:
         from .core.annotation_prior import _resolve_composite_annotations
 
         composite = _resolve_composite_annotations(adata, obs_keys)
-        return int(len(composite.dropna().unique()))
+        non_null = composite.dropna()
+
+    if min_cells > 0:
+        counts = non_null.value_counts()
+        return int(len(counts[counts >= min_cells]))
+    return int(len(non_null.unique()))
 
 
 # ==============================================================================
@@ -192,6 +203,7 @@ def fit(
     annotation_key: Optional[Union[str, List[str]]] = None,
     annotation_confidence: float = 3.0,
     annotation_component_order: Optional[List[str]] = None,
+    annotation_min_cells: Optional[int] = None,
     # Power user: explicit configs override above
     model_config: Optional[ModelConfig] = None,
     inference_config: Optional[InferenceConfig] = None,
@@ -370,6 +382,15 @@ def fit(
         using ``"__"`` as separator (e.g.
         ``["T__ctrl", "T__stim", "B__ctrl", "B__stim"]``).
 
+    annotation_min_cells : int, optional
+        Minimum number of cells required for an annotation label to be
+        used as a component prior.  Labels with fewer than this many
+        cells are treated as unlabeled — their logit rows are set to
+        zero (no bias toward any component) and the labels are excluded
+        from the component mapping.  When ``n_components`` is inferred
+        automatically, only labels meeting this threshold are counted.
+        If ``None`` (default), no filtering is applied.
+
     model_config : ModelConfig, optional
         Fully configured model configuration object.
         If provided, overrides model, parameterization, unconstrained,
@@ -489,9 +510,12 @@ def fit(
         _n_comp = n_components
         if _n_comp is None and model_config is not None:
             _n_comp = model_config.n_components
+        _min_cells = annotation_min_cells or 0
         if _n_comp is None:
             # Infer from the number of unique non-null annotation labels
-            _n_comp = _count_unique_labels(adata, annotation_key)
+            _n_comp = _count_unique_labels(
+                adata, annotation_key, min_cells=_min_cells
+            )
             n_components = _n_comp  # propagate so ModelConfig picks it up
         annotation_prior_logits, _label_map = build_annotation_prior_logits(
             adata=adata,
@@ -499,6 +523,7 @@ def fit(
             n_components=_n_comp,
             confidence=annotation_confidence,
             component_order=annotation_component_order,
+            min_cells=_min_cells,
         )
         validate_annotation_prior_logits(
             annotation_prior_logits, n_cells, _n_comp

@@ -213,6 +213,129 @@ class TestBuildAnnotationPriorLogits:
                 component_order=["A", "C", "D"],  # Missing "B"
             )
 
+    # --- min_cells filtering tests ---
+
+    def test_min_cells_filters_rare_labels(self):
+        """Labels with fewer than min_cells are treated as unlabeled."""
+        import anndata
+
+        n_genes = 5
+        rng = np.random.default_rng(42)
+        # 10 "A" cells, 3 "B" cells, 2 NaN
+        labels = ["A"] * 10 + ["B"] * 3 + [np.nan, np.nan]
+        X = rng.poisson(5, (len(labels), n_genes)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        logits, label_map = build_annotation_prior_logits(
+            adata, "ct", n_components=2, confidence=3.0, min_cells=5
+        )
+
+        # "B" has only 3 cells (< 5), should be excluded
+        assert "B" not in label_map
+        assert "A" in label_map
+        assert len(label_map) == 1
+
+        # "B" cells (indices 10-12) should have zero logits
+        for i in range(10, 13):
+            assert jnp.allclose(logits[i], 0.0)
+
+        # "A" cells should still have confidence
+        for i in range(10):
+            assert float(logits[i, label_map["A"]]) == pytest.approx(3.0)
+
+    def test_min_cells_zero_no_filtering(self, simple_adata):
+        """min_cells=0 should not filter any labels (default behavior)."""
+        logits_default, map_default = build_annotation_prior_logits(
+            simple_adata, "cell_type", n_components=3, confidence=3.0
+        )
+        logits_zero, map_zero = build_annotation_prior_logits(
+            simple_adata,
+            "cell_type",
+            n_components=3,
+            confidence=3.0,
+            min_cells=0,
+        )
+        assert map_default == map_zero
+        assert jnp.allclose(logits_default, logits_zero)
+
+    def test_min_cells_all_labels_pass(self, adata_three_types):
+        """When all labels meet the threshold, nothing is filtered."""
+        # Each type has 10 cells; min_cells=5 should keep all
+        logits, label_map = build_annotation_prior_logits(
+            adata_three_types,
+            "cell_type",
+            n_components=3,
+            confidence=2.0,
+            min_cells=5,
+        )
+        assert len(label_map) == 3
+
+    def test_min_cells_all_labels_filtered(self):
+        """When all labels are below threshold, all cells are unlabeled."""
+        import anndata
+
+        n_genes = 3
+        rng = np.random.default_rng(42)
+        labels = ["A"] * 2 + ["B"] * 2
+        X = rng.poisson(5, (4, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        logits, label_map = build_annotation_prior_logits(
+            adata, "ct", n_components=2, confidence=3.0, min_cells=5
+        )
+        assert len(label_map) == 0
+        assert jnp.allclose(logits, 0.0)
+
+    def test_min_cells_with_composite_labels(self):
+        """min_cells filtering works with multi-column composite labels."""
+        import anndata
+
+        n_genes = 3
+        rng = np.random.default_rng(42)
+        # 6 cells: T__ctrl (3), T__stim (1), B__ctrl (2)
+        ct = ["T", "T", "T", "T", "B", "B"]
+        tx = ["ctrl", "ctrl", "ctrl", "stim", "ctrl", "ctrl"]
+        X = rng.poisson(5, (6, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(
+            X=X, obs=pd.DataFrame({"ct": ct, "tx": tx})
+        )
+
+        logits, label_map = build_annotation_prior_logits(
+            adata,
+            ["ct", "tx"],
+            n_components=3,
+            confidence=3.0,
+            min_cells=2,
+        )
+
+        # T__stim has only 1 cell (< 2), should be excluded
+        assert "T__stim" not in label_map
+        assert "T__ctrl" in label_map
+        assert "B__ctrl" in label_map
+        assert len(label_map) == 2
+
+        # Cell 3 (T__stim) should have zero logits
+        assert jnp.allclose(logits[3], 0.0)
+
+    def test_min_cells_logs_warning(self, caplog):
+        """A warning is logged listing the filtered labels."""
+        import anndata
+        import logging
+
+        n_genes = 3
+        rng = np.random.default_rng(42)
+        labels = ["A"] * 10 + ["B"] * 2
+        X = rng.poisson(5, (12, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        with caplog.at_level(logging.WARNING, logger="scribe.core.annotation_prior"):
+            build_annotation_prior_logits(
+                adata, "ct", n_components=2, confidence=3.0, min_cells=5
+            )
+
+        assert "fewer than 5 cells" in caplog.text
+        assert "'B'" in caplog.text or "B" in caplog.text
+
 
 # ==============================================================================
 # Tests for multi-column (composite) annotation priors
@@ -712,6 +835,43 @@ class TestSVISmoke:
         )
 
         assert result.n_components == 2
+
+    def test_fit_api_annotation_min_cells(self):
+        """annotation_min_cells filters rare labels and adjusts n_components."""
+        import anndata
+        import scribe
+
+        n_genes = 5
+        rng = np.random.default_rng(42)
+        # 10 "A", 10 "B", 2 "C" (rare)
+        labels = ["A"] * 10 + ["B"] * 10 + ["C"] * 2
+        X = rng.poisson(5, (22, n_genes)).astype(np.float32)
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"ct": labels}))
+
+        # Without min_cells: 3 labels → n_components=3
+        result_all = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=3,
+            batch_size=11,
+            annotation_key="ct",
+            annotation_confidence=3.0,
+            seed=42,
+        )
+        assert result_all.n_components == 3
+
+        # With min_cells=5: "C" filtered → n_components=2
+        result_filtered = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=3,
+            batch_size=11,
+            annotation_key="ct",
+            annotation_confidence=3.0,
+            annotation_min_cells=5,
+            seed=42,
+        )
+        assert result_filtered.n_components == 2
 
     def test_svi_zinb_mixture_with_annotation(self):
         """Run SVI on ZINB mixture with annotation priors."""
