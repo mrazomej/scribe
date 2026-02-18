@@ -1,0 +1,761 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# Bayesian denoising of single-cell transcriptional profiles {#sec-denoising}
+
+In @sec-dirichlet-multinomial, we derived the generative model for single-cell
+RNA-seq UMI counts. A key step in that derivation was showing that the
+composition of a negative binomial distribution (representing true transcript
+counts) with a binomial distribution (representing the stochastic capture
+process) yields another negative binomial distribution with an effective
+parameter $\hat{p}$. The variable capture probability (VCP) model further allows
+the capture probability $\nu$ to vary across cells, and the zero-inflated
+variants add a technical dropout gate $g$ that produces spurious zeros.
+
+While these technical parameters are essential for accurate likelihood
+evaluation during inference, a natural question arises once the model is fitted:
+**Given an observed cell profile, what was the most likely "true"
+transcriptional profile before capture loss and dropout?** In this section, we
+show that this denoising problem has a clean, closed-form Bayesian solution that
+falls directly out of the conjugacy structure underlying the model.
+
+## Problem setup
+
+We begin by restating the relevant generative model for a single gene $g$ in a
+single cell $c$. The true (unobserved) transcript count follows a negative
+binomial distribution,
+
+$$
+m_g \sim \text{NB}(r_g, p),
+$${#eq-denoising-true-dist}
+
+where $r_g > 0$ is the gene-specific dispersion parameter and $p \in (0, 1)$ is
+the shared success probability. Recall from @sec-dirichlet-multinomial that the
+negative binomial PMF is
+
+$$
+\pi(m_g \mid r_g, p) = \binom{m_g + r_g - 1}{m_g} p^{r_g} (1-p)^{m_g}.
+$${#eq-denoising-nb-pmf}
+
+Conditioned on the true count, the observed UMI count follows a binomial
+distribution,
+
+$$
+u_g \mid m_g, \nu_c \sim \text{Binomial}(m_g, \nu_c),
+$${#eq-denoising-capture}
+
+where $\nu_c \in (0, 1)$ is the cell-specific capture probability. Notice that
+we must have $m_g \geq u_g$ since we cannot observe more UMIs than there are
+transcripts.
+
+The denoising problem is to compute the posterior distribution of the true count
+given the observation:
+
+$$
+\pi(m_g \mid u_g, r_g, p, \nu_c).
+$${#eq-denoising-goal}
+
+We will show that this posterior has a closed-form expression as a shifted
+negative binomial distribution.
+
+## Decomposition into captured and uncaptured transcripts
+
+The key insight is to decompose the true count $m_g$ into two parts:
+
+$$
+m_g = u_g + d_g,
+$${#eq-denoising-decomposition}
+
+where $u_g$ is the number of **captured** transcripts (which we observe) and
+$d_g$ is the number of **uncaptured** (dropped) transcripts. Since each of the
+$m_g$ transcripts is independently captured with probability $\nu_c$, the pair
+$(u_g, d_g)$ follows a joint distribution conditioned on $m_g$. Rather than
+working with this conditional distribution directly, we will exploit the
+Poisson-Gamma representation of the negative binomial to derive the result more
+elegantly.
+
+## Poisson-Gamma representation and the thinning property
+
+In @sec-dirichlet-multinomial, we showed that the negative binomial distribution
+can be expressed as a compound Poisson-Gamma distribution. Specifically, the
+true count $m_g$ can be generated in two steps:
+
+$$
+\lambda_g \sim \text{Gamma}(r_g, \theta),
+$${#eq-denoising-gamma-prior}
+
+$$
+m_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
+$${#eq-denoising-poisson-true}
+
+where $\theta$ is the rate parameter of the gamma distribution, related to $p$
+via
+
+$$
+\theta = \frac{p}{1-p}.
+$${#eq-denoising-theta-def}
+
+Now, conditioned on $\lambda_g$, the true count $m_g$ is Poisson distributed.
+The capture process @eq-denoising-capture says that each of the $m_g$
+transcripts is independently retained with probability $\nu_c$. We can invoke
+the **thinning property** of the Poisson process: if $m_g \sim
+\text{Poisson}(\lambda_g)$ and each event is independently retained with
+probability $\nu_c$, then the number of retained events and the number of
+discarded events are independent Poisson random variables,
+
+$$
+u_g \mid \lambda_g \sim \text{Poisson}(\nu_c \lambda_g),
+$${#eq-denoising-poisson-captured}
+
+$$
+d_g \mid \lambda_g \sim \text{Poisson}((1-\nu_c) \lambda_g),
+$${#eq-denoising-poisson-dropped}
+
+and crucially,
+
+$$
+u_g \perp d_g \mid \lambda_g.
+$${#eq-denoising-conditional-independence}
+
+This conditional independence is the key property that makes the derivation
+tractable. We emphasize that $u_g$ and $d_g$ are **not** unconditionally
+independent (knowing $u_g$ tells us something about $d_g$ through the shared
+latent rate $\lambda_g$), but they are independent once $\lambda_g$ is known.
+
+## Posterior distribution of the latent rate
+
+Our strategy is as follows: first, compute the posterior distribution of
+$\lambda_g$ given the observation $u_g$; then, use this posterior to derive the
+marginal distribution of $d_g$ given $u_g$.
+
+The prior on $\lambda_g$ is $\text{Gamma}(r_g, \theta)$, and the likelihood of
+observing $u_g$ given $\lambda_g$ is $\text{Poisson}(\nu_c \lambda_g)$. The
+gamma distribution is conjugate to the Poisson likelihood, so the posterior is
+also a gamma distribution. Let us derive this explicitly.
+
+The posterior density is proportional to the product of the likelihood and the
+prior:
+
+$$
+\pi(\lambda_g \mid u_g) \propto 
+\pi(u_g \mid \lambda_g) \cdot \pi(\lambda_g).
+$${#eq-denoising-posterior-proportional}
+
+Substituting the Poisson likelihood and the gamma prior:
+
+$$
+\pi(\lambda_g \mid u_g) \propto 
+\frac{(\nu_c \lambda_g)^{u_g} e^{-\nu_c \lambda_g}}{u_g!}
+\cdot
+\frac{\theta^{r_g} \lambda_g^{r_g - 1} e^{-\theta \lambda_g}}{\Gamma(r_g)}.
+$${#eq-denoising-posterior-substituted}
+
+Collecting the terms that depend on $\lambda_g$:
+
+$$
+\pi(\lambda_g \mid u_g) \propto 
+\lambda_g^{u_g} e^{-\nu_c \lambda_g}
+\cdot
+\lambda_g^{r_g - 1} e^{-\theta \lambda_g}.
+$${#eq-denoising-posterior-collected}
+
+Combining the powers of $\lambda_g$ and the exponential terms:
+
+$$
+\pi(\lambda_g \mid u_g) \propto 
+\lambda_g^{(r_g + u_g) - 1} \, e^{-(\theta + \nu_c) \lambda_g}.
+$${#eq-denoising-posterior-combined}
+
+We recognize this as the kernel of a gamma distribution with updated parameters.
+Therefore,
+
+$$
+\lambda_g \mid u_g \sim \text{Gamma}(r_g + u_g, \; \theta + \nu_c).
+$${#eq-denoising-posterior-gamma}
+
+The shape parameter is updated from $r_g$ to $r_g + u_g$ (the prior shape plus
+the observed count), and the rate parameter is updated from $\theta$ to $\theta
++ \nu_c$ (the prior rate plus the capture probability). This is the standard
+Bayesian update for the Poisson-Gamma conjugate pair, with the effective
+"exposure" being $\nu_c$ (the capture probability scales the rate).
+
+## Marginal distribution of uncaptured transcripts
+
+We now derive the distribution of $d_g$ given $u_g$ by marginalizing over
+$\lambda_g$. From @eq-denoising-poisson-dropped and
+@eq-denoising-conditional-independence, the conditional distribution of $d_g$
+given $\lambda_g$ is $\text{Poisson}((1-\nu_c)\lambda_g)$, and this is
+independent of $u_g$ given $\lambda_g$. Therefore,
+
+$$
+\pi(d_g \mid u_g) = 
+\int_0^{\infty} d\lambda_g \;
+\overbrace{\pi(d_g \mid \lambda_g)}^{\text{Poisson}}
+\cdot
+\underbrace{\pi(\lambda_g \mid u_g)}_{\text{posterior Gamma}}.
+$${#eq-denoising-marginal-integral}
+
+This is a Poisson-Gamma compound distribution. From
+@sec-dirichlet-multinomial, we know that such a compound is a negative binomial.
+Let us verify this by computing the integral explicitly. Substituting the
+Poisson PMF with rate $(1-\nu_c)\lambda_g$ and the posterior gamma density from
+@eq-denoising-posterior-gamma:
+
+$$
+\pi(d_g \mid u_g) = 
+\int_0^{\infty} d\lambda_g \;
+\frac{[(1-\nu_c)\lambda_g]^{d_g} \, e^{-(1-\nu_c)\lambda_g}}{d_g!}
+\cdot
+\frac{(\theta + \nu_c)^{r_g + u_g} \, 
+\lambda_g^{r_g + u_g - 1} \, e^{-(\theta + \nu_c)\lambda_g}}
+{\Gamma(r_g + u_g)}.
+$${#eq-denoising-marginal-substituted}
+
+We factor out the terms that do not depend on $\lambda_g$:
+
+$$
+\pi(d_g \mid u_g) = 
+\frac{(1-\nu_c)^{d_g} \, (\theta + \nu_c)^{r_g + u_g}}
+{d_g! \, \Gamma(r_g + u_g)}
+\int_0^{\infty} d\lambda_g \;
+\lambda_g^{d_g + r_g + u_g - 1} \, 
+e^{-(\theta + \nu_c + 1 - \nu_c)\lambda_g}.
+$${#eq-denoising-marginal-factored}
+
+The exponent of the exponential simplifies:
+
+$$
+\theta + \nu_c + 1 - \nu_c = \theta + 1.
+$${#eq-denoising-exponent-simplified}
+
+Substituting back:
+
+$$
+\pi(d_g \mid u_g) = 
+\frac{(1-\nu_c)^{d_g} \, (\theta + \nu_c)^{r_g + u_g}}
+{d_g! \, \Gamma(r_g + u_g)}
+\int_0^{\infty} d\lambda_g \;
+\lambda_g^{d_g + r_g + u_g - 1} \, e^{-(\theta + 1)\lambda_g}.
+$${#eq-denoising-marginal-simplified}
+
+The integral is of the standard gamma function form. Recall that
+
+$$
+\int_0^{\infty} dx \; x^{\alpha - 1} e^{-\beta x} = 
+\frac{\Gamma(\alpha)}{\beta^{\alpha}}.
+$${#eq-denoising-gamma-integral-identity}
+
+Applying this identity with $\alpha = d_g + r_g + u_g$ and $\beta = \theta +
+1$:
+
+$$
+\int_0^{\infty} d\lambda_g \;
+\lambda_g^{d_g + r_g + u_g - 1} \, e^{-(\theta + 1)\lambda_g} = 
+\frac{\Gamma(d_g + r_g + u_g)}{(\theta + 1)^{d_g + r_g + u_g}}.
+$${#eq-denoising-gamma-integral-result}
+
+Substituting this result back into our expression:
+
+$$
+\pi(d_g \mid u_g) = 
+\frac{(1-\nu_c)^{d_g} \, (\theta + \nu_c)^{r_g + u_g}}
+{d_g! \, \Gamma(r_g + u_g)}
+\cdot
+\frac{\Gamma(d_g + r_g + u_g)}{(\theta + 1)^{d_g + r_g + u_g}}.
+$${#eq-denoising-marginal-raw}
+
+Now we rearrange this expression to identify it as a negative binomial PMF. We
+group the terms as follows:
+
+$$
+\pi(d_g \mid u_g) = 
+\frac{\Gamma(d_g + r_g + u_g)}{d_g! \, \Gamma(r_g + u_g)}
+\cdot
+\left(\frac{\theta + \nu_c}{\theta + 1}\right)^{r_g + u_g}
+\cdot
+\left(\frac{1 - \nu_c}{\theta + 1}\right)^{d_g}.
+$${#eq-denoising-marginal-rearranged}
+
+The first factor is the generalized binomial coefficient
+$\binom{d_g + r_g + u_g - 1}{d_g}$. For the remaining factors, let us define
+
+$$
+p' \equiv \frac{\theta + \nu_c}{\theta + 1}.
+$${#eq-denoising-pprime-def}
+
+We need to verify that $1 - p'$ equals the base of the last factor divided
+appropriately. Computing $1 - p'$:
+
+$$
+1 - p' = 1 - \frac{\theta + \nu_c}{\theta + 1} 
+= \frac{\theta + 1 - \theta - \nu_c}{\theta + 1} 
+= \frac{1 - \nu_c}{\theta + 1}.
+$${#eq-denoising-one-minus-pprime}
+
+This confirms that the last factor in @eq-denoising-marginal-rearranged is
+exactly $(1 - p')^{d_g}$. Therefore, @eq-denoising-marginal-rearranged can be
+written as
+
+$$
+\pi(d_g \mid u_g) = 
+\binom{d_g + r_g + u_g - 1}{d_g} 
+\, (p')^{r_g + u_g} \, (1 - p')^{d_g},
+$${#eq-denoising-marginal-nb-form}
+
+which we recognize as the PMF of a negative binomial distribution. Hence,
+
+$$
+\boxed{
+d_g \mid u_g \sim \text{NB}(r_g + u_g, \; p'),
+}
+$${#eq-denoising-dropped-dist}
+
+where the parameters are
+
+$$
+\text{shape:} \quad \alpha = r_g + u_g,
+$${#eq-denoising-nb-shape}
+
+$$
+\text{success probability:} \quad p' = \frac{\theta + \nu_c}{\theta + 1}.
+$${#eq-denoising-nb-prob}
+
+## Expressing $p'$ in terms of the original parameters
+
+The result is more interpretable when expressed in terms of $p$ and $\nu_c$
+rather than $\theta$. Substituting $\theta = p/(1-p)$ from @eq-denoising-theta-def
+into @eq-denoising-pprime-def:
+
+$$
+p' = \frac{\frac{p}{1-p} + \nu_c}{\frac{p}{1-p} + 1}.
+$${#eq-denoising-pprime-substituted}
+
+Multiplying numerator and denominator by $(1-p)$:
+
+$$
+p' = \frac{p + \nu_c(1-p)}{p + (1-p)}.
+$${#eq-denoising-pprime-multiplied}
+
+The denominator simplifies to 1:
+
+$$
+p' = p + \nu_c(1-p).
+$${#eq-denoising-pprime-simplified-step}
+
+We can also write this as
+
+$$
+p' = \nu_c + p(1-\nu_c).
+$${#eq-denoising-pprime-final}
+
+This is a satisfying result. The effective success probability $p'$ for the
+uncaptured-transcript distribution is a convex combination of $\nu_c$ and $p$,
+and notably it equals the denominator of the effective capture probability
+$\hat{p}$ that we derived in @sec-dirichlet-multinomial. Recall that there we
+showed
+
+$$
+\hat{p} = \frac{p}{\nu_c + p(1-\nu_c)} = \frac{p}{p'}.
+$${#eq-denoising-phat-connection}
+
+This is not a coincidence---the same algebraic structure that relates the
+biological and observed NB parameters also governs the posterior distribution of
+uncaptured transcripts.
+
+## The denoised count distribution
+
+With the distribution of $d_g$ in hand, we can write the full posterior
+distribution of the true transcript count. Since $m_g = u_g + d_g$, and $u_g$
+is observed (hence fixed), the denoised count is a shifted negative binomial:
+
+$$
+\boxed{
+m_g \mid u_g \sim u_g + \text{NB}\!\left(r_g + u_g, \;\; 
+\nu_c + p(1-\nu_c)\right).
+}
+$${#eq-denoising-full-posterior}
+
+The interpretation is as follows: the denoised count equals the observed count
+$u_g$ (the transcripts we did capture) plus a random correction $d_g$ (the
+transcripts we missed), where $d_g$ follows a negative binomial whose shape
+depends on both the prior dispersion $r_g$ and the observation $u_g$.
+
+## Point estimates of the denoised count
+
+### Posterior mean
+
+The mean of a negative binomial random variable $X \sim \text{NB}(\alpha, q)$
+with PMF $\binom{x + \alpha - 1}{x} q^{\alpha} (1-q)^x$ is
+
+$$
+\mathbb{E}[X] = \alpha \cdot \frac{1-q}{q}.
+$${#eq-denoising-nb-mean}
+
+Applying this to $d_g \mid u_g \sim \text{NB}(r_g + u_g, \, p')$:
+
+$$
+\mathbb{E}[d_g \mid u_g] = (r_g + u_g) \cdot \frac{1 - p'}{p'}.
+$${#eq-denoising-expected-dropped}
+
+Computing $1 - p'$ from @eq-denoising-pprime-final:
+
+$$
+1 - p' = 1 - \nu_c - p(1-\nu_c) = (1-\nu_c)(1-p).
+$${#eq-denoising-one-minus-pprime-expanded}
+
+Substituting:
+
+$$
+\mathbb{E}[d_g \mid u_g] = (r_g + u_g) \cdot 
+\frac{(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
+$${#eq-denoising-expected-dropped-explicit}
+
+The posterior mean of the denoised count is therefore
+
+$$
+\mathbb{E}[m_g \mid u_g] = u_g + \mathbb{E}[d_g \mid u_g] 
+= u_g + (r_g + u_g) \cdot 
+\frac{(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
+$${#eq-denoising-expected-true-intermediate}
+
+To simplify this expression, we combine the two terms over a common denominator.
+Writing $u_g$ as $u_g \cdot \frac{p'}{p'}$:
+
+$$
+\mathbb{E}[m_g \mid u_g] = 
+\frac{u_g \, [\nu_c + p(1-\nu_c)] + (r_g + u_g)(1-\nu_c)(1-p)}
+{\nu_c + p(1-\nu_c)}.
+$${#eq-denoising-expected-true-common-denom}
+
+Expanding the numerator:
+
+$$
+\text{numerator} = 
+u_g \nu_c + u_g p(1-\nu_c) + r_g(1-\nu_c)(1-p) + u_g(1-\nu_c)(1-p).
+$${#eq-denoising-numerator-expanded}
+
+We group the terms involving $u_g$:
+
+$$
+u_g \left[\nu_c + p(1-\nu_c) + (1-\nu_c)(1-p)\right] + r_g(1-\nu_c)(1-p).
+$${#eq-denoising-numerator-grouped}
+
+The expression in brackets simplifies:
+
+$$
+\nu_c + p(1-\nu_c) + (1-\nu_c)(1-p) 
+= \nu_c + (1-\nu_c)\left[p + (1-p)\right] 
+= \nu_c + (1-\nu_c) = 1.
+$${#eq-denoising-bracket-simplification}
+
+Therefore, the posterior mean takes the compact form
+
+$$
+\boxed{
+\mathbb{E}[m_g \mid u_g] = 
+\frac{u_g + r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
+}
+$${#eq-denoising-posterior-mean}
+
+This expression has a natural interpretation as a **shrinkage estimator**. The
+numerator is the sum of two terms: the observed count $u_g$ and a prior
+correction $r_g(1-\nu_c)(1-p)$ that pulls the estimate toward the prior mean.
+The denominator scales by the effective capture probability to account for the
+fraction of transcripts that were lost.
+
+### Limiting behavior of the posterior mean
+
+The posterior mean exhibits sensible behavior in several limiting cases:
+
+**Perfect capture** ($\nu_c = 1$): When all transcripts are captured, no
+denoising is needed. Substituting $\nu_c = 1$:
+
+$$
+\mathbb{E}[m_g \mid u_g, \nu_c = 1] = \frac{u_g + 0}{1 + 0} = u_g.
+$${#eq-denoising-limit-perfect-capture}
+
+The denoised count equals the observed count, as expected.
+
+**Zero observation** ($u_g = 0$): When we observe zero UMIs for a gene, the
+posterior mean is
+
+$$
+\mathbb{E}[m_g \mid u_g = 0] = \frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)},
+$${#eq-denoising-limit-zero-obs}
+
+which is strictly positive whenever $\nu_c < 1$ and $p < 1$. This reflects the
+prior expectation that the gene was being expressed even though no transcripts
+were captured. The estimate is entirely driven by the prior and modulated by
+the capture probability.
+
+**Weak prior** ($r_g \to 0$): When the prior is very weak (approaching an
+improper flat prior on the positive reals), the posterior mean becomes
+
+$$
+\mathbb{E}[m_g \mid u_g, r_g \to 0] \approx 
+\frac{u_g}{\nu_c + p(1-\nu_c)},
+$${#eq-denoising-limit-weak-prior}
+
+which is a simple rescaling of the observed count by the effective capture
+probability. This is the "naive" denoising that inflates counts to account for
+capture loss, without any prior regularization.
+
+**Strong signal** ($u_g \gg r_g$): When the observed count is much larger than
+the prior dispersion, the data dominate and we similarly recover the rescaling
+result:
+
+$$
+\mathbb{E}[m_g \mid u_g \gg r_g] \approx 
+\frac{u_g}{\nu_c + p(1-\nu_c)}.
+$${#eq-denoising-limit-large-count}
+
+### Posterior mode (MAP denoised count)
+
+The mode of a negative binomial $\text{NB}(\alpha, q)$ with $\alpha > 1$ is
+$\lfloor (\alpha - 1)(1-q)/q \rfloor$. Applying this to $d_g \mid u_g$, the
+MAP estimate of the number of uncaptured transcripts is
+
+$$
+d_g^* = \left\lfloor 
+(r_g + u_g - 1) \cdot \frac{(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}
+\right\rfloor,
+\quad \text{when } r_g + u_g > 1,
+$${#eq-denoising-mode-dropped}
+
+and $d_g^* = 0$ when $r_g + u_g \leq 1$. The MAP denoised count is therefore
+
+$$
+m_g^* = u_g + d_g^*.
+$${#eq-denoising-mode-true}
+
+### Posterior variance
+
+The variance of a negative binomial $\text{NB}(\alpha, q)$ is $\alpha(1-q)/q^2$.
+Thus, the posterior variance of $d_g$ is
+
+$$
+\text{Var}(d_g \mid u_g) = (r_g + u_g) \cdot 
+\frac{(1-\nu_c)(1-p)}{[\nu_c + p(1-\nu_c)]^2},
+$${#eq-denoising-variance-dropped}
+
+and since $m_g = u_g + d_g$ with $u_g$ fixed,
+
+$$
+\text{Var}(m_g \mid u_g) = \text{Var}(d_g \mid u_g) = (r_g + u_g) \cdot 
+\frac{(1-\nu_c)(1-p)}{[\nu_c + p(1-\nu_c)]^2}.
+$${#eq-denoising-variance-true}
+
+This variance decreases as $\nu_c \to 1$ (better capture means less
+uncertainty about the true count) and increases with $u_g$ (larger observed
+counts imply a wider range of plausible true counts).
+
+## Extension to zero-inflated models
+
+For zero-inflated negative binomial (ZINB) models, the observed count
+distribution includes a point mass at zero:
+
+$$
+u_g \sim g \cdot \delta_0 + (1-g) \cdot \text{NB}(r_g, \hat{p}),
+$${#eq-denoising-zinb-obs}
+
+where $g \in [0, 1]$ is the zero-inflation gate probability and $\hat{p}$ is
+the effective probability after capture. If we interpret the gate as a
+**technical dropout** mechanism (library preparation failure, amplification
+dropout, etc.), then when the gate fires, the biology was producing transcripts
+normally—we simply failed to observe them.
+
+### Non-zero observations ($u_g > 0$)
+
+When $u_g > 0$, the gate could not have produced this observation (the gate
+only generates zeros). Therefore, the denoising is **identical** to the pure NB
+case:
+
+$$
+m_g \mid u_g > 0 \sim u_g + \text{NB}\!\left(r_g + u_g, \;
+\nu_c + p(1-\nu_c)\right).
+$${#eq-denoising-zinb-nonzero}
+
+### Zero observations ($u_g = 0$)
+
+When $u_g = 0$, the zero could have arisen from either the gate or the NB
+component. By Bayes' rule, the posterior probability that the gate was
+responsible is
+
+$$
+w = P(\text{gate} \mid u_g = 0) = 
+\frac{P(u_g = 0 \mid \text{gate}) \cdot P(\text{gate})}
+{P(u_g = 0)}.
+$${#eq-denoising-gate-posterior-bayes}
+
+The numerator is simply $1 \cdot g = g$ (the gate always produces zero).
+The denominator is the total probability of observing zero:
+
+$$
+P(u_g = 0) = g + (1-g) \cdot P_{\text{NB}}(u_g = 0 \mid r_g, \hat{p}).
+$${#eq-denoising-total-prob-zero}
+
+The NB probability of zero is
+
+$$
+P_{\text{NB}}(u_g = 0 \mid r_g, \hat{p}) = \hat{p}^{\,r_g},
+$${#eq-denoising-nb-prob-zero}
+
+since $\binom{0 + r_g - 1}{0} \hat{p}^{r_g} (1-\hat{p})^0 = \hat{p}^{r_g}$.
+Substituting:
+
+$$
+w = \frac{g}{g + (1-g) \cdot \hat{p}^{\,r_g}}.
+$${#eq-denoising-gate-posterior}
+
+### Mixture posterior for zero observations
+
+The denoised count distribution for $u_g = 0$ is a **mixture** of two
+components, weighted by whether the gate or the NB pathway produced the zero:
+
+$$
+\pi(m_g \mid u_g = 0) = w \cdot 
+\underbrace{\pi_{\text{gate}}(m_g)}_{\text{gate pathway}} + 
+(1-w) \cdot 
+\underbrace{\pi_{\text{NB}}(m_g \mid u_g = 0)}_{\text{NB pathway}}.
+$${#eq-denoising-zinb-zero-mixture}
+
+**Gate pathway**: If the gate fired, the cell was expressing the gene according
+to its biological program, but technical dropout prevented us from observing any
+transcripts. The denoised count is therefore drawn from the biological prior:
+
+$$
+\pi_{\text{gate}}(m_g) = \text{NB}(r_g, p).
+$${#eq-denoising-gate-pathway}
+
+This is the prior distribution of true transcript counts, unmodified by any
+observation (since the gate-mediated zero carries no information about the
+underlying biology).
+
+**NB pathway**: If the zero came from the NB component (the gene genuinely had
+low expression and/or capture loss removed all transcripts), the denoising
+follows the standard NB result from @eq-denoising-full-posterior with $u_g = 0$:
+
+$$
+\pi_{\text{NB}}(m_g \mid u_g = 0) = \text{NB}(r_g, \; \nu_c + p(1-\nu_c)).
+$${#eq-denoising-nb-pathway}
+
+Note that this distribution differs from the prior: even though $u_g = 0$, the
+fact that the observation went through the capture process (rather than being
+gated) provides information that updates the prior.
+
+### Mean of the mixture posterior
+
+The posterior mean of the denoised count for $u_g = 0$ in the ZINB model is
+
+$$
+\mathbb{E}[m_g \mid u_g = 0] = w \cdot \mathbb{E}_{\text{gate}}[m_g] + 
+(1-w) \cdot \mathbb{E}_{\text{NB}}[m_g \mid u_g = 0].
+$${#eq-denoising-zinb-zero-mean}
+
+The mean under the gate pathway is the prior mean:
+
+$$
+\mathbb{E}_{\text{gate}}[m_g] = r_g \cdot \frac{1-p}{p}.
+$${#eq-denoising-gate-mean}
+
+The mean under the NB pathway with $u_g = 0$ follows from
+@eq-denoising-posterior-mean:
+
+$$
+\mathbb{E}_{\text{NB}}[m_g \mid u_g = 0] = 
+\frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
+$${#eq-denoising-nb-zero-mean}
+
+Substituting:
+
+$$
+\boxed{
+\mathbb{E}[m_g \mid u_g = 0] = w \cdot \frac{r_g(1-p)}{p} + 
+(1-w) \cdot \frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
+}
+$${#eq-denoising-zinb-zero-mean-final}
+
+### Comparison of the two pathways
+
+To understand the relative contribution of each pathway, note that the gate
+pathway mean $r_g(1-p)/p$ is always **larger** than the NB pathway mean
+$r_g(1-\nu_c)(1-p)/[\nu_c + p(1-\nu_c)]$ when $\nu_c < 1$. This makes
+intuitive sense: if we believe the zero was caused by technical dropout, the
+cell was likely expressing the gene at its typical level (the prior mean). If
+instead the zero reflects genuine low expression combined with capture loss,
+the expected true count is lower because some of the "evidence" for low
+expression has been incorporated.
+
+## Summary of denoising formulas
+
+For convenience, we collect the main results. All formulas condition on
+posterior point estimates (or samples) of $r_g$, $p$, $\nu_c$, and $g$.
+
+### Pure NB models (nbvcp)
+
+For any observed count $u_g \geq 0$:
+
+$$
+m_g \mid u_g \sim u_g + \text{NB}\!\left(r_g + u_g, \; 
+\nu_c + p(1-\nu_c)\right),
+\qquad
+\mathbb{E}[m_g \mid u_g] = 
+\frac{u_g + r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
+$${#eq-denoising-summary-nb}
+
+### Zero-inflated models (zinbvcp)
+
+For $u_g > 0$: identical to the NB case above.
+
+For $u_g = 0$: mixture of gate and NB pathways with weight $w = g / [g +
+(1-g)\hat{p}^{r_g}]$.
+
+$$
+\mathbb{E}[m_g \mid u_g = 0] = 
+w \cdot \frac{r_g(1-p)}{p} + (1-w) \cdot 
+\frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
+$${#eq-denoising-summary-zinb}
+
+### Models without variable capture probability (zinb, nbdm)
+
+For ZINB models without cell-specific capture (i.e., $\nu_c$ is the same for
+all cells or is absorbed into $\hat{p}$), set $\nu_c = 1$ in the NB denoising
+formulas. In this case $p' = 1$ and $d_g = 0$ almost surely, so $m_g = u_g$.
+The zero-inflation denoising still applies for $u_g = 0$:
+
+$$
+\mathbb{E}[m_g \mid u_g = 0] = w \cdot \frac{r_g(1-\hat{p})}{\hat{p}},
+$${#eq-denoising-summary-zinb-only}
+
+where $w = g / [g + (1-g)\hat{p}^{r_g}]$ and the NB pathway contributes
+nothing (since without separate capture, $u_g = 0$ from the NB means $m_g =
+0$).
+
+## Fully Bayesian denoising
+
+The formulas above condition on point estimates of the parameters $(r_g, p,
+\nu_c, g)$. In a fully Bayesian treatment, we propagate uncertainty by
+repeating the denoising for each posterior sample of these parameters. Given
+$S$ posterior draws $\{(r_g^{(s)}, p^{(s)}, \nu_c^{(s)}, g^{(s)})\}_{s=1}^S$,
+the denoised posterior for cell $c$, gene $g$ is
+
+$$
+\pi(m_g \mid u_g, \text{data}) \approx 
+\frac{1}{S} \sum_{s=1}^S 
+\pi\!\left(m_g \mid u_g, r_g^{(s)}, p^{(s)}, \nu_c^{(s)}, g^{(s)}\right),
+$${#eq-denoising-fully-bayesian}
+
+where each term in the sum is evaluated using the formulas derived in this
+section. This produces a full distribution over denoised counts that reflects
+both the inherent stochasticity of the capture process and the uncertainty in
+the model parameters.
+
+In practice, one can summarize this distribution by its mean (averaging
+@eq-denoising-posterior-mean across posterior samples), its median, or credible
+intervals. For downstream analyses that require a single denoised count matrix,
+the posterior mean provides a natural point estimate with well-understood
+shrinkage properties.
