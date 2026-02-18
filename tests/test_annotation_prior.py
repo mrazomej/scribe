@@ -759,6 +759,42 @@ class TestSVISmoke:
         assert result.n_genes == n_genes
         assert result.n_components == 2
 
+    def test_fit_api_coerces_oversized_batch_size_to_full_batch(self):
+        """
+        Oversized batch_size is coerced to full-batch mode.
+
+        The fit API should preserve bounded mini-batching when possible, but
+        if ``batch_size`` exceeds ``n_cells`` it should transparently pass
+        ``None`` to the SVI configuration and emit a user-facing warning.
+        """
+        import anndata
+        import scribe
+
+        n_cells, n_genes = 10, 5
+        rng = np.random.default_rng(42)
+        X = rng.poisson(5, (n_cells, n_genes)).astype(np.float32)
+        labels = ["A"] * 5 + ["B"] * 5
+        adata = anndata.AnnData(X=X, obs=pd.DataFrame({"cell_type": labels}))
+
+        with pytest.warns(
+            UserWarning,
+            match=r"batch_size=20 exceeds n_cells=10; using full-batch mode",
+        ):
+            result = scribe.fit(
+                adata,
+                model="nbdm",
+                n_components=2,
+                n_steps=3,
+                batch_size=20,
+                annotation_key="cell_type",
+                annotation_confidence=3.0,
+                seed=42,
+            )
+
+        assert result.n_cells == n_cells
+        assert result.n_genes == n_genes
+        assert result.n_components == 2
+
     def test_fit_api_infers_n_components_single_key(self):
         """n_components is auto-inferred from annotation labels when omitted."""
         import anndata

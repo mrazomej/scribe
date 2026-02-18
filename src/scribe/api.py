@@ -37,6 +37,7 @@ Examples
 ... )
 """
 
+import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import jax.numpy as jnp
@@ -147,6 +148,56 @@ def _count_unique_labels(
         counts = non_null.value_counts()
         return int(len(counts[counts >= min_cells]))
     return int(len(non_null.unique()))
+
+
+# ------------------------------------------------------------------------------
+
+
+def _coerce_batch_size_for_dataset(
+    batch_size: Optional[int], n_cells: int
+) -> Optional[int]:
+    """
+    Normalize mini-batch size against dataset size.
+
+    This helper preserves user-specified mini-batch sizes when they are valid
+    and automatically switches to full-batch mode when the requested
+    ``batch_size`` exceeds the number of cells in the current dataset.
+    Full-batch mode is represented by ``None`` in SCRIBE's SVI/VAE configs.
+
+    Parameters
+    ----------
+    batch_size : int or None
+        Requested mini-batch size. ``None`` means full-batch mode.
+    n_cells : int
+        Number of cells available for inference after data processing.
+
+    Returns
+    -------
+    int or None
+        Effective batch size. Returns:
+
+        - ``None`` when ``batch_size`` is ``None``.
+        - The original ``batch_size`` when it is less than or equal to
+          ``n_cells``.
+        - ``None`` when ``batch_size`` is greater than ``n_cells``.
+
+    Warns
+    -----
+    UserWarning
+        Emitted when ``batch_size`` exceeds ``n_cells`` and is coerced to
+        ``None``.
+    """
+    if batch_size is None:
+        return None
+    if batch_size > n_cells:
+        warnings.warn(
+            f"batch_size={batch_size} exceeds n_cells={n_cells}; "
+            "using full-batch mode (batch_size=None).",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    return batch_size
 
 
 # ==============================================================================
@@ -315,8 +366,10 @@ def fit(
         Increase for complex models or large datasets.
 
     batch_size : int, optional
-        Mini-batch size for SVI/VAE. If None, uses full dataset.
-        Recommended for large datasets (>10K cells).
+        Mini-batch size for SVI/VAE. If ``None``, uses full-batch inference.
+        If provided but larger than the dataset size, it is automatically
+        coerced to ``None`` (full-batch mode). Recommended for large datasets
+        (>10K cells).
 
     stable_update : bool, default=True
         Use numerically stable parameter updates in SVI.
@@ -585,6 +638,9 @@ def fit(
     if inference_config is None:
         # Determine inference method from model_config or parameter
         method = model_config.inference_method
+        effective_batch_size = _coerce_batch_size_for_dataset(
+            batch_size=batch_size, n_cells=n_cells
+        )
 
         # Process early_stopping configuration
         early_stop_config = None
@@ -603,15 +659,13 @@ def fit(
         if method == InferenceMethod.SVI:
             svi_config = SVIConfig(
                 n_steps=n_steps,
-                batch_size=batch_size,
+                batch_size=effective_batch_size,
                 stable_update=stable_update,
                 early_stopping=early_stop_config,
             )
             inference_config = InferenceConfig.from_svi(svi_config)
         elif method == InferenceMethod.MCMC:
             if early_stopping is not None:
-                import warnings
-
                 warnings.warn(
                     "early_stopping is only supported for SVI and VAE "
                     "inference methods. Ignoring for MCMC.",
@@ -627,7 +681,7 @@ def fit(
             # VAE uses SVI config
             svi_config = SVIConfig(
                 n_steps=n_steps,
-                batch_size=batch_size,
+                batch_size=effective_batch_size,
                 stable_update=stable_update,
                 early_stopping=early_stop_config,
             )
