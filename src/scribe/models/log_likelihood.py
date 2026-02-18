@@ -868,9 +868,9 @@ def zinb_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
-    gate = jnp.squeeze(params["gate"]).astype(
-        dtype
-    )  # shape (n_components, n_genes)
+    gate = jnp.asarray(params["gate"]).astype(dtype)
+    if gate.ndim < 2:
+        gate = gate[jnp.newaxis, :]  # (n_genes,) -> (1, n_genes)
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
@@ -889,7 +889,7 @@ def zinb_mixture_log_likelihood(
     counts = jnp.expand_dims(counts, axis=-1)
     # r: (n_components, n_genes) -> (1, n_genes, n_components)
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # gate: (n_components, n_genes) -> (1, n_genes, n_components)
+    # gate: (K, n_genes) -> (1, n_genes, K) where K = n_components or 1
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
 
     # Handle p parameter based on whether it's component-specific or shared
@@ -1355,9 +1355,9 @@ def zinbvcp_mixture_log_likelihood(
         p_capture = jnp.squeeze(params["p_capture"]).astype(
             dtype
         )  # shape (n_cells,)
-    gate = jnp.squeeze(params["gate"]).astype(
-        dtype
-    )  # shape (n_components, n_genes)
+    gate = jnp.asarray(params["gate"]).astype(dtype)
+    if gate.ndim < 2:
+        gate = gate[jnp.newaxis, :]  # (n_genes,) -> (1, n_genes)
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
@@ -1376,7 +1376,8 @@ def zinbvcp_mixture_log_likelihood(
     counts = jnp.expand_dims(counts, axis=-1)
     # r: (n_components, n_genes) -> (1, n_genes, n_components)
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # gate: (n_components, n_genes) -> (1, n_genes, n_components)
+    # gate: (K, n_genes) -> (1, n_genes, K) where K = n_components or 1
+    # When K=1 (shared gate), the trailing dim broadcasts with n_components.
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
     # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
     p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
