@@ -119,10 +119,18 @@ log_lik = results.log_likelihood(
 
 **Predictive Analysis:**
 ```python
-# Posterior predictive checks
+# Posterior predictive checks (includes technical noise)
 ppc_samples = results.get_ppc_samples(
     n_samples=500,
     seed=42
+)
+
+# Biological (denoised) PPC — strips capture probability and
+# zero-inflation gate, sampling from the base NB(r, p) only.
+# For NBDM models this is equivalent to standard PPC.
+bio_ppc = results.get_ppc_samples_biological(
+    rng_key=rng_key,
+    cell_batch_size=2048,  # Optional cell batching for memory
 )
 
 # Prior predictive samples

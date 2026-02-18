@@ -232,6 +232,35 @@ ppc_samples = results.get_ppc_samples(
 )
 ```
 
+**Biological (Denoised) Posterior Predictive Checks:**
+
+Standard PPCs include technical noise parameters (capture probability, zero-
+inflation gate) when generating synthetic counts. Biological PPCs strip these
+parameters and sample from the base Negative Binomial NB(r, p) only, reflecting
+the underlying biology. See the Dirichlet-Multinomial derivation in the paper
+supplement for the mathematical justification.
+
+```python
+# Full-posterior biological PPC (strips p_capture, gate, etc.)
+bio_ppc = results.get_ppc_samples_biological(
+    rng_key=rng_key,
+    n_samples=100,
+)
+bio_counts = bio_ppc["predictive_samples"]  # (n_samples, n_cells, n_genes)
+
+# MAP-based biological PPC (memory-efficient, supports cell batching)
+bio_map_counts = results.get_map_ppc_samples_biological(
+    rng_key=rng_key,
+    n_samples=5,
+    cell_batch_size=2048,  # Process cells in batches
+)
+```
+
+For NBDM models (which have no technical parameters), biological PPCs produce
+the same result as standard PPCs. For VCP and ZINB models, the biological PPC
+gives a denoised view of the data by bypassing the capture probability
+transformation and zero-inflation gate.
+
 **Amortized Capture Probability and PPC:**
 
 When using amortized capture probability (enabled via
@@ -380,6 +409,10 @@ ScribeSVIResults
      - `get_predictive_samples()`: Generate predictive samples
      - `get_ppc_samples()`: Posterior predictive check samples
      - `get_map_ppc_samples()`: MAP-based predictive samples with batching
+     - `get_ppc_samples_biological()`: Biological (denoised) PPC — strips
+       technical noise and samples from base NB(r, p) only
+     - `get_map_ppc_samples_biological()`: MAP-based biological PPC with
+       cell batching support
      - `_sample_standard_model()`: Helper for standard (non-mixture) models
      - `_sample_mixture_model()`: Helper for mixture models
    - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
