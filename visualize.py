@@ -84,16 +84,20 @@ Examples:
 
     # Process multiple runs via wildcard pattern
     python visualize.py "outputs/*/zinb*/*" --umap
+
+    # Unquoted wildcard expansion (shell expands to many paths)
+    python visualize.py outputs/bleo_study0*/zinbvcp/* --recursive --umap
         """,
     )
 
     # Required argument
     parser.add_argument(
         "model_dir",
+        nargs="+",
         help="Path to a model output directory containing scribe_results.pkl "
         "and .hydra/config.yaml. Supports shell-style wildcards (e.g. "
-        "'outputs/*/zinb*/*'). When used with --recursive, matching paths are "
-        "treated as roots to search.",
+        "'outputs/*/zinb*/*'). Multiple paths are accepted. When used with "
+        "--recursive, matching paths are treated as roots to search.",
     )
 
     # Plot toggles (default plots)
@@ -889,8 +893,8 @@ def main() -> None:
     # ======================================================================
     # Dispatch: single path, wildcard pattern, or recursive search
     # ======================================================================
-    input_expr = args.model_dir
-    uses_glob = _contains_glob_pattern(input_expr)
+    input_exprs = args.model_dir
+    uses_glob = any(_contains_glob_pattern(expr) for expr in input_exprs)
 
     if args.recursive:
         console.print()
@@ -903,19 +907,25 @@ def main() -> None:
         if uses_glob:
             console.print(
                 f"[dim]Searching recursively for roots matching:[/dim] "
-                f"[cyan]{input_expr}[/cyan]"
+                f"[cyan]{', '.join(input_exprs)}[/cyan]"
             )
         else:
             console.print(
                 f"[dim]Searching recursively in:[/dim] "
-                f"[cyan]{os.path.abspath(input_expr)}[/cyan]"
+                f"[cyan]{', '.join(os.path.abspath(x) for x in input_exprs)}[/cyan]"
             )
     elif uses_glob:
         console.print(
-            f"[dim]Resolving wildcard pattern:[/dim] [cyan]{input_expr}[/cyan]"
+            f"[dim]Resolving wildcard pattern(s):[/dim] "
+            f"[cyan]{', '.join(input_exprs)}[/cyan]"
         )
 
-    model_dirs = _resolve_model_dirs(input_expr, recursive=args.recursive)
+    model_dirs = []
+    for expr in input_exprs:
+        model_dirs.extend(
+            _resolve_model_dirs(expr, recursive=args.recursive)
+        )
+    model_dirs = sorted(set(model_dirs))
 
     if not model_dirs:
         if uses_glob:
@@ -929,7 +939,7 @@ def main() -> None:
                 "scribe_results.pkl[/bold yellow]"
             )
         else:
-            missing = os.path.abspath(input_expr)
+            missing = ", ".join(os.path.abspath(x) for x in input_exprs)
             console.print(
                 "[bold red]ERROR: Model directory does not exist or "
                 "does not contain scribe_results.pkl![/bold red]"
