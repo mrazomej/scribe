@@ -664,9 +664,6 @@ def nbdm_mixture_log_likelihood(
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
-    # Determine if p is component-specific or shared
-    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
-
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -674,21 +671,23 @@ def nbdm_mixture_log_likelihood(
         n_genes, n_cells = counts.shape
         counts = jnp.transpose(counts)  # Transpose to make cells rows
 
-    # Expand dimensions for vectorized computation
-    # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
+    # Broadcasting layout: (n_cells, n_genes, n_components)
     counts = jnp.expand_dims(counts, axis=-1)
-    # r: (n_components, n_genes) -> (1, n_genes, n_components)
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
 
-    # Handle p parameter based on whether it's component-specific or shared
-    if p_is_component_specific:
-        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+    # Handle p: scalar, (n_components,), or (n_components, n_genes)
+    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_component_specific = (
+        not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
+    )
+
+    if p_is_gene_specific:
+        p = jnp.expand_dims(jnp.transpose(p), axis=0)
+    elif p_is_component_specific:
         p = jnp.expand_dims(p, axis=(0, 1))
     else:
-        # Shared p: scalar -> (1, 1, 1) for broadcasting
         p = jnp.array(p)[None, None, None]
 
-    # Create base NB distribution vectorized over cells, components, genes
     nb_dist = dist.NegativeBinomialProbs(r, p)
 
     # Validate and process weights
@@ -874,9 +873,6 @@ def zinb_mixture_log_likelihood(
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
-    # Determine if p is component-specific or shared
-    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
-
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -884,20 +880,22 @@ def zinb_mixture_log_likelihood(
         n_genes, n_cells = counts.shape
         counts = jnp.transpose(counts)  # Transpose to make cells rows
 
-    # Expand dimensions for vectorized computation
-    # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
+    # Broadcasting layout: (n_cells, n_genes, n_components)
     counts = jnp.expand_dims(counts, axis=-1)
-    # r: (n_components, n_genes) -> (1, n_genes, n_components)
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # gate: (K, n_genes) -> (1, n_genes, K) where K = n_components or 1
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
 
-    # Handle p parameter based on whether it's component-specific or shared
-    if p_is_component_specific:
-        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+    # Handle p: scalar, (n_components,), or (n_components, n_genes)
+    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_component_specific = (
+        not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
+    )
+
+    if p_is_gene_specific:
+        p = jnp.expand_dims(jnp.transpose(p), axis=0)
+    elif p_is_component_specific:
         p = jnp.expand_dims(p, axis=(0, 1))
     else:
-        # Shared p: scalar -> (1, 1, 1) for broadcasting
         p = jnp.array(p)[None, None, None]
 
     # Create base NB distribution vectorized over cells, genes, components
@@ -1102,9 +1100,6 @@ def nbvcp_mixture_log_likelihood(
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
-    # Determine if p is component-specific or shared
-    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
-
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
@@ -1112,7 +1107,7 @@ def nbvcp_mixture_log_likelihood(
         n_genes, n_cells = counts.shape
         counts = jnp.transpose(counts)  # Transpose to make cells rows
 
-    # Expand dimensions for vectorized computation
+    # Broadcasting layout used throughout: (n_cells, n_genes, n_components)
     # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
     counts = jnp.expand_dims(counts, axis=-1)
     # r: (n_components, n_genes) -> (1, n_genes, n_components)
@@ -1120,17 +1115,25 @@ def nbvcp_mixture_log_likelihood(
     # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
     p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
 
-    # Handle p parameter based on whether it's component-specific or shared
-    if p_is_component_specific:
-        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+    # Handle p parameter: scalar, (n_components,), or (n_components, n_genes)
+    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_component_specific = (
+        not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
+    )
+
+    if p_is_gene_specific:
+        # Hierarchical: (n_components, n_genes) -> (1, n_genes, n_components)
+        p = jnp.expand_dims(jnp.transpose(p), axis=0)
+    elif p_is_component_specific:
+        # Component-only: (n_components,) -> (1, 1, n_components)
         p = jnp.expand_dims(p, axis=(0, 1))
     else:
-        # Shared p: scalar -> (1, 1, 1) for broadcasting
+        # Shared scalar: () -> (1, 1, 1)
         p = jnp.array(p)[None, None, None]
 
-    # Compute effective probability for each cell using the correct formula
+    # Compute effective probability for each cell
     # p_hat = p * p_capture / (1 - p * (1 - p_capture))
-    # This will broadcast to shape (n_cells, 1, n_components) or (n_cells, 1, 1)
+    # Broadcasts to (n_cells, n_genes, n_components) or (n_cells, 1, n_components)
     p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     # Validate and process weights
@@ -1346,53 +1349,44 @@ def zinbvcp_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
-    # Handle both p_capture and phi_capture (odds_ratio parameterization)
     if "phi_capture" in params:
-        # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
         phi_capture = jnp.squeeze(params["phi_capture"]).astype(dtype)
-        p_capture = 1.0 / (1.0 + phi_capture)  # shape (n_cells,)
+        p_capture = 1.0 / (1.0 + phi_capture)
     else:
-        p_capture = jnp.squeeze(params["p_capture"]).astype(
-            dtype
-        )  # shape (n_cells,)
+        p_capture = jnp.squeeze(params["p_capture"]).astype(dtype)
     gate = jnp.asarray(params["gate"]).astype(dtype)
     if gate.ndim < 2:
-        gate = gate[jnp.newaxis, :]  # (n_genes,) -> (1, n_genes)
+        gate = gate[jnp.newaxis, :]
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
-
-    # Determine if p is component-specific or shared
-    p_is_component_specific = len(p.shape) > 0 and p.shape[0] == n_components
 
     # Extract dimensions
     if cells_axis == 0:
         n_cells, n_genes = counts.shape
     else:
         n_genes, n_cells = counts.shape
-        counts = jnp.transpose(counts)  # Transpose to make cells rows
+        counts = jnp.transpose(counts)
 
-    # Expand dimensions for vectorized computation
-    # counts: (n_cells, n_genes) -> (n_cells, n_genes, 1)
+    # Broadcasting layout: (n_cells, n_genes, n_components)
     counts = jnp.expand_dims(counts, axis=-1)
-    # r: (n_components, n_genes) -> (1, n_genes, n_components)
     r = jnp.expand_dims(jnp.transpose(r), axis=0)
-    # gate: (K, n_genes) -> (1, n_genes, K) where K = n_components or 1
-    # When K=1 (shared gate), the trailing dim broadcasts with n_components.
     gate = jnp.expand_dims(jnp.transpose(gate), axis=0)
-    # p_capture: (n_cells,) -> (n_cells, 1, 1) for broadcasting
     p_capture = jnp.expand_dims(p_capture, axis=(-1, -2))
 
-    # Handle p parameter based on whether it's component-specific or shared
-    if p_is_component_specific:
-        # Component-specific p: shape (n_components,) -> (1, 1, n_components)
+    # Handle p: scalar, (n_components,), or (n_components, n_genes)
+    p_is_gene_specific = p.ndim == 2 and p.shape[0] == n_components and p.shape[1] > 1
+    p_is_component_specific = (
+        not p_is_gene_specific and p.ndim >= 1 and p.shape[0] == n_components
+    )
+
+    if p_is_gene_specific:
+        p = jnp.expand_dims(jnp.transpose(p), axis=0)
+    elif p_is_component_specific:
         p = jnp.expand_dims(p, axis=(0, 1))
     else:
-        # Shared p: scalar -> (1, 1, 1) for broadcasting
         p = jnp.array(p)[None, None, None]
 
-    # Compute effective probability for each cell using the correct formula
-    # p_hat = p * p_capture / (1 - p * (1 - p_capture))
-    # This will broadcast to shape (n_cells, 1, n_components) or (n_cells, 1, 1)
+    # p_hat broadcasts to (n_cells, n_genes, n_components) or (n_cells, 1, n_components)
     p_hat = p * p_capture / (1 - p * (1 - p_capture))
 
     # Validate and process weights
