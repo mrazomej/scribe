@@ -163,10 +163,12 @@ def get_posterior_distributions(
     # Add capture probability if applicable
     # -------------------------------------------------------------------------
     if uses_vcp:
-        # For mean_odds parameterization, use phi_capture instead of p_capture
+        # For mean_odds parameterization (including hierarchical variant),
+        # use phi_capture instead of p_capture
         if parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
+            Parameterization.HIERARCHICAL_MEAN_ODDS,
         ):
             distributions.update(
                 _build_phi_capture_posterior(params, unconstrained, split)
