@@ -97,6 +97,7 @@ format:
     default-image-extension: png
     toc: true
     filters:
+      - tikz.lua
       - maintext-filter.lua
       - sitext-filter.lua
   pdf: 
@@ -110,6 +111,7 @@ format:
     biblio-style: ieee
     keep-tex: false
     filters:
+      - tikz.lua
       - abstract-filter.lua
       - color-text-span.lua
       - maintext-filter.lua
