@@ -984,12 +984,20 @@ def _denoise_batch(
     variance : jnp.ndarray
         Posterior variance ``(batch_cells, n_genes)``.
     """
+    # Normalize per-cell p vectors to column shape so they broadcast with
+    # (batch_cells, n_genes) tensors rather than producing an outer product.
+    p_eff = (
+        p[:, None]
+        if p.ndim == 1 and p.shape[0] == counts.shape[0]
+        else p
+    )
+
     # probs_post is the numpyro probs for the posterior NB of uncaptured
     # transcripts d_g.  probs_post = canonical_p * (1 - nu_c).
     # When no VCP (nu_c = 1): probs_post = 0 → d_g = 0 → identity.
     if p_capture is not None:
         nu = p_capture[:, None]  # (batch_cells, 1)
-        probs_post = p * (1.0 - nu)
+        probs_post = p_eff * (1.0 - nu)
     else:
         probs_post = jnp.zeros(())
 
@@ -1030,20 +1038,20 @@ def _denoise_batch(
         is_zero = counts == 0
 
         # Gate weight w = P(gate fired | u=0)
-        w = _compute_gate_weight(gate, r, p, one_minus_pp)
+        w = _compute_gate_weight(gate, r, p_eff, one_minus_pp)
 
         # Gate pathway: the cell was expressing normally but dropout
         # prevented observation.  Denoised count follows the prior NB(r, p).
         if method == "mean":
-            gate_val = r * p / (1.0 - p)
+            gate_val = r * p_eff / (1.0 - p_eff)
         elif method == "mode":
             gate_val = jnp.floor(
-                jnp.maximum(r - 1.0, 0.0) * p / (1.0 - p)
+                jnp.maximum(r - 1.0, 0.0) * p_eff / (1.0 - p_eff)
             )
         else:
             key_gate, rng_key = random.split(rng_key)
             gate_val = dist.NegativeBinomialProbs(
-                total_count=r, probs=p
+                total_count=r, probs=p_eff
             ).sample(key_gate)
 
         # NB pathway value at u=0 is already in denoised_nb
@@ -1066,9 +1074,9 @@ def _denoise_batch(
         denoised = jnp.where(is_zero, zinb_zero, denoised_nb)
 
         # Variance at zero positions: law of total variance for the mixture
-        var_gate = r * p / (1.0 - p) ** 2
+        var_gate = r * p_eff / (1.0 - p_eff) ** 2
         var_nb_zero = var_nb  # already correct at u=0 positions
-        mean_gate = r * p / (1.0 - p)
+        mean_gate = r * p_eff / (1.0 - p_eff)
         mean_nb_zero = (r * probs_post) / one_minus_pp
         mixture_var = (
             w * var_gate

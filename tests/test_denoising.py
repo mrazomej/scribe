@@ -493,6 +493,58 @@ class TestDenoiseMixture:
         assert result.shape == (n_cells, n_genes)
         assert jnp.all(result >= 0)
 
+    def test_sample_method_mixture_component_p_with_batching(self, rng):
+        """Sampled mixture denoising handles per-component p with batching."""
+        n_cells, n_genes, n_components = 9, 5, 3
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 2
+        r = jnp.ones((n_components, n_genes), dtype=jnp.float32) * 4.0
+        p = jnp.array([0.2, 0.4, 0.6], dtype=jnp.float32)
+        nu = jnp.linspace(0.2, 0.8, n_cells, dtype=jnp.float32)
+        mw = jnp.array([0.2, 0.5, 0.3], dtype=jnp.float32)
+
+        result = denoise_counts(
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=mw,
+            method="sample",
+            rng_key=rng,
+            cell_batch_size=4,
+        )
+        assert result.shape == (n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_multi_sample_mixture_component_p_shape(self, rng):
+        """Multi-sample mixture denoising returns expected 3D shape."""
+        n_samples, n_cells, n_genes, n_components = 3, 8, 4, 2
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones(
+            (n_samples, n_components, n_genes), dtype=jnp.float32
+        ) * 5.0
+        p = jnp.array(
+            [[0.25, 0.45], [0.30, 0.50], [0.35, 0.55]],
+            dtype=jnp.float32,
+        )
+        nu = jnp.ones((n_samples, n_cells), dtype=jnp.float32) * 0.5
+        mw = jnp.array(
+            [[0.6, 0.4], [0.4, 0.6], [0.5, 0.5]],
+            dtype=jnp.float32,
+        )
+
+        result = denoise_counts(
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=mw,
+            method="sample",
+            rng_key=rng,
+            cell_batch_size=3,
+        )
+        assert result.shape == (n_samples, n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
 
 # ==============================================================================
 # Tests for variance computation
