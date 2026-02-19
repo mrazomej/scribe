@@ -44,7 +44,7 @@ viz:
 
   # Correlation heatmap options
   heatmap_opts:
-    n_genes: 1500  # Number of genes to display (selected by correlation variance)
+    n_genes: 200  # Number of genes to display (selected by correlation variance)
     n_samples: 512 # Number of posterior samples to generate for correlation computation
     figsize: 12  # Figure size (square)
     cmap: "RdBu_r"  # Colormap (red=positive, blue=negative correlation)
