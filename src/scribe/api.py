@@ -70,6 +70,7 @@ from .core.annotation_prior import (
 from .svi.results import ScribeSVIResults
 from .mcmc.results import ScribeMCMCResults
 from .vae.results import ScribeVAEResults
+from .models.parameterizations import PARAMETERIZATIONS
 
 # Type alias for return type
 ScribeResults = Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
@@ -77,15 +78,8 @@ ScribeResults = Union[ScribeSVIResults, ScribeMCMCResults, ScribeVAEResults]
 # Valid model types
 VALID_MODELS = {"nbdm", "zinb", "nbvcp", "zinbvcp"}
 
-# Valid parameterizations (including aliases)
-VALID_PARAMETERIZATIONS = {
-    "canonical",
-    "linked",
-    "odds_ratio",
-    "standard",
-    "mean_prob",
-    "mean_odds",
-}
+# Derive valid parameterizations from the single source of truth
+VALID_PARAMETERIZATIONS = set(PARAMETERIZATIONS.keys())
 
 # Valid inference methods
 VALID_INFERENCE_METHODS = {"svi", "mcmc", "vae"}
