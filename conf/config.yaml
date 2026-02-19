@@ -142,3 +142,4 @@ hydra:
           - viz.annotation_ppc_opts
           - output_dir
           - inference.early_stopping.enabled
+          - inference.log_progress_lines

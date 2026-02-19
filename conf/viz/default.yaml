@@ -30,6 +30,13 @@ viz:
     min_dist: 0.1  # Minimum distance for UMAP
     n_components: 2  # Number of UMAP dimensions
     random_state: 42  # Random seed for reproducibility
+    target_sum: 1e4  # Library-size normalization target (counts per cell)
+    gene_filter_min_cells: 3  # Keep genes detected in at least this many cells
+    use_hvg: true  # Select highly variable genes before UMAP
+    hvg_n_top_genes: 2000  # Number of HVGs (Scanpy-style default)
+    hvg_flavor: "seurat"  # Scanpy HVG flavor
+    use_pca: true  # Run PCA before UMAP (standard Scanpy workflow)
+    pca_n_comps: 50  # Number of PCs used as UMAP input
     batch_size: 1000  # Batch size for PPC sampling (None = no batching, use for memory efficiency)
     data_color: "dark_blue"  # Color for experimental data
     synthetic_color: "dark_red"  # Color for synthetic data
