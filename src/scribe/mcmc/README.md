@@ -140,6 +140,31 @@ prior_samples = results.get_prior_predictive_samples(
 )
 ```
 
+**Bayesian Denoising of Observed Counts:**
+
+Takes observed counts and computes the posterior of the true (pre-capture,
+pre-dropout) transcript counts using the MCMC posterior samples.
+
+```python
+# Denoise using all MCMC posterior draws (returns one denoised
+# matrix per draw; average for a Bayesian point estimate)
+denoised = results.denoise_counts(
+    counts=observed_counts,
+    method="mean",          # "mean", "mode", or "sample"
+    rng_key=rng_key,
+)
+# denoised.shape == (n_posterior_samples, n_cells, n_genes)
+denoised_avg = denoised.mean(axis=0)
+
+# With variance for uncertainty quantification
+result = results.denoise_counts(
+    counts=observed_counts,
+    return_variance=True,
+    rng_key=rng_key,
+)
+# result["denoised_counts"] and result["variance"]
+```
+
 **Mixture Model Analysis:**
 ```python
 # For mixture models, analyze cell type assignments

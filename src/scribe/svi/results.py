@@ -105,6 +105,7 @@ class ScribeSVIResults(
     posterior_samples: Optional[Dict] = None
     predictive_samples: Optional[Dict] = None
     n_components: Optional[int] = None
+    denoised_counts: Optional[jnp.ndarray] = None
 
     # Internal: tracks original gene count before subsetting (for amortizer
     # validation) When using amortized capture probability, counts must have

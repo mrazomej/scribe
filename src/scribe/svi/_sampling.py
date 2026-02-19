@@ -2,13 +2,18 @@
 Sampling mixin for SVI results.
 
 This mixin provides methods for posterior and predictive sampling, including
-posterior predictive checks and MAP-based sampling.  It also exposes
-*biological* PPC methods that sample from the base Negative Binomial
-distribution only, stripping technical noise parameters (capture probability,
-zero-inflation gate) so the resulting counts reflect the latent biology.
+posterior predictive checks and MAP-based sampling.  It also exposes:
+
+* **Biological PPC** methods that sample from the base Negative Binomial
+  distribution only, stripping technical noise parameters (capture probability,
+  zero-inflation gate) so the resulting counts reflect the latent biology.
+
+* **Bayesian denoising** methods that take observed count matrices and
+  posterior parameter estimates to compute the closed-form posterior of
+  true (pre-capture, pre-dropout) transcript counts.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 import jax.numpy as jnp
 from jax import random
 import numpyro.distributions as dist
@@ -17,6 +22,7 @@ from ..sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
     sample_biological_nb,
+    denoise_counts,
 )
 
 # ==============================================================================
@@ -820,3 +826,268 @@ class SamplingMixin:
             self.predictive_samples_biological = samples
 
         return samples
+
+    # --------------------------------------------------------------------------
+    # Bayesian denoising of observed counts
+    # --------------------------------------------------------------------------
+
+    def denoise_counts_map(
+        self,
+        counts: jnp.ndarray,
+        method: str = "mean",
+        rng_key: Optional[random.PRNGKey] = None,
+        return_variance: bool = False,
+        cell_batch_size: Optional[int] = None,
+        use_mean: bool = True,
+        store_result: bool = True,
+        verbose: bool = True,
+    ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
+        """Denoise observed counts using MAP parameter estimates.
+
+        Computes the posterior of true (pre-capture, pre-dropout)
+        transcript counts for each cell and gene, using point estimates
+        of the model parameters.  For VCP models this accounts for the
+        per-cell capture probability; for ZINB variants it additionally
+        corrects zero observations for dropout.  For NBDM the result is
+        the identity (``denoised == counts``).
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Observed UMI count matrix of shape ``(n_cells, n_genes)``.
+        method : {'mean', 'mode', 'sample'}, optional
+            Summary of the denoised posterior to return.
+
+            * ``'mean'``: closed-form posterior mean (shrinkage estimator).
+            * ``'mode'``: posterior mode (MAP denoised count).
+            * ``'sample'``: one stochastic draw per cell/gene.
+
+            Default: ``'mean'``.
+        rng_key : random.PRNGKey or None, optional
+            JAX PRNG key.  Required when ``method='sample'``.
+            Defaults to ``random.PRNGKey(42)`` when ``None``.
+        return_variance : bool, optional
+            If ``True``, return a dictionary with ``'denoised_counts'``
+            and ``'variance'`` keys.  Default: ``False``.
+        cell_batch_size : int or None, optional
+            Process cells in batches of this size to limit memory.
+            ``None`` processes all cells at once.
+        use_mean : bool, optional
+            If ``True``, replaces undefined MAP values (NaN) with
+            posterior means.  Default: ``True``.
+        store_result : bool, optional
+            If ``True``, stores the denoised counts in
+            ``self.denoised_counts``.  Default: ``True``.
+        verbose : bool, optional
+            Print progress messages.  Default: ``True``.
+
+        Returns
+        -------
+        jnp.ndarray or Dict[str, jnp.ndarray]
+            Denoised count matrix of shape ``(n_cells, n_genes)`` (or
+            dict with variance when ``return_variance=True``).
+
+        See Also
+        --------
+        denoise_counts_posterior : Full-posterior Bayesian denoising.
+        get_map_ppc_samples_biological : MAP-based biological PPC.
+        scribe.sampling.denoise_counts : Core denoising utility.
+        """
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
+        if verbose:
+            print("Getting MAP estimates for denoising...")
+
+        map_estimates = self.get_map(
+            use_mean=use_mean, canonical=True, verbose=False,
+            counts=counts,
+        )
+
+        r = map_estimates.get("r")
+        p = map_estimates.get("p")
+        if r is None or p is None:
+            raise ValueError(
+                "Could not extract r and p from MAP estimates. "
+                f"Available keys: {list(map_estimates.keys())}"
+            )
+
+        p_capture = map_estimates.get("p_capture")
+        gate = map_estimates.get("gate")
+        is_mixture = self.n_components is not None and self.n_components > 1
+        mixing_weights = (
+            map_estimates.get("mixing_weights") if is_mixture else None
+        )
+
+        if verbose:
+            model_desc = (
+                f"mixture ({self.n_components} components)"
+                if is_mixture
+                else "standard"
+            )
+            extras = []
+            if p_capture is not None:
+                extras.append("VCP")
+            if gate is not None:
+                extras.append("gate")
+            extra_str = f" [{', '.join(extras)}]" if extras else ""
+            print(
+                f"Denoising {model_desc} model "
+                f"({self.model_type}){extra_str}, method='{method}'..."
+            )
+
+        result = denoise_counts(
+            counts=counts,
+            r=r,
+            p=p,
+            p_capture=p_capture,
+            gate=gate,
+            method=method,
+            rng_key=rng_key,
+            return_variance=return_variance,
+            mixing_weights=mixing_weights,
+            cell_batch_size=cell_batch_size,
+        )
+
+        if verbose:
+            shape = (
+                result["denoised_counts"].shape
+                if return_variance
+                else result.shape
+            )
+            print(f"Denoised counts shape: {shape}")
+
+        if store_result:
+            self.denoised_counts = (
+                result["denoised_counts"] if return_variance else result
+            )
+
+        return result
+
+    # --------------------------------------------------------------------------
+
+    def denoise_counts_posterior(
+        self,
+        counts: jnp.ndarray,
+        method: str = "mean",
+        rng_key: Optional[random.PRNGKey] = None,
+        n_samples: int = 100,
+        batch_size: Optional[int] = None,
+        return_variance: bool = False,
+        cell_batch_size: Optional[int] = None,
+        store_result: bool = True,
+        verbose: bool = True,
+    ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
+        """Denoise observed counts using full posterior samples.
+
+        Propagates parameter uncertainty by repeating the denoising
+        computation for each draw from the variational posterior.  The
+        result has a leading ``n_samples`` dimension that can be
+        summarised (e.g. ``.mean(axis=0)`` for a fully Bayesian point
+        estimate, or quantiles for credible intervals).
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Observed UMI count matrix ``(n_cells, n_genes)``.
+        method : {'mean', 'mode', 'sample'}, optional
+            Summary of the per-sample denoised posterior.
+            Default: ``'mean'``.
+        rng_key : random.PRNGKey or None, optional
+            JAX PRNG key.  Defaults to ``random.PRNGKey(42)``.
+        n_samples : int, optional
+            Number of posterior samples to draw from the guide if
+            ``self.posterior_samples`` is ``None``.  Default: 100.
+        batch_size : int or None, optional
+            Batch size for posterior sampling (passed to
+            :meth:`get_posterior_samples`).
+        return_variance : bool, optional
+            If ``True``, return dict with ``'denoised_counts'`` and
+            ``'variance'``.  Default: ``False``.
+        cell_batch_size : int or None, optional
+            Cell batching inside each posterior draw.
+        store_result : bool, optional
+            Store result in ``self.denoised_counts``.  Default: ``True``.
+        verbose : bool, optional
+            Print progress messages.  Default: ``True``.
+
+        Returns
+        -------
+        jnp.ndarray or Dict[str, jnp.ndarray]
+            Denoised counts with shape ``(n_samples, n_cells, n_genes)``
+            (or dict with variance when ``return_variance=True``).
+
+        See Also
+        --------
+        denoise_counts_map : MAP-based denoising (single point estimate).
+        get_ppc_samples_biological : Full-posterior biological PPC.
+        scribe.sampling.denoise_counts : Core denoising utility.
+        """
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
+        # Ensure posterior samples exist
+        if self.posterior_samples is None:
+            key_post, rng_key = random.split(rng_key)
+            if verbose:
+                print("Drawing posterior samples...")
+            self.get_posterior_samples(
+                rng_key=key_post,
+                n_samples=n_samples,
+                batch_size=batch_size,
+                store_samples=True,
+                counts=counts,
+            )
+
+        r = self.posterior_samples["r"]
+        p = self.posterior_samples["p"]
+        p_capture = self.posterior_samples.get("p_capture")
+        gate = self.posterior_samples.get("gate")
+        is_mixture = self.n_components is not None and self.n_components > 1
+        mixing_weights = (
+            self.posterior_samples.get("mixing_weights")
+            if is_mixture
+            else None
+        )
+
+        if verbose:
+            extras = []
+            if p_capture is not None:
+                extras.append("VCP")
+            if gate is not None:
+                extras.append("gate")
+            extra_str = f" [{', '.join(extras)}]" if extras else ""
+            n_post = r.shape[0]
+            print(
+                f"Denoising with {n_post} posterior samples"
+                f" ({self.model_type}){extra_str}, method='{method}'..."
+            )
+
+        _, key_denoise = random.split(rng_key)
+        result = denoise_counts(
+            counts=counts,
+            r=r,
+            p=p,
+            p_capture=p_capture,
+            gate=gate,
+            method=method,
+            rng_key=key_denoise,
+            return_variance=return_variance,
+            mixing_weights=mixing_weights,
+            cell_batch_size=cell_batch_size,
+        )
+
+        if verbose:
+            shape = (
+                result["denoised_counts"].shape
+                if return_variance
+                else result.shape
+            )
+            print(f"Denoised counts shape: {shape}")
+
+        if store_result:
+            self.denoised_counts = (
+                result["denoised_counts"] if return_variance else result
+            )
+
+        return result

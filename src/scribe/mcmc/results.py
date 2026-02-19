@@ -13,7 +13,11 @@ import pandas as pd
 from numpyro.infer import MCMC
 import numpy as np
 
-from ..sampling import generate_predictive_samples, sample_biological_nb
+from ..sampling import (
+    generate_predictive_samples,
+    sample_biological_nb,
+    denoise_counts as _denoise_counts_util,
+)
 from ..models.config import ModelConfig
 from ..core.normalization import normalize_counts_from_posterior
 from ..svi._gene_subsetting import build_gene_axis_by_key
@@ -601,6 +605,7 @@ class ScribeMCMCResults(MCMC):
         # Optional attributes
         self.predictive_samples = predictive_samples
         self.prior_predictive_samples = None
+        self.denoised_counts = None
         self.n_components = (
             n_components
             if n_components is not None
@@ -1167,6 +1172,120 @@ class ScribeMCMCResults(MCMC):
             self.predictive_samples_biological = bio_samples
 
         return bio_samples
+
+    # --------------------------------------------------------------------------
+    # Bayesian denoising of observed counts
+    # --------------------------------------------------------------------------
+
+    def denoise_counts(
+        self,
+        counts: jnp.ndarray,
+        method: str = "mean",
+        rng_key: Optional[random.PRNGKey] = None,
+        return_variance: bool = False,
+        cell_batch_size: Optional[int] = None,
+        store_result: bool = True,
+        verbose: bool = True,
+    ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
+        """Denoise observed counts using MCMC posterior samples.
+
+        Propagates parameter uncertainty by computing the denoised
+        posterior for each MCMC draw.  The result has a leading
+        ``n_posterior_samples`` dimension that can be summarised
+        (e.g. ``.mean(axis=0)`` for a Bayesian point estimate).
+
+        For VCP models this accounts for per-cell capture probability.
+        For ZINB variants it corrects zero observations for technical
+        dropout.  For NBDM the result is the identity.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Observed UMI count matrix ``(n_cells, n_genes)``.
+        method : {'mean', 'mode', 'sample'}, optional
+            Summary of the per-sample denoised posterior.
+
+            * ``'mean'``: closed-form posterior mean (shrinkage estimator).
+            * ``'mode'``: posterior mode (MAP denoised count).
+            * ``'sample'``: one stochastic draw per cell/gene per sample.
+
+            Default: ``'mean'``.
+        rng_key : random.PRNGKey or None, optional
+            JAX PRNG key.  Defaults to ``random.PRNGKey(42)``.
+        return_variance : bool, optional
+            If ``True``, return dict with ``'denoised_counts'`` and
+            ``'variance'``.  Default: ``False``.
+        cell_batch_size : int or None, optional
+            Cell batching inside each posterior draw.
+        store_result : bool, optional
+            Store result in ``self.denoised_counts``.  Default: ``True``.
+        verbose : bool, optional
+            Print progress messages.  Default: ``True``.
+
+        Returns
+        -------
+        jnp.ndarray or Dict[str, jnp.ndarray]
+            Denoised counts with shape
+            ``(n_posterior_samples, n_cells, n_genes)`` (or dict with
+            variance when ``return_variance=True``).
+
+        See Also
+        --------
+        get_ppc_samples_biological : Biological PPC (not conditioned on
+            observed counts).
+        scribe.sampling.denoise_counts : Core denoising utility.
+        """
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
+        canonical_samples = self.get_samples(canonical=True)
+
+        r = canonical_samples["r"]
+        p = canonical_samples["p"]
+        p_capture = canonical_samples.get("p_capture")
+        gate = canonical_samples.get("gate")
+        mixing_weights = canonical_samples.get("mixing_weights")
+
+        if verbose:
+            extras = []
+            if p_capture is not None:
+                extras.append("VCP")
+            if gate is not None:
+                extras.append("gate")
+            extra_str = f" [{', '.join(extras)}]" if extras else ""
+            n_post = r.shape[0]
+            print(
+                f"Denoising with {n_post} MCMC samples"
+                f" ({self.model_type}){extra_str}, method='{method}'..."
+            )
+
+        result = _denoise_counts_util(
+            counts=counts,
+            r=r,
+            p=p,
+            p_capture=p_capture,
+            gate=gate,
+            method=method,
+            rng_key=rng_key,
+            return_variance=return_variance,
+            mixing_weights=mixing_weights,
+            cell_batch_size=cell_batch_size,
+        )
+
+        if verbose:
+            shape = (
+                result["denoised_counts"].shape
+                if return_variance
+                else result.shape
+            )
+            print(f"Denoised counts shape: {shape}")
+
+        if store_result:
+            self.denoised_counts = (
+                result["denoised_counts"] if return_variance else result
+            )
+
+        return result
 
     # --------------------------------------------------------------------------
     # Count normalization methods
