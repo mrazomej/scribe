@@ -32,6 +32,41 @@ from scribe.models.parameterizations import (
     HierarchicalMeanProbParameterization,
 )
 from scribe.models.components.likelihoods.base import broadcast_p_for_mixture
+from scribe.models.presets.registry import (
+    MODEL_EXTRA_PARAMS,
+    build_extra_param_spec,
+)
+from scribe.models.config.groups import GuideFamilyConfig
+
+
+def _build_full_param_specs(model_config):
+    """Build the complete param_specs list from a ModelConfig.
+
+    Mirrors the logic in ``create_model`` so that manually-constructed
+    test fixtures carry the same metadata as real inference results.
+    """
+    strategy = PARAMETERIZATIONS[model_config.parameterization]
+    guide_families = model_config.guide_families or GuideFamilyConfig()
+
+    specs = strategy.build_param_specs(
+        unconstrained=model_config.unconstrained,
+        guide_families=guide_families,
+        n_components=model_config.n_components,
+        mixture_params=model_config.mixture_params,
+    )
+
+    for name in MODEL_EXTRA_PARAMS.get(model_config.base_model, []):
+        specs.append(
+            build_extra_param_spec(
+                param_name=name,
+                unconstrained=model_config.unconstrained,
+                guide_families=guide_families,
+                param_strategy=strategy,
+                n_components=model_config.n_components,
+                mixture_params=model_config.mixture_params,
+            )
+        )
+    return specs
 
 
 # ==========================================================================
@@ -867,6 +902,9 @@ class TestHierarchicalMAPSampling:
             n_components=n_components,
             mixture_params=["phi", "mu"],
         )
+        model_config = model_config.model_copy(
+            update={"param_specs": _build_full_param_specs(model_config)}
+        )
 
         return ScribeSVIResults(
             params=params,
@@ -919,6 +957,9 @@ class TestHierarchicalMAPSampling:
             unconstrained=True,
             n_components=n_components,
             mixture_params=["p", "mu"],
+        )
+        model_config = model_config.model_copy(
+            update={"param_specs": _build_full_param_specs(model_config)}
         )
 
         return ScribeSVIResults(
@@ -1072,6 +1113,9 @@ class TestHierarchicalMAPSampling:
             n_components=n_components,
             mixture_params=["phi", "mu"],
         )
+        model_config = model_config.model_copy(
+            update={"param_specs": _build_full_param_specs(model_config)}
+        )
 
         results = ScribeSVIResults(
             params=params,
@@ -1157,6 +1201,9 @@ class TestHierarchicalComponentSubsetting:
             unconstrained=True,
             n_components=n_components,
             mixture_params=["phi", "mu"],
+        )
+        model_config = model_config.model_copy(
+            update={"param_specs": _build_full_param_specs(model_config)}
         )
 
         return ScribeSVIResults(
@@ -1283,3 +1330,276 @@ class TestHierarchicalComponentSubsetting:
         np.testing.assert_allclose(comp0.params["phi_loc"], 1.0)
         np.testing.assert_allclose(comp1.params["phi_loc"], 2.0)
         np.testing.assert_allclose(comp2.params["phi_loc"], 3.0)
+
+
+# ==========================================================================
+# Metadata-driven component subsetting
+# ==========================================================================
+
+
+class TestMetadataDrivenComponentSubsetting:
+    """Verify that component subsetting is driven by ParamSpec metadata.
+
+    The implementation in ``_component.py`` no longer uses hardcoded
+    parameter name lists.  Instead it reads ``is_mixture`` from the
+    ``ParamSpec`` objects stored on ``model_config.param_specs``.  These
+    tests verify correctness across every parameterization.
+    """
+
+    @staticmethod
+    def _make_results(parameterization, mixture_params, extra_params=None):
+        """Build a minimal ``ScribeSVIResults`` for *parameterization*.
+
+        Parameters
+        ----------
+        parameterization : str
+            E.g. ``"canonical"``, ``"mean_odds"``,
+            ``"hierarchical_mean_odds"``.
+        mixture_params : list[str]
+            Which core params are mixture-specific.
+        extra_params : dict, optional
+            Additional entries to merge into the variational params dict.
+
+        Returns
+        -------
+        ScribeSVIResults
+        """
+        from scribe.svi.results import ScribeSVIResults
+        from scribe.models.config import ModelConfig
+
+        n_cells, n_genes, n_components = 8, 6, 3
+
+        model_config = ModelConfig(
+            base_model="nbvcp",
+            parameterization=parameterization,
+            unconstrained=True,
+            n_components=n_components,
+            mixture_params=mixture_params,
+        )
+        specs = _build_full_param_specs(model_config)
+        model_config = model_config.model_copy(
+            update={"param_specs": specs}
+        )
+
+        # Build a params dict with shapes dictated by the specs
+        params: dict = {}
+        for spec in specs:
+            # Determine the concrete shape
+            if spec.is_mixture and spec.is_gene_specific:
+                shape = (n_components, n_genes)
+            elif spec.is_mixture:
+                shape = (n_components,)
+            elif spec.is_cell_specific:
+                shape = (n_cells,)
+            elif spec.is_gene_specific:
+                shape = (n_genes,)
+            else:
+                shape = ()
+
+            # Guide param key names depend on spec type, not the
+            # unconstrained flag.
+            name = spec.name
+            if isinstance(spec, NormalWithTransformSpec):
+                params[f"{name}_loc"] = jnp.ones(shape) * 0.5
+                params[f"{name}_scale"] = jnp.ones(shape) * 0.1
+            else:
+                params[f"{name}_alpha"] = jnp.ones(shape) * 1.0
+                params[f"{name}_beta"] = jnp.ones(shape) * 1.0
+
+        params["mixing_concentrations"] = jnp.ones(n_components)
+
+        if extra_params:
+            params.update(extra_params)
+
+        return ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=model_config,
+            prior_params={},
+            n_components=n_components,
+        )
+
+    # ------------------------------------------------------------------
+    # _build_mixture_keys unit tests
+    # ------------------------------------------------------------------
+
+    def test_build_mixture_keys_identifies_mixture_params(self):
+        """Mixture-specific variational keys must be identified."""
+        from scribe.svi._component import _build_mixture_keys
+
+        results = self._make_results(
+            "hierarchical_mean_odds", ["phi", "mu"]
+        )
+        mixture_keys = _build_mixture_keys(
+            results.model_config.param_specs, results.params
+        )
+        assert "phi_loc" in mixture_keys
+        assert "phi_scale" in mixture_keys
+        assert "mu_loc" in mixture_keys
+        assert "mu_scale" in mixture_keys
+
+    def test_build_mixture_keys_excludes_capture(self):
+        """Cell-specific capture params must NOT be in mixture_keys."""
+        from scribe.svi._component import _build_mixture_keys
+
+        results = self._make_results(
+            "hierarchical_mean_odds", ["phi", "mu"]
+        )
+        mixture_keys = _build_mixture_keys(
+            results.model_config.param_specs, results.params
+        )
+        for key in results.params:
+            if "capture" in key:
+                assert key not in mixture_keys, (
+                    f"capture param '{key}' wrongly in mixture_keys"
+                )
+
+    def test_build_mixture_keys_excludes_hyperparams(self):
+        """Scalar hyper-parameters must NOT be in mixture_keys."""
+        from scribe.svi._component import _build_mixture_keys
+
+        results = self._make_results(
+            "hierarchical_mean_odds", ["phi", "mu"]
+        )
+        mixture_keys = _build_mixture_keys(
+            results.model_config.param_specs, results.params
+        )
+        for key in results.params:
+            val = results.params[key]
+            if hasattr(val, "ndim") and val.ndim == 0:
+                assert key not in mixture_keys, (
+                    f"scalar hyper '{key}' wrongly in mixture_keys"
+                )
+
+    def test_build_mixture_keys_empty_specs(self):
+        """Empty param_specs must produce an empty set."""
+        from scribe.svi._component import _build_mixture_keys
+
+        assert _build_mixture_keys([], {"phi_loc": jnp.zeros(3)}) == set()
+
+    # ------------------------------------------------------------------
+    # Canonical parameterization
+    # ------------------------------------------------------------------
+
+    def test_canonical_component_subsetting(self):
+        """Canonical (p, r): r is mixture-gene, p is mixture-scalar."""
+        results = self._make_results("canonical", ["p", "r"])
+        comp = results.get_component(1)
+
+        # r_loc was (K, G) → (G,)
+        assert comp.params["r_loc"].ndim == 1
+        assert comp.params["r_loc"].shape[0] == results.n_genes
+        # p_loc was (K,) → scalar
+        assert comp.params["p_loc"].ndim == 0
+
+    # ------------------------------------------------------------------
+    # Mean-prob parameterization
+    # ------------------------------------------------------------------
+
+    def test_mean_prob_component_subsetting(self):
+        """Mean-prob (p, mu): p is mixture-scalar, mu is mixture-gene."""
+        results = self._make_results("mean_prob", ["p", "mu"])
+        comp = results.get_component(0)
+
+        # p is (K,) → scalar after component extraction
+        assert comp.params["p_loc"].ndim == 0
+        # mu is (K, G) → (G,)
+        assert comp.params["mu_loc"].ndim == 1
+
+    # ------------------------------------------------------------------
+    # Mean-odds parameterization
+    # ------------------------------------------------------------------
+
+    def test_mean_odds_component_subsetting(self):
+        """Mean-odds (phi, mu): phi is mixture-scalar, mu is mixture-gene."""
+        results = self._make_results("mean_odds", ["phi", "mu"])
+        comp = results.get_component(2)
+
+        # phi is (K,) → scalar
+        assert comp.params["phi_loc"].ndim == 0
+        # mu is (K, G) → (G,)
+        assert comp.params["mu_loc"].ndim == 1
+
+    # ------------------------------------------------------------------
+    # Hierarchical canonical
+    # ------------------------------------------------------------------
+
+    def test_hierarchical_canonical_component_subsetting(self):
+        """Hierarchical canonical: p is hierarchical-gene, r is gene."""
+        results = self._make_results(
+            "hierarchical_canonical", ["p", "r"]
+        )
+        comp = results.get_component(0)
+
+        assert comp.params["p_loc"].ndim == 1
+        assert comp.params["r_loc"].ndim == 1
+
+    # ------------------------------------------------------------------
+    # Hierarchical mean-prob
+    # ------------------------------------------------------------------
+
+    def test_hierarchical_mean_prob_component_subsetting(self):
+        """Hierarchical mean-prob: p is hierarchical-gene, mu is gene."""
+        results = self._make_results(
+            "hierarchical_mean_prob", ["p", "mu"]
+        )
+        comp = results.get_component(1)
+
+        assert comp.params["p_loc"].ndim == 1
+        assert comp.params["mu_loc"].ndim == 1
+
+    # ------------------------------------------------------------------
+    # Hierarchical mean-odds
+    # ------------------------------------------------------------------
+
+    def test_hierarchical_mean_odds_component_subsetting(self):
+        """Hierarchical mean-odds: phi is hierarchical-gene, mu is gene."""
+        results = self._make_results(
+            "hierarchical_mean_odds", ["phi", "mu"]
+        )
+        comp = results.get_component(0)
+
+        assert comp.params["phi_loc"].ndim == 1
+        assert comp.params["mu_loc"].ndim == 1
+
+    # ------------------------------------------------------------------
+    # Capture and hyper-parameters preserved
+    # ------------------------------------------------------------------
+
+    def test_capture_preserved_across_parameterizations(self):
+        """phi_capture must keep its (n_cells,) shape after get_component."""
+        for param in ("hierarchical_mean_odds", "mean_odds"):
+            results = self._make_results(param, ["phi", "mu"])
+            comp = results.get_component(0)
+
+            capture_key = [
+                k for k in comp.params if "capture" in k and "loc" in k
+            ][0]
+            assert comp.params[capture_key].shape == (results.n_cells,)
+
+    def test_hyperparams_preserved(self):
+        """Scalar hyper-parameters must pass through get_component unchanged."""
+        results = self._make_results(
+            "hierarchical_mean_odds", ["phi", "mu"]
+        )
+        comp = results.get_component(0)
+
+        for key, val in comp.params.items():
+            orig = results.params[key]
+            if hasattr(orig, "ndim") and orig.ndim == 0:
+                assert val.ndim == 0, f"{key} changed from scalar"
+
+    def test_mixing_concentrations_preserved(self):
+        """mixing_concentrations is shared and must be copied as-is."""
+        results = self._make_results(
+            "hierarchical_mean_odds", ["phi", "mu"]
+        )
+        comp = results.get_component(0)
+
+        np.testing.assert_array_equal(
+            comp.params["mixing_concentrations"],
+            results.params["mixing_concentrations"],
+        )
