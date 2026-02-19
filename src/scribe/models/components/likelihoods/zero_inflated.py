@@ -11,7 +11,11 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 
-from .base import Likelihood, compute_cell_specific_mixing
+from .base import (
+    Likelihood,
+    broadcast_p_for_mixture,
+    compute_cell_specific_mixing,
+)
 from ...builders.parameter_specs import sample_prior
 
 if TYPE_CHECKING:
@@ -73,24 +77,10 @@ class ZeroInflatedNBLikelihood(Likelihood):
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
-            # Broadcast p to match r shape if needed
-            if p.ndim == 0:
-                p = p[None, None]
-            elif p.ndim == 1:
-                p = p[:, None]
+            # Broadcast p and gate to match r shape (n_components, n_genes)
+            p = broadcast_p_for_mixture(p, r)
+            gate = broadcast_p_for_mixture(gate, r)
 
-            # Broadcast gate to match r shape if needed
-            if gate.ndim == 1 and gate.shape[0] == r.shape[1]:
-                # gate is (n_genes,) - broadcast to (n_components, n_genes)
-                gate = gate[None, :]
-            elif gate.ndim == 2:
-                # gate is already (n_components, n_genes)
-                pass
-            else:
-                # gate is scalar - broadcast
-                gate = gate[None, None]
-
-            # Base distribution for each component
             base_nb = dist.NegativeBinomialProbs(r, p)
             zinb_base = dist.ZeroInflatedDistribution(
                 base_nb, gate=gate
@@ -129,25 +119,14 @@ class ZeroInflatedNBLikelihood(Likelihood):
         r = param_values["r"]
         gate = param_values["gate"]
 
-        # Cell-specific mixing via logit nudging
         cell_mixing = compute_cell_specific_mixing(
             mixing_weights, annotation_logits_batch
         )
         mixing_dist = dist.Categorical(probs=cell_mixing)
 
-        # Broadcast p to match r shape if needed
-        if p.ndim == 0:
-            p = p[None, None]
-        elif p.ndim == 1:
-            p = p[:, None]
-
-        # Broadcast gate to match r shape if needed
-        if gate.ndim == 1 and gate.shape[0] == r.shape[1]:
-            gate = gate[None, :]
-        elif gate.ndim == 2:
-            pass
-        else:
-            gate = gate[None, None]
+        # Broadcast p and gate to match r shape (n_components, n_genes)
+        p = broadcast_p_for_mixture(p, r)
+        gate = broadcast_p_for_mixture(gate, r)
 
         base_nb = dist.NegativeBinomialProbs(r, p)
         zinb_base = dist.ZeroInflatedDistribution(base_nb, gate=gate).to_event(

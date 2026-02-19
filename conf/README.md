@@ -49,7 +49,11 @@ conf/
 │   ├── nbdm.yaml        # Negative Binomial Dropout Model
 │   ├── zinb.yaml        # Zero-Inflated NB
 │   ├── nbvcp.yaml       # NB with Variable Capture Probability
-│   └── zinbvcp.yaml     # ZINB with Variable Capture
+│   ├── zinbvcp.yaml     # ZINB with Variable Capture
+│   ├── nbdm_hierarchical.yaml    # NBDM with gene-specific p_g
+│   ├── zinb_hierarchical.yaml    # ZINB with gene-specific p_g
+│   ├── nbvcp_hierarchical.yaml   # NBVCP with gene-specific p_g
+│   └── zinbvcp_hierarchical.yaml # ZINBVCP with gene-specific p_g
 ├── viz/                 # Visualization configurations
 │   └── default.yaml
 └── README.md
@@ -69,6 +73,10 @@ model: nbdm
 # - "canonical" (or "standard"): Sample p, r directly
 # - "linked" (or "mean_prob"): Sample p, mu, derive r
 # - "odds_ratio" (or "mean_odds"): Sample phi, mu, derive p and r
+# Hierarchical variants (gene-specific p_g or phi_g with hyperprior):
+# - "hierarchical_canonical": Gene-specific p_g with hyperprior, direct r
+# - "hierarchical_mean_prob": Gene-specific p_g with hyperprior, mu, derive r
+# - "hierarchical_mean_odds": Gene-specific phi_g with hyperprior, mu, derive p,r
 parameterization: canonical
 
 # Use unconstrained parameterization (Normal + transform)
@@ -279,6 +287,27 @@ python infer.py model=zinb parameterization=linked n_components=3
 ```
 
 Each preset file (e.g., `model/zinb.yaml`) sets sensible defaults that can be overridden.
+
+### Hierarchical Model Presets
+
+Hierarchical presets relax the shared-`p` assumption, allowing each gene to draw
+its own `p_g` from a learned population distribution. This is useful when the
+shared-p assumption is too restrictive for the data.
+
+```bash
+# NBDM with hierarchical gene-specific p_g
+python infer.py model=nbdm_hierarchical
+
+# ZINB with hierarchical gene-specific p_g
+python infer.py model=zinb_hierarchical
+
+# You can override the parameterization to use mean_odds instead
+python infer.py model=nbdm_hierarchical parameterization=hierarchical_mean_odds
+```
+
+After fitting, inspect `posterior_samples["logit_p_scale"]` as a diagnostic:
+small values validate the shared-p assumption, large values indicate gene-specific
+heterogeneity matters.
 
 ## Advanced Usage
 

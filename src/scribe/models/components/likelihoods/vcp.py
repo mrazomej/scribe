@@ -19,6 +19,7 @@ import numpyro.distributions as dist
 
 from .base import (
     Likelihood,
+    broadcast_p_for_mixture,
     compute_cell_specific_mixing,
     _sample_phi_capture_constrained,
     _sample_phi_capture_unconstrained,
@@ -245,14 +246,10 @@ class NBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast phi if needed
+                # Broadcast phi to match r for mixture models
                 if is_mixture:
-                    if phi.ndim == 0:
-                        phi = phi[None, None]
-                    elif phi.ndim == 1:
-                        phi = phi[:, None]
+                    phi = broadcast_p_for_mixture(phi, r)
 
-                # Compute logits
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -284,24 +281,16 @@ class NBWithVCPLikelihood(Likelihood):
                     )
             else:
                 # Canonical/mean-prob parameterization
-                # Reshape capture for broadcasting
                 if is_mixture:
                     capture_reshaped = capture_value[:, None, None]
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast p if needed
-                if is_mixture:
-                    if p.ndim == 0:
-                        p_for_hat = p
-                    elif p.ndim == 1:
-                        p_for_hat = p[:, None]
-                    else:
-                        p_for_hat = p
-                else:
-                    p_for_hat = p
+                # Broadcast p for mixture models (handles gene-specific p)
+                p_for_hat = (
+                    broadcast_p_for_mixture(p, r) if is_mixture else p
+                )
 
-                # Compute p_hat
                 p_hat = (
                     p_for_hat
                     * capture_reshaped
@@ -538,13 +527,10 @@ class ZINBWithVCPLikelihood(Likelihood):
                     capture_reshaped = capture_value[:, None]
 
                 # Broadcast phi if needed
+                # Broadcast phi for mixture models
                 if is_mixture:
-                    if phi.ndim == 0:
-                        phi = phi[None, None]
-                    elif phi.ndim == 1:
-                        phi = phi[:, None]
+                    phi = broadcast_p_for_mixture(phi, r)
 
-                # Compute logits
                 logits = -jnp.log(phi * (1.0 + capture_reshaped))
 
                 if is_mixture:
@@ -582,18 +568,11 @@ class ZINBWithVCPLikelihood(Likelihood):
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast p if needed
-                if is_mixture:
-                    if p.ndim == 0:
-                        p_for_hat = p
-                    elif p.ndim == 1:
-                        p_for_hat = p[:, None]
-                    else:
-                        p_for_hat = p
-                else:
-                    p_for_hat = p
+                # Broadcast p for mixture models (handles gene-specific p)
+                p_for_hat = (
+                    broadcast_p_for_mixture(p, r) if is_mixture else p
+                )
 
-                # Compute p_hat
                 p_hat = (
                     p_for_hat
                     * capture_reshaped

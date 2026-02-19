@@ -192,6 +192,34 @@ PARAMETERIZATION_MAPPINGS = {
             "mu": "Mean parameter (LogNormal distribution)",
         },
     ),
+    # Hierarchical parameterizations (gene-specific p/phi with hyperprior)
+    Parameterization.HIERARCHICAL_CANONICAL: ParameterizationMapping(
+        parameterization=Parameterization.HIERARCHICAL_CANONICAL,
+        core_parameters={"p", "r"},
+        optional_parameters=set(),
+        parameter_descriptions={
+            "p": "Gene-specific success probability (hierarchical sigmoid)",
+            "r": "Dispersion parameter (ExpNormal distribution)",
+        },
+    ),
+    Parameterization.HIERARCHICAL_MEAN_PROB: ParameterizationMapping(
+        parameterization=Parameterization.HIERARCHICAL_MEAN_PROB,
+        core_parameters={"p", "mu"},
+        optional_parameters=set(),
+        parameter_descriptions={
+            "p": "Gene-specific success probability (hierarchical sigmoid)",
+            "mu": "Mean parameter (ExpNormal distribution)",
+        },
+    ),
+    Parameterization.HIERARCHICAL_MEAN_ODDS: ParameterizationMapping(
+        parameterization=Parameterization.HIERARCHICAL_MEAN_ODDS,
+        core_parameters={"phi", "mu"},
+        optional_parameters=set(),
+        parameter_descriptions={
+            "phi": "Gene-specific odds ratio (hierarchical exp)",
+            "mu": "Mean parameter (ExpNormal distribution)",
+        },
+    ),
 }
 
 # ==============================================================================

@@ -190,7 +190,9 @@ errors = validate_parameter_consistency(
 ### Enums
 
 - `ModelType`: NBDM, ZINB, NBVCP, ZINBVCP
-- `Parameterization`: STANDARD, LINKED, ODDS_RATIO
+- `Parameterization`: CANONICAL, MEAN_PROB, MEAN_ODDS,
+  HIERARCHICAL_CANONICAL, HIERARCHICAL_MEAN_PROB, HIERARCHICAL_MEAN_ODDS
+  (plus backward-compat aliases STANDARD, LINKED, ODDS_RATIO)
 - `InferenceMethod`: SVI, MCMC, VAE
 - `VAEPriorType`: STANDARD, DECOUPLED
 - `VAEMaskType`: ALTERNATING, SEQUENTIAL
@@ -233,6 +235,22 @@ config = (ModelConfigBuilder()
     .as_mixture(n_components=3, mixture_params=["p"])
     .with_guide_families(GuideFamilyConfig(r=LowRankGuide(rank=10)))
     .with_priors(p=(1.0, 1.0), mu=(0.0, 1.0), gate=(2.0, 2.0))
+    .build())
+```
+
+### Hierarchical Configuration
+
+```python
+# Hierarchical model with gene-specific p_g
+config = (ModelConfigBuilder()
+    .for_model("nbdm")
+    .with_parameterization("hierarchical_canonical")
+    .build())
+
+# Hierarchical mean-odds (gene-specific phi_g)
+config = (ModelConfigBuilder()
+    .for_model("zinb")
+    .with_parameterization("hierarchical_mean_odds")
     .build())
 ```
 

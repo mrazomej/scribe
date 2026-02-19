@@ -674,6 +674,9 @@ def compare(
     batch_size: int = 2048,
     # --- Gene filtering ---
     gene_mask: Optional[jnp.ndarray] = None,
+    # --- Hierarchical model: gene-specific p ---
+    p_samples_A: Optional[jnp.ndarray] = None,
+    p_samples_B: Optional[jnp.ndarray] = None,
 ) -> ScribeDEResults:
     """Create a DE results object from two fitted models or posterior samples.
 
@@ -728,6 +731,13 @@ def compare(
         should pass ``gene_mask`` to ``fit_logistic_normal`` before
         calling ``compare``.  Gene names are filtered to match the
         kept genes.  If ``None`` (default), all genes are used.
+    p_samples_A : jnp.ndarray, optional
+        For ``method="empirical"`` with hierarchical models: posterior
+        samples of gene-specific success probabilities for condition A.
+        Shape ``(N, D)`` or ``(N, K, D)``.  When provided, Gamma-based
+        composition sampling is used instead of Dirichlet.
+    p_samples_B : jnp.ndarray, optional
+        Same as ``p_samples_A`` for condition B.
 
     Returns
     -------
@@ -760,6 +770,16 @@ def compare(
     ...     paired=True,
     ...     gene_names=names,
     ... )
+
+    Empirical (hierarchical model with gene-specific p):
+
+    >>> de = compare(
+    ...     r_samples_A, r_samples_B,
+    ...     method="empirical",
+    ...     component_A=0, component_B=0,
+    ...     p_samples_A=p_A, p_samples_B=p_B,
+    ...     gene_names=names,
+    ... )
     """
     if method == "parametric":
         return _compare_parametric(
@@ -780,6 +800,8 @@ def compare(
             rng_key=rng_key,
             batch_size=batch_size,
             gene_mask=gene_mask,
+            p_samples_A=p_samples_A,
+            p_samples_B=p_samples_B,
         )
     else:
         raise ValueError(
@@ -894,6 +916,8 @@ def _compare_empirical(
     rng_key,
     batch_size: int,
     gene_mask: Optional[jnp.ndarray] = None,
+    p_samples_A: Optional[jnp.ndarray] = None,
+    p_samples_B: Optional[jnp.ndarray] = None,
 ) -> ScribeEmpiricalDEResults:
     """Build an empirical DE comparison from posterior r samples.
 
@@ -924,6 +948,11 @@ def _compare_empirical(
     gene_mask : jnp.ndarray, shape ``(D,)``, optional
         Boolean mask selecting genes to keep.  Passed through to
         ``compute_clr_differences`` for compositional aggregation.
+    p_samples_A : jnp.ndarray, optional
+        Gene-specific success probability samples for condition A.
+        When provided, Gamma-based composition sampling is used.
+    p_samples_B : jnp.ndarray, optional
+        Gene-specific success probability samples for condition B.
 
     Returns
     -------
@@ -931,7 +960,6 @@ def _compare_empirical(
     """
     from ._empirical import compute_clr_differences
 
-    # Compute CLR differences from posterior r samples
     delta_samples = compute_clr_differences(
         r_samples_A=r_samples_A,
         r_samples_B=r_samples_B,
@@ -942,6 +970,8 @@ def _compare_empirical(
         rng_key=rng_key,
         batch_size=batch_size,
         gene_mask=gene_mask,
+        p_samples_A=p_samples_A,
+        p_samples_B=p_samples_B,
     )
 
     # Filter gene_names to match kept genes when gene_mask is provided

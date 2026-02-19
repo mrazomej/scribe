@@ -94,7 +94,7 @@ class TestActiveParameters:
             uses_variable_capture=True,
         )
 
-        assert params == {"phi", "mu", "p_capture"}
+        assert params == {"phi", "mu", "phi_capture"}
 
     def test_odds_ratio_zinbvcp(self):
         """Test odds_ratio ZINBVCP model parameters."""
@@ -180,7 +180,7 @@ class TestRequiredParameters:
             is_zero_inflated=False,
             uses_variable_capture=True,
         )
-        assert params_or == {"phi", "mu", "p_capture"}
+        assert params_or == {"phi", "mu", "phi_capture"}
 
     def test_mixture_required(self):
         """Test required parameters for mixture models."""
@@ -313,7 +313,14 @@ class TestParameterMappingRegistry:
         assert Parameterization.LINKED in mappings
         assert Parameterization.ODDS_RATIO in mappings
 
-        assert len(mappings) == 3
+        assert Parameterization.CANONICAL in mappings
+        assert Parameterization.MEAN_PROB in mappings
+        assert Parameterization.MEAN_ODDS in mappings
+        assert Parameterization.HIERARCHICAL_CANONICAL in mappings
+        assert Parameterization.HIERARCHICAL_MEAN_PROB in mappings
+        assert Parameterization.HIERARCHICAL_MEAN_ODDS in mappings
+
+        assert len(mappings) == 9
 
     def test_parameterization_summary(self):
         """Test parameterization summary generation."""

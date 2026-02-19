@@ -10,7 +10,11 @@ import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 
-from .base import Likelihood, compute_cell_specific_mixing
+from .base import (
+    Likelihood,
+    broadcast_p_for_mixture,
+    compute_cell_specific_mixing,
+)
 from ...builders.parameter_specs import sample_prior
 
 if TYPE_CHECKING:
@@ -65,16 +69,10 @@ class NegativeBinomialLikelihood(Likelihood):
             mixing_weights = param_values["mixing_weights"]
             mixing_dist = dist.Categorical(probs=mixing_weights)
 
-            # Ensure correct shape for broadcasting:
-            # p: (n_components, n_genes); r: (n_components, n_genes)
-            # Expand p if it's lower-dimensional, so it matches r.
-            if p.ndim == 0:
-                p = p[None, None]
-            elif p.ndim == 1:
-                p = p[:, None]
+            # Broadcast p to match r shape (n_components, n_genes).
+            # Handles scalar, gene-specific, and mixture-specific p.
+            p = broadcast_p_for_mixture(p, r)
 
-            # Build mixture of Negative Binomial distributions (over
-            # "components").
             base_dist_component = dist.NegativeBinomialProbs(r, p).to_event(1)
             return dist.MixtureSameFamily(mixing_dist, base_dist_component)
 
@@ -115,11 +113,9 @@ class NegativeBinomialLikelihood(Likelihood):
         )  # (batch, K)
         mixing_dist = dist.Categorical(probs=cell_mixing)
 
-        # Broadcast p to match r shape (n_components, n_genes)
-        if p.ndim == 0:
-            p = p[None, None]
-        elif p.ndim == 1:
-            p = p[:, None]
+        # Broadcast p to match r shape (n_components, n_genes).
+        # Handles scalar, gene-specific, and mixture-specific p.
+        p = broadcast_p_for_mixture(p, r)
 
         base_dist_component = dist.NegativeBinomialProbs(r, p).to_event(1)
         return dist.MixtureSameFamily(mixing_dist, base_dist_component)
