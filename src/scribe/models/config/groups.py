@@ -752,6 +752,11 @@ class SVIConfig(BaseModel):
     stable_update : bool, default=True
         Use numerically stable parameter updates. When True, uses
         `svi.stable_update()` which handles NaN/Inf gracefully.
+    log_progress_lines : bool, default=False
+        Whether to emit plain-text progress log lines during SVI training.
+        When enabled, the engine writes one newline log approximately every
+        ``max(1, n_steps // 20)`` steps (about 20 updates per run), which is
+        useful for non-interactive environments such as SLURM log files.
     early_stopping : EarlyStoppingConfig, optional
         Configuration for early stopping. If None, early stopping is disabled
         and training runs for the full `n_steps`.
@@ -799,6 +804,13 @@ class SVIConfig(BaseModel):
     )
     stable_update: bool = Field(
         True, description="Use numerically stable parameter updates"
+    )
+    log_progress_lines: bool = Field(
+        False,
+        description=(
+            "Emit plain-text progress lines every max(1, n_steps // 20) "
+            "steps during SVI training"
+        ),
     )
     early_stopping: Optional[EarlyStoppingConfig] = Field(
         None,

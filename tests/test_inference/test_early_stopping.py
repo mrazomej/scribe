@@ -388,6 +388,30 @@ class TestEarlyStoppingLogic:
         assert patience_counter > 0
 
 
+class TestSVIProgressLoggingInterval:
+    """Test periodic SVI progress logging interval behavior."""
+
+    def test_progress_interval_uses_twentieths(self):
+        """The interval is ``max(1, n_steps // 20)``."""
+        from scribe.svi.inference_engine import _progress_display_interval
+
+        assert _progress_display_interval(50_000) == 2_500
+        assert _progress_display_interval(2_001) == 100
+        assert _progress_display_interval(19) == 1
+
+    def test_progress_update_emits_about_twenty_times(self):
+        """Periodic updates are emitted ~20 times over large runs."""
+        from scribe.svi.inference_engine import _should_emit_progress_update
+
+        n_steps = 50_000
+        updates = sum(
+            1
+            for step in range(n_steps)
+            if _should_emit_progress_update(step, n_steps)
+        )
+        assert updates == 20
+
+
 # =============================================================================
 # Integration Tests - Actual SVI Runs (Slow, skipped by default)
 # =============================================================================
