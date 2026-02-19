@@ -72,6 +72,44 @@ class SVIRunResult:
 # ------------------------------------------------------------------------------
 
 
+def _progress_display_interval(n_steps: int) -> int:
+    """
+    Compute the periodic display/logging interval for SVI progress.
+
+    Parameters
+    ----------
+    n_steps : int
+        Total number of optimization steps.
+
+    Returns
+    -------
+    int
+        Display interval in steps, computed as ``max(1, n_steps // 20)``.
+        This yields approximately 20 updates over a full run.
+    """
+    return max(1, n_steps // 20)
+
+
+def _should_emit_progress_update(step: int, n_steps: int) -> bool:
+    """
+    Determine whether to emit a periodic progress update at ``step``.
+
+    Parameters
+    ----------
+    step : int
+        Zero-based optimization step index.
+    n_steps : int
+        Total number of optimization steps.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``step`` falls on the configured periodic interval.
+    """
+    interval = _progress_display_interval(n_steps)
+    return step % interval == 0
+
+
 def _run_with_early_stopping(
     svi: SVI,
     rng_key: random.PRNGKey,
@@ -80,6 +118,7 @@ def _run_with_early_stopping(
     early_stopping: EarlyStoppingConfig,
     stable_update: bool = True,
     progress: bool = True,
+    log_progress_lines: bool = False,
     model_config: Optional[ModelConfig] = None,
 ) -> SVIRunResult:
     """Run SVI with a custom training loop, checkpointing, and optional early stopping.
@@ -114,6 +153,10 @@ def _run_with_early_stopping(
         Whether to use numerically stable updates.
     progress : bool, default=True
         Whether to show progress bar.
+    log_progress_lines : bool, default=False
+        Whether to emit periodic plain-text progress lines. When enabled,
+        one log line is emitted every ``max(1, n_steps // 20)`` steps
+        (approximately 20 updates per run).
     model_config : Optional[ModelConfig], default=None
         Model configuration to attach to the result for provenance.
 
@@ -211,7 +254,7 @@ def _run_with_early_stopping(
     with progress_ctx as pbar:
         # Track initial loss for display (like NumPyro)
         init_loss = losses[0] if losses else 0.0
-        loss_display_interval = max(1, n_steps // 20)
+        loss_display_interval = _progress_display_interval(n_steps)
 
         task = pbar.add_task(
             "SVI optimization" + (" (resumed)" if resumed else ""),
@@ -250,7 +293,7 @@ def _run_with_early_stopping(
 
             # Update progress bar periodically with avg loss over recent batch
             # Format matches NumPyro: "init loss: X, avg. loss [start-end]: X"
-            should_display = step % loss_display_interval == 0
+            should_display = _should_emit_progress_update(step, n_steps)
             if should_display:
                 batch_start = max(0, len(losses) - loss_display_interval)
                 batch_end = len(losses)
@@ -260,6 +303,14 @@ def _run_with_early_stopping(
                     f"avg. loss [{batch_start + 1}-{batch_end}]: {avg_loss:.4e}"
                 )
                 pbar.update(task, advance=1, loss_info=loss_info)
+                if log_progress_lines:
+                    print(
+                        "SVI progress "
+                        f"[{batch_end}/{n_steps}] "
+                        f"init loss: {init_loss:.4e}, "
+                        f"avg. loss [{batch_start + 1}-{batch_end}]: "
+                        f"{avg_loss:.4e}"
+                    )
             else:
                 pbar.update(task, advance=1)
 
@@ -488,6 +539,7 @@ class SVIInferenceEngine:
         batch_size: Optional[int] = None,
         seed: int = 42,
         stable_update: bool = True,
+        log_progress_lines: bool = False,
         early_stopping: Optional[EarlyStoppingConfig] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
         progress: bool = True,
@@ -520,6 +572,10 @@ class SVIInferenceEngine:
         stable_update : bool, default=True
             Whether to use numerically stable parameter updates. When True,
             uses `svi.stable_update()` which handles NaN/Inf gracefully.
+        log_progress_lines : bool, default=False
+            Whether to emit periodic plain-text progress lines in addition to
+            the interactive progress bar. When enabled, one line is emitted
+            every ``max(1, n_steps // 20)`` steps.
         early_stopping : Optional[EarlyStoppingConfig], default=None
             Configuration for early stopping and checkpointing. When provided
             (even with ``enabled=False``), the custom training loop is used
@@ -601,6 +657,7 @@ class SVIInferenceEngine:
                 early_stopping=early_stopping,
                 stable_update=stable_update,
                 progress=progress,
+                log_progress_lines=log_progress_lines,
                 model_config=model_config_for_results,
             )
         else:

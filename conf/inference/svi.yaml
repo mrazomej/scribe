@@ -19,6 +19,10 @@ batch_size: null
 # When true, handles NaN/Inf gracefully
 stable_update: true
 
+# Emit plain-text progress lines suitable for non-interactive logs (e.g., SLURM)
+# When true, prints an update every max(1, n_steps // 20) steps
+log_progress_lines: false
+
 # Early stopping configuration
 # Monitors loss and stops when improvement plateaus
 # Supports Orbax checkpointing for resumable training
