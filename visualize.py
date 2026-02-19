@@ -342,8 +342,9 @@ def _plot_exists(figs_dir, suffix, fmt):
     figs_dir : str
         Path to the figures directory.
     suffix : str
-        Filename suffix that identifies the plot type (e.g. ``"_loss"``,
-        ``"steps_ppc"``).  Matched as ``*{suffix}.{fmt}`` via glob.
+        Filename suffix or glob fragment that identifies the plot type
+        (e.g. ``"_loss"``, ``"steps_ppc"``, ``"_correlation_heatmap*"``).
+        Matched as ``*{suffix}.{fmt}`` via glob.
     fmt : str
         File extension / output format (e.g. ``"png"``).
 
@@ -723,8 +724,11 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 )
 
     if viz_cfg.heatmap:
+        # Match both single heatmap files
+        # ("..._correlation_heatmap.<fmt>") and per-component heatmaps
+        # ("..._correlation_heatmap_component{k}.<fmt>").
         if not overwrite and _plot_exists(
-            figs_dir, "_correlation_heatmap", fmt
+            figs_dir, "_correlation_heatmap*", fmt
         ):
             plots_skipped.append("heatmap")
             console.print(
