@@ -1,0 +1,578 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# Relaxing the shared-$p$ assumption: hierarchical gene-specific $p_g$ {#sec-hierarchical-p}
+
+In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model under
+the assumption that all genes share a single success probability parameter
+$p_g = p$. This assumption was central to the beautiful factorization of the
+joint distribution of independent negative binomial random variables into the
+product of a negative binomial (governing total counts) and a
+Dirichlet-Multinomial (governing compositions):
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\underbrace{
+\pi\left(u_T \mid r_T, \hat{p}\right)
+}_{\text{Negative Binomial}}
+\times 
+\underbrace{
+\pi(\underline{u} \mid u_T, \underline{r})
+}_{\text{Dirichlet-Multinomial}}.
+$${#eq-hier-factorization-recap}
+
+A crucial consequence of this factorization is that the compositional term
+$\pi(\underline{u} \mid u_T, \underline{r})$ depends only on the concentration
+parameters $\underline{r}$ and not on $\hat{p}$. This is what allows the entire
+differential expression framework developed in @sec-diffexp to operate solely on
+the $\underline{r}$ parameters: compositions are drawn from
+$\text{Dirichlet}(\underline{r})$, and the shared $\hat{p}$ is irrelevant for
+compositional inference.
+
+In this section, we ask: **what happens if we relax this assumption?** That is,
+what if each gene has its own success probability $p_g$, so that the true
+transcript count for gene $g$ follows
+
+$$
+m_g \sim \text{NB}(r_g, p_g),
+$${#eq-hier-nb-gene-specific}
+
+with potentially different $p_g$ for each gene? We will show rigorously that:
+
+1. The factorization in @eq-hier-factorization-recap **breaks down** when the
+$p_g$ are gene-specific.
+
+2. A principled Bayesian approach is to place a **hierarchical prior** on the
+$p_g$, allowing the data to determine the degree of gene-to-gene variation.
+
+3. Compositions under gene-specific $p_g$ can be correctly sampled via a
+**Gamma-based procedure** that strictly generalizes the Dirichlet sampling used
+in the shared-$p$ model.
+
+4. The Gamma-based composition sampling **reduces exactly to Dirichlet sampling**
+when all $p_g$ are equal, establishing backward compatibility with the standard
+model.
+
+## Why the factorization breaks {#sec-hier-factorization-breaks}
+
+To understand precisely what goes wrong, let us revisit the key step in the
+proof of @eq-hier-factorization-recap. The factorization relied on the
+Poisson-Gamma representation of the negative binomial: for each gene $g$,
+
+$$
+\lambda_g \sim \text{Gamma}(r_g, \theta), \qquad
+u_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
+$${#eq-hier-poisson-gamma-shared}
+
+where the rate parameter $\theta$ is the same for all genes and is related to
+$\hat{p}$ by $\theta = \hat{p} / (1 - \hat{p})$ (see @eq-theta-hatp). The
+crucial property was that when all Gamma random variables share the same rate
+parameter $\theta$, the product of Gamma densities can be factored into a Gamma
+distribution over the total $\Lambda = \sum_g \lambda_g$ and a Dirichlet
+distribution over the proportions $\rho_g = \lambda_g / \Lambda$:
+
+$$
+\prod_{g=1}^G \text{Gamma}(\lambda_g \mid r_g, \theta) =
+\text{Gamma}(\Lambda \mid r_T, \theta) \times
+\text{Dirichlet}(\underline{\rho} \mid \underline{r}).
+$${#eq-hier-gamma-dirichlet-factorization}
+
+This factorization of the product of Gammas is what ultimately allowed $\hat{p}$
+(and hence $\theta$) to separate from the compositional distribution. But when
+each gene has its own $p_g$, the Poisson-Gamma representation becomes
+
+$$
+\lambda_g \sim \text{Gamma}(r_g, \theta_g), \qquad
+u_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
+$${#eq-hier-poisson-gamma-gene-specific}
+
+where now
+
+$$
+\theta_g = \frac{p_g}{1 - p_g}
+$${#eq-hier-theta-g-def}
+
+differs across genes. To see why the Gamma-Dirichlet factorization fails, we
+write the product of Gamma densities explicitly:
+
+$$
+\prod_{g=1}^G \text{Gamma}(\lambda_g \mid r_g, \theta_g) =
+\prod_{g=1}^G \frac{\theta_g^{r_g}}{\Gamma(r_g)} \lambda_g^{r_g - 1}
+e^{-\theta_g \lambda_g}.
+$${#eq-hier-gamma-product-gene-specific}
+
+The exponential term in @eq-hier-gamma-product-gene-specific takes the form
+
+$$
+\prod_{g=1}^G e^{-\theta_g \lambda_g} = 
+\exp\left(-\sum_{g=1}^G \theta_g \lambda_g\right).
+$${#eq-hier-exp-term}
+
+When all $\theta_g = \theta$, this simplifies to $\exp(-\theta \sum_g
+\lambda_g) = \exp(-\theta \Lambda)$, which depends on $\underline{\lambda}$
+only through $\Lambda$. Under the change of variables $\lambda_g = \Lambda
+\rho_g$, this becomes $\exp(-\theta \Lambda)$, which is a function of $\Lambda$
+alone and thus factors cleanly into the Gamma distribution over $\Lambda$.
+
+However, when $\theta_g$ vary, the exponent becomes
+
+$$
+\sum_{g=1}^G \theta_g \lambda_g = 
+\Lambda \sum_{g=1}^G \theta_g \rho_g,
+$${#eq-hier-exp-term-gene-specific}
+
+which is a function of both $\Lambda$ and $\underline{\rho}$. The joint
+distribution of $\Lambda$ and $\underline{\rho}$ can no longer be separated into
+independent factors, because the exponential term couples the total $\Lambda$
+with the proportions $\underline{\rho}$ through the gene-specific rates
+$\theta_g$. Formally,
+
+$$
+\exp\left(-\Lambda \sum_{g=1}^G \theta_g \rho_g\right) \neq
+f(\Lambda) \cdot g(\underline{\rho})
+$${#eq-hier-no-factorization}
+
+for any functions $f$ and $g$ when the $\theta_g$ are not all equal. The
+distribution of the proportions $\underline{\rho}$ depends on the total
+$\Lambda$, and vice versa. As a consequence, the compositional distribution is
+no longer a Dirichlet, and the parameter $\hat{p}$ can no longer be separated
+from the compositional term.
+
+This means that if we wish to perform compositional differential expression with
+gene-specific $p_g$, we cannot simply draw
+$\underline{\rho} \sim \text{Dirichlet}(\underline{r})$ and ignore $p$. We must
+account for the $p_g$ in the composition-generating process.
+
+## The hierarchical model {#sec-hier-hierarchical-model}
+
+Rather than treating each $p_g$ as a completely free parameter (which would add
+$G$ unconstrained parameters to the model, one per gene), we take a Bayesian
+approach and place a **hierarchical prior** on the $p_g$. This provides adaptive
+shrinkage: genes with limited data are regularized toward the population mean,
+while genes with abundant data can deviate from it.
+
+### Model specification
+
+Since $p_g \in (0, 1)$, we work in the unconstrained logit space. The
+hierarchical model is specified as follows. First, we define the hyperprior over
+the population-level parameters:
+
+$$
+\mu_p \sim \mathcal{N}(0, 1),
+$${#eq-hier-hyperprior-loc}
+
+$$
+\sigma_p \sim \text{Softplus}\!\left(\mathcal{N}(0, 1)\right),
+$${#eq-hier-hyperprior-scale}
+
+where $\mu_p$ is the population mean of the logit-transformed $p_g$ and
+$\sigma_p > 0$ is the population standard deviation. The Softplus transformation
+$\text{Softplus}(x) = \log(1 + e^x)$ ensures that $\sigma_p$ is strictly
+positive. Next, each gene draws its own logit-$p_g$ from the population
+distribution:
+
+$$
+\text{logit}(p_g) \sim \mathcal{N}(\mu_p, \sigma_p),
+\quad g = 1, 2, \ldots, G,
+$${#eq-hier-gene-specific-p}
+
+where $\text{logit}(p_g) = \log(p_g / (1 - p_g))$. Equivalently, the
+gene-specific success probability is obtained by applying the sigmoid function:
+
+$$
+p_g = \sigma(\text{logit}(p_g)) = \frac{1}{1 + e^{-\text{logit}(p_g)}}.
+$${#eq-hier-sigmoid-transform}
+
+This ensures that $p_g \in (0, 1)$ for all genes. The gene-specific dispersion
+parameter $r_g$ retains its prior from the standard model:
+
+$$
+r_g \sim \pi(r_g), \quad g = 1, 2, \ldots, G,
+$${#eq-hier-r-prior}
+
+where $\pi(r_g)$ is the chosen prior distribution (e.g., LogNormal or Gamma, as
+in the standard model). The complete generative model for the observed UMI
+counts of a single cell is then:
+
+$$
+u_g \mid r_g, p_g \sim \text{NB}(r_g, p_g),
+\quad g = 1, 2, \ldots, G.
+$${#eq-hier-observation-model}
+
+### Graphical model
+
+The hierarchical structure can be summarized as follows. At the top level, the
+hyperparameters $\mu_p$ and $\sigma_p$ govern the population distribution of
+the logit-$p_g$. At the gene level, each $p_g$ is drawn from this population
+distribution, and the gene-specific $r_g$ is drawn from its own prior. At the
+cell level, the observed count $u_g$ is drawn from a negative binomial with
+parameters $r_g$ and $p_g$. Across $C$ cells, the full model is:
+
+$$
+\pi(\underline{r}, \underline{p}, \mu_p, \sigma_p \mid
+\underline{\underline{U}}) \propto
+\left[\prod_{c=1}^C \prod_{g=1}^G
+    \pi(u_{gc} \mid r_g, p_g)
+\right]
+\left[\prod_{g=1}^G \pi(p_g \mid \mu_p, \sigma_p) \, \pi(r_g)\right]
+\pi(\mu_p) \, \pi(\sigma_p).
+$${#eq-hier-full-model}
+
+### Interpretation of $\sigma_p$
+
+The hyperparameter $\sigma_p$ has a natural interpretation as a **diagnostic of
+the shared-$p$ assumption**. After fitting the model, the posterior distribution
+of $\sigma_p$ tells us how much gene-to-gene variation in $p_g$ is supported by
+the data:
+
+- If $\sigma_p \approx 0$ (posterior mass concentrated near zero), then the data
+  are consistent with a shared $p$ across all genes. The hierarchical model
+  effectively recovers the standard model, with all $p_g$ shrunk toward the
+  common value $\sigma^{-1}(\mu_p)$.
+
+- If $\sigma_p$ is large (posterior mass away from zero), then there is
+  substantial gene-to-gene variation in $p_g$ that cannot be captured by a
+  shared parameter. In this regime, the hierarchical model provides a more
+  faithful representation of the data.
+
+This makes $\sigma_p$ a principled, data-driven diagnostic. One does not need to
+commit a priori to either the shared-$p$ or gene-specific model: the
+hierarchical model lets the data decide.
+
+## Composition sampling with gene-specific $p_g$ {#sec-hier-gamma-sampling}
+
+Having introduced the hierarchical model, we now turn to the question of how to
+generate compositional samples $\underline{\rho}$ when the $p_g$ are
+gene-specific. Recall from @sec-diffexp-nonparametric that the empirical
+differential expression pipeline requires drawing compositions from the
+posterior predictive distribution. Under the standard model with shared $p$,
+these compositions are drawn as
+
+$$
+\underline{\rho}^{(s)} \sim \text{Dir}(\underline{r}^{(s)}),
+$${#eq-hier-standard-dirichlet}
+
+using only the posterior samples $\underline{r}^{(s)}$. Under the hierarchical
+model, compositions depend on both $\underline{r}^{(s)}$ and
+$\underline{p}^{(s)}$, and we need a generalized sampling procedure.
+
+### The Gamma-Poisson representation revisited
+
+The key to deriving the correct sampling procedure is the Poisson-Gamma
+representation of the negative binomial. In @sec-dirichlet-multinomial, we
+showed that the negative binomial distribution $\text{NB}(r_g, p_g)$ can be
+expressed as the marginal of the compound distribution
+
+$$
+\lambda_g \sim \text{Gamma}(r_g, \theta_g), \qquad
+u_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
+$${#eq-hier-nb-compound}
+
+where $\theta_g = p_g / (1 - p_g)$. The Gamma random variable $\lambda_g$ can
+be interpreted as the expected count for gene $g$. Using the rate
+parameterization of the Gamma distribution, the density of $\lambda_g$ is
+
+$$
+\pi(\lambda_g \mid r_g, \theta_g) =
+\frac{\theta_g^{r_g}}{\Gamma(r_g)} \lambda_g^{r_g - 1} e^{-\theta_g \lambda_g}.
+$${#eq-hier-gamma-density}
+
+The Gamma distribution can equivalently be parameterized with a unit rate and a
+scaling. Specifically, if $\gamma_g \sim \text{Gamma}(r_g, 1)$ (i.e., a Gamma
+distribution with shape $r_g$ and rate 1), then
+
+$$
+\lambda_g = \frac{\gamma_g}{\theta_g}
+$${#eq-hier-gamma-scaling}
+
+has the distribution $\text{Gamma}(r_g, \theta_g)$. To verify this, we compute
+the density of $\lambda_g$ via the change of variables formula. We have
+$\gamma_g = \theta_g \lambda_g$, so $d\gamma_g / d\lambda_g = \theta_g$. The
+density of $\lambda_g$ is therefore
+
+$$
+\pi(\lambda_g) = \pi_\gamma(\theta_g \lambda_g) \cdot \theta_g =
+\frac{1}{\Gamma(r_g)} (\theta_g \lambda_g)^{r_g - 1}
+e^{-\theta_g \lambda_g} \cdot \theta_g,
+$${#eq-hier-gamma-cov-1}
+
+which simplifies to
+
+$$
+\pi(\lambda_g) = \frac{\theta_g^{r_g}}{\Gamma(r_g)}
+\lambda_g^{r_g - 1} e^{-\theta_g \lambda_g},
+$${#eq-hier-gamma-cov-2}
+
+confirming that $\lambda_g \sim \text{Gamma}(r_g, \theta_g)$.
+
+### Deriving the expected count
+
+The Poisson rate $\lambda_g$ from @eq-hier-nb-compound represents the latent
+expected count for gene $g$ in a given cell. However, it is more natural to
+express the expected count directly in terms of the original negative binomial
+parameters. Given the Poisson-Gamma representation, the conditional expected
+count is
+
+$$
+\mathbb{E}[u_g \mid \lambda_g] = \lambda_g.
+$${#eq-hier-conditional-mean}
+
+The marginal expected count (averaging over the Gamma prior) is
+
+$$
+\mu_g = \mathbb{E}[u_g] = \mathbb{E}[\lambda_g] =
+\frac{r_g}{\theta_g} = r_g \cdot \frac{1 - p_g}{p_g},
+$${#eq-hier-marginal-mean}
+
+where we used the fact that the mean of a $\text{Gamma}(r_g, \theta_g)$
+distribution is $r_g / \theta_g$, and $\theta_g = p_g / (1 - p_g)$.
+Equivalently,
+
+$$
+\mu_g = \frac{r_g (1 - p_g)}{p_g}.
+$${#eq-hier-mu-formula}
+
+Now, rather than working with the Poisson rate $\lambda_g$ from
+@eq-hier-nb-compound (which uses the Gamma rate $\theta_g$), we can
+equivalently sample a unit-rate Gamma variate $\gamma_g$ and scale it by
+$1/\theta_g = (1 - p_g) / p_g$. The resulting scaled variate
+
+$$
+\tilde{\lambda}_g = \gamma_g \cdot \frac{1 - p_g}{p_g}
+$${#eq-hier-scaled-gamma}
+
+has the same distribution as $\lambda_g$ in @eq-hier-nb-compound. The quantity
+$\tilde{\lambda}_g$ represents the expected count for gene $g$, incorporating
+both the gene-specific dispersion $r_g$ and the gene-specific success
+probability $p_g$.
+
+### Composition from expected counts
+
+The composition (fractional abundance) of gene $g$ is defined as the proportion
+of the total expected count attributable to gene $g$:
+
+$$
+\rho_g = \frac{\tilde{\lambda}_g}{\sum_{j=1}^G \tilde{\lambda}_j}.
+$${#eq-hier-composition-def}
+
+Substituting the expression for $\tilde{\lambda}_g$ from @eq-hier-scaled-gamma,
+we obtain
+
+$$
+\rho_g = \frac{
+    \gamma_g \cdot \frac{1 - p_g}{p_g}
+}{
+    \sum_{j=1}^G \gamma_j \cdot \frac{1 - p_j}{p_j}
+}.
+$${#eq-hier-composition-expanded}
+
+This is the generalized composition formula. To draw a compositional sample from
+the posterior predictive distribution under the hierarchical model, we:
+
+1. Draw $\gamma_g \sim \text{Gamma}(r_g, 1)$ independently for each gene $g$.
+2. Scale each variate by the gene-specific factor: 
+   $\tilde{\lambda}_g = \gamma_g \cdot (1 - p_g) / p_g$.
+3. Normalize to obtain the composition: 
+   $\rho_g = \tilde{\lambda}_g / \sum_j \tilde{\lambda}_j$.
+
+We now prove that this procedure reduces to Dirichlet sampling when all $p_g$
+are equal.
+
+### Reduction to Dirichlet when $p_g = p$ for all $g$ {#sec-hier-dirichlet-reduction}
+
+Suppose all $p_g = p$ for some common value $p \in (0, 1)$. Then the
+composition in @eq-hier-composition-expanded becomes
+
+$$
+\rho_g = \frac{
+    \gamma_g \cdot \frac{1 - p}{p}
+}{
+    \sum_{j=1}^G \gamma_j \cdot \frac{1 - p}{p}
+}.
+$${#eq-hier-composition-shared-p}
+
+Since the factor $(1 - p) / p$ is a positive constant that appears in every
+term of both the numerator and denominator, it cancels:
+
+$$
+\rho_g = \frac{
+    \gamma_g \cdot \frac{1 - p}{p}
+}{
+    \sum_{j=1}^G \gamma_j \cdot \frac{1 - p}{p}
+} = \frac{\gamma_g}{\sum_{j=1}^G \gamma_j}.
+$${#eq-hier-composition-simplified}
+
+But the right-hand side of @eq-hier-composition-simplified is precisely the
+definition of a Dirichlet sample. Recall that if $\gamma_1, \gamma_2, \ldots,
+\gamma_G$ are independent with $\gamma_g \sim \text{Gamma}(r_g, 1)$, then the
+normalized vector
+
+$$
+\left(\frac{\gamma_1}{\sum_j \gamma_j}, \;
+\frac{\gamma_2}{\sum_j \gamma_j}, \; \ldots, \;
+\frac{\gamma_G}{\sum_j \gamma_j}\right) \sim
+\text{Dir}(r_1, r_2, \ldots, r_G).
+$${#eq-hier-dirichlet-definition}
+
+This is a standard result in probability theory (see, e.g., the construction in
+@sec-dirichlet-multinomial where we showed the equivalence between the product
+of Gammas and the Gamma-Dirichlet factorization). Therefore, when all $p_g = p$,
+the Gamma-based composition sampling procedure produces exactly the same
+distribution as $\underline{\rho} \sim \text{Dir}(\underline{r})$.
+
+This establishes the Gamma-based procedure as a **strict generalization** of
+the Dirichlet sampling used in the standard model: it agrees with Dirichlet
+when the shared-$p$ assumption holds, and correctly incorporates gene-specific
+probabilities when it does not. $\square$
+
+### What changes when $p_g$ vary {#sec-hier-what-changes}
+
+When the $p_g$ are not all equal, the compositions are no longer governed by
+$\underline{r}$ alone. The scaling factor $(1 - p_g) / p_g$ modulates the
+contribution of each gene to the total, effectively reweighting the composition
+relative to what $\underline{r}$ alone would predict.
+
+To build intuition, consider two genes with the same dispersion $r_1 = r_2$ but
+different success probabilities $p_1 > p_2$. Their expected counts are
+
+$$
+\mu_1 = \frac{r_1 (1 - p_1)}{p_1}, \qquad
+\mu_2 = \frac{r_2 (1 - p_2)}{p_2}.
+$${#eq-hier-intuition-means}
+
+Since $p_1 > p_2$ and $r_1 = r_2$, we have $(1 - p_1)/p_1 < (1 - p_2)/p_2$,
+and therefore $\mu_1 < \mu_2$. Gene 2 has a larger expected count despite having
+the same dispersion, because its lower $p_g$ corresponds to a higher expected
+count in the negative binomial parameterization. This asymmetry is captured in
+the Gamma-based composition sampling through the gene-specific scaling factor.
+
+Under the standard Dirichlet model (shared $p$), two genes with the same $r_g$
+would have the same expected compositional proportion. Under the hierarchical
+model, their proportions differ due to their different $p_g$ values. This means
+that differential expression can arise from changes in $p_g$ between conditions,
+even when $r_g$ remains the same---a signal that the shared-$p$ model would
+miss entirely.
+
+## Differential expression with gene-specific $p_g$ {#sec-hier-de}
+
+The empirical differential expression framework from
+@sec-diffexp-nonparametric extends naturally to the hierarchical model. The only
+modification is in the composition-generating step: instead of drawing
+$\underline{\rho} \sim \text{Dir}(\underline{r})$, we use the Gamma-based
+procedure from @sec-hier-gamma-sampling with both the posterior samples of
+$\underline{r}$ and $\underline{p}$.
+
+### Modified CLR difference computation
+
+Given posterior samples $\underline{r}_A^{(s)}$, $\underline{p}_A^{(s)}$ for
+condition A and $\underline{r}_B^{(s)}$, $\underline{p}_B^{(s)}$ for condition
+B, the CLR differences are computed as follows:
+
+**Step 1: Sample compositions.** For each posterior sample $s$, draw compositions
+using the Gamma-based procedure:
+
+$$
+\gamma_{A,g}^{(s)} \sim \text{Gamma}(r_{A,g}^{(s)}, 1), \qquad
+\tilde{\lambda}_{A,g}^{(s)} = \gamma_{A,g}^{(s)} \cdot
+\frac{1 - p_{A,g}^{(s)}}{p_{A,g}^{(s)}},
+$${#eq-hier-de-gamma-draw}
+
+$$
+\rho_{A,g}^{(s)} = \frac{\tilde{\lambda}_{A,g}^{(s)}}{
+    \sum_{j=1}^G \tilde{\lambda}_{A,j}^{(s)}
+},
+$${#eq-hier-de-normalize}
+
+and analogously for condition B.
+
+**Step 2: CLR transform.** Apply the centered log-ratio transformation:
+
+$$
+z_{A,g,\text{CLR}}^{(s)} = \log \rho_{A,g}^{(s)} -
+\frac{1}{G} \sum_{j=1}^G \log \rho_{A,j}^{(s)}.
+$${#eq-hier-de-clr}
+
+**Step 3: Compute differences.** Form the paired differences:
+
+$$
+\Delta_g^{(s)} = z_{A,g,\text{CLR}}^{(s)} - z_{B,g,\text{CLR}}^{(s)}.
+$${#eq-hier-de-delta}
+
+**Step 4: Compute statistics.** All gene-level DE statistics (lfsr, prob_effect,
+PEFP, etc.) are computed from the matrix of $\Delta_g^{(s)}$ samples using the
+same counting procedures described in @sec-diffexp-nonparametric. No
+distributional assumptions are required.
+
+### Compatibility with the standard pipeline
+
+The modified pipeline is fully backward compatible. When the standard model
+(shared $p$) is used, the posterior samples of $p$ are scalar (or absent), and
+the Gamma-based procedure reduces to Dirichlet sampling as shown in
+@sec-hier-dirichlet-reduction. The `compare()` function accepts optional
+`p_samples_A` and `p_samples_B` arguments; when these are `None` (the
+default), the standard Dirichlet pipeline is used.
+
+Furthermore, the output of the modified pipeline---a matrix of CLR differences
+$\Delta_g^{(s)}$---has exactly the same structure as the output of the standard
+pipeline. All downstream functions (gene-level statistics, PEFP error control,
+gene-set analysis, threshold finding) operate on this matrix regardless of how
+it was generated. This modularity ensures that the hierarchical model integrates
+seamlessly with the existing analysis framework.
+
+## Mathematical summary {#sec-hier-summary}
+
+We collect the key mathematical results of this section for reference.
+
+**Generative model (hierarchical).** The hierarchical model with gene-specific
+$p_g$ is:
+
+$$
+\mu_p \sim \mathcal{N}(0, 1), \quad
+\sigma_p \sim \text{Softplus}(\mathcal{N}(0, 1)),
+$${#eq-hier-summary-hyperprior}
+
+$$
+p_g = \sigma\!\left(\mathcal{N}(\mu_p, \sigma_p)\right), \quad
+r_g \sim \pi(r_g), \quad
+u_g \mid r_g, p_g \sim \text{NB}(r_g, p_g),
+$${#eq-hier-summary-generative}
+
+for $g = 1, 2, \ldots, G$.
+
+**Composition sampling.** Given posterior samples $(r_g, p_g)$ for each gene,
+compositions are drawn via:
+
+$$
+\gamma_g \sim \text{Gamma}(r_g, 1), \qquad
+\rho_g = \frac{
+    \gamma_g \cdot (1 - p_g) / p_g
+}{
+    \sum_{j=1}^G \gamma_j \cdot (1 - p_j) / p_j
+}.
+$${#eq-hier-summary-composition}
+
+**Dirichlet reduction.** When $p_g = p$ for all $g$:
+
+$$
+\rho_g = \frac{\gamma_g}{\sum_j \gamma_j}
+\sim \text{Dir}(\underline{r}).
+$${#eq-hier-summary-dirichlet}
+
+**Factorization failure.** The joint density of $G$ independent
+$\text{Gamma}(r_g, \theta_g)$ random variables cannot be factored into a
+marginal over the total and a Dirichlet over the proportions when the rates
+$\theta_g = p_g/(1-p_g)$ are gene-specific, because the exponential term
+
+$$
+\exp\left(-\Lambda \sum_{g=1}^G \theta_g \rho_g\right)
+$${#eq-hier-summary-coupling}
+
+couples $\Lambda$ and $\underline{\rho}$.
+
+**Posterior diagnostic.** The posterior of $\sigma_p$ diagnoses the shared-$p$
+assumption: $\sigma_p \approx 0$ validates it; $\sigma_p \gg 0$ indicates
+gene-specific heterogeneity.
