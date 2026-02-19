@@ -142,6 +142,17 @@ class ComponentMixin:
             # Low-rank guide parameters (gate - unconstrained)
             "gate_unconstrained_W",
             "gate_unconstrained_raw_diag",
+            # Hierarchical parameterizations: gene-specific phi/p with
+            # Normal guide in unconstrained space (shape: [n_components, n_genes]
+            # when phi/p is in mixture_params).
+            "phi_loc",
+            "phi_scale",
+            "phi_W",
+            "phi_raw_diag",
+            "p_loc",
+            "p_scale",
+            "p_W",
+            "p_raw_diag",
         ]
 
         # Component-specific parameters (shape: [n_components])
@@ -177,6 +188,11 @@ class ComponentMixin:
             # Odds ratio unconstrained parameterization
             "phi_capture_unconstrained_loc",
             "phi_capture_unconstrained_scale",
+            # Hierarchical parameterizations (unconstrained capture)
+            "phi_capture_loc",
+            "phi_capture_scale",
+            "p_capture_loc",
+            "p_capture_scale",
         ]
 
         # Parameters that can be either component-specific or shared depending
