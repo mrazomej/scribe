@@ -30,10 +30,15 @@ class ParameterExtractionMixin:
     def _uses_amortized_capture(self) -> bool:
         """Check if this model uses amortized capture probability."""
         guide_families = self.model_config.guide_families
-        if guide_families is None or not self.model_config.uses_variable_capture:
+        if (
+            guide_families is None
+            or not self.model_config.uses_variable_capture
+        ):
             return False
         amort_config = getattr(guide_families, "capture_amortization", None)
-        return amort_config is not None and getattr(amort_config, "enabled", False)
+        return amort_config is not None and getattr(
+            amort_config, "enabled", False
+        )
 
     def _validate_counts_for_amortizer(
         self, counts, context: str = "sampling"
@@ -61,7 +66,9 @@ class ParameterExtractionMixin:
             return
 
         # Get the expected gene count for amortizer input
-        original_n_genes = getattr(self, "_original_n_genes", None) or self.n_genes
+        original_n_genes = (
+            getattr(self, "_original_n_genes", None) or self.n_genes
+        )
 
         # Check counts shape
         if counts.ndim != 2:
@@ -246,7 +253,9 @@ class ParameterExtractionMixin:
 
         # Validate counts shape for amortizer (checks original gene count)
         if has_amortized_capture and counts is not None:
-            self._validate_counts_for_amortizer(counts, context="MAP estimation")
+            self._validate_counts_for_amortizer(
+                counts, context="MAP estimation"
+            )
 
         if counts is not None and self.model_config.uses_variable_capture:
             # Check if amortized capture is enabled (already checked above)
@@ -444,17 +453,30 @@ class ParameterExtractionMixin:
         parameterization = self.model_config.parameterization
         unconstrained = self.model_config.unconstrained
 
-        # Handle linked / mean_prob parameterization
-        if parameterization in ("linked", "mean_prob"):
+        # Handle linked / mean_prob parameterization (including hierarchical)
+        if parameterization in (
+            "linked",
+            "mean_prob",
+            "hierarchical_mean_prob",
+        ):
             if "mu" in estimates and "p" in estimates and "r" not in estimates:
                 if verbose:
                     print(
-                        "Computing r from mu and p for linked parameterization"
+                        "Computing r from mu and p for "
+                        f"{parameterization} parameterization"
                     )
                 # r = mu * (1 - p) / p
                 p = estimates["p"]
-                if self.n_components is not None and "p" in (
-                    self.model_config.mixture_params or []
+                # For standard (non-hierarchical) mixture models, p is
+                # (n_components,) and needs reshaping to broadcast with
+                # mu of shape (n_components, n_genes).  For hierarchical
+                # models, p is already (n_genes,) or (n_components,
+                # n_genes) and broadcasts element-wise with mu.
+                if (
+                    self.n_components is not None
+                    and "p" in (self.model_config.mixture_params or [])
+                    and p.ndim == 1
+                    and p.shape[0] == self.n_components
                 ):
                     # Mixture model: mu has shape (n_components, n_genes)
                     # p has shape (n_components,). Reshape for broadcasting.
@@ -465,13 +487,19 @@ class ParameterExtractionMixin:
 
                 estimates["r"] = estimates["mu"] * (1 - p_reshaped) / p_reshaped
 
-        # Handle odds_ratio / mean_odds parameterization
-        elif parameterization in ("odds_ratio", "mean_odds"):
+        # Handle odds_ratio / mean_odds parameterization (including
+        # hierarchical)
+        elif parameterization in (
+            "odds_ratio",
+            "mean_odds",
+            "hierarchical_mean_odds",
+        ):
             # Convert phi to p if needed
             if "phi" in estimates and "p" not in estimates:
                 if verbose:
                     print(
-                        "Computing p from phi for odds_ratio parameterization"
+                        "Computing p from phi for "
+                        f"{parameterization} parameterization"
                     )
                 estimates["p"] = 1.0 / (1.0 + estimates["phi"])
 
@@ -484,11 +512,17 @@ class ParameterExtractionMixin:
                 if verbose:
                     print(
                         "Computing r from phi and mu for "
-                        "(odds_ratio / mean_odds) parameterization"
+                        f"{parameterization} parameterization"
                     )
-                # Reshape phi to broadcast with mu based on mixture model
-                if self.n_components is not None and "phi" in (
-                    self.model_config.mixture_params or []
+                # For standard (non-hierarchical) mixture models, phi is
+                # (n_components,) and needs reshaping.  For hierarchical
+                # models, phi is already (n_genes,) or (n_components,
+                # n_genes) and broadcasts element-wise with mu.
+                if (
+                    self.n_components is not None
+                    and "phi" in (self.model_config.mixture_params or [])
+                    and estimates["phi"].ndim == 1
+                    and estimates["phi"].shape[0] == self.n_components
                 ):
                     # Mixture model: mu has shape (n_components, n_genes)
                     phi_reshaped = estimates["phi"][:, None]
@@ -502,7 +536,7 @@ class ParameterExtractionMixin:
                 if verbose:
                     print(
                         "Computing p_capture from phi_capture for "
-                        "(odds_ratio / mean_odds) parameterization"
+                        f"{parameterization} parameterization"
                     )
                 estimates["p_capture"] = 1.0 / (1.0 + estimates["phi_capture"])
 
@@ -569,15 +603,28 @@ class ParameterExtractionMixin:
             if verbose:
                 print("Computing p_hat from p and p_capture")
 
-            # Reshape p_capture for broadcasting
+            # p_capture is (n_cells,); reshape to (n_cells, 1) for
+            # broadcasting against p which may be scalar, (n_genes,),
+            # or (n_components, n_genes).
             p_capture_reshaped = estimates["p_capture"][:, None]
 
             # p_hat = p * p_capture / (1 - p * (1 - p_capture))
-            estimates["p_hat"] = (
+            p_hat_raw = (
                 estimates["p"]
                 * p_capture_reshaped
                 / (1 - estimates["p"] * (1 - p_capture_reshaped))
-            ).flatten()
+            )
+
+            # When p is scalar or per-component (not gene-specific),
+            # p_hat is per-cell only → flatten to (n_cells,).
+            # When p is gene-specific, p_hat is (n_cells, n_genes).
+            if estimates["p"].ndim == 0 or (
+                estimates["p"].ndim == 1
+                and self.n_components is not None
+                and estimates["p"].shape[0] == self.n_components
+            ):
+                estimates["p_hat"] = p_hat_raw.flatten()
+            else:
+                estimates["p_hat"] = p_hat_raw
 
         return estimates
-
