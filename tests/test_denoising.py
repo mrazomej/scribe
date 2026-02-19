@@ -804,3 +804,214 @@ class TestMCMCDenoising:
         assert isinstance(result, dict)
         assert "denoised_counts" in result
         assert "variance" in result
+
+
+# ==============================================================================
+# Tests for gene-specific p denoising (hierarchical model)
+# ==============================================================================
+
+
+class TestDenoiseGeneSpecificP:
+    """Tests for denoising when p is gene-specific (hierarchical model).
+
+    Verifies that ``denoise_counts`` correctly handles ``p`` arrays
+    with shape ``(n_genes,)`` or ``(n_components, n_genes)`` instead of
+    scalar, as produced by hierarchical parameterizations.
+    """
+
+    def test_gene_specific_p_shape(self):
+        """Gene-specific p produces correct output shape."""
+        n_cells, n_genes = 8, 5
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.linspace(0.2, 0.6, n_genes)
+        nu = jnp.ones(n_cells) * 0.5
+
+        result = denoise_counts(counts, r, p, p_capture=nu)
+        assert result.shape == (n_cells, n_genes)
+
+    def test_gene_specific_p_non_negative(self, rng):
+        """Gene-specific p denoised counts are non-negative."""
+        n_cells, n_genes = 6, 4
+        counts = jnp.array(
+            np.random.RandomState(99).negative_binomial(3, 0.4, (n_cells, n_genes)),
+            dtype=jnp.float32,
+        )
+        r = jnp.ones(n_genes) * 3.0
+        p = jnp.array([0.2, 0.4, 0.5, 0.7])
+        nu = jnp.full(n_cells, 0.4)
+
+        for method in ("mean", "mode", "sample"):
+            result = denoise_counts(
+                counts, r, p, p_capture=nu, method=method, rng_key=rng,
+            )
+            assert jnp.all(result >= 0), f"method={method}"
+
+    def test_gene_specific_p_ge_observed(self):
+        """Denoised mean with gene-specific p >= observed counts."""
+        n_cells, n_genes = 4, 5
+        counts = jnp.array(
+            np.random.RandomState(88).negative_binomial(5, 0.3, (n_cells, n_genes)),
+            dtype=jnp.float32,
+        )
+        r = jnp.ones(n_genes) * 4.0
+        p = jnp.linspace(0.2, 0.7, n_genes)
+        nu = jnp.full(n_cells, 0.5)
+
+        result = denoise_counts(counts, r, p, p_capture=nu, method="mean")
+        assert jnp.all(result >= counts - 1e-5)
+
+    def test_gene_specific_p_matches_scalar_when_uniform(self):
+        """When all p_g are equal, gene-specific matches scalar result."""
+        n_cells, n_genes = 6, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 5
+        r = jnp.array([2.0, 3.0, 4.0, 1.0])
+        p_val = 0.4
+        p_scalar = jnp.float32(p_val)
+        p_vector = jnp.full(n_genes, p_val)
+        nu = jnp.full(n_cells, 0.5)
+
+        result_scalar = denoise_counts(counts, r, p_scalar, p_capture=nu)
+        result_vector = denoise_counts(counts, r, p_vector, p_capture=nu)
+        np.testing.assert_allclose(result_scalar, result_vector, atol=1e-5)
+
+    def test_gene_specific_p_different_genes_differ(self):
+        """Different p_g values produce different denoised values per gene."""
+        n_cells, n_genes = 4, 3
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 5
+        r = jnp.ones(n_genes) * 4.0
+        p = jnp.array([0.1, 0.5, 0.9])
+        nu = jnp.full(n_cells, 0.5)
+
+        result = denoise_counts(counts, r, p, p_capture=nu, method="mean")
+        # Genes with different p should have different denoised values
+        assert not jnp.allclose(result[:, 0], result[:, 1])
+        assert not jnp.allclose(result[:, 1], result[:, 2])
+
+    def test_gene_specific_p_nbdm_identity(self):
+        """Without VCP, gene-specific p still gives identity."""
+        counts = jnp.array([[5, 0, 3], [1, 2, 7]], dtype=jnp.float32)
+        r = jnp.array([2.0, 1.5, 3.0])
+        p = jnp.array([0.3, 0.5, 0.7])
+
+        result = denoise_counts(counts, r, p)
+        np.testing.assert_allclose(result, counts, atol=1e-5)
+
+    def test_gene_specific_p_cell_batching(self):
+        """Cell batching with gene-specific p matches full computation."""
+        n_cells, n_genes = 15, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.array([0.2, 0.4, 0.5, 0.7])
+        nu = jnp.full(n_cells, 0.5)
+
+        full = denoise_counts(counts, r, p, p_capture=nu)
+        batched = denoise_counts(
+            counts, r, p, p_capture=nu, cell_batch_size=4,
+        )
+        np.testing.assert_allclose(full, batched, atol=1e-5)
+
+    def test_gene_specific_p_with_gate(self):
+        """Gene-specific p works correctly with zero-inflation gate."""
+        n_cells, n_genes = 6, 3
+        counts = jnp.array(
+            [[5, 0, 3], [0, 0, 0], [2, 1, 0],
+             [0, 3, 1], [4, 0, 2], [1, 0, 0]],
+            dtype=jnp.float32,
+        )
+        r = jnp.array([3.0, 2.0, 4.0])
+        p = jnp.array([0.3, 0.5, 0.7])
+        nu = jnp.full(n_cells, 0.4)
+        gate = jnp.array([0.1, 0.2, 0.15])
+
+        result = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate, method="mean",
+        )
+        assert result.shape == (n_cells, n_genes)
+        assert jnp.all(result >= 0)
+        assert jnp.all(jnp.isfinite(result))
+
+    def test_gene_specific_p_mixture_marginal(self):
+        """Gene-specific p with mixture model (marginal path)."""
+        n_cells, n_genes, n_comp = 6, 4, 2
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones((n_comp, n_genes)) * jnp.array([[3.0], [5.0]])
+        p = jnp.array([[0.2, 0.3, 0.4, 0.5], [0.5, 0.6, 0.7, 0.8]])
+        nu = jnp.full(n_cells, 0.5)
+        weights = jnp.array([0.6, 0.4])
+
+        result = denoise_counts(
+            counts, r, p, p_capture=nu,
+            mixing_weights=weights, method="mean",
+        )
+        assert result.shape == (n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_gene_specific_p_mixture_assignment(self):
+        """Gene-specific p with mixture model (component assignment)."""
+        n_cells, n_genes, n_comp = 8, 4, 2
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones((n_comp, n_genes)) * jnp.array([[3.0], [5.0]])
+        p = jnp.array([[0.2, 0.3, 0.4, 0.5], [0.5, 0.6, 0.7, 0.8]])
+        nu = jnp.full(n_cells, 0.5)
+        weights = jnp.array([0.6, 0.4])
+        assignment = jnp.array([0, 0, 1, 1, 0, 1, 0, 1])
+
+        result = denoise_counts(
+            counts, r, p, p_capture=nu,
+            mixing_weights=weights,
+            component_assignment=assignment, method="mean",
+        )
+        assert result.shape == (n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_gene_specific_p_mixture_assignment_batched(self):
+        """Gene-specific p with mixture + assignment + cell_batch_size."""
+        n_cells, n_genes, n_comp = 10, 4, 2
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones((n_comp, n_genes)) * jnp.array([[3.0], [5.0]])
+        p = jnp.array([[0.2, 0.3, 0.4, 0.5], [0.5, 0.6, 0.7, 0.8]])
+        nu = jnp.full(n_cells, 0.5)
+        weights = jnp.array([0.6, 0.4])
+        assignment = jnp.array([0, 0, 1, 1, 0, 1, 0, 1, 0, 1])
+
+        full = denoise_counts(
+            counts, r, p, p_capture=nu,
+            mixing_weights=weights,
+            component_assignment=assignment, method="mean",
+        )
+        batched = denoise_counts(
+            counts, r, p, p_capture=nu,
+            mixing_weights=weights,
+            component_assignment=assignment,
+            method="mean", cell_batch_size=3,
+        )
+        np.testing.assert_allclose(full, batched, atol=1e-5)
+
+    def test_gene_specific_p_multi_sample(self):
+        """Multi-sample denoising with gene-specific p."""
+        n_samples, n_cells, n_genes = 3, 6, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 2
+        r = jnp.ones((n_samples, n_genes)) * 5.0
+        p = jnp.tile(jnp.linspace(0.2, 0.6, n_genes), (n_samples, 1))
+        nu = jnp.ones((n_samples, n_cells)) * 0.5
+
+        result = denoise_counts(counts, r, p, p_capture=nu)
+        assert result.shape == (n_samples, n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_gene_specific_p_variance(self):
+        """return_variance works with gene-specific p."""
+        n_cells, n_genes = 6, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.array([0.2, 0.4, 0.5, 0.7])
+        nu = jnp.full(n_cells, 0.5)
+
+        result = denoise_counts(
+            counts, r, p, p_capture=nu, return_variance=True,
+        )
+        assert isinstance(result, dict)
+        assert result["denoised_counts"].shape == (n_cells, n_genes)
+        assert result["variance"].shape == (n_cells, n_genes)
+        assert jnp.all(result["variance"] >= 0)

@@ -818,6 +818,11 @@ def _denoise_single(
         r_cell = r[component_assignment]  # (n_cells, n_genes)
         p_is_comp = p.ndim >= 1 and p.shape[0] == r.shape[0]
         p_cell = p[component_assignment] if p_is_comp else p
+        # When p was (n_components,), gathering yields (n_cells,).
+        # Reshape to (n_cells, 1) to disambiguate from gene-specific
+        # p of shape (n_genes,) in downstream broadcasting.
+        if p_cell.ndim == 1 and p_cell.shape[0] == counts.shape[0]:
+            p_cell = p_cell[:, None]
         g_cell = (
             gate[component_assignment]
             if gate is not None and gate.ndim == 2
@@ -920,8 +925,14 @@ def _denoise_standard(
             gate[start:end] if gate is not None and gate.ndim == 2 else gate
         )
 
-        # p may be scalar or (n_cells,) [component-gathered]
-        p_b = p[start:end] if p.ndim == 1 and p.shape[0] == n_cells else p
+        # After the reshape in _denoise_single, per-cell p is always 2D:
+        # (n_cells, 1) or (n_cells, n_genes).  Gene-specific p is 1D
+        # (n_genes,) and scalar p is 0D — neither should be sliced.
+        p_b = (
+            p[start:end]
+            if p.ndim >= 2 and p.shape[0] == n_cells
+            else p
+        )
 
         if method == "sample":
             rng_key, batch_key = random.split(rng_key)
@@ -966,7 +977,8 @@ def _denoise_batch(
     r : jnp.ndarray
         Dispersion, ``(n_genes,)`` or ``(batch_cells, n_genes)``.
     p : jnp.ndarray
-        Success probability, scalar or ``(batch_cells,)``.
+        Success probability: scalar ``()``, gene-specific ``(n_genes,)``,
+        or per-cell ``(batch_cells, 1)`` / ``(batch_cells, n_genes)``.
     p_capture : jnp.ndarray or None
         Capture probability ``(batch_cells,)`` or ``None``.
     gate : jnp.ndarray or None
@@ -984,13 +996,11 @@ def _denoise_batch(
     variance : jnp.ndarray
         Posterior variance ``(batch_cells, n_genes)``.
     """
-    # Normalize per-cell p vectors to column shape so they broadcast with
-    # (batch_cells, n_genes) tensors rather than producing an outer product.
-    p_eff = (
-        p[:, None]
-        if p.ndim == 1 and p.shape[0] == counts.shape[0]
-        else p
-    )
+    # Per-cell p arrives as (batch_cells, 1) from the gathering step in
+    # _denoise_single / _denoise_mixture_marginal, gene-specific p as
+    # (n_genes,), and scalar p as ().  All broadcast correctly with
+    # (batch_cells, n_genes) tensors without further reshaping.
+    p_eff = p
 
     # probs_post is the numpyro probs for the posterior NB of uncaptured
     # transcripts d_g.  probs_post = canonical_p * (1 - nu_c).
@@ -1210,6 +1220,9 @@ def _denoise_mixture_marginal(
         )
         r_cell = r[comp]  # (n_cells, n_genes)
         p_cell = p[comp] if p_is_comp else p
+        # Disambiguate per-cell p from gene-specific p (see _denoise_single)
+        if p_cell.ndim == 1 and p_cell.shape[0] == counts.shape[0]:
+            p_cell = p_cell[:, None]
         g_cell = (
             gate[comp] if gate is not None and gate.ndim == 2 else gate
         )
