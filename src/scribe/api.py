@@ -241,6 +241,7 @@ def fit(
     n_steps: int = 50_000,
     batch_size: Optional[int] = None,
     stable_update: bool = True,
+    log_progress_lines: bool = False,
     n_samples: int = 2_000,
     n_warmup: int = 1_000,
     n_chains: int = 1,
@@ -374,6 +375,12 @@ def fit(
     stable_update : bool, default=True
         Use numerically stable parameter updates in SVI.
 
+    log_progress_lines : bool, default=False
+        Whether to emit periodic plain-text progress lines during SVI/VAE
+        inference. When enabled, the SVI engine logs approximately 20 updates
+        over a run (every ``max(1, n_steps // 20)`` steps). This is useful for
+        non-interactive logs such as SLURM ``.out`` files.
+
     n_samples : int, default=2_000
         Number of MCMC samples to draw (only for inference_method="mcmc").
 
@@ -452,7 +459,7 @@ def fit(
     inference_config : InferenceConfig, optional
         Fully configured inference configuration object.
         If provided, overrides inference_method, n_steps, batch_size,
-        stable_update, n_samples, n_warmup, and n_chains.
+        stable_update, log_progress_lines, n_samples, n_warmup, and n_chains.
 
     Returns
     -------
@@ -661,6 +668,7 @@ def fit(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
                 stable_update=stable_update,
+                log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
             )
             inference_config = InferenceConfig.from_svi(svi_config)
@@ -683,6 +691,7 @@ def fit(
                 n_steps=n_steps,
                 batch_size=effective_batch_size,
                 stable_update=stable_update,
+                log_progress_lines=log_progress_lines,
                 early_stopping=early_stop_config,
             )
             inference_config = InferenceConfig.from_vae(svi_config)
