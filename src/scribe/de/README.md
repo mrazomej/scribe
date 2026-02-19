@@ -206,6 +206,40 @@ This gives exact analytic posteriors for:
 - Each gene: `Δ_g ~ N(μ_A[g] - μ_B[g], σ²_A[g] + σ²_B[g])`
 - Any contrast: `c^T Δ ~ N(c^T(μ_A - μ_B), c^T(Σ_A + Σ_B)c)`
 
+## Gene-Specific p: Gamma-Based Composition Sampling
+
+When using hierarchical parameterizations that produce gene-specific `p_g`
+values, the standard `Dirichlet(r)` sampling for compositions is no longer
+correct. The `compare()` function and `compute_clr_differences()` accept
+optional `p_samples_A` and `p_samples_B` arrays of shape `(N, K, D)` (or
+`(N, D)` for non-mixture models). When provided, compositions are generated
+via scaled Gamma variates instead of Dirichlet:
+
+```
+lambda_g ~ Gamma(r_g, rate=1) * p_g / (1 - p_g)
+rho_g = lambda_g / sum_j lambda_j
+```
+
+This is implemented by `_batched_gamma_normalize()` in `_empirical.py`. When
+all `p_g` are equal, this reduces exactly to `Dirichlet(r)` sampling, so the
+method is a strict generalization.
+
+```python
+from scribe.de import compare
+
+de = compare(
+    r_bleo, r_ctrl,
+    p_samples_A=results_bleo.posterior_samples.get("p"),
+    p_samples_B=results_ctrl.posterior_samples.get("p"),
+    method="empirical",
+    component_A=0, component_B=0,
+    gene_names=gene_names,
+)
+```
+
+**Note**: Combining `gene_mask` with `p_samples` raises a `ValueError` because
+gene aggregation under gene-specific probabilities is ill-defined.
+
 ## Gene Expression Filter (`gene_mask`)
 
 Low-expression genes can appear spuriously DE due to compositional artefacts:
@@ -304,8 +338,9 @@ de = compare(
 
 ### How it works
 
-1. **Dirichlet sampling**: Draw `rho ~ Dirichlet(r)` from the concentration
-   parameters in batches (GPU-friendly).
+1. **Composition sampling**: Draw `rho ~ Dirichlet(r)` from the concentration
+   parameters in batches (GPU-friendly). When gene-specific `p_samples` are
+   provided, uses Gamma-based sampling instead (see above).
 2. **CLR transform**: `CLR(rho) = log(rho) - mean(log(rho))`.
 3. **Pair and difference**: `Delta = CLR(rho_A) - CLR(rho_B)`.
 4. **Count**: Estimate all statistics by vectorized counting:

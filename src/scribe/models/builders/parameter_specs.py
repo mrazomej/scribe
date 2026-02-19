@@ -1018,6 +1018,253 @@ class SoftplusNormalSpec(NormalWithTransformSpec):
 
 
 # ==============================================================================
+# Hierarchical Normal + Transform Specifications
+# ==============================================================================
+#
+# These specs define gene-specific parameters whose prior is determined by
+# hyperparameters that are themselves sampled.  The generative process is:
+#
+#     hyper_loc   ~ prior (sampled as a global parameter)
+#     hyper_scale ~ prior (sampled as a global parameter, positive)
+#     unconstrained_g ~ Normal(hyper_loc, hyper_scale)   for each gene g
+#     param_g = transform(unconstrained_g)
+#
+# When all genes share the same hyperparameters, the gene-specific parameters
+# are exchangeable draws from the same population distribution — a classical
+# Bayesian hierarchical structure.  This relaxes the shared-p assumption of
+# the Dirichlet-Multinomial factorization while retaining soft shrinkage
+# toward a common value.
+# ==============================================================================
+
+
+class HierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
+    """
+    Hierarchical Normal + Transform: gene-specific parameter with learned prior.
+
+    Instead of using fixed prior hyperparameters, this spec draws its
+    Normal(loc, scale) parameters from other sampled hyperparameters.
+    The generative model is::
+
+        hyper_loc   ~ some prior  (global parameter)
+        hyper_scale ~ some prior  (global parameter, positive)
+        param_g     = transform(Normal(hyper_loc, hyper_scale))  per gene
+
+    This enables gene-specific parameters (e.g., p_g, phi_g) whose prior
+    is learned from data, providing adaptive shrinkage.
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g., ``"p"``).  Used as the NumPyro sample site.
+    shape_dims : Tuple[str, ...]
+        Shape dimensions.  Typically ``("n_genes",)`` for gene-specific
+        hierarchical parameters.
+    default_params : Tuple[float, float]
+        Fallback (loc, scale) for the base Normal when hyperparameters are
+        not yet available.  Not used during hierarchical sampling.
+    hyper_loc_name : str
+        Name of the sampled hyperparameter providing the prior location
+        (e.g., ``"logit_p_loc"``).
+    hyper_scale_name : str
+        Name of the sampled hyperparameter providing the prior scale
+        (e.g., ``"logit_p_scale"``).  Must be positive at sampling time.
+    is_gene_specific : bool
+        Should be ``True`` for hierarchical gene-specific parameters.
+    is_mixture : bool
+        If ``True``, parameter is per-component per-gene.
+    transform : Transform
+        NumPyro transform applied to the base Normal sample
+        (e.g., ``SigmoidTransform`` for (0,1), ``ExpTransform`` for (0,∞)).
+
+    Examples
+    --------
+    >>> # Hierarchical p with sigmoid transform: p_g = sigmoid(Normal(loc, scale))
+    >>> HierarchicalSigmoidNormalSpec(
+    ...     name="p",
+    ...     shape_dims=("n_genes",),
+    ...     default_params=(0.0, 1.0),
+    ...     hyper_loc_name="logit_p_loc",
+    ...     hyper_scale_name="logit_p_scale",
+    ...     is_gene_specific=True,
+    ... )
+
+    See Also
+    --------
+    HierarchicalSigmoidNormalSpec : Sigmoid-transformed hierarchical spec.
+    HierarchicalExpNormalSpec : Exp-transformed hierarchical spec.
+    """
+
+    hyper_loc_name: str = Field(
+        ...,
+        description="Name of the hyperparameter for the Normal location",
+    )
+    hyper_scale_name: str = Field(
+        ...,
+        description="Name of the hyperparameter for the Normal scale",
+    )
+
+    # --------------------------------------------------------------------------
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample from the hierarchical prior using learned hyperparameters.
+
+        Constructs a ``TransformedDistribution(Normal(loc, scale), transform)``
+        where ``loc`` and ``scale`` are drawn from the population-level
+        hyperprior (already in ``param_values``).
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes (must contain ``"n_genes"`` and optionally
+            ``"n_components"``).
+        param_values : Dict[str, jnp.ndarray]
+            Dictionary of already-sampled parameter values.  Must contain
+            ``self.hyper_loc_name`` and ``self.hyper_scale_name``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Sampled gene-specific parameter in constrained space (after
+            applying the transform).  Shape is ``(n_genes,)`` or
+            ``(n_components, n_genes)`` if ``is_mixture=True``.
+
+        Raises
+        ------
+        KeyError
+            If the required hyperparameters are not in ``param_values``.
+        """
+        loc = param_values[self.hyper_loc_name]
+        scale = param_values[self.hyper_scale_name]
+        shape = resolve_shape(self.shape_dims, dims, is_mixture=self.is_mixture)
+
+        # Build hierarchical prior: Normal(learned_loc, learned_scale)
+        if shape == ():
+            base_dist = dist.Normal(loc, scale)
+        else:
+            base_dist = (
+                dist.Normal(loc, scale).expand(shape).to_event(len(shape))
+            )
+
+        transformed_dist = dist.TransformedDistribution(
+            base_dist, self.transform
+        )
+        return numpyro.sample(self.constrained_name, transformed_dist)
+
+
+# ------------------------------------------------------------------------------
+# Hierarchical Sigmoid Normal Specification
+# ------------------------------------------------------------------------------
+
+
+class HierarchicalSigmoidNormalSpec(HierarchicalNormalWithTransformSpec):
+    """Hierarchical Normal + Sigmoid for gene-specific parameters in (0, 1).
+
+    Generative model::
+
+        logit_p_loc   ~ Normal(0, 1)           [global hyperparameter]
+        logit_p_scale ~ Softplus(Normal(0, 1))  [global hyperparameter]
+        p_g = sigmoid(Normal(logit_p_loc, logit_p_scale))  [per gene]
+
+    This is the hierarchical extension of ``SigmoidNormalSpec``, used for
+    gene-specific success probability ``p_g`` in the hierarchical
+    canonical and mean_prob parameterizations.
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (typically ``"p"``).
+    shape_dims : Tuple[str, ...]
+        Shape dimensions (typically ``("n_genes",)``).
+    default_params : Tuple[float, float]
+        Fallback (loc, scale).
+    hyper_loc_name : str
+        Hyperparameter name for location (e.g., ``"logit_p_loc"``).
+    hyper_scale_name : str
+        Hyperparameter name for scale (e.g., ``"logit_p_scale"``).
+
+    Examples
+    --------
+    >>> spec = HierarchicalSigmoidNormalSpec(
+    ...     name="p",
+    ...     shape_dims=("n_genes",),
+    ...     default_params=(0.0, 1.0),
+    ...     hyper_loc_name="logit_p_loc",
+    ...     hyper_scale_name="logit_p_scale",
+    ...     is_gene_specific=True,
+    ... )
+
+    Notes
+    -----
+    When ``logit_p_scale`` is small, genes are tightly clustered around
+    ``sigmoid(logit_p_loc)`` (strong shrinkage).  When it is large,
+    genes have diverse p values (weak shrinkage).  The data determine
+    the appropriate degree of shrinkage via the hyperprior.
+    """
+
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SigmoidTransform()
+    )
+
+
+# ------------------------------------------------------------------------------
+# Hierarchical Exp Normal Specification
+# ------------------------------------------------------------------------------
+
+
+class HierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
+    """Hierarchical Normal + Exp for gene-specific parameters in (0, ∞).
+
+    Generative model::
+
+        log_phi_loc   ~ Normal(0, 1)            [global hyperparameter]
+        log_phi_scale ~ Softplus(Normal(0, 1))   [global hyperparameter]
+        phi_g = exp(Normal(log_phi_loc, log_phi_scale))  [per gene]
+
+    This is the hierarchical extension of ``ExpNormalSpec``, used for
+    gene-specific odds ratio ``phi_g`` in the hierarchical mean_odds
+    parameterization.
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (typically ``"phi"``).
+    shape_dims : Tuple[str, ...]
+        Shape dimensions (typically ``("n_genes",)``).
+    default_params : Tuple[float, float]
+        Fallback (loc, scale).
+    hyper_loc_name : str
+        Hyperparameter name for location (e.g., ``"log_phi_loc"``).
+    hyper_scale_name : str
+        Hyperparameter name for scale (e.g., ``"log_phi_scale"``).
+
+    Examples
+    --------
+    >>> spec = HierarchicalExpNormalSpec(
+    ...     name="phi",
+    ...     shape_dims=("n_genes",),
+    ...     default_params=(0.0, 1.0),
+    ...     hyper_loc_name="log_phi_loc",
+    ...     hyper_scale_name="log_phi_scale",
+    ...     is_gene_specific=True,
+    ... )
+
+    Notes
+    -----
+    When ``log_phi_scale`` is small, genes have similar odds ratios
+    (strong shrinkage toward ``exp(log_phi_loc)``).  When large,
+    genes can have widely varying phi values.
+    """
+
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+
+# ==============================================================================
 # LatentSpec — guide distribution for VAE latent z
 # ==============================================================================
 

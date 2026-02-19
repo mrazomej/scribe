@@ -60,6 +60,10 @@ from .parameter_specs import (
     SigmoidNormalSpec,
     ExpNormalSpec,
     SoftplusNormalSpec,
+    # Hierarchical specs (gene-specific with learned hyperprior)
+    HierarchicalNormalWithTransformSpec,
+    HierarchicalSigmoidNormalSpec,
+    HierarchicalExpNormalSpec,
     # Latent specs (VAE z)
     LatentSpec,
     GaussianLatentSpec,
@@ -90,6 +94,10 @@ __all__ = [
     "SigmoidNormalSpec",
     "ExpNormalSpec",
     "SoftplusNormalSpec",
+    # Hierarchical specs
+    "HierarchicalNormalWithTransformSpec",
+    "HierarchicalSigmoidNormalSpec",
+    "HierarchicalExpNormalSpec",
     "LatentSpec",
     "GaussianLatentSpec",
     # Spec functions

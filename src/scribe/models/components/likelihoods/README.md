@@ -63,6 +63,38 @@ likelihood = NegativeBinomialLikelihood()
 builder.with_likelihood(likelihood)
 ```
 
+## Gene-Specific p Broadcasting
+
+When using hierarchical parameterizations, `p` (or `phi`) becomes gene-specific
+with shape `(n_genes,)` instead of a scalar. In mixture models this creates an
+ambiguity: a 1D array could be `(n_components,)` or `(n_genes,)`. The helper
+function `broadcast_p_for_mixture(p, r)` in `base.py` resolves this by checking
+the shape against `r` and reshaping accordingly:
+
+- Scalar `p` -> `(1, 1)` for broadcasting with `(n_components, n_genes)`
+- 1D `p` matching `r.shape[-1]` (n_genes) -> `(1, n_genes)`
+- 1D `p` matching `r.shape[0]` (n_components) -> `(n_components, 1)`
+- 2D `p` -> passed through unchanged
+
+All four likelihood classes use this helper for correct broadcasting when
+building mixture distributions.
+
+## Gene-Specific p Broadcasting
+
+When using hierarchical parameterizations, `p` (or `phi`) becomes gene-specific
+with shape `(n_genes,)` instead of a scalar. In mixture models this creates an
+ambiguity: a 1D array could be `(n_components,)` or `(n_genes,)`. The helper
+function `broadcast_p_for_mixture(p, r)` in `base.py` resolves this by checking
+the shape against `r` and reshaping accordingly:
+
+- Scalar `p` to `(1, 1)` for broadcasting with `(n_components, n_genes)`
+- 1D `p` matching `r.shape[-1]` (n_genes) to `(1, n_genes)`
+- 1D `p` matching `r.shape[0]` (n_components) to `(n_components, 1)`
+- 2D `p` passed through unchanged
+
+All four likelihood classes use this helper for correct broadcasting when
+building mixture distributions.
+
 ## VCP Likelihoods
 
 The Variable Capture Probability (VCP) likelihoods model cell-specific technical
@@ -87,7 +119,7 @@ likelihood = NBWithVCPLikelihood(
 ## Annotation Priors for Mixture Models
 
 Likelihoods support **cell-specific annotation priors** that modify the global
-mixing weights on a per-cell basis.  When the caller provides an
+mixing weights on a per-cell basis. When the caller provides an
 `annotation_prior_logits` array of shape `(n_cells, n_components)`, the
 likelihood computes cell-specific mixing weights inside the cell plate:
 
@@ -115,8 +147,9 @@ pi_i = softmax(log(mixing_weights) + kappa * one_hot(ann_i))   # per-cell
 x_i ~ MixtureSameFamily(Categorical(pi_i), F_k)
 ```
 
-The posterior assignment `p(z_i = k | x_i) ∝ pi_{i,k} · f_k(x_i | θ_k)` — the
-annotation is the prior, the data likelihood is the update.
+The posterior assignment `p(z_i = k | x_i)` is proportional to
+`pi_{i,k} * f_k(x_i | theta_k)` -- the annotation is the prior, the data
+likelihood is the update.
 
 ### Interaction with the three plate modes
 
@@ -134,7 +167,7 @@ exactly (distribution built once outside the plate for the non-VAE path).
 ```python
 import scribe
 
-# Via the high-level API — single annotation column
+# Via the high-level API -- single annotation column
 result = scribe.fit(
     adata,
     model="nbdm",
@@ -170,9 +203,14 @@ To add a new likelihood:
 
 1. Create a new file or add to an existing one
 2. Inherit from `Likelihood` (in `base.py`)
-3. Implement the `sample` method with signature including `vae_cell_fn: Optional[Callable] = None` and `annotation_prior_logits: Optional[jnp.ndarray] = None`, handling:
+3. Implement the `sample` method with signature including
+   `vae_cell_fn: Optional[Callable] = None` and
+   `annotation_prior_logits: Optional[jnp.ndarray] = None`, handling:
    - All three plate modes (prior predictive, full, batch)
-   - Non-VAE path: `vae_cell_fn is None` — build distribution once from `param_values`
-   - VAE path: `vae_cell_fn` provided — call it inside the cell plate, merge into `param_values`, then build distribution
-   - Annotation path: if `annotation_prior_logits is not None` and this is a mixture, use `compute_cell_specific_mixing` inside the cell plate
+   - Non-VAE path: `vae_cell_fn is None` -- build distribution once from
+     `param_values`
+   - VAE path: `vae_cell_fn` provided -- call it inside the cell plate, merge
+     into `param_values`, then build distribution
+   - Annotation path: if `annotation_prior_logits is not None` and this is a
+     mixture, use `compute_cell_specific_mixing` inside the cell plate
 4. Export the class in `__init__.py`

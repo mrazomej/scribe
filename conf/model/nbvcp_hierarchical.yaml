@@ -1,0 +1,8 @@
+# @package _global_
+# NB + VCP with hierarchical gene-specific p
+# Combines variable capture probability with relaxed shared-p assumption.
+
+model: nbvcp
+parameterization: hierarchical_canonical
+unconstrained: true
+n_components: null

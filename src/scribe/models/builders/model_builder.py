@@ -37,6 +37,7 @@ from scribe.flows import FlowDistribution
 from .parameter_specs import (
     DerivedParam,
     DirichletSpec,
+    HierarchicalNormalWithTransformSpec,
     ParamSpec,
     sample_prior,
 )
@@ -384,10 +385,25 @@ class ModelBuilder:
             #    Shape: (n_genes,) - one value per gene, shared across cells
             #    Examples: r (dispersion), mu (mean), gate (zero-inflation prob)
             #    Using to_event(1) to mark the gene dimension as non-independent
+            #
+            #    Hierarchical specs (HierarchicalNormalWithTransformSpec) are
+            #    gene-specific parameters whose prior is defined by already-
+            #    sampled hyperparameters (from step 1). These use a dedicated
+            #    sampling method that reads hyperparameter values from
+            #    param_values instead of using fixed prior hyperparameters.
             # ================================================================
             gene_specs = [s for s in specs if s.is_gene_specific]
             for spec in gene_specs:
-                param_values[spec.name] = sample_prior(spec, dims, model_config)
+                if isinstance(spec, HierarchicalNormalWithTransformSpec):
+                    # Hierarchical prior: loc and scale come from
+                    # hyperparameters sampled in step 1
+                    param_values[spec.name] = spec.sample_hierarchical(
+                        dims, param_values
+                    )
+                else:
+                    param_values[spec.name] = sample_prior(
+                        spec, dims, model_config
+                    )
 
             # ================================================================
             # 3. Compute DERIVED parameters from sampled values

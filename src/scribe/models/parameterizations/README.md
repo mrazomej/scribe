@@ -78,6 +78,68 @@ capture_param = param_strategy.transform_model_param("p_capture")
 # Returns: "phi_capture"
 ```
 
+## Hierarchical Parameterizations
+
+Hierarchical parameterizations relax the shared-`p` (or shared-`phi`)
+assumption. Instead of a single scalar probability shared across all genes,
+each gene draws its own `p_g` (or `phi_g`) from a learned population
+distribution defined by a Normal hyperprior in unconstrained (logit/log) space.
+
+The hierarchy lives **only in the model prior**; the guide treats `p_g` as an
+ordinary gene-specific `SigmoidNormal` parameter. The KL divergence in the ELBO
+couples the gene-level parameters to the hyperprior, providing adaptive
+shrinkage: genes with little data are pulled toward the population mean, while
+well-supported genes retain their individual estimates.
+
+### `HierarchicalCanonicalParameterization`
+
+Samples hyperprior parameters for `p`, then gene-specific `p_g` and `r`:
+
+- **Hyperpriors**: `logit_p_loc ~ Normal(0, 1)`, `logit_p_scale ~ Softplus(Normal(0, 1))`
+- **Core parameters**: `p_g ~ sigmoid(Normal(logit_p_loc, logit_p_scale))`, `r`
+- **Derived parameters**: None
+- **Gene parameters**: `p` (gene-specific via hierarchy), `r` (gene-specific)
+
+**Example**:
+```python
+param_strategy = PARAMETERIZATIONS["hierarchical_canonical"]
+param_specs = param_strategy.build_param_specs(
+    unconstrained=True,
+    guide_families=GuideFamilyConfig(),
+)
+# Returns: [NormalWithTransformSpec("logit_p_loc"), SoftplusNormalSpec("logit_p_scale"),
+#           HierarchicalSigmoidNormalSpec("p"), ExpNormalSpec("r")]
+```
+
+### `HierarchicalMeanProbParameterization`
+
+Like `MeanProbParameterization`, but with hierarchical gene-specific `p_g`:
+
+- **Hyperpriors**: `logit_p_loc`, `logit_p_scale`
+- **Core parameters**: `p_g` (hierarchical sigmoid), `mu`
+- **Derived parameters**: `r = mu * (1 - p) / p`
+- **Gene parameters**: `p` (gene-specific via hierarchy), `mu` (gene-specific)
+
+### `HierarchicalMeanOddsParameterization`
+
+Like `MeanOddsParameterization`, but with hierarchical gene-specific `phi_g`:
+
+- **Hyperpriors**: `log_phi_loc ~ Normal(0, 1)`, `log_phi_scale ~ Softplus(Normal(0, 1))`
+- **Core parameters**: `phi_g ~ exp(Normal(log_phi_loc, log_phi_scale))`, `mu`
+- **Derived parameters**: `p = 1 / (1 + phi)`, `r = mu * phi`
+- **Gene parameters**: `phi` (gene-specific via hierarchy), `mu` (gene-specific)
+- **Parameter transformations**: `p_capture` -> `phi_capture`
+
+### Posterior Diagnostics
+
+After fitting a hierarchical model, `posterior_samples["logit_p_scale"]` (or
+`"log_phi_scale"`) provides a diagnostic of the shared-p assumption:
+
+- **Small values** (close to 0): genes share similar `p` values, validating the
+  shared-p assumption
+- **Large values**: substantial gene-to-gene variation in `p`, indicating the
+  hierarchy is capturing real biological heterogeneity
+
 ## Usage in Unified Factory
 
 The unified factory uses parameterizations to eliminate nested conditionals:
@@ -109,10 +171,14 @@ The `PARAMETERIZATIONS` dictionary maps names to parameterization instances:
 
 ```python
 PARAMETERIZATIONS = {
-    # New names (preferred)
+    # Standard parameterizations
     "canonical": CanonicalParameterization(),
     "mean_prob": MeanProbParameterization(),
     "mean_odds": MeanOddsParameterization(),
+    # Hierarchical parameterizations (gene-specific p/phi with hyperprior)
+    "hierarchical_canonical": HierarchicalCanonicalParameterization(),
+    "hierarchical_mean_prob": HierarchicalMeanProbParameterization(),
+    "hierarchical_mean_odds": HierarchicalMeanOddsParameterization(),
     # Backward compatibility
     "standard": CanonicalParameterization(),
     "linked": MeanProbParameterization(),
@@ -120,7 +186,8 @@ PARAMETERIZATIONS = {
 }
 ```
 
-Both new and old names are supported for backward compatibility.
+Both new and old names are supported for backward compatibility. Hierarchical
+variants are opt-in via the `hierarchical_*` prefix.
 
 ## Benefits
 
@@ -166,6 +233,8 @@ PARAMETERIZATIONS["my_param"] = MyParameterization()
 ## See Also
 
 - `scribe.models.presets`: Preset factories that use parameterizations
-- `scribe.models.builders.parameter_specs`: Parameter specification classes
+- `scribe.models.builders.parameter_specs`: Parameter specification classes,
+  including `HierarchicalSigmoidNormalSpec` and `HierarchicalExpNormalSpec` for
+  hierarchical gene-specific parameters
 - `scribe.models.components.likelihoods`: Likelihoods that handle parameter
-  transformations
+  transformations and gene-specific `p` broadcasting

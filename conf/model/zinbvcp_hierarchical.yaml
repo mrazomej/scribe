@@ -1,0 +1,8 @@
+# @package _global_
+# ZINB + VCP with hierarchical gene-specific p
+# Full model: zero-inflation + variable capture + relaxed shared-p.
+
+model: zinbvcp
+parameterization: hierarchical_canonical
+unconstrained: true
+n_components: null

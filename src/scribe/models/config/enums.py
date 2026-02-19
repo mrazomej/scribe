@@ -50,14 +50,28 @@ class Parameterization(str, Enum):
     - MEAN_ODDS (ODDS_RATIO): Samples phi (odds ratio) and mu (mean), derives p
       and r
 
+    Hierarchical variants relax the shared-p assumption by placing a
+    hierarchical Normal prior on the success probability (or odds ratio)
+    in unconstrained space, so each gene draws its own p_g (or phi_g)
+    from a learned population distribution:
+
+    - HIERARCHICAL_CANONICAL: Gene-specific p_g with hyperprior, direct r
+    - HIERARCHICAL_MEAN_PROB: Gene-specific p_g with hyperprior, mu, derives r
+    - HIERARCHICAL_MEAN_ODDS: Gene-specific phi_g with hyperprior, mu, derives
+      p and r
+
     The old names (STANDARD, LINKED, ODDS_RATIO) are kept for backward
     compatibility.
     """
 
-    # New names (preferred)
+    # Standard parameterizations
     CANONICAL = "canonical"
     MEAN_PROB = "mean_prob"
     MEAN_ODDS = "mean_odds"
+    # Hierarchical parameterizations (gene-specific p/phi with hyperprior)
+    HIERARCHICAL_CANONICAL = "hierarchical_canonical"
+    HIERARCHICAL_MEAN_PROB = "hierarchical_mean_prob"
+    HIERARCHICAL_MEAN_ODDS = "hierarchical_mean_odds"
     # Backward compatibility
     STANDARD = "standard"
     LINKED = "linked"

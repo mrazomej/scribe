@@ -72,6 +72,55 @@ def _sample_p_capture_unconstrained(
 
 
 # ==============================================================================
+# Helper for broadcasting scalar/gene-specific p in mixture models
+# ==============================================================================
+
+
+def broadcast_p_for_mixture(
+    p: jnp.ndarray, r: jnp.ndarray
+) -> jnp.ndarray:
+    """Broadcast ``p`` to match ``r``'s shape for mixture NB distributions.
+
+    Handles all combinations of scalar, gene-specific, and mixture-specific
+    shapes for the success probability parameter ``p``.  This is needed
+    because hierarchical parameterizations produce gene-specific ``p``
+    (shape ``(n_genes,)``), which must be expanded to ``(1, n_genes)`` for
+    broadcasting with mixture ``r`` of shape ``(n_components, n_genes)``.
+
+    Parameters
+    ----------
+    p : jnp.ndarray
+        Success probability.  Possible shapes:
+
+        - ``()`` — scalar (shared across components and genes)
+        - ``(n_components,)`` — mixture-specific scalar
+        - ``(n_genes,)`` — gene-specific (shared across components)
+        - ``(n_components, n_genes)`` — both mixture- and gene-specific
+
+    r : jnp.ndarray
+        Dispersion parameter.  Shape ``(n_components, n_genes)`` in mixture
+        models.
+
+    Returns
+    -------
+    jnp.ndarray
+        ``p`` reshaped for broadcasting with ``r``.
+    """
+    if p.ndim == 0:
+        return p[None, None]
+    elif p.ndim == 1:
+        # Distinguish (n_genes,) from (n_components,) by comparing with r
+        if r.ndim == 2 and p.shape[0] == r.shape[-1]:
+            # Gene-specific: (n_genes,) → (1, n_genes)
+            return p[None, :]
+        else:
+            # Mixture-specific scalar: (n_components,) → (n_components, 1)
+            return p[:, None]
+    # Already (n_components, n_genes) or compatible shape
+    return p
+
+
+# ==============================================================================
 # Helper for cell-specific mixing weights (annotation priors)
 # ==============================================================================
 

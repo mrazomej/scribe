@@ -230,14 +230,23 @@ def compute_clr_differences(
     rng_key=None,
     batch_size: int = 2048,
     gene_mask: Optional[jnp.ndarray] = None,
+    p_samples_A: Optional[jnp.ndarray] = None,
+    p_samples_B: Optional[jnp.ndarray] = None,
 ) -> jnp.ndarray:
     """
     Compute CLR-space posterior differences from Dirichlet concentration samples.
 
     Takes posterior samples of Dirichlet concentration parameters ``r``
-    for two conditions, draws from ``Dirichlet(r)``, transforms to
-    centered log-ratio (CLR) coordinates, and returns the paired
-    differences.
+    for two conditions, draws compositions (either from ``Dirichlet(r)``
+    or from the generalized Gamma-based sampling when gene-specific ``p``
+    is provided), transforms to centered log-ratio (CLR) coordinates,
+    and returns the paired differences.
+
+    When ``p_samples_A`` / ``p_samples_B`` are provided (from a
+    hierarchical model with gene-specific p), compositions are generated
+    via scaled Gamma variates instead of Dirichlet sampling.  This
+    correctly accounts for gene-specific success probabilities in the
+    Negative Binomial → composition mapping.
 
     Parameters
     ----------
@@ -272,6 +281,13 @@ def compute_clr_differences(
         Dirichlet sampling.  The "other" column is dropped from the
         returned differences, so the output has ``D_kept`` columns.
         If ``None`` (default), all genes are kept.
+    p_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
+        Posterior samples of gene-specific success probabilities for
+        condition A.  When provided, Gamma-based composition sampling
+        is used instead of Dirichlet.  Shape must match ``r_samples_A``.
+    p_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
+        Posterior samples of gene-specific success probabilities for
+        condition B.  Shape must match ``r_samples_B``.
 
     Returns
     -------
@@ -284,14 +300,34 @@ def compute_clr_differences(
     ValueError
         If 3D input is given without the corresponding ``component_*``
         argument, or if ``paired=True`` and sample counts differ.
+
+    Notes
+    -----
+    When all ``p_g`` are equal across genes (shared p), the Gamma-based
+    sampling reduces exactly to Dirichlet sampling, because the constant
+    ``p / (1 - p)`` factor cancels in the normalization.
     """
-    # Default RNG key
     if rng_key is None:
         rng_key = random.PRNGKey(0)
 
     # --- Slice mixture components if needed ---
     r_A = _slice_component(r_samples_A, component_A, "A")
     r_B = _slice_component(r_samples_B, component_B, "B")
+
+    # Slice p samples if provided
+    p_A = (
+        _slice_component(p_samples_A, component_A, "A")
+        if p_samples_A is not None
+        else None
+    )
+    p_B = (
+        _slice_component(p_samples_B, component_B, "B")
+        if p_samples_B is not None
+        else None
+    )
+
+    # Determine whether to use Gamma-based sampling
+    use_gamma = p_A is not None or p_B is not None
 
     # --- Validate sample counts ---
     N_A, D_A = r_A.shape
@@ -312,19 +348,39 @@ def compute_clr_differences(
     N = min(N_A, N_B)
     r_A = r_A[:N]
     r_B = r_B[:N]
+    if p_A is not None:
+        p_A = p_A[:N]
+    if p_B is not None:
+        p_B = p_B[:N]
 
     # --- Gene aggregation (if requested) ---
     if gene_mask is not None:
         r_A, r_B = _aggregate_genes(r_A, r_B, gene_mask)
+        # gene_mask aggregation is not straightforward for p since it
+        # involves averaging probabilities; skip aggregation for p and
+        # note: gene_mask and gene-specific p should not be combined
+        if use_gamma:
+            raise ValueError(
+                "gene_mask and gene-specific p_samples cannot be used "
+                "together. Gene aggregation is not well-defined for "
+                "gene-specific success probabilities."
+            )
 
-    # --- Dirichlet sampling ---
-    if paired:
-        # Same RNG sub-key per sample index preserves joint structure
+    # --- Composition sampling ---
+    if use_gamma:
+        # Gamma-based composition sampling for gene-specific p
+        key_A, key_B = random.split(rng_key)
+        simplex_A = _batched_gamma_normalize(
+            r_A, p_A, n_samples_dirichlet, key_A, batch_size
+        )
+        simplex_B = _batched_gamma_normalize(
+            r_B, p_B, n_samples_dirichlet, key_B, batch_size
+        )
+    elif paired:
         simplex_A, simplex_B = _paired_dirichlet_sample(
             r_A, r_B, n_samples_dirichlet, rng_key, batch_size
         )
     else:
-        # Independent RNG keys for each condition
         key_A, key_B = random.split(rng_key)
         simplex_A = _batched_dirichlet(
             r_A, n_samples_dirichlet, key_A, batch_size
@@ -334,7 +390,6 @@ def compute_clr_differences(
         )
 
     # --- CLR transform ---
-    # CLR(rho) = log(rho) - mean(log(rho))
     clr_A = _clr_transform(simplex_A)
     clr_B = _clr_transform(simplex_B)
 
@@ -572,6 +627,93 @@ def _batched_dirichlet(
     # For n_samples_dirichlet == 1, result is (N, D) — correct.
     # For n_samples_dirichlet > 1, result is (N * S, D) — correct.
     return result
+
+
+# ------------------------------------------------------------------------------
+
+
+def _batched_gamma_normalize(
+    r_samples: jnp.ndarray,
+    p_samples: jnp.ndarray,
+    n_samples_dirichlet: int,
+    rng_key: random.PRNGKey,
+    batch_size: int,
+) -> jnp.ndarray:
+    """Sample compositions via scaled Gamma variates and normalization.
+
+    This generalizes Dirichlet sampling to the case where each gene has
+    its own success probability ``p_g``.  The generative process is:
+
+    1. Draw ``lambda_raw_g ~ Gamma(r_g, rate=1)`` independently per gene.
+    2. Scale: ``lambda_g = lambda_raw_g * p_g / (1 - p_g)``.
+    3. Normalize: ``rho_g = lambda_g / sum_j lambda_j``.
+
+    When all ``p_g`` are equal, the scaling factor ``p / (1 - p)`` is a
+    constant that cancels in the normalization, recovering exactly
+    ``Dirichlet(r)``.  When ``p_g`` vary across genes, the compositions
+    reflect gene-specific rate heterogeneity from the Negative Binomial
+    model.
+
+    Parameters
+    ----------
+    r_samples : jnp.ndarray, shape ``(N, D)``
+        Dirichlet concentration (dispersion) parameters.
+    p_samples : jnp.ndarray, shape ``(N, D)``
+        Gene-specific success probabilities.  Must be in ``(0, 1)``.
+    n_samples_dirichlet : int
+        Number of composition draws per posterior sample.
+    rng_key : random.PRNGKey
+        JAX PRNG key.
+    batch_size : int
+        Number of posterior samples per batch.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(N_total, D)``
+        Simplex samples.  ``N_total = N * n_samples_dirichlet``.
+
+    Notes
+    -----
+    The Gamma(r_g, 1) variate is the latent rate parameter of the
+    Negative Binomial.  Scaling by p_g / (1 - p_g) converts from the
+    NB parameterization to expected counts, which are then normalized
+    to get compositional proportions.
+    """
+    N, D = r_samples.shape
+    chunks = []
+
+    for start in range(0, N, batch_size):
+        end = min(start + batch_size, N)
+        r_batch = r_samples[start:end]  # (B, D)
+        p_batch = p_samples[start:end]  # (B, D)
+
+        key_batch = random.fold_in(rng_key, start)
+
+        if n_samples_dirichlet == 1:
+            # Draw Gamma(r, 1) and scale by p / (1 - p)
+            gamma_raw = jax.random.gamma(key_batch, r_batch)  # (B, D)
+            lambda_scaled = gamma_raw * p_batch / (1.0 - p_batch)
+            total = lambda_scaled.sum(axis=-1, keepdims=True)
+            samples = lambda_scaled / total  # (B, D)
+        else:
+            keys = random.split(key_batch, end - start)
+
+            def _sample_one(key, alpha, p_gene):
+                gamma_raw = jax.random.gamma(
+                    key, alpha, shape=(n_samples_dirichlet,) + alpha.shape
+                )
+                # alpha has shape (D,); gamma_raw has shape (S, D)
+                lambda_scaled = gamma_raw * p_gene / (1.0 - p_gene)
+                total = lambda_scaled.sum(axis=-1, keepdims=True)
+                return lambda_scaled / total  # (S, D)
+
+            # (B, S, D)
+            samples = jax.vmap(_sample_one)(keys, r_batch, p_batch)
+            samples = samples.reshape(-1, D)  # (B * S, D)
+
+        chunks.append(samples)
+
+    return jnp.concatenate(chunks, axis=0)
 
 
 # ------------------------------------------------------------------------------

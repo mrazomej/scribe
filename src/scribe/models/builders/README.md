@@ -30,6 +30,20 @@ Parameter specs define the distribution and metadata for each parameter:
 | `LatentSpec` | Base for VAE latent z | — | abstract |
 | `GaussianLatentSpec` | Normal(loc, scale).to_event(1) from encoder output | — | z (guide only) |
 
+### Hierarchical Parameter Specs
+
+`HierarchicalSigmoidNormalSpec` and `HierarchicalExpNormalSpec` inherit from
+`HierarchicalNormalWithTransformSpec`, which extends `NormalWithTransformSpec`.
+They define gene-specific parameters whose Normal prior has learnable location
+and scale drawn from hyperparameters sampled earlier in the model.
+
+Each hierarchical spec carries `hyper_loc_name` and `hyper_scale_name` fields
+identifying which sample sites provide its prior parameters. The model builder
+detects these specs via `isinstance` and calls `spec.sample_hierarchical(dims,
+param_values)` instead of the standard `sample_prior` dispatch. Because they
+inherit from `NormalWithTransformSpec`, all existing guide dispatch (mean-field,
+low-rank) works without modification.
+
 ### ParamSpec Attributes
 
 Each spec has the following attributes:
@@ -266,7 +280,7 @@ they have no guide counterpart.
 
 | File | Purpose |
 |------|---------|
-| `parameter_specs.py` | ParamSpec, LatentSpec, GaussianLatentSpec; `sample_prior` dispatch |
+| `parameter_specs.py` | ParamSpec, LatentSpec, GaussianLatentSpec, Hierarchical*Spec; `sample_prior` dispatch |
 | `model_builder.py` | ModelBuilder class |
 | `guide_builder.py` | GuideBuilder and `setup_guide` dispatch |
 | `__init__.py` | Public API exports |

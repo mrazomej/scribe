@@ -1,0 +1,9 @@
+# @package _global_
+# NBDM with hierarchical gene-specific p
+# Relaxes the shared-p assumption of the Dirichlet-Multinomial factorization.
+# Each gene draws its own p_g from a learned population Normal in logit space.
+
+model: nbdm
+parameterization: hierarchical_canonical
+unconstrained: true
+n_components: null

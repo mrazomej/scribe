@@ -1,0 +1,8 @@
+# @package _global_
+# ZINB with hierarchical gene-specific p
+# Combines zero-inflation with relaxed shared-p assumption.
+
+model: zinb
+parameterization: hierarchical_canonical
+unconstrained: true
+n_components: null
