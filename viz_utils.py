@@ -553,20 +553,23 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
 # ------------------------------------------------------------------------------
 
 
-def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
+def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
     """
     Plot UMAP projection of experimental and synthetic data.
 
-    Before computing the UMAP embedding, both the experimental counts and the
-    synthetic (posterior-predictive) counts are preprocessed with the standard
-    scRNA-seq pipeline used in the field:
+    The embedding follows a Scanpy-style preprocessing workflow before fitting
+    UMAP:
 
-    1. **Library-size normalisation** -- each cell is scaled so that its total
-       UMI count equals ``target_sum`` (default 10 000).
-    2. **Log1p transform** -- ``log(1 + x)`` is applied element-wise.
+    1. Filter genes detected in fewer than ``gene_filter_min_cells`` cells.
+    2. Library-size normalize to ``target_sum`` counts per cell.
+    3. Apply ``log1p`` transform.
+    4. Select highly variable genes (HVGs) via Scanpy (optional).
+    5. Run PCA on the selected genes (optional), then fit UMAP.
 
-    This preprocessing is performed on local copies; the original ``counts``
-    array and the results object are never modified.
+    The same learned preprocessing (gene mask, HVG mask, and PCA model) is then
+    applied to synthetic counts before projection with ``umap_reducer.transform``.
+    All preprocessing is done on local copies and does not modify ``counts`` or
+    the results object.
 
     Parameters
     ----------
@@ -580,6 +583,9 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         Original Hydra configuration.
     viz_cfg : DictConfig
         Visualization configuration.
+    force_refit : bool, optional
+        When ``True``, always refit UMAP even if a cache file exists. If cache
+        is enabled, the cache file is overwritten with the newly fitted reducer.
     """
     import pickle
 
@@ -605,18 +611,50 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     synthetic_color = umap_opts.get("synthetic_color", "dark_red")
     cache_umap = umap_opts.get("cache_umap", True)
     target_sum = umap_opts.get("target_sum", 1e4)
+    gene_filter_min_cells = int(umap_opts.get("gene_filter_min_cells", 3))
+    use_hvg = bool(umap_opts.get("use_hvg", True))
+    hvg_n_top_genes = int(umap_opts.get("hvg_n_top_genes", 2000))
+    hvg_flavor = umap_opts.get("hvg_flavor", "seurat")
+    use_pca = bool(umap_opts.get("use_pca", True))
+    pca_n_comps = int(umap_opts.get("pca_n_comps", 50))
 
-    # ------------------------------------------------------------------
-    # Standard scRNA-seq preprocessing (local copy -- never stored)
-    # ------------------------------------------------------------------
-    console.print(
-        f"[dim]Applying library-size normalisation (target_sum={target_sum:,.0f}) "
-        f"+ log1p to experimental counts...[/dim]"
-    )
-    counts_np = np.array(counts, dtype=np.float64)
-    lib_sizes = counts_np.sum(axis=1, keepdims=True)
-    lib_sizes = np.where(lib_sizes == 0, 1.0, lib_sizes)  # avoid div-by-zero
-    counts_norm = np.log1p(counts_np / lib_sizes * target_sum)
+    if force_refit:
+        console.print(
+            "[yellow]⚠️[/yellow] [yellow]Overwrite requested: forcing UMAP refit and cache overwrite[/yellow]"
+        )
+
+    try:
+        import scanpy as sc
+        import anndata as ad
+
+        has_scanpy = True
+    except ImportError:
+        has_scanpy = False
+        sc = None
+        ad = None
+        if use_hvg:
+            console.print(
+                "[yellow]⚠️[/yellow] [yellow]scanpy/anndata not available; skipping HVG selection and using all retained genes[/yellow]"
+            )
+
+    try:
+        from sklearn.decomposition import PCA
+
+        has_sklearn = True
+    except ImportError:
+        has_sklearn = False
+        PCA = None
+        if use_pca:
+            console.print(
+                "[yellow]⚠️[/yellow] [yellow]scikit-learn not available; skipping PCA and fitting UMAP directly on gene space[/yellow]"
+            )
+
+    def _normalize_log1p(matrix):
+        """Apply library-size normalization followed by log1p."""
+        matrix = np.array(matrix, dtype=np.float64)
+        lib_sizes = matrix.sum(axis=1, keepdims=True)
+        lib_sizes = np.where(lib_sizes == 0, 1.0, lib_sizes)
+        return np.log1p(matrix / lib_sizes * target_sum)
 
     # Get colors from scribe.viz if available
     try:
@@ -645,6 +683,12 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
         "n_components": n_components,
         "random_state": random_state,
         "target_sum": target_sum,
+        "gene_filter_min_cells": gene_filter_min_cells,
+        "use_hvg": use_hvg,
+        "hvg_n_top_genes": hvg_n_top_genes,
+        "hvg_flavor": hvg_flavor,
+        "use_pca": use_pca,
+        "pca_n_comps": pca_n_comps,
         "n_cells": counts.shape[0],
         "n_genes": counts.shape[1],
     }
@@ -652,8 +696,11 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     # Try to load cached UMAP
     umap_reducer = None
     umap_embedding = None
+    gene_mask = None
+    hvg_mask = None
+    pca_model = None
 
-    if cache_path and os.path.exists(cache_path):
+    if cache_path and os.path.exists(cache_path) and not force_refit:
         console.print(
             f"[dim]Found cached UMAP at:[/dim] [cyan]{cache_path}[/cyan]"
         )
@@ -666,13 +713,35 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
             params_match = all(
                 cached_params.get(k) == v for k, v in current_params.items()
             )
+            has_preprocessing = "preprocessing" in cached
 
-            if params_match:
-                console.print(
-                    "[green]✅[/green] [dim]Cache valid - loading UMAP from cache...[/dim]"
+            if params_match and has_preprocessing:
+                cached_pre = cached["preprocessing"]
+                gene_mask = cached_pre.get("gene_mask")
+                hvg_mask = cached_pre.get("hvg_mask")
+                pca_model = cached_pre.get("pca_model")
+
+                valid_masks = (
+                    gene_mask is not None
+                    and hvg_mask is not None
+                    and len(gene_mask) == counts.shape[1]
+                    and int(np.sum(gene_mask)) == len(hvg_mask)
                 )
-                umap_reducer = cached["reducer"]
-                umap_embedding = cached["embedding"]
+
+                if not valid_masks:
+                    console.print(
+                        "[yellow]⚠️[/yellow] [yellow]Cached preprocessing metadata invalid - will re-fit UMAP[/yellow]"
+                    )
+                else:
+                    console.print(
+                        "[green]✅[/green] [dim]Cache valid - loading UMAP from cache...[/dim]"
+                    )
+                    umap_reducer = cached["reducer"]
+                    umap_embedding = cached["embedding"]
+            elif params_match and not has_preprocessing:
+                console.print(
+                    "[yellow]⚠️[/yellow] [yellow]Cache is from an older format (missing preprocessing metadata) - will re-fit UMAP[/yellow]"
+                )
             else:
                 console.print(
                     "[yellow]⚠️[/yellow] [yellow]Cache parameters mismatch - will re-fit UMAP[/yellow]"
@@ -687,6 +756,87 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
     # Fit UMAP if not loaded from cache
     if umap_reducer is None:
         console.print(
+            "[dim]Preparing experimental data with Scanpy-style preprocessing...[/dim]"
+        )
+        counts_np = np.array(counts, dtype=np.float64)
+
+        # 1) Filter genes by detection frequency
+        detected_cells_per_gene = np.sum(counts_np > 0, axis=0)
+        gene_mask = detected_cells_per_gene >= gene_filter_min_cells
+        n_genes_retained = int(np.sum(gene_mask))
+        if n_genes_retained == 0:
+            console.print(
+                "[yellow]⚠️[/yellow] [yellow]Gene filtering removed all genes; reverting to all genes[/yellow]"
+            )
+            gene_mask = np.ones(counts_np.shape[1], dtype=bool)
+            n_genes_retained = counts_np.shape[1]
+
+        console.print(
+            f"[dim]Gene filter: kept {n_genes_retained}/{counts_np.shape[1]} genes "
+            f"(min_cells={gene_filter_min_cells})[/dim]"
+        )
+
+        # 2) Normalize + log1p on filtered matrix
+        counts_gene_filtered = counts_np[:, gene_mask]
+        counts_norm = _normalize_log1p(counts_gene_filtered)
+
+        # 3) HVG selection (optional)
+        hvg_mask = np.ones(counts_norm.shape[1], dtype=bool)
+        if use_hvg and counts_norm.shape[1] > 1 and has_scanpy:
+            n_top_genes = min(hvg_n_top_genes, counts_norm.shape[1])
+            if n_top_genes >= 1:
+                console.print(
+                    f"[dim]Selecting HVGs with scanpy.pp.highly_variable_genes "
+                    f"(flavor={hvg_flavor}, n_top_genes={n_top_genes})...[/dim]"
+                )
+                adata_hvg = ad.AnnData(X=counts_norm.copy())
+                sc.pp.highly_variable_genes(
+                    adata_hvg,
+                    n_top_genes=n_top_genes,
+                    flavor=hvg_flavor,
+                    inplace=True,
+                )
+                hvg_mask = np.asarray(
+                    adata_hvg.var["highly_variable"], dtype=bool
+                )
+                if np.sum(hvg_mask) == 0:
+                    console.print(
+                        "[yellow]⚠️[/yellow] [yellow]HVG selection returned no genes; using all retained genes[/yellow]"
+                    )
+                    hvg_mask = np.ones(counts_norm.shape[1], dtype=bool)
+        elif use_hvg and counts_norm.shape[1] <= 1:
+            console.print(
+                "[yellow]⚠️[/yellow] [yellow]Too few genes for HVG selection; using retained genes directly[/yellow]"
+            )
+
+        counts_embed = counts_norm[:, hvg_mask]
+        console.print(
+            f"[dim]Embedding feature space: {counts_embed.shape[1]} genes[/dim]"
+        )
+
+        # 4) PCA (optional)
+        embedding_input = counts_embed
+        pca_model = None
+        if use_pca and has_sklearn and counts_embed.shape[1] > 1:
+            max_pcs = min(
+                pca_n_comps,
+                counts_embed.shape[1],
+                max(1, counts_embed.shape[0] - 1),
+            )
+            if max_pcs >= 2:
+                console.print(
+                    f"[dim]Running PCA before UMAP (n_components={max_pcs})...[/dim]"
+                )
+                pca_model = PCA(
+                    n_components=max_pcs, random_state=random_state
+                )
+                embedding_input = pca_model.fit_transform(counts_embed)
+            else:
+                console.print(
+                    "[yellow]⚠️[/yellow] [yellow]Too few components/cells for PCA; fitting UMAP directly on gene space[/yellow]"
+                )
+
+        console.print(
             f"[dim]Fitting UMAP on experimental data "
             f"(n_neighbors={n_neighbors}, min_dist={min_dist})...[/dim]"
         )
@@ -697,7 +847,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
             min_dist=min_dist,
             random_state=random_state,
         )
-        umap_embedding = umap_reducer.fit_transform(counts_norm)
+        umap_embedding = umap_reducer.fit_transform(embedding_input)
 
         # Save to cache if caching is enabled
         if cache_path:
@@ -709,6 +859,11 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
                     "reducer": umap_reducer,
                     "embedding": umap_embedding,
                     "params": current_params,
+                    "preprocessing": {
+                        "gene_mask": gene_mask,
+                        "hvg_mask": hvg_mask,
+                        "pca_model": pca_model,
+                    },
                 }
                 with open(cache_path, "wb") as f:
                     pickle.dump(cache_data, f)
@@ -775,18 +930,20 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg):
 
     # Apply the same library-size normalisation + log1p to synthetic data
     console.print(
-        "[dim]Applying library-size normalisation + log1p to synthetic "
+        "[dim]Applying matched preprocessing to synthetic "
         "counts...[/dim]"
     )
     synthetic_data = synthetic_data.astype(np.float64)
-    syn_lib_sizes = synthetic_data.sum(axis=1, keepdims=True)
-    syn_lib_sizes = np.where(syn_lib_sizes == 0, 1.0, syn_lib_sizes)
-    synthetic_norm = np.log1p(synthetic_data / syn_lib_sizes * target_sum)
+    synthetic_filtered = synthetic_data[:, gene_mask]
+    synthetic_norm = _normalize_log1p(synthetic_filtered)
+    synthetic_embed = synthetic_norm[:, hvg_mask]
+    if pca_model is not None:
+        synthetic_embed = pca_model.transform(synthetic_embed)
 
     console.print("[dim]Projecting synthetic data onto UMAP space...[/dim]")
 
     # Project synthetic data onto the same UMAP space
-    umap_synthetic = umap_reducer.transform(synthetic_norm)
+    umap_synthetic = umap_reducer.transform(synthetic_embed)
 
     console.print("[dim]Creating overlay plot...[/dim]")
 

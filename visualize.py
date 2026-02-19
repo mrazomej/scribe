@@ -81,6 +81,9 @@ Examples:
 
     # Recursively process all model directories
     python visualize.py outputs/ --recursive --all
+
+    # Process multiple runs via wildcard pattern
+    python visualize.py "outputs/*/zinb*/*" --umap
         """,
     )
 
@@ -88,8 +91,9 @@ Examples:
     parser.add_argument(
         "model_dir",
         help="Path to a model output directory containing scribe_results.pkl "
-        "and .hydra/config.yaml. When used with --recursive, this is the "
-        "root directory to search.",
+        "and .hydra/config.yaml. Supports shell-style wildcards (e.g. "
+        "'outputs/*/zinb*/*'). When used with --recursive, matching paths are "
+        "treated as roots to search.",
     )
 
     # Plot toggles (default plots)
@@ -240,6 +244,13 @@ def _load_default_viz_config():
                     "data_color": "dark_blue",
                     "synthetic_color": "dark_red",
                     "cache_umap": True,
+                    "target_sum": 1e4,
+                    "gene_filter_min_cells": 3,
+                    "use_hvg": True,
+                    "hvg_n_top_genes": 2000,
+                    "hvg_flavor": "seurat",
+                    "use_pca": True,
+                    "pca_n_comps": 50,
                 },
                 "heatmap_opts": {
                     "n_genes": 1500,
@@ -364,6 +375,75 @@ def _find_model_dirs(root_dir):
         if "scribe_results.pkl" in filenames:
             model_dirs.append(os.path.abspath(dirpath))
     return sorted(model_dirs)
+
+
+# ------------------------------------------------------------------------------
+
+
+def _contains_glob_pattern(path_expr):
+    """
+    Return whether a path expression contains glob wildcards.
+
+    Parameters
+    ----------
+    path_expr : str
+        User-supplied path or path pattern.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``path_expr`` contains at least one glob token
+        (``*``, ``?``, or character class ``[...]``).
+    """
+    return any(token in path_expr for token in ("*", "?", "["))
+
+
+# ------------------------------------------------------------------------------
+
+
+def _resolve_model_dirs(path_expr, recursive=False):
+    """
+    Resolve user path input to concrete model output directories.
+
+    Parameters
+    ----------
+    path_expr : str
+        Path to a model directory or a glob pattern.
+    recursive : bool, optional
+        When ``True``, treat resolved paths as roots and recursively discover
+        all subdirectories containing ``scribe_results.pkl``. When ``False``,
+        only directories that themselves contain ``scribe_results.pkl`` are
+        returned.
+
+    Returns
+    -------
+    list of str
+        Sorted absolute model-directory paths.
+    """
+    if _contains_glob_pattern(path_expr):
+        candidates = glob.glob(path_expr, recursive=True)
+    else:
+        candidates = [path_expr]
+
+    resolved = []
+    for candidate in candidates:
+        abs_candidate = os.path.abspath(candidate)
+
+        # Accept file paths by promoting to their containing directory.
+        if os.path.isfile(abs_candidate):
+            abs_candidate = os.path.dirname(abs_candidate)
+
+        if not os.path.isdir(abs_candidate):
+            continue
+
+        if recursive:
+            resolved.extend(_find_model_dirs(abs_candidate))
+        else:
+            results_file = os.path.join(abs_candidate, "scribe_results.pkl")
+            if os.path.exists(results_file):
+                resolved.append(abs_candidate)
+
+    return sorted(set(resolved))
 
 
 # ------------------------------------------------------------------------------
@@ -623,7 +703,14 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 "[dim]Generating UMAP projection plot...[/dim]"
             )
             try:
-                plot_umap(results, counts, figs_dir, orig_cfg, viz_cfg)
+                plot_umap(
+                    results,
+                    counts,
+                    figs_dir,
+                    orig_cfg,
+                    viz_cfg,
+                    force_refit=overwrite,
+                )
                 plots_generated.append("UMAP")
                 console.print("[green]  UMAP plot saved[/green]")
             except Exception as e:
@@ -800,19 +887,12 @@ def main() -> None:
     console.print(f"[dim]Output format:[/dim] {viz_cfg.format}")
 
     # ======================================================================
-    # Dispatch: recursive or single directory
+    # Dispatch: single path, wildcard pattern, or recursive search
     # ======================================================================
-    if args.recursive:
-        root_dir = os.path.abspath(args.model_dir)
-        if not os.path.exists(root_dir):
-            console.print(
-                "[bold red]ERROR: Directory does not exist![/bold red]"
-            )
-            console.print(
-                f"[red]   Missing:[/red] [cyan]{root_dir}[/cyan]"
-            )
-            return
+    input_expr = args.model_dir
+    uses_glob = _contains_glob_pattern(input_expr)
 
+    if args.recursive:
         console.print()
         console.print(
             Panel.fit(
@@ -820,20 +900,47 @@ def main() -> None:
                 border_style="bright_cyan",
             )
         )
+        if uses_glob:
+            console.print(
+                f"[dim]Searching recursively for roots matching:[/dim] "
+                f"[cyan]{input_expr}[/cyan]"
+            )
+        else:
+            console.print(
+                f"[dim]Searching recursively in:[/dim] "
+                f"[cyan]{os.path.abspath(input_expr)}[/cyan]"
+            )
+    elif uses_glob:
         console.print(
-            f"[dim]Searching recursively in:[/dim] "
-            f"[cyan]{root_dir}[/cyan]"
+            f"[dim]Resolving wildcard pattern:[/dim] [cyan]{input_expr}[/cyan]"
         )
-        model_dirs = _find_model_dirs(root_dir)
 
-        if not model_dirs:
+    model_dirs = _resolve_model_dirs(input_expr, recursive=args.recursive)
+
+    if not model_dirs:
+        if uses_glob:
+            console.print(
+                "[bold yellow]No model directories matched the pattern "
+                "with scribe_results.pkl[/bold yellow]"
+            )
+        elif args.recursive:
             console.print(
                 "[bold yellow]No model directories found containing "
                 "scribe_results.pkl[/bold yellow]"
             )
-            return
+        else:
+            missing = os.path.abspath(input_expr)
+            console.print(
+                "[bold red]ERROR: Model directory does not exist or "
+                "does not contain scribe_results.pkl![/bold red]"
+            )
+            console.print(
+                f"[red]   Input:[/red] [cyan]{missing}[/cyan]"
+            )
+        return
 
-        n_dirs = len(model_dirs)
+    n_dirs = len(model_dirs)
+    if n_dirs > 1 or args.recursive or uses_glob:
         console.print(
             f"[green]Found {n_dirs} model "
             f"director{'ies' if n_dirs != 1 else 'y'}[/green]"
@@ -841,9 +948,10 @@ def main() -> None:
         for d in model_dirs:
             console.print(f"[dim]  \u2022 {d}[/dim]")
 
-        succeeded = 0
-        failed = 0
-        for i, model_dir in enumerate(model_dirs, 1):
+    succeeded = 0
+    failed = 0
+    for i, model_dir in enumerate(model_dirs, 1):
+        if n_dirs > 1:
             console.print()
             console.print(
                 Panel.fit(
@@ -852,26 +960,24 @@ def main() -> None:
                     border_style="bright_yellow",
                 )
             )
-            try:
-                if _process_single_model_dir(
-                    model_dir, viz_cfg, overwrite=args.overwrite
-                ):
-                    succeeded += 1
-                else:
-                    failed += 1
-            except Exception as e:
-                console.print(
-                    f"[bold red]UNEXPECTED ERROR:[/bold red] "
-                    f"[red]{e}[/red]"
-                )
+        try:
+            if _process_single_model_dir(
+                model_dir, viz_cfg, overwrite=args.overwrite
+            ):
+                succeeded += 1
+            else:
                 failed += 1
+        except Exception as e:
+            console.print(
+                f"[bold red]UNEXPECTED ERROR:[/bold red] [red]{e}[/red]"
+            )
+            failed += 1
 
-        # Final summary
+    if n_dirs > 1 or args.recursive or uses_glob:
         console.print()
         console.print(
             Panel.fit(
-                "[bold bright_green]RECURSIVE VISUALIZATION "
-                "COMPLETE[/bold bright_green]",
+                "[bold bright_green]VISUALIZATION COMPLETE[/bold bright_green]",
                 border_style="bright_green",
             )
         )
@@ -880,24 +986,7 @@ def main() -> None:
             f"[dim]Succeeded:[/dim] [green]{succeeded}[/green]"
         )
         if failed > 0:
-            console.print(
-                f"[dim]Failed:[/dim] [red]{failed}[/red]"
-            )
-    else:
-        model_dir = os.path.abspath(args.model_dir)
-        if not os.path.exists(model_dir):
-            console.print(
-                "[bold red]ERROR: Model directory does not "
-                "exist![/bold red]"
-            )
-            console.print(
-                f"[red]   Missing:[/red] [cyan]{model_dir}[/cyan]"
-            )
-            return
-
-        _process_single_model_dir(
-            model_dir, viz_cfg, overwrite=args.overwrite
-        )
+            console.print(f"[dim]Failed:[/dim] [red]{failed}[/red]")
 
     console.print()
 
