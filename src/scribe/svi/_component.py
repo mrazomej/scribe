@@ -5,8 +5,64 @@ This mixin provides methods for working with mixture model components, allowing
 extraction and subsetting of individual component views.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Set
 import jax.numpy as jnp
+
+
+# ==============================================================================
+# Metadata-driven helpers
+# ==============================================================================
+
+
+def _build_mixture_keys(
+    param_specs: List, params: Dict[str, jnp.ndarray]
+) -> Set[str]:
+    """
+    Identify variational-parameter keys that belong to mixture-specific specs.
+
+    Each ``ParamSpec`` with ``is_mixture=True`` owns variational parameter keys
+    whose names start with ``{spec.name}_`` or ``log_{spec.name}_``.  When
+    multiple specs could match the same key (e.g. ``"phi"`` vs
+    ``"phi_capture"``), the **longest** spec name wins, preventing false
+    positives.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Full parameter specifications from ``model_config.param_specs``.
+    params : Dict[str, jnp.ndarray]
+        Flat variational-parameter dictionary (``self.params``).
+
+    Returns
+    -------
+    Set[str]
+        Keys in *params* that should be indexed along the component axis
+        when extracting a single mixture component.
+    """
+    if not param_specs:
+        return set()
+
+    # Sort specs longest-name-first so greedy prefix matching is correct
+    sorted_specs = sorted(param_specs, key=lambda s: len(s.name), reverse=True)
+
+    mixture_keys: Set[str] = set()
+
+    for key in params:
+        if "$" in key:
+            continue
+        for spec in sorted_specs:
+            name = spec.name
+            if (
+                key == name
+                or key.startswith(name + "_")
+                or key.startswith("log_" + name + "_")
+            ):
+                if spec.is_mixture:
+                    mixture_keys.add(key)
+                break  # longest match found, stop searching
+
+    return mixture_keys
+
 
 # ==============================================================================
 # Component Mixin
@@ -89,203 +145,37 @@ class ComponentMixin:
         self, new_params: Dict, component_index: int
     ):
         """
-        Handle subsetting of all parameters based on their structure.
+        Subset variational parameters to a single mixture component.
 
-        This method intelligently handles parameters based on their dimensions
-        and naming conventions, regardless of parameterization.
+        Uses ``ParamSpec`` metadata from ``model_config.param_specs`` to
+        determine which keys carry a leading component axis.  Keys that belong
+        to a spec with ``is_mixture=True`` are indexed along axis 0; all
+        others are copied unchanged.
+
+        Parameters
+        ----------
+        new_params : Dict
+            Mutable params dict (pre-populated with a shallow copy of
+            ``self.params``).  Modified in-place.
+        component_index : int
+            Which mixture component to extract.
         """
-        # Define parameter categories based on their structure
+        mixture_keys = _build_mixture_keys(
+            self.model_config.param_specs, self.params
+        )
+        n_comp = self.n_components
 
-        # Component-gene-specific parameters (shape: [n_components, n_genes])
-        # These parameters have both component and gene dimensions
-        component_gene_specific = [
-            # Standard parameterization
-            "r_loc",
-            "r_scale",  # dispersion parameters
-            "gate_alpha",
-            "gate_beta",  # zero-inflation parameters
-            # Standard unconstrained parameterization
-            "r_unconstrained_loc",
-            "r_unconstrained_scale",
-            "gate_unconstrained_loc",
-            "gate_unconstrained_scale",
-            # Linked parameterization
-            "mu_loc",
-            "mu_scale",  # mean parameters
-            "gate_alpha",
-            "gate_beta",  # zero-inflation parameters
-            # Odds ratio parameterization
-            "phi_alpha",
-            "phi_beta",  # odds ratio parameters
-            "gate_alpha",
-            "gate_beta",  # zero-inflation parameters
-            # Odds ratio unconstrained parameterization
-            "phi_unconstrained_loc",
-            "phi_unconstrained_scale",
-            "gate_unconstrained_loc",
-            "gate_unconstrained_scale",
-            # Low-rank guide parameters (standard constrained)
-            "log_r_loc",
-            "log_r_W",
-            "log_r_raw_diag",
-            # Low-rank guide parameters (standard unconstrained)
-            "r_unconstrained_W",
-            "r_unconstrained_raw_diag",
-            # Low-rank guide parameters (linked/odds_ratio constrained)
-            "log_mu_loc",
-            "log_mu_W",
-            "log_mu_raw_diag",
-            # Low-rank guide parameters (linked/odds_ratio unconstrained)
-            "mu_unconstrained_loc",
-            "mu_unconstrained_W",
-            "mu_unconstrained_raw_diag",
-            # Low-rank guide parameters (gate - unconstrained)
-            "gate_unconstrained_W",
-            "gate_unconstrained_raw_diag",
-            # Hierarchical parameterizations: gene-specific phi/p with
-            # Normal guide in unconstrained space (shape: [n_components, n_genes]
-            # when phi/p is in mixture_params).
-            "phi_loc",
-            "phi_scale",
-            "phi_W",
-            "phi_raw_diag",
-            "p_loc",
-            "p_scale",
-            "p_W",
-            "p_raw_diag",
-        ]
-
-        # Component-specific parameters (shape: [n_components])
-        # These parameters have only component dimension
-        component_specific = [
-            # Standard unconstrained parameterization
-            "p_unconstrained_loc",
-            "p_unconstrained_scale",
-            "mixing_logits_unconstrained_loc",
-            "mixing_logits_unconstrained_scale",
-            # Odds ratio unconstrained parameterization
-            "phi_unconstrained_loc",
-            "phi_unconstrained_scale",
-            "mixing_logits_unconstrained_loc",
-            "mixing_logits_unconstrained_scale",
-        ]
-
-        # Cell-specific parameters (shape: [n_cells])
-        # These parameters are cell-specific and not component-specific
-        cell_specific = [
-            # Standard parameterization
-            "p_capture_alpha",
-            "p_capture_beta",  # capture probability parameters
-            # Standard unconstrained parameterization
-            "p_capture_unconstrained_loc",
-            "p_capture_unconstrained_scale",
-            # Linked parameterization
-            "p_capture_alpha",
-            "p_capture_beta",  # capture probability parameters
-            # Odds ratio parameterization
-            "phi_capture_alpha",
-            "phi_capture_beta",  # capture odds ratio parameters
-            # Odds ratio unconstrained parameterization
-            "phi_capture_unconstrained_loc",
-            "phi_capture_unconstrained_scale",
-            # Hierarchical parameterizations (unconstrained capture)
-            "phi_capture_loc",
-            "phi_capture_scale",
-            "p_capture_loc",
-            "p_capture_scale",
-        ]
-
-        # Parameters that can be either component-specific or shared depending
-        # on model config These need special handling based on
-        # component_specific_params setting
-        configurable_params = [
-            # Standard parameterization
-            "p_alpha",
-            "p_beta",  # success probability parameters
-            # Linked parameterization
-            "p_alpha",
-            "p_beta",  # success probability parameters
-            # Odds ratio parameterization
-            "phi_alpha",
-            "phi_beta",  # odds ratio parameters
-        ]
-
-        # Shared parameters (scalar or global)
-        # These parameters are shared across all components
-        shared_params = [
-            # Standard parameterization
-            "mixing_conc",  # mixture concentrations
-            # Standard unconstrained parameterization
-            "mixing_logits_unconstrained_loc",
-            "mixing_logits_unconstrained_scale",
-            # Linked parameterization
-            "mixing_conc",  # mixture concentrations
-            # Odds ratio parameterization
-            "mixing_conc",  # mixture concentrations
-            # Odds ratio unconstrained parameterization
-            "mixing_logits_unconstrained_loc",
-            "mixing_logits_unconstrained_scale",
-        ]
-
-        # Additional parameters that might be present but not categorized above
-        # These are typically scalar or global parameters
-        additional_params = [
-            # Any other parameters that don't fit the above categories
-            # This list can be expanded as needed
-        ]
-
-        # Handle component-gene-specific parameters (shape: [n_components,
-        # n_genes])
-        for param_name in component_gene_specific:
-            if param_name in self.params:
-                param = self.params[param_name]
-                # Check if parameter has component dimension
-                if param.ndim > 1:  # Has component dimension
-                    new_params[param_name] = param[component_index]
-                else:  # Scalar parameter, copy as-is
-                    new_params[param_name] = param
-
-        # Handle component-specific parameters (shape: [n_components])
-        for param_name in component_specific:
-            if param_name in self.params:
-                param = self.params[param_name]
-                # Check if parameter has component dimension
-                if param.ndim > 0:  # Has component dimension
-                    new_params[param_name] = param[component_index]
-                else:  # Scalar parameter, copy as-is
-                    new_params[param_name] = param
-
-        # Handle cell-specific parameters (copy as-is, not component-specific)
-        for param_name in cell_specific:
-            if param_name in self.params:
-                new_params[param_name] = self.params[param_name]
-
-        # Handle configurable parameters (can be component-specific or shared)
-        for param_name in configurable_params:
-            if param_name in self.params:
-                param = self.params[param_name]
-                # Check if parameter has component dimension
-                if param.ndim > 0:  # Has component dimension
-                    new_params[param_name] = param[component_index]
-                else:  # Scalar parameter, copy as-is
-                    new_params[param_name] = param
-
-        # Handle shared parameters (copy as-is, used across all components)
-        for param_name in shared_params:
-            if param_name in self.params:
-                new_params[param_name] = self.params[param_name]
-
-        # Handle any additional parameters that might be present
-        for param_name in additional_params:
-            if param_name in self.params:
-                new_params[param_name] = self.params[param_name]
-
-        # Handle any remaining parameters not explicitly categorized
-        # This ensures we don't miss any parameters
-        for param_name in self.params:
-            if param_name not in new_params:
-                # For any uncategorized parameters, copy as-is
-                new_params[param_name] = self.params[param_name]
+        for key, value in self.params.items():
+            if not hasattr(value, "ndim"):
+                new_params[key] = value
+            elif (
+                key in mixture_keys
+                and value.ndim > 0
+                and value.shape[0] == n_comp
+            ):
+                new_params[key] = value[component_index]
+            else:
+                new_params[key] = value
 
     # --------------------------------------------------------------------------
 
@@ -293,148 +183,44 @@ class ComponentMixin:
         self, samples: Dict, component_index: int
     ) -> Dict:
         """
-        Create a new posterior samples dictionary for the given component index.
+        Subset posterior samples to a single mixture component.
 
-        This method handles all parameter types based on their dimensions.
+        Posterior sample keys correspond directly to ``ParamSpec.name``
+        values.  Samples from mixture-specific specs have a component axis
+        at position 1 (axis 0 is the sample axis).
+
+        Parameters
+        ----------
+        samples : Dict
+            Posterior samples dictionary.
+        component_index : int
+            Which mixture component to extract.
+
+        Returns
+        -------
+        Dict
+            New dictionary with the component dimension removed for
+            mixture-specific parameters.
         """
         if samples is None:
             return None
 
+        specs_by_name = {s.name: s for s in self.model_config.param_specs}
+
         new_posterior_samples = {}
-
-        # Define parameter categories for posterior samples
-        component_gene_specific_samples = [
-            # Standard parameterization
-            "r",  # dispersion parameter
-            "gate",  # zero-inflation parameter
-            # Standard unconstrained parameterization
-            "r_unconstrained",  # dispersion parameter
-            "gate_unconstrained",  # zero-inflation parameter
-            # Linked parameterization
-            "mu",  # mean parameter
-            "gate",  # zero-inflation parameter
-            # Odds ratio parameterization
-            "phi",  # odds ratio parameter
-            "gate",  # zero-inflation parameter
-            # Odds ratio unconstrained parameterization
-            "phi_unconstrained",  # odds ratio parameter
-            "gate_unconstrained",  # zero-inflation parameter
-        ]
-
-        component_specific_samples = [
-            # Standard parameterization
-            "p",  # success probability parameter
-            # Standard unconstrained parameterization
-            "p_unconstrained",  # success probability parameter
-            "mixing_logits_unconstrained",  # mixing logits
-            # Linked parameterization
-            "p",  # success probability parameter
-            # Odds ratio parameterization
-            "phi",  # odds ratio parameter
-            # Odds ratio unconstrained parameterization
-            "phi_unconstrained",  # odds ratio parameter
-            "mixing_logits_unconstrained",  # mixing logits
-        ]
-
-        cell_specific_samples = [
-            # Standard parameterization
-            "p_capture",  # capture probability parameter
-            # Standard unconstrained parameterization
-            "p_capture_unconstrained",  # capture probability parameter
-            # Linked parameterization
-            "p_capture",  # capture probability parameter
-            # Odds ratio parameterization
-            "phi_capture",  # capture odds ratio parameter
-            # Odds ratio unconstrained parameterization
-            "phi_capture_unconstrained",  # capture odds ratio parameter
-        ]
-
-        # Shared parameters (scalar or global)
-        shared_samples = [
-            # Standard parameterization
-            "mixing_weights",  # mixture weights
-            # Standard unconstrained parameterization
-            "mixing_logits_unconstrained",  # mixing logits
-            # Linked parameterization
-            "mixing_weights",  # mixture weights
-            # Odds ratio parameterization
-            "mixing_weights",  # mixture weights
-            # Odds ratio unconstrained parameterization
-            "mixing_logits_unconstrained",  # mixing logits
-        ]
-
-        # Configurable parameters (can be component-specific or shared)
-        configurable_samples = [
-            # Standard parameterization
-            "p",  # success probability parameter
-            # Linked parameterization
-            "p",  # success probability parameter
-            # Odds ratio parameterization
-            "phi",  # odds ratio parameter
-        ]
-
-        # Additional parameters that might be present in posterior samples
-        # These are typically derived parameters or deterministic values
-        additional_samples = [
-            # Any other parameters that don't fit the above categories
-            # This list can be expanded as needed
-        ]
-
-        # Handle component-gene-specific samples
-        # (shape: [n_samples, n_components, n_genes])
-        for param_name in component_gene_specific_samples:
-            if param_name in samples:
-                sample_value = samples[param_name]
-                if sample_value.ndim > 2:  # Has component dimension
-                    new_posterior_samples[param_name] = sample_value[
-                        :, component_index, :
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples[param_name] = sample_value
-
-        # Handle component-specific samples (shape: [n_samples, n_components])
-        for param_name in component_specific_samples:
-            if param_name in samples:
-                sample_value = samples[param_name]
-                if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples[param_name] = sample_value[
-                        :, component_index
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples[param_name] = sample_value
-
-        # Handle cell-specific samples (copy as-is, not component-specific)
-        for param_name in cell_specific_samples:
-            if param_name in samples:
-                new_posterior_samples[param_name] = samples[param_name]
-
-        # Handle shared samples (copy as-is, used across all components)
-        for param_name in shared_samples:
-            if param_name in samples:
-                new_posterior_samples[param_name] = samples[param_name]
-
-        # Handle configurable samples (can be component-specific or shared)
-        for param_name in configurable_samples:
-            if param_name in samples:
-                sample_value = samples[param_name]
-                if sample_value.ndim > 1:  # Has component dimension
-                    new_posterior_samples[param_name] = sample_value[
-                        :, component_index
-                    ]
-                else:  # Scalar parameter, copy as-is
-                    new_posterior_samples[param_name] = sample_value
-
-        # Handle any additional samples that might be present
-        for param_name in additional_samples:
-            if param_name in samples:
-                new_posterior_samples[param_name] = samples[param_name]
-
-        # Handle any remaining samples not explicitly categorized
-        # This ensures we don't miss any parameters
-        for param_name in samples:
-            if param_name not in new_posterior_samples:
-                # For any uncategorized parameters, copy as-is
-                new_posterior_samples[param_name] = samples[param_name]
+        for key, value in samples.items():
+            spec = specs_by_name.get(key)
+            if spec is not None and spec.is_mixture:
+                if value.ndim > 2:
+                    # (n_samples, n_components, n_genes) → (n_samples, n_genes)
+                    new_posterior_samples[key] = value[:, component_index, :]
+                elif value.ndim > 1:
+                    # (n_samples, n_components) → (n_samples,)
+                    new_posterior_samples[key] = value[:, component_index]
+                else:
+                    new_posterior_samples[key] = value
+            else:
+                new_posterior_samples[key] = value
 
         return new_posterior_samples
 
