@@ -525,8 +525,13 @@ def _sample_biological_nb_single(
             # Gather per-cell p values
             p_is_component_specific = p.ndim >= 1 and p.shape[0] == r.shape[0]
             if p_is_component_specific:
-                # p: (n_components,) → (batch_n,) → (batch_n, 1)
-                p_batch = p[components][:, None]
+                p_batch = p[components]
+                # When p is (n_components,), indexing yields (batch_n,) and
+                # we need (batch_n, 1) to broadcast with r_batch
+                # (batch_n, n_genes).  When p is (n_components, n_genes)
+                # (hierarchical), indexing already yields (batch_n, n_genes).
+                if p_batch.ndim == 1:
+                    p_batch = p_batch[:, None]
             else:
                 p_batch = p
 

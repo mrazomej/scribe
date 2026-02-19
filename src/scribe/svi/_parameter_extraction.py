@@ -600,31 +600,54 @@ class ParameterExtractionMixin:
             and "p_capture" in estimates
             and "p_hat" not in estimates
         ):
-            if verbose:
-                print("Computing p_hat from p and p_capture")
+            p_val = estimates["p"]
 
-            # p_capture is (n_cells,); reshape to (n_cells, 1) for
-            # broadcasting against p which may be scalar, (n_genes,),
-            # or (n_components, n_genes).
-            p_capture_reshaped = estimates["p_capture"][:, None]
-
-            # p_hat = p * p_capture / (1 - p * (1 - p_capture))
-            p_hat_raw = (
-                estimates["p"]
-                * p_capture_reshaped
-                / (1 - estimates["p"] * (1 - p_capture_reshaped))
+            # For hierarchical models p has shape (n_components, n_genes).
+            # Pre-computing p_hat would require a (n_cells, n_components,
+            # n_genes) tensor — too large to materialise here.  The
+            # cell-batched sampling code handles the broadcast per-batch
+            # instead, so we skip the pre-computation.
+            # Guard is intentionally broad: any 2D p whose dimensions
+            # don't match (n_cells,) will fail the broadcast, so we
+            # skip whenever p is 2D with both dims > 1.
+            p_is_gene_specific_2d = (
+                p_val.ndim == 2
+                and p_val.shape[0] > 1
+                and p_val.shape[1] > 1
             )
 
-            # When p is scalar or per-component (not gene-specific),
-            # p_hat is per-cell only → flatten to (n_cells,).
-            # When p is gene-specific, p_hat is (n_cells, n_genes).
-            if estimates["p"].ndim == 0 or (
-                estimates["p"].ndim == 1
-                and self.n_components is not None
-                and estimates["p"].shape[0] == self.n_components
-            ):
-                estimates["p_hat"] = p_hat_raw.flatten()
+            if p_is_gene_specific_2d:
+                if verbose:
+                    print(
+                        "Skipping p_hat precomputation (gene-specific p "
+                        f"with shape {p_val.shape}; handled per-batch)"
+                    )
             else:
-                estimates["p_hat"] = p_hat_raw
+                if verbose:
+                    print("Computing p_hat from p and p_capture")
+
+                # p_capture is (n_cells,); reshape to (n_cells, 1) for
+                # broadcasting against p which may be scalar, (n_genes,),
+                # or (n_components,).
+                p_capture_reshaped = estimates["p_capture"][:, None]
+
+                # p_hat = p * p_capture / (1 - p * (1 - p_capture))
+                p_hat_raw = (
+                    p_val
+                    * p_capture_reshaped
+                    / (1 - p_val * (1 - p_capture_reshaped))
+                )
+
+                # When p is scalar or per-component (not gene-specific),
+                # p_hat is per-cell only → flatten to (n_cells,).
+                # When p is gene-specific, p_hat is (n_cells, n_genes).
+                if p_val.ndim == 0 or (
+                    p_val.ndim == 1
+                    and self.n_components is not None
+                    and p_val.shape[0] == self.n_components
+                ):
+                    estimates["p_hat"] = p_hat_raw.flatten()
+                else:
+                    estimates["p_hat"] = p_hat_raw
 
         return estimates

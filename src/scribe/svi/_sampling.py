@@ -511,10 +511,13 @@ class SamplingMixin:
         has_vcp = p_capture is not None
         has_gate = gate is not None
 
-        # Determine if p is component-specific
+        # Determine if p is component-specific and/or gene-specific.
+        # Standard mixture: p is (n_components,) — component-specific only.
+        # Hierarchical mixture: p is (n_components, n_genes) — both.
         p_is_component_specific = (
-            len(p.shape) > 0 and p.shape[0] == n_components
+            p.ndim >= 1 and p.shape[0] == n_components
         )
+        p_is_gene_specific = p.ndim == 2 and p.shape[1] == n_genes
 
         # Initialize output array
         all_samples = []
@@ -539,15 +542,17 @@ class SamplingMixin:
             )
 
             # Get parameters for assigned components
-            # r: (n_components, n_genes) -> index to get (n_samples, batch_size, n_genes)
+            # r: (n_components, n_genes) -> (n_samples, batch_size, n_genes)
             r_batch = r[components]
 
             # Handle p parameter
             if p_is_component_specific:
-                # p: (n_components,) -> (n_samples, batch_size)
+                # p[components] works for both (n_components,) and
+                # (n_components, n_genes):
+                #   (n_components,)        → (n_samples, batch_size)
+                #   (n_components, n_genes) → (n_samples, batch_size, n_genes)
                 p_batch = p[components]
             else:
-                # p is scalar, broadcast to all
                 p_batch = p
 
             # Handle gate parameter if present
@@ -564,9 +569,13 @@ class SamplingMixin:
                 # Expand for (n_samples, batch_size, 1)
                 p_capture_expanded = p_capture_batch[None, :, None]
 
-                # Reshape p_batch for broadcasting
-                if p_is_component_specific:
-                    # p_batch: (n_samples, batch_size) -> (n_samples, batch_size, 1)
+                # Reshape p_batch for broadcasting with p_capture_expanded
+                if p_is_gene_specific:
+                    # Already (n_samples, batch_size, n_genes) — broadcasts
+                    # with (1, batch_size, 1) directly.
+                    p_expanded = p_batch
+                elif p_is_component_specific:
+                    # (n_samples, batch_size) → (n_samples, batch_size, 1)
                     p_expanded = p_batch[:, :, None]
                 else:
                     p_expanded = p_batch
@@ -578,8 +587,11 @@ class SamplingMixin:
                     / (1 - p_expanded * (1 - p_capture_expanded))
                 )
             else:
-                if p_is_component_specific:
-                    # p_batch: (n_samples, batch_size) -> (n_samples, batch_size, 1)
+                if p_is_gene_specific:
+                    # Already (n_samples, batch_size, n_genes)
+                    p_effective = p_batch
+                elif p_is_component_specific:
+                    # (n_samples, batch_size) → (n_samples, batch_size, 1)
                     p_effective = p_batch[:, :, None]
                 else:
                     p_effective = p_batch
