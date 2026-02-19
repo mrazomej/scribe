@@ -261,6 +261,49 @@ the same result as standard PPCs. For VCP and ZINB models, the biological PPC
 gives a denoised view of the data by bypassing the capture probability
 transformation and zero-inflation gate.
 
+**Bayesian Denoising of Observed Counts:**
+
+Unlike biological PPCs (which sample synthetic counts from the prior NB),
+Bayesian denoising takes the *observed* count matrix and computes the posterior
+distribution of the true (pre-capture, pre-dropout) transcript counts.  The
+derivation exploits Poisson-Gamma conjugacy and the Poisson thinning property
+(see `paper/_denoising.qmd`).
+
+```python
+# MAP-based denoising (single point estimate, fast)
+denoised = results.denoise_counts_map(
+    counts=observed_counts,
+    method="mean",      # "mean" (default), "mode", or "sample"
+    rng_key=rng_key,
+)
+# denoised.shape == (n_cells, n_genes)
+
+# Full-posterior Bayesian denoising (propagates parameter uncertainty)
+denoised_post = results.denoise_counts_posterior(
+    counts=observed_counts,
+    method="mean",
+    rng_key=rng_key,
+    n_samples=100,
+)
+# denoised_post.shape == (100, n_cells, n_genes)
+# Bayesian point estimate:
+denoised_avg = denoised_post.mean(axis=0)
+
+# With variance (returns dict instead of array)
+result = results.denoise_counts_map(
+    counts=observed_counts,
+    return_variance=True,
+    rng_key=rng_key,
+)
+# result["denoised_counts"].shape == (n_cells, n_genes)
+# result["variance"].shape == (n_cells, n_genes)
+```
+
+For NBDM models the denoised counts equal the observed counts (identity).
+For VCP models the per-cell capture probability inflates counts to recover
+the pre-capture expression level.  For ZINB models, zero observations are
+additionally corrected for technical dropout using the gate posterior.
+
 **Amortized Capture Probability and PPC:**
 
 When using amortized capture probability (enabled via
@@ -413,6 +456,10 @@ ScribeSVIResults
        technical noise and samples from base NB(r, p) only
      - `get_map_ppc_samples_biological()`: MAP-based biological PPC with
        cell batching support
+     - `denoise_counts_map()`: MAP-based Bayesian denoising of observed
+       counts (posterior mean/mode/sample of true transcripts)
+     - `denoise_counts_posterior()`: Full-posterior Bayesian denoising
+       (propagates parameter uncertainty across posterior draws)
      - `_sample_standard_model()`: Helper for standard (non-mixture) models
      - `_sample_mixture_model()`: Helper for mixture models
    - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
