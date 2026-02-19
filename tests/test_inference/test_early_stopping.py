@@ -151,6 +151,15 @@ class TestSVIConfigWithEarlyStopping:
         assert inference_config.svi.early_stopping is not None
         assert inference_config.svi.early_stopping.patience == 200
 
+    def test_fit_api_exposes_log_progress_lines(self):
+        """The public fit API accepts the SLURM progress-lines flag."""
+        import inspect
+        import scribe
+
+        assert "log_progress_lines" in inspect.signature(
+            scribe.fit
+        ).parameters
+
 
 class TestSVIRunResult:
     """Test SVIRunResult dataclass."""
