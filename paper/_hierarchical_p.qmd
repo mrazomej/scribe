@@ -1,8 +1,11 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
+# bibliography: references.bib
 csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
 ---
 
 # Relaxing the shared-$p$ assumption: hierarchical gene-specific $p_g$ {#sec-hierarchical-p}
@@ -212,6 +215,43 @@ distribution, and the gene-specific $r_g$ is drawn from its own prior. At the
 cell level, the observed count $u_g$ is drawn from a negative binomial with
 parameters $r_g$ and $p_g$. Across $C$ cells, the full model is:
 
+```{.tikz caption="Graphical model for the hierarchical gene-specific $p_g$ model. White nodes are latent variables, gray nodes are observed variables, and plates indicate replication across genes and cells." label="fig-hierarchical-p-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+\begin{tikzpicture}[
+  >=stealth,
+  node distance=10mm and 12mm,
+  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
+  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  plate/.style={draw, rounded corners, inner sep=4mm}
+]
+  % Hyperparameters
+  \node[latent] (mu) {$\mu_p$};
+  \node[latent, right=of mu] (sigma) {$\sigma_p$};
+
+  % Gene-level variables
+  \node[latent, below=of mu, xshift=8mm] (pg) {$p_g$};
+  \node[latent, right=of pg] (rg) {$r_g$};
+
+  % Observed count
+  \node[obs, below=of rg] (u) {$u_{gc}$};
+
+  % Edges
+  \draw[->] (mu) -- (pg);
+  \draw[->] (sigma) -- (pg);
+  \draw[->] (pg) -- (u);
+  \draw[->] (rg) -- (u);
+
+  % Gene plate
+  \begin{scope}[on background layer]
+    \node[plate, fit=(pg)(rg)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+  \end{scope}
+
+  % Cell plate around observations
+  \begin{scope}[on background layer]
+    \node[plate, fit=(u), label={[yshift=1mm]north east:$c=1,\ldots,C$}] (cellplate) {};
+  \end{scope}
+\end{tikzpicture}
+```
+
 $$
 \pi(\underline{r}, \underline{p}, \mu_p, \sigma_p \mid
 \underline{\underline{U}}) \propto
@@ -232,7 +272,7 @@ the data:
 - If $\sigma_p \approx 0$ (posterior mass concentrated near zero), then the data
   are consistent with a shared $p$ across all genes. The hierarchical model
   effectively recovers the standard model, with all $p_g$ shrunk toward the
-  common value $\sigma^{-1}(\mu_p)$.
+  common value $\sigma(\mu_p)$.
 
 - If $\sigma_p$ is large (posterior mass away from zero), then there is
   substantial gene-to-gene variation in $p_g$ that cannot be captured by a
@@ -346,9 +386,9 @@ $$
 $${#eq-hier-scaled-gamma}
 
 has the same distribution as $\lambda_g$ in @eq-hier-nb-compound. The quantity
-$\tilde{\lambda}_g$ represents the expected count for gene $g$, incorporating
+$\tilde{\lambda}_g$ is a latent Poisson rate draw for gene $g$, incorporating
 both the gene-specific dispersion $r_g$ and the gene-specific success
-probability $p_g$.
+probability $p_g$. Its marginal mean is $\mu_g = r_g(1-p_g)/p_g$.
 
 ### Composition from expected counts
 
@@ -536,7 +576,7 @@ $$
 $${#eq-hier-summary-hyperprior}
 
 $$
-p_g = \sigma\!\left(\mathcal{N}(\mu_p, \sigma_p)\right), \quad
+\text{logit}(p_g) \sim \mathcal{N}(\mu_p, \sigma_p), \quad
 r_g \sim \pi(r_g), \quad
 u_g \mid r_g, p_g \sim \text{NB}(r_g, p_g),
 $${#eq-hier-summary-generative}
@@ -558,7 +598,14 @@ $${#eq-hier-summary-composition}
 **Dirichlet reduction.** When $p_g = p$ for all $g$:
 
 $$
-\rho_g = \frac{\gamma_g}{\sum_j \gamma_j}
+\underline{\rho}
+=
+\left(
+\frac{\gamma_1}{\sum_j \gamma_j},
+\frac{\gamma_2}{\sum_j \gamma_j},
+\ldots,
+\frac{\gamma_G}{\sum_j \gamma_j}
+\right)
 \sim \text{Dir}(\underline{r}).
 $${#eq-hier-summary-dirichlet}
 
