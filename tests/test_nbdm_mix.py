@@ -748,6 +748,63 @@ def test_component_selection(nbdm_mix_results):
 # ------------------------------------------------------------------------------
 
 
+def test_multi_component_api_aliases(nbdm_mix_results, rng_key):
+    """get_component([...]) and get_components([...]) should be equivalent."""
+    # Ensure posterior samples are available for SVI so shape checks are robust.
+    if not hasattr(nbdm_mix_results, "get_samples"):
+        nbdm_mix_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=3, store_samples=True
+        )
+
+    selected_a = nbdm_mix_results.get_component([0, 1])
+    selected_b = nbdm_mix_results.get_components([0, 1])
+
+    assert selected_a.n_components == 2
+    assert selected_b.n_components == 2
+    assert selected_a.model_type == nbdm_mix_results.model_type
+    assert selected_b.model_type == nbdm_mix_results.model_type
+
+    selected_a_samples = (
+        selected_a.samples
+        if hasattr(selected_a, "samples")
+        else selected_a.posterior_samples
+    )
+    selected_b_samples = (
+        selected_b.samples
+        if hasattr(selected_b, "samples")
+        else selected_b.posterior_samples
+    )
+    if selected_a_samples is not None and "r" in selected_a_samples:
+        assert selected_a_samples["r"].shape[-2] == 2
+        assert selected_b_samples["r"].shape[-2] == 2
+
+
+# ------------------------------------------------------------------------------
+
+
+def test_tuple_indexing_genes_then_components(nbdm_mix_results, rng_key):
+    """Tuple indexing should interpret second index as component selector."""
+    # Ensure posterior samples are available for SVI so shape checks are robust.
+    if not hasattr(nbdm_mix_results, "get_samples"):
+        nbdm_mix_results.get_posterior_samples(
+            rng_key=rng_key, n_samples=3, store_samples=True
+        )
+
+    subset = nbdm_mix_results[0:3, [0, 1]]
+    assert subset.n_genes == 3
+    assert subset.n_components == 2
+
+    subset_samples = (
+        subset.samples if hasattr(subset, "samples") else subset.posterior_samples
+    )
+    if subset_samples is not None and "r" in subset_samples:
+        assert subset_samples["r"].shape[-2] == 2
+        assert subset_samples["r"].shape[-1] == 3
+
+
+# ------------------------------------------------------------------------------
+
+
 def test_component_selection_with_posterior_samples(
     nbdm_mix_results, rng_key, parameterization, unconstrained, guide_rank
 ):

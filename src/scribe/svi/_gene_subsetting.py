@@ -216,8 +216,36 @@ class GeneSubsettingMixin:
 
     def __getitem__(self, index):
         """
-        Enable indexing of ScribeSVIResults object.
+        Enable indexing of ``ScribeSVIResults`` by genes and components.
+
+        Parameters
+        ----------
+        index : int, slice, array-like, or tuple
+            Gene selector, or a tuple ``(gene_selector, component_selector)``.
+            When a tuple is provided, gene subsetting is applied first and
+            component selection is applied second.
+
+        Returns
+        -------
+        ScribeSVIResults
+            Subset result after applying requested indexing operations.
         """
+        # Support two-axis indexing: results[genes, components].
+        # Component selection is delegated to ComponentMixin so selector
+        # semantics remain consistent with get_component/get_components.
+        if isinstance(index, tuple):
+            if len(index) != 2:
+                raise ValueError(
+                    "Tuple indexing must be (gene_indexer, component_indexer)."
+                )
+            gene_indexer, component_indexer = index
+            if isinstance(gene_indexer, tuple):
+                raise TypeError(
+                    "Nested tuple indexing is not supported for gene selector."
+                )
+            gene_subset = self[gene_indexer]
+            return gene_subset.get_component(component_indexer)
+
         # If index is a boolean mask, use it directly
         if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
             bool_index = index

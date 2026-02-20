@@ -18,6 +18,11 @@ from ..sampling import (
     sample_biological_nb,
     denoise_counts as _denoise_counts_util,
 )
+from ..core.component_indexing import (
+    normalize_component_indices,
+    renormalize_mixing_logits,
+    renormalize_mixing_weights,
+)
 from ..models.config import ModelConfig
 from ..core.normalization import normalize_counts_from_posterior
 from ..svi._gene_subsetting import build_gene_axis_by_key
@@ -53,7 +58,16 @@ class ScribeMCMCSubset:
     # --------------------------------------------------------------------------
 
     def __getitem__(self, index):
-        """Support further indexing of subset by genes."""
+        """Support indexing by genes and components."""
+        if isinstance(index, tuple):
+            if len(index) != 2:
+                raise ValueError(
+                    "Tuple indexing must be (gene_indexer, component_indexer)."
+                )
+            gene_indexer, component_indexer = index
+            gene_subset = self[gene_indexer]
+            return gene_subset.get_component(component_indexer)
+
         # If index is a boolean mask, use it directly
         if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
             bool_index = index
@@ -107,6 +121,204 @@ class ScribeMCMCSubset:
             n_vars=new_var.shape[0] if new_var is not None else None,
             n_components=self.n_components,
         )
+
+    # --------------------------------------------------------------------------
+
+    def get_component(
+        self, component_index, renormalize: bool = True
+    ) -> "ScribeMCMCSubset":
+        """
+        Return a component-restricted view of this subset.
+
+        Parameters
+        ----------
+        component_index : int, slice, array-like, or bool mask
+            Selector over mixture components.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixture fractions.
+
+        Returns
+        -------
+        ScribeMCMCSubset
+            Subset restricted to requested components.
+        """
+        selected = normalize_component_indices(
+            component_index, self.n_components
+        )
+        if int(selected.shape[0]) == 1:
+            return self._create_single_component_subset(int(selected[0]))
+        return self.get_components(selected, renormalize=renormalize)
+
+    # --------------------------------------------------------------------------
+
+    def get_components(
+        self, component_indices, renormalize: bool = True
+    ) -> "ScribeMCMCSubset":
+        """
+        Select multiple components while preserving mixture semantics.
+
+        Parameters
+        ----------
+        component_indices : int, slice, array-like, or bool mask
+            Selector over mixture components.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixture fractions.
+
+        Returns
+        -------
+        ScribeMCMCSubset
+            Mixture-aware subset with reduced ``n_components``.
+        """
+        selected = normalize_component_indices(
+            component_indices, self.n_components
+        )
+        if int(selected.shape[0]) == 1:
+            return self._create_single_component_subset(int(selected[0]))
+
+        new_samples = self._subset_samples_by_components(
+            self.samples,
+            selected,
+            renormalize=renormalize,
+            squeeze_single=False,
+        )
+        new_n_components = int(selected.shape[0])
+        new_model_config = self.model_config.model_copy(
+            update={"n_components": new_n_components}
+        )
+        return ScribeMCMCSubset(
+            samples=new_samples,
+            n_cells=self.n_cells,
+            n_genes=self.n_genes,
+            model_type=self.model_type,
+            model_config=new_model_config,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=self.n_vars,
+            n_components=new_n_components,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _create_single_component_subset(
+        self, component_index: int
+    ) -> "ScribeMCMCSubset":
+        """Create legacy non-mixture subset for one component."""
+        new_samples = self._subset_samples_by_components(
+            self.samples,
+            jnp.asarray([component_index], dtype=jnp.int32),
+            renormalize=True,
+            squeeze_single=True,
+        )
+        base_model = self.model_type.replace("_mix", "")
+        new_model_config = self.model_config.model_copy(
+            update={"base_model": base_model, "n_components": None}
+        )
+        return ScribeMCMCSubset(
+            samples=new_samples,
+            n_cells=self.n_cells,
+            n_genes=self.n_genes,
+            model_type=base_model,
+            model_config=new_model_config,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=self.n_vars,
+            n_components=None,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _subset_samples_by_components(
+        self,
+        samples: Dict,
+        component_indices: jnp.ndarray,
+        renormalize: bool = True,
+        squeeze_single: bool = False,
+    ) -> Dict:
+        """
+        Subset sample dictionary along component axis for mixture parameters.
+
+        Parameters
+        ----------
+        samples : Dict
+            Raw sample dictionary.
+        component_indices : jnp.ndarray
+            One-dimensional selected component indices.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixing fractions.
+        squeeze_single : bool, default=False
+            If True and one component is selected, remove component axis.
+
+        Returns
+        -------
+        Dict
+            Subset sample dictionary.
+        """
+        if samples is None:
+            return None
+
+        specs_by_name = {}
+        if getattr(self.model_config, "param_specs", None):
+            specs_by_name = {s.name: s for s in self.model_config.param_specs}
+
+        n_comp = self.n_components
+        use_single = squeeze_single and int(component_indices.shape[0]) == 1
+        single_index = int(component_indices[0]) if use_single else None
+        new_samples = {}
+
+        for key, values in samples.items():
+            spec = specs_by_name.get(key)
+            has_mixture_axis = hasattr(values, "ndim") and values.ndim > 1
+            is_named_mixture_weight = key in {
+                "mixing_weights",
+                "mixing_logits_unconstrained",
+            }
+            is_mixture = (
+                has_mixture_axis
+                and (
+                    (spec is not None and spec.is_mixture)
+                    or is_named_mixture_weight
+                )
+            )
+            if not is_mixture:
+                new_samples[key] = values
+                continue
+
+            # Component axis is typically 1, but some sample tensors include
+            # extra singleton dimensions where the component axis appears later.
+            component_axis = 1
+            if values.shape[component_axis] != n_comp:
+                candidates = [
+                    ax
+                    for ax in range(1, values.ndim)
+                    if values.shape[ax] == n_comp
+                ]
+                if not candidates:
+                    new_samples[key] = values
+                    continue
+                component_axis = candidates[0]
+
+            slicer = [slice(None)] * values.ndim
+            slicer[component_axis] = (
+                single_index if use_single else component_indices
+            )
+            selected = values[tuple(slicer)]
+
+            if renormalize and key == "mixing_weights" and not use_single:
+                selected = renormalize_mixing_weights(selected, axis=-1)
+            elif (
+                renormalize
+                and key == "mixing_logits_unconstrained"
+                and not use_single
+            ):
+                selected = renormalize_mixing_logits(selected, axis=-1)
+
+            new_samples[key] = selected
+
+        return new_samples
 
     # --------------------------------------------------------------------------
 
@@ -1538,7 +1750,7 @@ class ScribeMCMCResults(MCMC):
 
     def __getitem__(self, index):
         """
-        Enable indexing of ScribeMCMCResults object by genes.
+        Enable indexing of ``ScribeMCMCResults`` by genes and components.
 
         This allows selecting a subset of genes for analysis, e.g.:
         results[0:10]  # Get first 10 genes
@@ -1554,6 +1766,15 @@ class ScribeMCMCResults(MCMC):
         ScribeMCMCSubset
             A new ScribeMCMCResults object containing only the selected genes
         """
+        if isinstance(index, tuple):
+            if len(index) != 2:
+                raise ValueError(
+                    "Tuple indexing must be (gene_indexer, component_indexer)."
+                )
+            gene_indexer, component_indexer = index
+            gene_subset = self[gene_indexer]
+            return gene_subset.get_component(component_indexer)
+
         # If index is a boolean mask, use it directly
         if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
             bool_index = index
@@ -1590,13 +1811,7 @@ class ScribeMCMCResults(MCMC):
         samples = self.get_samples(canonical=False)
         new_samples = self._subset_posterior_samples(samples, bool_index)
 
-        # Create new instance with subset data
-        # We can't use inheritance for the subset since we need to detach from
-        # the mcmc instance Instead, create a lightweight version that stores
-        # the subset data
-        from dataclasses import dataclass
-
-        # Create and return the subset using the module-level class
+        # Create and return the subset using the module-level class.
         return ScribeMCMCSubset(
             samples=new_samples,
             n_cells=self.n_cells,
@@ -1619,145 +1834,197 @@ class ScribeMCMCResults(MCMC):
     # Indexing by component
     # --------------------------------------------------------------------------
 
-    def get_component(self, component_index):
+    def get_component(self, component_index, renormalize: bool = True):
         """
-        Get a specific component from mixture model results.
-
-        This method returns a ScribeMCMCSubset object that contains parameter
-        samples for the specified component, allowing for further gene-based
-        indexing. Only applicable to mixture models.
+        Return a component-restricted view of mixture model results.
 
         Parameters
         ----------
-        component_index : int
-            Index of the component to select
+        component_index : int, slice, array-like, or bool mask
+            Selector over mixture components.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixture fractions.
 
         Returns
         -------
         ScribeMCMCSubset
-            A ScribeMCMCSubset object with samples for the selected component
-
-        Raises
-        ------
-        ValueError
-            If the model is not a mixture model or if component_index is out of range
+            Subset containing requested components.
         """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "Component selection only applies to mixture models with multiple components"
-            )
+        selected = normalize_component_indices(
+            component_index, self.n_components
+        )
+        if int(selected.shape[0]) == 1:
+            return self._create_single_component_subset(int(selected[0]))
+        return self.get_components(selected, renormalize=renormalize)
 
-        # Check if component_index is valid
-        if component_index < 0 or component_index >= self.n_components:
-            raise ValueError(
-                f"Component index {component_index} "
-                f"out of range [0, {self.n_components-1}]"
-            )
+    # --------------------------------------------------------------------------
 
-        # Get samples and subset by component
+    def get_components(
+        self, component_indices, renormalize: bool = True
+    ) -> ScribeMCMCSubset:
+        """
+        Select multiple components while preserving mixture semantics.
+
+        Parameters
+        ----------
+        component_indices : int, slice, array-like, or bool mask
+            Selector over mixture components.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixture fractions.
+
+        Returns
+        -------
+        ScribeMCMCSubset
+            Mixture subset with reduced ``n_components``.
+        """
+        selected = normalize_component_indices(
+            component_indices, self.n_components
+        )
+        if int(selected.shape[0]) == 1:
+            return self._create_single_component_subset(int(selected[0]))
+
         samples = self.get_samples(canonical=False)
-        component_samples = self._subset_samples_by_component(
-            samples, component_index
+        component_samples = self._subset_samples_by_components(
+            samples,
+            selected,
+            renormalize=renormalize,
+            squeeze_single=False,
         )
-
-        # Create modified model config (remove mixture aspects)
+        new_n_components = int(selected.shape[0])
         modified_model_config = self.model_config.model_copy(
-            update={
-                "base_model": self.model_type.replace("_mix", ""),
-                "n_components": None,
-            }
+            update={"n_components": new_n_components}
         )
-
-        # Return ScribeMCMCSubset with component-specific data
         return ScribeMCMCSubset(
             samples=component_samples,
             n_cells=self.n_cells,
             n_genes=self.n_genes,
-            model_type=self.model_type.replace(
-                "_mix", ""
-            ),  # Remove _mix suffix
+            model_type=self.model_type,
             model_config=modified_model_config,
             obs=self.obs,
             var=self.var,
             uns=self.uns,
             n_obs=self.n_obs,
             n_vars=self.n_vars,
-            n_components=None,  # No longer a mixture model
+            n_components=new_n_components,
         )
 
     # --------------------------------------------------------------------------
 
-    def _subset_samples_by_component(
-        self, samples: Dict, component_index: int
+    def _create_single_component_subset(
+        self, component_index: int
+    ) -> ScribeMCMCSubset:
+        """Create legacy non-mixture subset for one selected component."""
+        samples = self.get_samples(canonical=False)
+        component_samples = self._subset_samples_by_components(
+            samples,
+            jnp.asarray([component_index], dtype=jnp.int32),
+            renormalize=True,
+            squeeze_single=True,
+        )
+        base_model = self.model_type.replace("_mix", "")
+        modified_model_config = self.model_config.model_copy(
+            update={"base_model": base_model, "n_components": None}
+        )
+        return ScribeMCMCSubset(
+            samples=component_samples,
+            n_cells=self.n_cells,
+            n_genes=self.n_genes,
+            model_type=base_model,
+            model_config=modified_model_config,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=self.n_vars,
+            n_components=None,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _subset_samples_by_components(
+        self,
+        samples: Dict,
+        component_indices: jnp.ndarray,
+        renormalize: bool = True,
+        squeeze_single: bool = False,
     ) -> Dict:
         """
-        Subset samples for a specific component.
+        Subset sample dictionary along the mixture-component axis.
 
         Parameters
         ----------
         samples : Dict
-            Dictionary of parameter samples
-        component_index : int
-            Index of the component to select
+            Raw sample dictionary.
+        component_indices : jnp.ndarray
+            One-dimensional selected component indices.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixture fractions.
+        squeeze_single : bool, default=False
+            If True and one component is selected, remove the component axis.
 
         Returns
         -------
         Dict
-            Dictionary of parameter samples for the selected component
+            Sample dictionary restricted to selected components.
         """
-        new_samples = {}
+        if samples is None:
+            return None
 
-        # Define parameter categories based on their typical structure
-        component_gene_specific = [
-            "r",
-            "r_unconstrained",
-            "gate",
-            "gate_unconstrained",
-            "mu",
-            "phi",
-            "r_unconstrained_loc",
-            "r_unconstrained_scale",
-            "gate_unconstrained_loc",
-            "gate_unconstrained_scale",
-        ]
+        specs_by_name = {}
+        if getattr(self.model_config, "param_specs", None):
+            specs_by_name = {s.name: s for s in self.model_config.param_specs}
 
-        component_specific = [
-            "p",
-            "p_unconstrained",
-            "mixing_weights",
-            "mixing_logits_unconstrained",
-            "p_unconstrained_loc",
-            "p_unconstrained_scale",
-            "mixing_logits_unconstrained_loc",
-            "mixing_logits_unconstrained_scale",
-        ]
+        n_comp = self.n_components
+        use_single = squeeze_single and int(component_indices.shape[0]) == 1
+        single_index = int(component_indices[0]) if use_single else None
+        new_samples: Dict = {}
 
-        cell_specific = [
-            "p_capture",
-            "p_capture_unconstrained",
-            "phi_capture",
-            "p_capture_unconstrained_loc",
-            "p_capture_unconstrained_scale",
-        ]
+        for key, values in samples.items():
+            spec = specs_by_name.get(key)
+            has_mixture_axis = hasattr(values, "ndim") and values.ndim > 1
+            is_named_mixture_weight = key in {
+                "mixing_weights",
+                "mixing_logits_unconstrained",
+            }
+            is_mixture = (
+                has_mixture_axis
+                and (
+                    (spec is not None and spec.is_mixture)
+                    or is_named_mixture_weight
+                )
+            )
+            if not is_mixture:
+                new_samples[key] = values
+                continue
 
-        for param_name, values in samples.items():
-            if param_name in component_gene_specific:
-                # Component-gene specific parameters:
-                # (n_samples, n_components, n_genes)
-                if values.ndim == 3:
-                    new_samples[param_name] = values[:, component_index, :]
-                else:  # Already in correct shape or scalar
-                    new_samples[param_name] = values
-            elif param_name in component_specific:
-                # Component-specific parameters: (n_samples, n_components)
-                if values.ndim == 2:
-                    new_samples[param_name] = values[:, component_index]
-                else:  # Scalar parameter
-                    new_samples[param_name] = values
-            else:
-                # Cell-specific or other parameters - copy as-is
-                new_samples[param_name] = values
+            component_axis = 1
+            if values.shape[component_axis] != n_comp:
+                candidates = [
+                    ax
+                    for ax in range(1, values.ndim)
+                    if values.shape[ax] == n_comp
+                ]
+                if not candidates:
+                    new_samples[key] = values
+                    continue
+                component_axis = candidates[0]
+
+            slicer = [slice(None)] * values.ndim
+            slicer[component_axis] = (
+                single_index if use_single else component_indices
+            )
+            selected = values[tuple(slicer)]
+
+            if renormalize and key == "mixing_weights" and not use_single:
+                selected = renormalize_mixing_weights(selected, axis=-1)
+            elif (
+                renormalize
+                and key == "mixing_logits_unconstrained"
+                and not use_single
+            ):
+                selected = renormalize_mixing_logits(selected, axis=-1)
+
+            new_samples[key] = selected
 
         return new_samples
 

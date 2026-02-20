@@ -548,6 +548,7 @@ def _get_log_liks(
     return_by: str,
     batch_size: Optional[int],
     dtype: jnp.dtype,
+    ignore_nans: bool = False,
 ) -> jnp.ndarray:
     """Retrieve log-likelihoods from a fitted results object.
 
@@ -559,13 +560,16 @@ def _get_log_liks(
     results : ScribeSVIResults or ScribeMCMCResults
         Fitted model results object.
     counts : jnp.ndarray
-        Observed count data, shape ``(C, G)``.
+        Observed count data, shape ``(C, G)`` (cells-first).
     return_by : str
         ``'cell'`` for shape ``(S, C)`` or ``'gene'`` for shape ``(S, G)``.
     batch_size : int, optional
         Mini-batch size for memory-efficient log-likelihood computation.
     dtype : jnp.dtype
         Floating-point precision.
+    ignore_nans : bool, default=False
+        If ``True``, discard posterior samples that produce NaN log-likelihoods
+        before computing the IS weights.
 
     Returns
     -------
@@ -577,7 +581,7 @@ def _get_log_liks(
         batch_size=batch_size,
         return_by=return_by,
         cells_axis=0,
-        ignore_nans=False,
+        ignore_nans=ignore_nans,
         split_components=False,
         dtype=dtype,
     )
@@ -597,6 +601,7 @@ def compare_models(
     rng_key=None,
     batch_size: Optional[int] = None,
     compute_gene_liks: bool = False,
+    ignore_nans: bool = False,
     dtype_lik: jnp.dtype = jnp.float32,
     dtype_psis: type = np.float64,
 ) -> ScribeModelComparisonResults:
@@ -636,6 +641,9 @@ def compare_models(
     compute_gene_liks : bool, default=False
         If ``True``, also compute per-gene log-likelihoods (shape ``(S, G)``)
         for gene-level model comparison.  Doubles the computation time.
+    ignore_nans : bool, default=False
+        If ``True``, discard posterior samples that produce NaN log-likelihoods.
+        Useful when the model occasionally produces degenerate samples.
     dtype_lik : jnp.dtype, default=jnp.float32
         Precision for log-likelihood computation.
     dtype_psis : numpy dtype, default=np.float64
@@ -702,12 +710,12 @@ def compare_models(
                 results.get_posterior_samples()
 
         # Per-cell log-likelihoods: shape (S, C)
-        ll_cell = _get_log_liks(results, counts, "cell", batch_size, dtype_lik)
+        ll_cell = _get_log_liks(results, counts, "cell", batch_size, dtype_lik, ignore_nans)
         log_liks_cell.append(ll_cell)
 
         # Per-gene log-likelihoods: shape (S, G) — optional
         if compute_gene_liks:
-            ll_gene = _get_log_liks(results, counts, "gene", batch_size, dtype_lik)
+            ll_gene = _get_log_liks(results, counts, "gene", batch_size, dtype_lik, ignore_nans)
             log_liks_gene.append(ll_gene)
 
     return ScribeModelComparisonResults(

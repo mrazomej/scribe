@@ -169,13 +169,20 @@ result = results.denoise_counts(
 ```python
 # For mixture models, analyze cell type assignments
 cell_type_probs = results.cell_type_probabilities()
+
+# Access one or multiple mixture components
+component_0 = results.get_component(0)
+components_12 = results.get_components([1, 2])  # renormalize=True default
+components_12_raw = results.get_components([1, 2], renormalize=False)
 ```
 
 **Data Subsetting:**
 ```python
-# Subset results by genes or cells
-gene_subset = results[:, :100]  # First 100 genes
-cell_subset = results[:500, :]  # First 500 cells
+# Subset by genes
+gene_subset = results[:100]  # First 100 genes
+
+# Two-axis indexing: results[genes, components]
+gene_component_subset = results[1:4, [1, 2]]
 ```
 
 ### MCMCResultsFactory (`results_factory.py`)
@@ -378,6 +385,15 @@ mcmc_results = MCMCInferenceEngine.run_inference(
 
 # Analyze mixture components
 cell_type_probs = mcmc_results.cell_type_probabilities()
+
+# Multi-component selection with optional renormalization
+components = mcmc_results.get_components([1, 2])  # renormalize=True default
+components_no_renorm = mcmc_results.get_components(
+    [1, 2], renormalize=False
+)
+
+# Tuple indexing: first genes, second components
+subset = mcmc_results[1:4, [1, 2]]
 
 # Plot cell type assignments
 import matplotlib.pyplot as plt

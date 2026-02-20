@@ -1,12 +1,23 @@
 """
 Component mixin for SVI results.
 
-This mixin provides methods for working with mixture model components, allowing
-extraction and subsetting of individual component views.
+This mixin provides methods for working with mixture model components, including
+single-component extraction and multi-component selection with optional
+renormalization of component fractions.
 """
 
-from typing import Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+
 import jax.numpy as jnp
+
+from ..core.component_indexing import (
+    normalize_component_indices,
+    renormalize_mixing_logits,
+    renormalize_mixing_weights,
+)
+
+if TYPE_CHECKING:
+    from .results import ScribeSVIResults
 
 
 # ==============================================================================
@@ -21,10 +32,9 @@ def _build_mixture_keys(
     Identify variational-parameter keys that belong to mixture-specific specs.
 
     Each ``ParamSpec`` with ``is_mixture=True`` owns variational parameter keys
-    whose names start with ``{spec.name}_`` or ``log_{spec.name}_``.  When
+    whose names start with ``{spec.name}_`` or ``log_{spec.name}_``. When
     multiple specs could match the same key (e.g. ``"phi"`` vs
-    ``"phi_capture"``), the **longest** spec name wins, preventing false
-    positives.
+    ``"phi_capture"``), the longest spec name wins.
 
     Parameters
     ----------
@@ -36,15 +46,12 @@ def _build_mixture_keys(
     Returns
     -------
     Set[str]
-        Keys in *params* that should be indexed along the component axis
-        when extracting a single mixture component.
+        Keys in ``params`` that carry a component axis.
     """
     if not param_specs:
         return set()
 
-    # Sort specs longest-name-first so greedy prefix matching is correct
     sorted_specs = sorted(param_specs, key=lambda s: len(s.name), reverse=True)
-
     mixture_keys: Set[str] = set()
 
     for key in params:
@@ -59,7 +66,7 @@ def _build_mixture_keys(
             ):
                 if spec.is_mixture:
                     mixture_keys.add(key)
-                break  # longest match found, stop searching
+                break
 
     return mixture_keys
 
@@ -76,62 +83,117 @@ class ComponentMixin:
     # Indexing by component
     # --------------------------------------------------------------------------
 
-    def get_component(self, component_index):
+    def get_component(
+        self, component_index: Any, renormalize: bool = True
+    ):
         """
-        Create a view of the results selecting a specific mixture component.
+        Create a component-restricted view of mixture results.
 
-        This method returns a new ScribeSVIResults object that contains
-        parameter values for the specified component, allowing for further
-        gene-based indexing. Only applicable to mixture models.
+        This API remains backward compatible for single integer component
+        selection and also supports multi-component selectors.
 
         Parameters
         ----------
-        component_index : int
-            Index of the component to select
+        component_index : Any
+            Component selector. Supported values:
+
+            - ``int``
+            - ``slice``
+            - list/array of integer indices
+            - boolean mask with length ``n_components``
+        renormalize : bool, default=True
+            Whether to renormalize mixture-fraction carriers for multi-component
+            selections.
 
         Returns
         -------
         ScribeSVIResults
-            A new ScribeSVIResults object with parameters for the selected
-            component
-
-        Raises
-        ------
-        ValueError
-            If the model is not a mixture model
+            New result object containing the selected components.
         """
-        # Check if this is a mixture model
-        if self.n_components is None or self.n_components <= 1:
-            raise ValueError(
-                "Component view only applies to mixture models with "
-                "multiple components"
-            )
+        selected = normalize_component_indices(
+            component_index, self.n_components
+        )
+        if int(selected.shape[0]) == 1:
+            return self._get_single_component(int(selected[0]))
+        return self.get_components(selected, renormalize=renormalize)
 
-        # Check if component_index is valid
-        if component_index < 0 or component_index >= self.n_components:
-            raise ValueError(
-                f"Component index {component_index} out of range "
-                f"[0, {self.n_components-1}]"
-            )
+    # --------------------------------------------------------------------------
 
-        # Create new params dict with component subset
+    def get_components(
+        self, component_indices: Any, renormalize: bool = True
+    ):
+        """
+        Select multiple mixture components while preserving mixture semantics.
+
+        Parameters
+        ----------
+        component_indices : Any
+            Component selector (same accepted formats as
+            :meth:`get_component`).
+        renormalize : bool, default=True
+            Whether to renormalize ``mixing_weights`` and recenter
+            ``mixing_logits_unconstrained`` after subsetting.
+
+        Returns
+        -------
+        ScribeSVIResults
+            New result with reduced ``n_components``.
+        """
+        selected = normalize_component_indices(
+            component_indices, self.n_components
+        )
+        if int(selected.shape[0]) == 1:
+            return self._get_single_component(int(selected[0]))
+
         new_params = dict(self.params)
+        self._subset_params_by_components(
+            new_params, selected, renormalize=renormalize
+        )
 
-        # Handle all parameters based on their structure
+        new_posterior_samples = None
+        if self.posterior_samples is not None:
+            new_posterior_samples = (
+                self._subset_posterior_samples_by_components(
+                    self.posterior_samples,
+                    selected,
+                    renormalize=renormalize,
+                )
+            )
+
+        new_predictive_samples = None
+        return self._create_multi_component_subset(
+            component_indices=selected,
+            new_params=new_params,
+            new_posterior_samples=new_posterior_samples,
+            new_predictive_samples=new_predictive_samples,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _get_single_component(self, component_index: int):
+        """
+        Return a single-component subset using legacy non-mixture behavior.
+
+        Parameters
+        ----------
+        component_index : int
+            Selected component index.
+
+        Returns
+        -------
+        ScribeSVIResults
+            Non-mixture result corresponding to the selected component.
+        """
+        new_params = dict(self.params)
         self._subset_params_by_component(new_params, component_index)
 
-        # Create new posterior samples if available
         new_posterior_samples = None
         if self.posterior_samples is not None:
             new_posterior_samples = self._subset_posterior_samples_by_component(
                 self.posterior_samples, component_index
             )
 
-        # Create new predictive samples if available - this is more complex
-        # as we would need to condition on the component
         new_predictive_samples = None
-
-        # Create new instance with component subset
         return self._create_component_subset(
             component_index=component_index,
             new_params=new_params,
@@ -147,16 +209,10 @@ class ComponentMixin:
         """
         Subset variational parameters to a single mixture component.
 
-        Uses ``ParamSpec`` metadata from ``model_config.param_specs`` to
-        determine which keys carry a leading component axis.  Keys that belong
-        to a spec with ``is_mixture=True`` are indexed along axis 0; all
-        others are copied unchanged.
-
         Parameters
         ----------
         new_params : Dict
-            Mutable params dict (pre-populated with a shallow copy of
-            ``self.params``).  Modified in-place.
+            Mutable params dictionary to update in-place.
         component_index : int
             Which mixture component to extract.
         """
@@ -179,46 +235,178 @@ class ComponentMixin:
 
     # --------------------------------------------------------------------------
 
+    def _subset_params_by_components(
+        self,
+        new_params: Dict,
+        component_indices: jnp.ndarray,
+        renormalize: bool = True,
+    ):
+        """
+        Subset variational parameters to multiple mixture components.
+
+        Parameters
+        ----------
+        new_params : Dict
+            Mutable params dictionary to update in-place.
+        component_indices : jnp.ndarray
+            One-dimensional integer array of selected components.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixing fractions.
+        """
+        mixture_keys = _build_mixture_keys(
+            self.model_config.param_specs, self.params
+        )
+        n_comp = self.n_components
+
+        for key, value in self.params.items():
+            if (
+                hasattr(value, "ndim")
+                and key in mixture_keys
+                and value.ndim > 0
+                and value.shape[0] == n_comp
+            ):
+                selected_value = value[component_indices]
+                if renormalize and key == "mixing_weights":
+                    selected_value = renormalize_mixing_weights(
+                        selected_value, axis=-1
+                    )
+                elif renormalize and key == "mixing_logits_unconstrained":
+                    selected_value = renormalize_mixing_logits(
+                        selected_value, axis=-1
+                    )
+                new_params[key] = selected_value
+            else:
+                new_params[key] = value
+
+    # --------------------------------------------------------------------------
+
     def _subset_posterior_samples_by_component(
         self, samples: Dict, component_index: int
     ) -> Dict:
         """
         Subset posterior samples to a single mixture component.
 
-        Posterior sample keys correspond directly to ``ParamSpec.name``
-        values.  Samples from mixture-specific specs have a component axis
-        at position 1 (axis 0 is the sample axis).
-
         Parameters
         ----------
         samples : Dict
             Posterior samples dictionary.
         component_index : int
-            Which mixture component to extract.
+            Selected component index.
 
         Returns
         -------
         Dict
-            New dictionary with the component dimension removed for
-            mixture-specific parameters.
+            Posterior samples with component axis removed for mixture keys.
         """
         if samples is None:
             return None
 
         specs_by_name = {s.name: s for s in self.model_config.param_specs}
-
         new_posterior_samples = {}
+
         for key, value in samples.items():
             spec = specs_by_name.get(key)
-            if spec is not None and spec.is_mixture:
-                if value.ndim > 2:
-                    # (n_samples, n_components, n_genes) → (n_samples, n_genes)
-                    new_posterior_samples[key] = value[:, component_index, :]
-                elif value.ndim > 1:
-                    # (n_samples, n_components) → (n_samples,)
-                    new_posterior_samples[key] = value[:, component_index]
-                else:
+            is_named_mixture_weight = key in {
+                "mixing_weights",
+                "mixing_logits_unconstrained",
+            }
+            if (spec is not None and spec.is_mixture) or is_named_mixture_weight:
+                if not hasattr(value, "ndim") or value.ndim <= 1:
                     new_posterior_samples[key] = value
+                    continue
+
+                component_axis = 1
+                if (
+                    self.n_components is not None
+                    and value.shape[component_axis] != self.n_components
+                ):
+                    candidates = [
+                        ax
+                        for ax in range(1, value.ndim)
+                        if value.shape[ax] == self.n_components
+                    ]
+                    if not candidates:
+                        new_posterior_samples[key] = value
+                        continue
+                    component_axis = candidates[0]
+
+                slicer = [slice(None)] * value.ndim
+                slicer[component_axis] = component_index
+                new_posterior_samples[key] = value[tuple(slicer)]
+            else:
+                new_posterior_samples[key] = value
+
+        return new_posterior_samples
+
+    # --------------------------------------------------------------------------
+
+    def _subset_posterior_samples_by_components(
+        self,
+        samples: Dict,
+        component_indices: jnp.ndarray,
+        renormalize: bool = True,
+    ) -> Dict:
+        """
+        Subset posterior samples to multiple mixture components.
+
+        Parameters
+        ----------
+        samples : Dict
+            Posterior samples dictionary.
+        component_indices : jnp.ndarray
+            One-dimensional integer array of selected components.
+        renormalize : bool, default=True
+            Whether to renormalize selected mixing fraction carriers.
+
+        Returns
+        -------
+        Dict
+            Posterior samples with restricted component axis.
+        """
+        if samples is None:
+            return None
+
+        specs_by_name = {s.name: s for s in self.model_config.param_specs}
+        new_posterior_samples = {}
+
+        for key, value in samples.items():
+            spec = specs_by_name.get(key)
+            is_named_mixture_weight = key in {
+                "mixing_weights",
+                "mixing_logits_unconstrained",
+            }
+            if (spec is not None and spec.is_mixture) or is_named_mixture_weight:
+                if not hasattr(value, "ndim") or value.ndim <= 1:
+                    selected_value = value
+                else:
+                    component_axis = 1
+                    if (
+                        self.n_components is not None
+                        and value.shape[component_axis] != self.n_components
+                    ):
+                        candidates = [
+                            ax
+                            for ax in range(1, value.ndim)
+                            if value.shape[ax] == self.n_components
+                        ]
+                        if not candidates:
+                            new_posterior_samples[key] = value
+                            continue
+                        component_axis = candidates[0]
+
+                    slicer = [slice(None)] * value.ndim
+                    slicer[component_axis] = component_indices
+                    selected_value = value[tuple(slicer)]
+
+                if renormalize and key == "mixing_weights":
+                    selected_value = renormalize_mixing_weights(
+                        selected_value, axis=-1
+                    )
+                elif renormalize and key == "mixing_logits_unconstrained":
+                    selected_value = renormalize_mixing_logits(
+                        selected_value, axis=-1
+                    )
+                new_posterior_samples[key] = selected_value
             else:
                 new_posterior_samples[key] = value
 
@@ -233,12 +421,26 @@ class ComponentMixin:
         new_posterior_samples: Optional[Dict],
         new_predictive_samples: Optional[jnp.ndarray],
     ) -> "ScribeSVIResults":
-        """Create a new instance for a specific component."""
-        # Create a non-mixture model type
-        base_model = self.model_type.replace("_mix", "")
+        """
+        Create a new instance for a single selected component.
 
-        # Create a modified model config with n_components=None to indicate
-        # this is now a non-mixture result after component selection
+        Parameters
+        ----------
+        component_index : int
+            Selected component index.
+        new_params : Dict
+            Subset variational parameters.
+        new_posterior_samples : Optional[Dict]
+            Subset posterior samples.
+        new_predictive_samples : Optional[jnp.ndarray]
+            Subset predictive samples.
+
+        Returns
+        -------
+        ScribeSVIResults
+            Non-mixture result for the selected component.
+        """
+        base_model = self.model_type.replace("_mix", "")
         new_model_config = self.model_config.model_copy(
             update={
                 "base_model": base_model,
@@ -251,7 +453,7 @@ class ComponentMixin:
             loss_history=self.loss_history,
             n_cells=self.n_cells,
             n_genes=self.n_genes,
-            model_type=base_model,  # Remove _mix suffix
+            model_type=base_model,
             model_config=new_model_config,
             prior_params=self.prior_params,
             obs=self.obs,
@@ -261,5 +463,58 @@ class ComponentMixin:
             n_vars=self.n_vars,
             posterior_samples=new_posterior_samples,
             predictive_samples=new_predictive_samples,
-            n_components=None,  # No longer a mixture model
+            n_components=None,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def _create_multi_component_subset(
+        self,
+        component_indices: jnp.ndarray,
+        new_params: Dict,
+        new_posterior_samples: Optional[Dict],
+        new_predictive_samples: Optional[jnp.ndarray],
+    ) -> "ScribeSVIResults":
+        """
+        Create a new instance for multiple selected mixture components.
+
+        Parameters
+        ----------
+        component_indices : jnp.ndarray
+            One-dimensional integer array of selected components.
+        new_params : Dict
+            Subset variational parameters.
+        new_posterior_samples : Optional[Dict]
+            Subset posterior samples.
+        new_predictive_samples : Optional[jnp.ndarray]
+            Subset predictive samples.
+
+        Returns
+        -------
+        ScribeSVIResults
+            Mixture result with reduced ``n_components``.
+        """
+        new_n_components = int(component_indices.shape[0])
+        new_model_config = self.model_config.model_copy(
+            update={"n_components": new_n_components}
+        )
+
+        return type(self)(
+            params=new_params,
+            loss_history=self.loss_history,
+            n_cells=self.n_cells,
+            n_genes=self.n_genes,
+            model_type=self.model_type,
+            model_config=new_model_config,
+            prior_params=self.prior_params,
+            obs=self.obs,
+            var=self.var,
+            uns=self.uns,
+            n_obs=self.n_obs,
+            n_vars=self.n_vars,
+            posterior_samples=new_posterior_samples,
+            predictive_samples=new_predictive_samples,
+            n_components=new_n_components,
+            _original_n_genes=getattr(self, "_original_n_genes", None),
+            _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
         )
