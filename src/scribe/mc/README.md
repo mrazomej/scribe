@@ -1,0 +1,127 @@
+# `scribe.mc` — Bayesian Model Comparison
+
+This module provides scalable, principled Bayesian model comparison for SCRIBE
+models.  It implements **WAIC** and **PSIS-LOO** on top of the existing
+posterior inference infrastructure, with no need to refit any model.
+
+---
+
+## Mathematical background
+
+See `paper/_model_comparison.qmd` for full derivations.  The short version:
+
+**Expected log predictive density (elpd)** — the fundamental quantity:
+
+```
+elpd = E_{p_t(ỹ)}[log p(ỹ | y)]
+```
+
+**WAIC** — analytical LOO-CV approximation:
+
+```
+lppd    = Σᵢ log (1/S Σₛ exp(ℓᵢˢ))
+p_waic₂ = Σᵢ var_s(ℓᵢˢ)
+WAIC    = -2 (lppd - p_waic₂)
+```
+
+**PSIS-LOO** — Pareto-smoothed IS, with per-observation reliability diagnostic
+k̂:
+
+```
+log w_s = -ℓᵢˢ      (raw IS weights)
+→ Pareto-smooth top-M weights per observation
+→ elpd_loo = Σᵢ log IS-weighted average
+k̂ < 0.5 = excellent, 0.5–0.7 = OK, ≥ 0.7 = problematic
+```
+
+---
+
+## Module structure
+
+```
+mc/
+├── __init__.py         Public API
+├── README.md           This file
+├── results.py          ScribeModelComparisonResults + compare_models()
+├── _waic.py            JAX-accelerated WAIC
+├── _psis_loo.py        PSIS-LOO with Pareto fitting (NumPy/SciPy)
+├── _gene_level.py      Per-gene elpd differences
+└── _stacking.py        Model stacking weight optimization
+```
+
+---
+
+## Quick start
+
+```python
+from scribe.mc import compare_models
+
+# Fit two models on the same data
+results_nbdm        = ...   # ScribeSVIResults (NBDM, shared p)
+results_hierarchical = ...  # ScribeSVIResults (hierarchical, gene-specific p)
+
+# Compare
+mc = compare_models(
+    [results_nbdm, results_hierarchical],
+    counts=counts,
+    model_names=["NBDM", "Hierarchical"],
+    gene_names=gene_names,
+    compute_gene_liks=True,   # enable gene-level comparison
+)
+
+# Ranked summary table
+print(mc.summary())
+
+# PSIS-LOO k̂ diagnostics
+print(mc.diagnostics())
+
+# Ranked DataFrame (ready for plotting)
+df = mc.rank()
+
+# Gene-level comparison
+gene_df = mc.gene_level_comparison("NBDM", "Hierarchical")
+print(gene_df.head(20))
+
+# Stacking weights (optimal ensemble)
+w = mc.stacking_weights()
+print(w)
+```
+
+---
+
+## Choosing between WAIC and PSIS-LOO
+
+| Criterion  | Speed    | Reliability     | Diagnostic |
+|------------|----------|-----------------|------------|
+| WAIC2      | Very fast (JIT) | Good for well-behaved posteriors | None |
+| PSIS-LOO   | Moderate (SciPy) | More robust, recommended | k̂ per obs |
+
+Use **PSIS-LOO** by default.  Use **WAIC** for quick exploratory comparisons
+or when data is very large and PSIS-LOO is slow.
+
+---
+
+## Diagnostics
+
+The per-observation k̂ from PSIS-LOO is printed by `mc.diagnostics()`.
+Observations with k̂ ≥ 0.7 are "problematic" — the IS approximation is
+unreliable for them and the LOO estimate may be noisy.
+
+In single-cell data, high k̂ values typically correspond to:
+- Cells with unusually high or low total UMI counts.
+- Cells that are highly influential for the posterior (e.g., rare cell types).
+
+---
+
+## Relationship to the `de/` module
+
+The `mc/` module is designed to answer a different question from `de/`:
+
+| Module | Question |
+|--------|----------|
+| `de/`  | Do genes change **between conditions** (same model)? |
+| `mc/`  | Does one **model** fit the data better than another? |
+
+Both modules use the same `ScribeSVIResults`/`ScribeMCMCResults` infrastructure
+and follow the same design pattern (results class + factory function + private
+sub-modules).

@@ -108,6 +108,8 @@ from .mcmc import ScribeMCMCResults
 from .svi import ScribeSVIResults
 from .vae import ScribeVAEResults
 from .de import ScribeDEResults, compare
+from .mc import ScribeModelComparisonResults, compare_models
+from . import mc
 
 __version__ = "0.1.0"
 
@@ -129,6 +131,10 @@ __all__ = [
     "ScribeVAEResults",
     "ScribeDEResults",
     "compare",
+    # Model comparison
+    "ScribeModelComparisonResults",
+    "compare_models",
+    "mc",
     # Experiment management
     "ExperimentCatalog",
     # Other modules
