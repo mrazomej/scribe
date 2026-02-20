@@ -133,16 +133,20 @@ def _pareto_smooth_single(log_weights: np.ndarray) -> Tuple[np.ndarray, float]:
     sort_idx = np.argsort(log_weights)
     sorted_lw = log_weights[sort_idx]
 
-    # Threshold: the (S-M)-th largest value (boundary of the tail)
-    cutoff_lw = sorted_lw[S - M - 1] if S > M else sorted_lw[0]
-
-    # Tail values on the original (exponentiated) scale, shifted to excess
+    # Tail log-weights (the M largest, in ascending order)
     tail_lw = sorted_lw[S - M:]
-    # Exponentiate relative to the cutoff for numerical stability
-    tail_w = np.exp(tail_lw - cutoff_lw)
+
+    # Normalize by the MAXIMUM of the tail so that exp(tail_lw - tail_norm)
+    # is always in (0, 1].  Normalizing by the threshold (cutoff_lw) was
+    # the original approach but it fails when the tail spans more than ~709
+    # log-units above the cutoff — a common occurrence for outlier cells in
+    # single-cell data, where IS weights are exp(-log_lik) and log_liks can
+    # be deeply negative under some posterior samples.
+    tail_norm = tail_lw[-1]  # max of sorted tail → maps to exp(0) = 1
+    tail_w = np.exp(tail_lw - tail_norm)  # values in (0, 1], overflow-safe
     tail_excess = tail_w - tail_w[0]
 
-    # Fit GPD to excess values
+    # Fit GPD to the excess values above the minimum tail weight
     k_hat, sigma_hat = _fit_gpd(tail_excess)
 
     # Replace tail with GPD quantiles at (j - 0.5) / M for j = 1, ..., M
@@ -155,8 +159,8 @@ def _pareto_smooth_single(log_weights: np.ndarray) -> Tuple[np.ndarray, float]:
     else:
         smooth_tail_w = tail_w[0] + stats.genpareto.ppf(probs, k_hat, loc=0.0, scale=sigma_hat)
 
-    # Convert smoothed tail back to log scale
-    smooth_tail_lw = cutoff_lw + np.log(np.maximum(smooth_tail_w, 1e-300))
+    # Convert smoothed tail back to log scale using the same shift (tail_norm)
+    smooth_tail_lw = tail_norm + np.log(np.maximum(smooth_tail_w, 1e-300))
 
     # Truncate at log(S^0.75) to prevent runaway weights
     max_lw = min(sorted_lw[-1], 0.75 * np.log(S))
