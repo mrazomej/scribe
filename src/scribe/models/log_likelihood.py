@@ -24,6 +24,7 @@ def nbdm_log_likelihood(
     cells_axis: int = 0,
     return_by: str = "cell",
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -56,6 +57,15 @@ def nbdm_log_likelihood(
         sample.  Clamping ``r`` to this small positive value neutralises those
         degenerate samples at negligible cost to the likelihood.  Set to
         ``0.0`` to disable the floor entirely.
+    p_floor : float, default=1e-6
+        Epsilon clipped away from both 0 and 1 for the success probability
+        ``p``.  In hierarchical parameterisations ``p`` is gene-specific and
+        derived from ``phi_g = exp(log_phi_g)``; if ``log_phi_g`` underflows
+        to zero in float32, ``p_g = 1/(1+0) = 1.0`` exactly, causing
+        ``r * log(1-p)`` to evaluate as ``r * log(0) = NaN`` (without
+        ``r_floor``) or ``-inf`` (with it).  Setting a small cap keeps ``p``
+        strictly inside ``(p_floor, 1 - p_floor)``.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -76,6 +86,9 @@ def nbdm_log_likelihood(
     # Guard against degenerate posterior samples where r underflows to 0
     if r_floor > 0.0:
         r = jnp.maximum(r, r_floor)
+    # Clip p away from 0 and 1 to prevent log(0) or log(1-1) = NaN/-inf
+    if p_floor > 0.0:
+        p = jnp.clip(p, p_floor, 1.0 - p_floor)
 
     # Extract dimensions
     if cells_axis == 0:
@@ -160,6 +173,7 @@ def zinb_log_likelihood(
     cells_axis: int = 0,
     return_by: str = "cell",
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -189,6 +203,11 @@ def zinb_log_likelihood(
         casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
         posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
         disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the success probability ``p``, clipping it to the
+        open interval ``(p_floor, 1 - p_floor)``.  Prevents NaN from
+        gene-specific ``p`` values hitting exactly 0 or 1 in float32.
+        Set to ``0.0`` to disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -208,6 +227,9 @@ def zinb_log_likelihood(
     # Guard against degenerate posterior samples where r underflows to 0
     if r_floor > 0.0:
         r = jnp.maximum(r, r_floor)
+    # Clip p away from 0 and 1 to prevent log(0) NaN
+    if p_floor > 0.0:
+        p = jnp.clip(p, p_floor, 1.0 - p_floor)
     gate = jnp.squeeze(params["gate"]).astype(dtype)
 
     # Extract dimensions
@@ -300,6 +322,7 @@ def nbvcp_log_likelihood(
     cells_axis: int = 0,
     return_by: str = "cell",
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -330,6 +353,18 @@ def nbvcp_log_likelihood(
         casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
         posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
         disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the *effective* probability ``p_hat`` (after
+        combining ``p`` and ``p_capture``), clipping it to
+        ``(p_floor, 1 - p_floor)``.  Two degenerate cases can make ``p_hat``
+        hit 0 or 1 exactly in float32:
+
+        - ``phi_g → 0`` (hierarchical models) → ``p_g = 1/(1+0) = 1.0``
+          → ``p_hat = 1.0`` → ``r * log(1 - 1.0) = NaN/−∞``.
+        - ``phi_capture → ∞`` → ``p_capture = 0``
+          → ``p_hat = 0`` → ``0 * log(0) = NaN`` for zero counts.
+
+        Set to ``0.0`` to disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -374,6 +409,9 @@ def nbvcp_log_likelihood(
             p_capture_reshaped = p_capture[:, None]
             # Compute p_hat for all cells
             p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Return per-cell log probabilities
             return (
                 dist.NegativeBinomialProbs(r, p_hat)
@@ -397,6 +435,9 @@ def nbvcp_log_likelihood(
             batch_p_capture = batch_p_capture[:, None]
             # Compute p_hat for batch
             batch_p_hat = p * batch_p_capture / (1 - p * (1 - batch_p_capture))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Store batch log probabilities
             cell_log_probs = cell_log_probs.at[start_idx:end_idx].set(
                 dist.NegativeBinomialProbs(r, batch_p_hat)
@@ -413,6 +454,9 @@ def nbvcp_log_likelihood(
             p_capture_reshaped = p_capture[:, None]
             # Compute p_hat for all cells
             p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Compute log probabilities for each gene
             return jnp.sum(
                 dist.NegativeBinomialProbs(r, p_hat).log_prob(counts),
@@ -435,6 +479,9 @@ def nbvcp_log_likelihood(
             batch_p_capture = batch_p_capture[:, None]
             # Compute p_hat for batch
             batch_p_hat = p * batch_p_capture / (1 - p * (1 - batch_p_capture))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Compute log probabilities for batch
             batch_log_probs = dist.NegativeBinomialProbs(
                 r, batch_p_hat
@@ -458,6 +505,7 @@ def zinbvcp_log_likelihood(
     cells_axis: int = 0,
     return_by: str = "cell",
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -489,6 +537,18 @@ def zinbvcp_log_likelihood(
         casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
         posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
         disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the *effective* probability ``p_hat`` (after
+        combining ``p`` and ``p_capture``), clipping it to
+        ``(p_floor, 1 - p_floor)``.  Two degenerate cases can make ``p_hat``
+        hit 0 or 1 exactly in float32:
+
+        - ``phi_g → 0`` (hierarchical models) → ``p_g = 1/(1+0) = 1.0``
+          → ``p_hat = 1.0`` → ``r * log(1 - 1.0) = NaN/−∞``.
+        - ``phi_capture → ∞`` → ``p_capture = 0``
+          → ``p_hat = 0`` → ``0 * log(0) = NaN`` for zero counts.
+
+        Set to ``0.0`` to disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -534,6 +594,9 @@ def zinbvcp_log_likelihood(
             p_capture_reshaped = p_capture[:, None]
             # Compute adjusted success probability
             p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Create base Negative Binomial distribution
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
             # Create Zero-Inflated distribution
@@ -559,6 +622,9 @@ def zinbvcp_log_likelihood(
             batch_p_capture = batch_p_capture[:, None]
             # Compute adjusted success probability
             batch_p_hat = p * batch_p_capture / (1 - p * (1 - batch_p_capture))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Create base Negative Binomial distribution
             base_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
             # Create Zero-Inflated distribution
@@ -579,6 +645,9 @@ def zinbvcp_log_likelihood(
             p_capture_reshaped = p_capture[:, None]
             # Compute adjusted success probability
             p_hat = p * p_capture_reshaped / (1 - p * (1 - p_capture_reshaped))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
             # Create base distribution and compute all at once
             base_dist = dist.NegativeBinomialProbs(r, p_hat)
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
@@ -600,6 +669,9 @@ def zinbvcp_log_likelihood(
             batch_p_capture = batch_p_capture[:, None]
             # Compute adjusted success probability
             batch_p_hat = p * batch_p_capture / (1 - p * (1 - batch_p_capture))
+            # Clip effective probability away from 0 and 1 to prevent NaN
+            if p_floor > 0.0:
+                batch_p_hat = jnp.clip(batch_p_hat, p_floor, 1.0 - p_floor)
             # Create distributions and compute log probs
             base_dist = dist.NegativeBinomialProbs(r, batch_p_hat)
             zinb = dist.ZeroInflatedDistribution(base_dist, gate=gate)
@@ -632,6 +704,7 @@ def nbdm_mixture_log_likelihood(
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -673,6 +746,12 @@ def nbdm_mixture_log_likelihood(
         casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
         posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
         disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the success probability ``p``, clipping it to the
+        open interval ``(p_floor, 1 - p_floor)``.  In hierarchical
+        parameterisations ``p`` is gene-specific; if ``phi_g`` underflows to
+        zero in float32, ``p_g = 1.0`` exactly, causing ``r * log(0) = NaN``.
+        Set to ``0.0`` to disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -709,6 +788,9 @@ def nbdm_mixture_log_likelihood(
     # Guard against degenerate posterior samples where r underflows to 0
     if r_floor > 0.0:
         r = jnp.maximum(r, r_floor)
+    # Clip p away from 0 and 1 to prevent log(0) NaN (relevant for hierarchical p)
+    if p_floor > 0.0:
+        p = jnp.clip(p, p_floor, 1.0 - p_floor)
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
@@ -851,6 +933,7 @@ def zinb_mixture_log_likelihood(
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -890,6 +973,12 @@ def zinb_mixture_log_likelihood(
         casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
         posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
         disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the success probability ``p``, clipping it to the
+        open interval ``(p_floor, 1 - p_floor)``.  In hierarchical
+        parameterisations ``p`` is gene-specific; if ``phi_g`` underflows to
+        zero in float32, ``p_g = 1.0`` exactly, causing ``r * log(0) = NaN``.
+        Set to ``0.0`` to disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -924,6 +1013,9 @@ def zinb_mixture_log_likelihood(
     # Guard against degenerate posterior samples where r underflows to 0
     if r_floor > 0.0:
         r = jnp.maximum(r, r_floor)
+    # Clip p away from 0 and 1 to prevent log(0) NaN (relevant for hierarchical p)
+    if p_floor > 0.0:
+        p = jnp.clip(p, p_floor, 1.0 - p_floor)
     gate = jnp.asarray(params["gate"]).astype(dtype)
     if gate.ndim < 2:
         gate = gate[jnp.newaxis, :]  # (n_genes,) -> (1, n_genes)
@@ -1077,6 +1169,7 @@ def nbvcp_mixture_log_likelihood(
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -1118,6 +1211,18 @@ def nbvcp_mixture_log_likelihood(
         casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
         posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
         disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the *effective* probability ``p_hat`` (after
+        combining ``p`` and ``p_capture``), clipping it to
+        ``(p_floor, 1 - p_floor)``.  Two degenerate cases can make ``p_hat``
+        hit 0 or 1 exactly in float32:
+
+        - ``phi_g → 0`` (hierarchical models) → ``p_g = 1/(1+0) = 1.0``
+          → ``p_hat = 1.0`` → ``r * log(1 - 1.0) = NaN/−∞``.
+        - ``phi_capture → ∞`` → ``p_capture = 0``
+          → ``p_hat = 0`` → ``0 * log(0) = NaN`` for zero counts.
+
+        Set to ``0.0`` to disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -1201,6 +1306,9 @@ def nbvcp_mixture_log_likelihood(
     # p_hat = p * p_capture / (1 - p * (1 - p_capture))
     # Broadcasts to (n_cells, n_genes, n_components) or (n_cells, 1, n_components)
     p_hat = p * p_capture / (1 - p * (1 - p_capture))
+    # Clip effective probability away from 0 and 1 to prevent NaN
+    if p_floor > 0.0:
+        p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
 
     # Validate and process weights
     if weights is not None:
@@ -1347,6 +1455,7 @@ def zinbvcp_mixture_log_likelihood(
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -1388,6 +1497,18 @@ def zinbvcp_mixture_log_likelihood(
         casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
         posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
         disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the *effective* probability ``p_hat`` (after
+        combining ``p`` and ``p_capture``), clipping it to
+        ``(p_floor, 1 - p_floor)``.  Two degenerate cases can make ``p_hat``
+        hit 0 or 1 exactly in float32:
+
+        - ``phi_g → 0`` (hierarchical models) → ``p_g = 1/(1+0) = 1.0``
+          → ``p_hat = 1.0`` → ``r * log(1 - 1.0) = NaN/−∞``.
+        - ``phi_capture → ∞`` → ``p_capture = 0``
+          → ``p_hat = 0`` → ``0 * log(0) = NaN`` for zero counts.
+
+        Set to ``0.0`` to disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -1463,6 +1584,9 @@ def zinbvcp_mixture_log_likelihood(
 
     # p_hat broadcasts to (n_cells, n_genes, n_components) or (n_cells, 1, n_components)
     p_hat = p * p_capture / (1 - p * (1 - p_capture))
+    # Clip effective probability away from 0 and 1 to prevent NaN
+    if p_floor > 0.0:
+        p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
 
     # Validate and process weights
     if weights is not None:

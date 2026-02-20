@@ -29,6 +29,7 @@ class LikelihoodMixin:
         weights: Optional[jnp.ndarray] = None,
         weight_type: Optional[str] = None,
         r_floor: float = 1e-6,
+        p_floor: float = 1e-6,
         dtype: jnp.dtype = jnp.float32,
     ) -> jnp.ndarray:
         """
@@ -66,6 +67,21 @@ class LikelihoodMixin:
             (e.g. ``1e-6``) neutralises those degenerate samples without
             meaningfully changing the likelihood for well-behaved ones.
             Set to ``0.0`` to disable the floor entirely.
+        p_floor : float, default=1e-6
+            Epsilon applied to the success probability ``p`` (or effective
+            probability ``p_hat`` for VCP models), clipping it to the open
+            interval ``(p_floor, 1 - p_floor)``.
+
+            Two float32 degenerate cases this guards against:
+
+            1. ``phi_g → 0`` in hierarchical parameterisations
+               → ``p_g = 1/(1+0) = 1.0`` exactly in float32
+               → ``r * log(1 - p) = r * log(0)`` → NaN/−∞.
+            2. ``phi_capture → ∞`` in VCP models
+               → ``p_capture = 0`` → ``p_hat = 0``
+               → ``NB(r, 0).log_prob(0) = 0 * log(0)`` → NaN.
+
+            Set to ``0.0`` to disable.
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
 
@@ -123,6 +139,7 @@ class LikelihoodMixin:
                     weights=weights,
                     weight_type=weight_type,
                     r_floor=r_floor,
+                    p_floor=p_floor,
                     dtype=dtype,
                 )
             else:
@@ -133,6 +150,7 @@ class LikelihoodMixin:
                     cells_axis=cells_axis,
                     return_by=return_by,
                     r_floor=r_floor,
+                    p_floor=p_floor,
                     dtype=dtype,
                 )
 

@@ -694,6 +694,7 @@ def _get_log_liks(
     dtype: jnp.dtype,
     ignore_nans: bool = False,
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
 ) -> jnp.ndarray:
     """Retrieve log-likelihoods from a fitted results object.
 
@@ -719,6 +720,12 @@ def _get_log_liks(
         Minimum dispersion value passed to the underlying log-likelihood
         function.  See :func:`~scribe.models.log_likelihood.nbdm_log_likelihood`
         for details.
+    p_floor : float, default=1e-6
+        Epsilon clipped away from 0 and 1 for the success probability ``p``
+        (or effective probability ``p_hat`` in VCP models).  Prevents NaN from
+        hierarchical models where ``phi_g → 0`` causes ``p_g = 1.0`` in
+        float32, or VCP models where ``phi_capture → ∞`` causes ``p_hat = 0``.
+        Set to ``0.0`` to disable.
 
     Returns
     -------
@@ -733,6 +740,7 @@ def _get_log_liks(
         ignore_nans=ignore_nans,
         split_components=False,
         r_floor=r_floor,
+        p_floor=p_floor,
         dtype=dtype,
     )
 
@@ -754,6 +762,7 @@ def compare_models(
     ignore_nans: bool = False,
     component_threshold: float = 0.0,
     r_floor: float = 1e-6,
+    p_floor: float = 1e-6,
     dtype_lik: jnp.dtype = jnp.float32,
     dtype_psis: type = np.float64,
 ) -> ScribeModelComparisonResults:
@@ -817,6 +826,19 @@ def compare_models(
         that underflow to zero in ``float32``, causing ``lgamma(r) = NaN``
         and discarding the entire sample.  A small positive floor prevents
         this at negligible cost.  Set to ``0.0`` to disable.
+    p_floor : float, default=1e-6
+        Epsilon applied to the success probability ``p`` (or effective
+        probability ``p_hat`` for VCP models), clipping it to the open
+        interval ``(p_floor, 1 - p_floor)`` before evaluating log-likelihoods.
+
+        Two float32 degenerate cases this guards against:
+
+        1. **Hierarchical models** — ``phi_g → 0`` causes ``p_g = 1/(1+0)
+           = 1.0`` exactly in float32, making ``r * log(1 - p) = NaN``.
+        2. **VCP models** — ``phi_capture → ∞`` causes ``p_capture = 0``,
+           which then gives ``p_hat = 0`` and ``NB(r,0).log_prob(0) = NaN``.
+
+        Set to ``0.0`` to disable.
     dtype_lik : jnp.dtype, default=jnp.float32
         Precision for log-likelihood computation.
     dtype_psis : numpy dtype, default=np.float64
@@ -902,14 +924,14 @@ def compare_models(
 
         # Per-cell log-likelihoods: shape (S, C)
         ll_cell = _get_log_liks(
-            results_eff, counts, "cell", batch_size, dtype_lik, ignore_nans, r_floor
+            results_eff, counts, "cell", batch_size, dtype_lik, ignore_nans, r_floor, p_floor
         )
         log_liks_cell.append(ll_cell)
 
         # Per-gene log-likelihoods: shape (S, G) — optional
         if compute_gene_liks:
             ll_gene = _get_log_liks(
-                results_eff, counts, "gene", batch_size, dtype_lik, ignore_nans, r_floor
+                results_eff, counts, "gene", batch_size, dtype_lik, ignore_nans, r_floor, p_floor
             )
             log_liks_gene.append(ll_gene)
 
