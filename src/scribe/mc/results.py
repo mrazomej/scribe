@@ -693,6 +693,7 @@ def _get_log_liks(
     batch_size: Optional[int],
     dtype: jnp.dtype,
     ignore_nans: bool = False,
+    r_floor: float = 1e-6,
 ) -> jnp.ndarray:
     """Retrieve log-likelihoods from a fitted results object.
 
@@ -714,6 +715,10 @@ def _get_log_liks(
     ignore_nans : bool, default=False
         If ``True``, discard posterior samples that produce NaN log-likelihoods
         before computing the IS weights.
+    r_floor : float, default=1e-6
+        Minimum dispersion value passed to the underlying log-likelihood
+        function.  See :func:`~scribe.models.log_likelihood.nbdm_log_likelihood`
+        for details.
 
     Returns
     -------
@@ -727,6 +732,7 @@ def _get_log_liks(
         cells_axis=0,
         ignore_nans=ignore_nans,
         split_components=False,
+        r_floor=r_floor,
         dtype=dtype,
     )
 
@@ -747,6 +753,7 @@ def compare_models(
     compute_gene_liks: bool = False,
     ignore_nans: bool = False,
     component_threshold: float = 0.0,
+    r_floor: float = 1e-6,
     dtype_lik: jnp.dtype = jnp.float32,
     dtype_psis: type = np.float64,
 ) -> ScribeModelComparisonResults:
@@ -803,6 +810,13 @@ def compare_models(
         - The pruning decision is stored in
           :attr:`ScribeModelComparisonResults.active_components` for
           transparency.
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the NB dispersion parameter ``r`` before
+        evaluating log-likelihoods.  Posterior samples from a wide
+        variational guide (e.g. high guide rank) can produce ``r`` values
+        that underflow to zero in ``float32``, causing ``lgamma(r) = NaN``
+        and discarding the entire sample.  A small positive floor prevents
+        this at negligible cost.  Set to ``0.0`` to disable.
     dtype_lik : jnp.dtype, default=jnp.float32
         Precision for log-likelihood computation.
     dtype_psis : numpy dtype, default=np.float64
@@ -888,14 +902,14 @@ def compare_models(
 
         # Per-cell log-likelihoods: shape (S, C)
         ll_cell = _get_log_liks(
-            results_eff, counts, "cell", batch_size, dtype_lik, ignore_nans
+            results_eff, counts, "cell", batch_size, dtype_lik, ignore_nans, r_floor
         )
         log_liks_cell.append(ll_cell)
 
         # Per-gene log-likelihoods: shape (S, G) — optional
         if compute_gene_liks:
             ll_gene = _get_log_liks(
-                results_eff, counts, "gene", batch_size, dtype_lik, ignore_nans
+                results_eff, counts, "gene", batch_size, dtype_lik, ignore_nans, r_floor
             )
             log_liks_gene.append(ll_gene)
 
