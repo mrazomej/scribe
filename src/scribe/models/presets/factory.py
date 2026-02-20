@@ -484,11 +484,27 @@ def create_model(
     # ==========================================================================
     # Step 4: Build core parameter specs from parameterization strategy
     # ==========================================================================
+    # When stored param_specs are present (i.e. this is a loaded / already-
+    # trained model), derive mixture_params from those specs rather than
+    # relying on the current code default.  This preserves the exact
+    # is_mixture flags used during training, which determines parameter shapes
+    # (scalar vs. per-component), and prevents guide/params mismatches when
+    # the default mixture_params list changes between code versions.
+    effective_mixture_params = model_config.mixture_params
+    if model_config.param_specs and model_config.n_components is not None:
+        stored_mixture_params = [
+            spec.name
+            for spec in model_config.param_specs
+            if spec.is_mixture
+        ]
+        if stored_mixture_params:
+            effective_mixture_params = stored_mixture_params
+
     param_specs = param_strategy.build_param_specs(
         unconstrained=model_config.unconstrained,
         guide_families=guide_families,
         n_components=model_config.n_components,
-        mixture_params=model_config.mixture_params,
+        mixture_params=effective_mixture_params,
     )
 
     # ==========================================================================
@@ -502,7 +518,7 @@ def create_model(
             guide_families=guide_families,
             param_strategy=param_strategy,
             n_components=model_config.n_components,
-            mixture_params=model_config.mixture_params,
+            mixture_params=effective_mixture_params,
         )
         param_specs.append(extra_spec)
 
