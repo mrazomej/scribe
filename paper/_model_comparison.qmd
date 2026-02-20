@@ -1,0 +1,458 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Bayesian Model Comparison {#sec-model-comparison}
+
+Having established the Dirichlet-Multinomial (NBDM) model in
+@sec-dirichlet-multinomial and its hierarchical extension in @sec-hierarchical-p,
+we now address a fundamental question: given two or more competing models, which
+one should we prefer for predictive inference? In this section we develop the
+mathematical framework for **Bayesian model comparison based on out-of-sample
+predictive accuracy**, culminating in two complementary criteria---WAIC and
+PSIS-LOO---along with methods for computing model comparison uncertainty and
+optimal model weighting.
+
+## Predictive accuracy and the expected log predictive density {#sec-mc-elpd}
+
+The central quantity in model comparison is the **expected log predictive
+density** (elpd), which measures how well a fitted model predicts new,
+unseen data drawn from the true data-generating distribution $p_t$,
+
+$$
+\text{elpd} = \mathbb{E}_{\tilde{y} \sim p_t}\!\left[\log p(\tilde{y} \mid y)\right]
+= \int \log p(\tilde{y} \mid y)\, p_t(\tilde{y})\, d\tilde{y},
+$${#eq-mc-elpd-def}
+
+where $p(\tilde{y} \mid y)$ is the **posterior predictive distribution**
+obtained by averaging the likelihood over the posterior:
+
+$$
+p(\tilde{y} \mid y) = \int p(\tilde{y} \mid \theta)\, p(\theta \mid y)\, d\theta.
+$${#eq-mc-ppd}
+
+Since $p_t$ is unknown, we cannot directly evaluate @eq-mc-elpd-def. Instead,
+we estimate elpd from the observed data $y = (y_1, \ldots, y_n)$.
+
+### Leave-one-out cross-validation {#sec-mc-loo}
+
+A natural estimator of elpd is **leave-one-out cross-validation** (LOO-CV):
+
+$$
+\text{elpd}_{\text{loo}} = \sum_{i=1}^n \log p(y_i \mid y_{-i}),
+$${#eq-mc-elpd-loo}
+
+where $y_{-i} = \{y_j : j \neq i\}$ denotes all observations except the $i$-th,
+and $p(y_i \mid y_{-i})$ is the **LOO predictive density**:
+
+$$
+p(y_i \mid y_{-i}) = \int p(y_i \mid \theta)\, p(\theta \mid y_{-i})\, d\theta.
+$${#eq-mc-loo-predictive}
+
+Each summand $\log p(y_i \mid y_{-i})$ in @eq-mc-elpd-loo is the log predictive
+density for observation $i$ when the model has been fitted on all other
+observations. In practice, exact LOO-CV requires $n$ separate model fits,
+which is computationally prohibitive for large datasets.
+
+We therefore seek efficient approximations that compute elpd from a single
+posterior inference.
+
+## WAIC: a fully analytical LOO approximation {#sec-mc-waic}
+
+The Widely Applicable Information Criterion (WAIC) @watanabe2010 @gelman2014 is
+a fully-computed approximation to LOO-CV that requires only the $S$ posterior
+samples $\{\theta^{(s)}\}_{s=1}^S$ already obtained during inference.
+
+### Log pointwise predictive density {#sec-mc-lppd}
+
+Define the **log pointwise predictive density** (lppd) as
+
+$$
+\text{lppd} = \sum_{i=1}^n \log \hat{p}(y_i \mid y),
+$${#eq-mc-lppd}
+
+where the posterior predictive probability of observation $i$ is approximated
+via a Monte Carlo average over $S$ posterior samples:
+
+$$
+\hat{p}(y_i \mid y) = \frac{1}{S} \sum_{s=1}^S p(y_i \mid \theta^{(s)}).
+$${#eq-mc-ppd-mc}
+
+In practice, @eq-mc-ppd-mc is evaluated using the log-sum-exp identity for
+numerical stability:
+
+$$
+\log \hat{p}(y_i \mid y) =
+\ell_i^* + \log \frac{1}{S} \sum_{s=1}^S \exp\!\left(\ell_i^{(s)} - \ell_i^*\right),
+$${#eq-mc-logsumexp}
+
+where $\ell_i^{(s)} = \log p(y_i \mid \theta^{(s)})$ is the log-likelihood of
+the $i$-th observation under the $s$-th posterior draw, and $\ell_i^* = \max_s
+\ell_i^{(s)}$.
+
+### Effective number of parameters {#sec-mc-pwaic}
+
+WAIC adds an **overfitting penalty** $p_{\text{waic}}$ that estimates the
+effective number of parameters consumed by the model. Two versions exist.
+
+**Version 1** (bias-corrected):
+
+$$
+p_{\text{waic}_1} = 2 \sum_{i=1}^n
+\left[
+    \log \hat{p}(y_i \mid y) -
+    \frac{1}{S} \sum_{s=1}^S \ell_i^{(s)}
+\right],
+$${#eq-mc-pwaic1}
+
+which measures the gap between the log average and the average log for each
+observation. A large gap signals overdispersion in the posterior predictions.
+
+**Version 2** (variance-based, preferred by @gelman2014):
+
+$$
+p_{\text{waic}_2} = \sum_{i=1}^n \widehat{\mathrm{var}}_s\!\left(\ell_i^{(s)}\right),
+$${#eq-mc-pwaic2}
+
+where $\widehat{\mathrm{var}}_s(\ell_i^{(s)}) = \frac{1}{S-1}\sum_s
+(\ell_i^{(s)} - \bar{\ell}_i)^2$ is the sample variance of the
+log-likelihood over posterior draws. The sum of these variances measures the
+total posterior uncertainty in the log-likelihood, a natural measure of
+effective parameter count.
+
+### WAIC {#sec-mc-waic-formula}
+
+The **expected log pointwise predictive density** (elppd) under WAIC is
+
+$$
+\text{elppd}_{\text{waic}} = \text{lppd} - p_{\text{waic}},
+$${#eq-mc-elppd-waic}
+
+and WAIC itself (on the deviance scale) is
+
+$$
+\text{WAIC} = -2\,\text{elppd}_{\text{waic}}.
+$${#eq-mc-waic}
+
+Lower WAIC indicates better out-of-sample predictive accuracy. The factor of
+$-2$ places WAIC on the same scale as the deviance and AIC, facilitating
+comparison with classical information criteria.
+
+**Theoretical connection to LOO.** Under mild regularity conditions, WAIC is
+asymptotically equivalent to LOO-CV @watanabe2010. However, WAIC can be
+unreliable when the posterior has heavy tails or is dominated by a small number
+of influential observations.
+
+## PSIS-LOO: Pareto-smoothed importance sampling {#sec-mc-psis}
+
+A more robust alternative to WAIC is the **Pareto-smoothed importance sampling
+LOO** (PSIS-LOO) criterion @vehtari2017. PSIS-LOO approximates the exact LOO
+predictive distribution via importance sampling, with a Pareto-based
+tail-stabilization step and a built-in reliability diagnostic.
+
+### Importance sampling for LOO {#sec-mc-is-loo}
+
+The key observation is that the LOO posterior $p(\theta \mid y_{-i})$ can be
+obtained from the full-data posterior $p(\theta \mid y)$ via importance
+weighting. By Bayes' theorem,
+
+$$
+p(\theta \mid y_{-i}) = \frac{p(y_{-i} \mid \theta)\,p(\theta)}{p(y_{-i})}
+= p(\theta \mid y) \cdot \frac{p(y)}{p(y_{-i})\,p(y_i \mid \theta)}.
+$${#eq-mc-loo-posterior}
+
+The importance ratio between the LOO posterior and the full posterior is
+therefore
+
+$$
+r_i(\theta) =
+\frac{p(\theta \mid y_{-i})}{p(\theta \mid y)} \propto \frac{1}{p(y_i \mid \theta)}.
+$${#eq-mc-is-ratio}
+
+Using Monte Carlo draws $\{\theta^{(s)}\}_{s=1}^S$ from the full posterior, the
+**raw importance weights** for observation $i$ are
+
+$$
+w_i^{(s)} = \frac{1}{p(y_i \mid \theta^{(s)})},
+\qquad \text{i.e.}, \quad
+\log w_i^{(s)} = -\ell_i^{(s)}.
+$${#eq-mc-raw-weights}
+
+The IS approximation to the LOO predictive density is then
+
+$$
+p(y_i \mid y_{-i}) \approx
+\frac{\sum_s w_i^{(s)}\, p(y_i \mid \theta^{(s)})}{\sum_s w_i^{(s)}}.
+$${#eq-mc-is-loo-approx}
+
+### The heavy-tail problem {#sec-mc-heavy-tail}
+
+The raw weights $w_i^{(s)} = 1/p(y_i \mid \theta^{(s)})$ can be highly
+variable: when $p(y_i \mid \theta^{(s)})$ is very small for some samples, the
+corresponding weights are very large, inflating the IS estimator and making it
+unreliable. This heavy-tail behavior is captured by fitting a **generalized
+Pareto distribution** (GPD) to the upper tail of the weight distribution.
+
+The GPD with shape $k$ and scale $\sigma$ has survival function
+
+$$
+\Pr(W > w) = \left(1 + \frac{k\,w}{\sigma}\right)^{-1/k}, \quad w > 0,\; k > 0.
+$${#eq-mc-gpd}
+
+The **shape parameter $k$** governs the heaviness of the tail:
+
+- $k < 0.5$: finite variance, IS weights are well-behaved.
+- $0.5 \leq k < 0.7$: finite mean, acceptable but worth monitoring.
+- $k \geq 0.7$: the IS estimator has infinite variance; LOO approximation is
+  unreliable.
+
+The fitted value $\hat{k}$ therefore serves as a **per-observation reliability
+diagnostic**.
+
+### PSIS smoothing algorithm {#sec-mc-psis-algorithm}
+
+For each observation $i$, the PSIS smoothing proceeds as follows.
+
+**Step 1: Identify tail samples.** Set $M = \min(\lfloor S/5 \rfloor, \lceil
+3\sqrt{S} \rceil)$ as the number of tail weights to smooth.
+
+**Step 2: Sort log weights.** Let $l_{(1)} \leq l_{(2)} \leq \cdots \leq
+l_{(S)}$ denote the sorted values of $\{-\ell_i^{(s)}\}_{s=1}^S$. Denote by
+$l^* = l_{(S-M)}$ the threshold separating the tail from the bulk.
+
+**Step 3: Fit GPD to the tail.** Let $z_j = \exp(l_{(S-M+j)} - l^*)$ for $j =
+1, \ldots, M+1$. Fit a GPD$(\hat{k}, \hat{\sigma})$ to the excess values $\{z_j
+- z_1 : j = 2, \ldots, M+1\}$ using the prior-weighted maximum likelihood
+estimator of @zhang2009.
+
+**Step 4: Replace with GPD quantiles.** Smooth the $M$ largest log weights by
+
+$$
+\tilde{l}_{(S-M+j)} = l^* + \log G^{-1}\!\!\left(\frac{j - 0.5}{M}; \hat{k}, \hat{\sigma}\right),
+\quad j = 1, \ldots, M,
+$${#eq-mc-psis-smoothed}
+
+where $G^{-1}$ is the GPD quantile function. The smoothed weights thus follow
+the fitted Pareto tail rather than the noisy empirical order statistics.
+
+**Step 5: Truncate.** Cap all smoothed log weights at $\min(l_{(S)},\, \log
+S^{0.75})$ to prevent any single weight from dominating.
+
+**Step 6: Compute LOO contribution.** The PSIS approximation to the LOO log
+predictive density for observation $i$ is
+
+$$
+\log \hat{p}_{\text{psis}}(y_i \mid y_{-i}) =
+\log\frac{\sum_s \exp\!\left(\tilde{l}_{s,i} + \ell_i^{(s)}\right)}
+         {\sum_s \exp\!\left(\tilde{l}_{s,i}\right)},
+$${#eq-mc-psis-loo-pointwise}
+
+where $\tilde{l}_{s,i}$ are the Pareto-smoothed log weights (in original,
+unsorted order).
+
+### PSIS-LOO elpd {#sec-mc-psis-elpd}
+
+Summing over all observations,
+
+$$
+\text{elpd}_{\text{psis-loo}} = \sum_{i=1}^n
+\log \hat{p}_{\text{psis}}(y_i \mid y_{-i}),
+$${#eq-mc-psis-loo}
+
+with an associated effective parameter count
+
+$$
+p_{\text{psis-loo}} = \text{lppd} - \text{elpd}_{\text{psis-loo}},
+$${#eq-mc-psis-ploo}
+
+and the PSIS-LOO criterion on the deviance scale
+
+$$
+\text{LOO-IC} = -2\,\text{elpd}_{\text{psis-loo}}.
+$${#eq-mc-looic}
+
+@vehtari2017 showed that PSIS-LOO achieves lower bias than WAIC for realistic
+posterior geometries, particularly when the posterior has heavy tails relative
+to the LOO posterior.
+
+## Pairwise model comparison with uncertainty {#sec-mc-pairwise}
+
+Given two models $M_A$ and $M_B$ evaluated on the same $n$ observations, define
+the **pointwise elpd difference**
+
+$$
+d_i = l_{i,A} - l_{i,B},
+$${#eq-mc-pointwise-diff}
+
+where $l_{i,\cdot}$ denotes the pointwise LOO log predictive density (either
+WAIC or PSIS-LOO) for observation $i$. The total difference in elpd is
+
+$$
+\Delta\text{elpd}_{AB} = \sum_{i=1}^n d_i.
+$${#eq-mc-delta-elpd}
+
+Since the $d_i$ are computed from the same data (and in particular are paired),
+the standard error of this estimate can be obtained directly from the variance
+of the pointwise differences using the CLT:
+
+$$
+\widehat{\mathrm{SE}}(\Delta\text{elpd}_{AB}) =
+\sqrt{n \cdot \widehat{\mathrm{var}}(d_i)} =
+\sqrt{\sum_{i=1}^n (d_i - \bar{d})^2},
+$${#eq-mc-se-delta-elpd}
+
+where $\bar{d} = n^{-1}\sum_i d_i$. A natural signal-to-noise ratio for model
+comparison is
+
+$$
+z_{AB} = \frac{\Delta\text{elpd}_{AB}}{\widehat{\mathrm{SE}}(\Delta\text{elpd}_{AB})}.
+$${#eq-mc-z-score}
+
+When $|z_{AB}| \gg 1$, the evidence for one model over the other is strong;
+when $|z_{AB}| \lesssim 1$, the difference is not practically meaningful.
+
+**Remark.** The $z$-score in @eq-mc-z-score should be interpreted cautiously:
+it is not a frequentist $p$-value and does not have a calibrated Type I error
+interpretation. It is simply a scale-free measure of how large the observed elpd
+difference is relative to the pointwise variability.
+
+## Model stacking {#sec-mc-stacking}
+
+Instead of selecting a single winning model, **model stacking** @yao2018
+constructs an optimal predictive ensemble. Given $K$ models, the stacking
+weights $w^* \in \Delta^{K-1}$ (the $(K-1)$-simplex) are found by maximizing
+the log-score of the mixture:
+
+$$
+w^* = \underset{w \in \Delta^{K-1}}{\arg\max}
+\sum_{i=1}^n \log \sum_{k=1}^K w_k \hat{p}(y_i \mid y_{-i}, M_k),
+$${#eq-mc-stacking}
+
+where $\hat{p}(y_i \mid y_{-i}, M_k)$ is the LOO predictive density of
+observation $i$ under model $k$. The objective in @eq-mc-stacking is
+**concave** in $w$ (log of a linear function), so the optimization over the
+simplex has a unique solution that can be found efficiently with standard
+convex solvers.
+
+Stacking weights differ from model-selection and from simple Bayesian model
+averaging (BMA): they are optimized for predictive performance on held-out data,
+not for posterior model probabilities, and they are more robust when models are
+misspecified or structurally similar.
+
+A simpler, non-optimized alternative are the **pseudo-BMA weights**
+
+$$
+w_k^{\text{AIC}} \propto \exp\!\left(-\tfrac{1}{2}\,\text{WAIC}_k\right),
+$${#eq-mc-pseudo-bma}
+
+which mimic the AIC weight formula and are provided alongside stacking weights
+for comparison.
+
+## Application to the NBDM and hierarchical models {#sec-mc-application}
+
+We now describe how the general framework above applies to the two model
+classes developed in this work.
+
+### Pointwise log-likelihood {#sec-mc-nbdm-lik}
+
+For the standard NBDM model with shared success probability $\hat{p}$ (see
+@sec-dirichlet-multinomial), the per-cell log-likelihood under sample
+$\theta^{(s)} = (\underline{r}^{(s)}, \hat{p}^{(s)})$ is
+
+$$
+\ell_c^{(s)} = \log \text{NB}(u_{T,c} \mid r_T^{(s)}, \hat{p}^{(s)})
++ \log \text{DM}(\underline{u}_c \mid u_{T,c}, \underline{r}^{(s)}),
+$${#eq-mc-nbdm-ll}
+
+where $u_{T,c} = \sum_g u_{gc}$ is the total UMI count for cell $c$, and
+$r_T^{(s)} = \sum_g r_g^{(s)}$.
+
+For the hierarchical model with gene-specific probabilities $p_g$ (see
+@sec-hierarchical-p), the NB-DM factorization breaks down (as we proved in
+@sec-hier-factorization-breaks), and the per-cell log-likelihood becomes a sum
+over genes:
+
+$$
+\ell_c^{(s)} = \sum_{g=1}^G
+\log \text{NB}(u_{gc} \mid r_g^{(s)}, p_g^{(s)}).
+$${#eq-mc-hierarchical-ll}
+
+Both @eq-mc-nbdm-ll and @eq-mc-hierarchical-ll are evaluated by the
+`log_likelihood` method of the respective fitted model object. The outputs
+are stored in an $S \times C$ matrix that drives all downstream model-comparison
+computations.
+
+### What PSIS-LOO detects {#sec-mc-what-psis-detects}
+
+Comparing the NBDM model to the hierarchical model with PSIS-LOO answers the
+question: **does allowing gene-specific $p_g$ improve out-of-sample predictions
+at the cell level?**
+
+A positive $\Delta\text{elpd}_{\text{hierarchical} - \text{NBDM}}$ with $|z| >
+2$ indicates meaningful improvement from the relaxed assumption. Conversely,
+when $\sigma_p \approx 0$ in the posterior of the hierarchical model (see
+@sec-hierarchical-p), both models should predict equally well, and the PSIS-LOO
+comparison should reflect this.
+
+The per-observation diagnostic $\hat{k}$ is particularly informative in
+single-cell data: cells with high $\hat{k}$ are influential outliers for which
+the full-data posterior deviates substantially from the LOO posterior. These
+often correspond to cells with unusually high or low total counts.
+
+### Gene-level model comparison {#sec-mc-gene-level}
+
+Beyond cell-level comparison, we can assess **per-gene predictive improvement**
+by evaluating the gene-level log-likelihood: for observation unit "gene $g$"
+with total summed count $\sum_c u_{gc}$ across all $C$ cells, define
+
+$$
+\ell_g^{(s)} = \sum_{c=1}^C \log p(u_{gc} \mid \theta^{(s)}),
+$${#eq-mc-gene-ll}
+
+where the per-count term is evaluated using the gene-specific NB likelihood.
+Applying WAIC or PSIS-LOO with these gene-level log-likelihoods gives per-gene
+elpd differences between models, with their associated standard errors and
+z-scores. This reveals which genes benefit most from the hierarchical model's
+added flexibility---often genes with highly variable total counts across cells.
+
+## Summary {#sec-mc-summary}
+
+We collect the key quantities introduced in this section.
+
+**lppd** (log pointwise predictive density):
+$$
+\text{lppd} = \sum_i \log \frac{1}{S}\sum_s \exp(\ell_i^{(s)}).
+$${#eq-mc-summary-lppd}
+
+**WAIC** (effective parameter counts and criterion):
+$$
+p_{\text{waic}_2} = \sum_i \widehat{\mathrm{var}}_s(\ell_i^{(s)}),
+\qquad
+\text{WAIC} = -2(\text{lppd} - p_{\text{waic}_2}).
+$${#eq-mc-summary-waic}
+
+**PSIS-LOO** (Pareto-smoothed LOO elpd and diagnostic):
+$$
+\text{elpd}_{\text{psis-loo}} = \sum_i \log \hat{p}_{\text{psis}}(y_i \mid y_{-i}),
+\qquad
+\hat{k}_i \in [0, \infty).
+$${#eq-mc-summary-psis}
+
+**Pairwise comparison**:
+$$
+\Delta\text{elpd}_{AB} = \sum_i (l_{i,A} - l_{i,B}),
+\qquad
+\widehat{\mathrm{SE}} = \sqrt{\sum_i (d_i - \bar{d})^2}.
+$${#eq-mc-summary-comparison}
+
+**Stacking weights**:
+$$
+w^* = \underset{w \in \Delta^{K-1}}{\arg\max}
+\sum_i \log \sum_k w_k \hat{p}(y_i \mid y_{-i}, M_k).
+$${#eq-mc-summary-stacking}
