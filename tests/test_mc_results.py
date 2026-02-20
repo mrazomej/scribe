@@ -390,3 +390,225 @@ def test_scribe_mc_accessible_from_top_level():
     assert hasattr(scribe, "mc")
     assert hasattr(scribe, "compare_models")
     assert hasattr(scribe, "ScribeModelComparisonResults")
+
+
+# --------------------------------------------------------------------------
+# Dead component pruning — _prune_dead_components()
+# --------------------------------------------------------------------------
+
+
+class MockMixtureResults:
+    """Minimal mock of ScribeSVIResults for pruning tests.
+
+    Provides the attributes and methods that ``_prune_dead_components``
+    inspects: ``n_components``, ``posterior_samples``, and ``get_component``.
+    """
+
+    def __init__(self, mixing_weights: np.ndarray):
+        """
+        Parameters
+        ----------
+        mixing_weights : np.ndarray, shape ``(S, K)``
+            Simulated posterior mixing weight samples.
+        """
+        S, K = mixing_weights.shape
+        self.n_components = K
+        self.posterior_samples = {"mixing_weights": jnp.array(mixing_weights)}
+        self._mixing_weights = mixing_weights
+
+    def get_component(self, mask, renormalize=True):
+        """Return a new MockMixtureResults with only the selected components."""
+        # Subset the mixing weights to the active components and renormalize
+        active_idx = np.flatnonzero(np.asarray(mask))
+        selected_mw = self._mixing_weights[:, active_idx]
+        if renormalize:
+            row_sums = selected_mw.sum(axis=1, keepdims=True)
+            selected_mw = selected_mw / row_sums
+        return MockMixtureResults(selected_mw)
+
+
+class MockNonMixtureResults:
+    """Minimal mock of a non-mixture ScribeSVIResults (n_components=None)."""
+
+    def __init__(self):
+        self.n_components = None
+        self.posterior_samples = {}
+
+
+@pytest.fixture
+def mock_mixture_4comp():
+    """Mock 4-component mixture where components 2 and 3 are near-zero.
+
+    Posterior-mean mixing weights ≈ [0.45, 0.50, 0.003, 0.002].
+    """
+    rng = np.random.default_rng(7)
+    S = 300
+    # Draw from Dirichlet — heavily concentrated on components 0 and 1
+    alpha = np.array([45.0, 50.0, 0.3, 0.2])
+    mw = rng.dirichlet(alpha, size=S)  # shape (S, 4)
+    return MockMixtureResults(mw)
+
+
+@pytest.fixture
+def mock_mixture_all_active():
+    """Mock 3-component mixture where all components have substantial weight."""
+    rng = np.random.default_rng(8)
+    S = 200
+    alpha = np.array([30.0, 35.0, 25.0])
+    mw = rng.dirichlet(alpha, size=S)
+    return MockMixtureResults(mw)
+
+
+def test_prune_dead_components_reduces_k(mock_mixture_4comp):
+    """With threshold=0.01, the two near-zero components should be pruned."""
+    from scribe.mc.results import _prune_dead_components
+
+    pruned, active = _prune_dead_components(mock_mixture_4comp, threshold=0.01)
+
+    # active mask should exist and flag exactly 2 surviving components
+    assert active is not None, "Pruning should have been applied"
+    assert active.dtype == bool
+    assert int(active.sum()) == 2, f"Expected 2 survivors, got {int(active.sum())}"
+
+    # Pruned model should have n_components == 2
+    assert pruned.n_components == 2
+
+    # Mixing weights in pruned model should sum to 1 per sample
+    mw_pruned = np.asarray(pruned.posterior_samples["mixing_weights"])
+    np.testing.assert_allclose(mw_pruned.sum(axis=1), 1.0, atol=1e-5)
+
+
+def test_prune_dead_components_non_mixture_unchanged():
+    """Non-mixture model (n_components=None) should not be pruned."""
+    from scribe.mc.results import _prune_dead_components
+
+    results = MockNonMixtureResults()
+    pruned, active = _prune_dead_components(results, threshold=0.05)
+
+    assert pruned is results, "Non-mixture results must be returned unchanged"
+    assert active is None
+
+
+def test_prune_dead_components_zero_threshold_unchanged(mock_mixture_4comp):
+    """threshold=0.0 should disable pruning entirely."""
+    from scribe.mc.results import _prune_dead_components
+
+    pruned, active = _prune_dead_components(mock_mixture_4comp, threshold=0.0)
+
+    assert pruned is mock_mixture_4comp
+    assert active is None
+
+
+def test_prune_dead_components_all_active_unchanged(mock_mixture_all_active):
+    """When all components exceed the threshold, nothing should be pruned."""
+    from scribe.mc.results import _prune_dead_components
+
+    pruned, active = _prune_dead_components(mock_mixture_all_active, threshold=0.01)
+
+    # All three components have weight >> 0.01, so no pruning
+    assert pruned is mock_mixture_all_active
+    assert active is None
+
+
+def test_prune_dead_components_aggressive_threshold_keeps_best(mock_mixture_4comp):
+    """A threshold that kills all components should fall back to keeping the best."""
+    from scribe.mc.results import _prune_dead_components
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        pruned, active = _prune_dead_components(mock_mixture_4comp, threshold=0.99)
+
+    # Should warn and keep exactly 1 component
+    assert active is not None
+    assert int(active.sum()) == 1
+    assert pruned.n_components == 1
+    # The kept component should be the one with the largest posterior-mean weight
+    assert len(w) > 0  # a UserWarning was issued
+
+
+def test_prune_dead_components_active_mask_correct_length(mock_mixture_4comp):
+    """The active mask should have length K_original."""
+    from scribe.mc.results import _prune_dead_components
+
+    _, active = _prune_dead_components(mock_mixture_4comp, threshold=0.01)
+
+    assert active is not None
+    assert len(active) == mock_mixture_4comp.n_components  # 4
+
+
+def test_prune_dead_components_missing_mixing_weights_warns():
+    """If posterior_samples has no mixing_weights key, a UserWarning is issued."""
+    from scribe.mc.results import _prune_dead_components
+    import warnings
+
+    # Create a mock with n_components > 1 but no mixing weights in samples
+    class MockNoWeights:
+        n_components = 3
+        posterior_samples = {"some_other_param": jnp.ones((10, 3))}
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        pruned, active = _prune_dead_components(MockNoWeights(), threshold=0.05)
+
+    assert active is None  # pruning skipped
+    assert any("mixing_weights" in str(warning.message) for warning in w)
+
+
+# --------------------------------------------------------------------------
+# active_components stored in ScribeModelComparisonResults
+# --------------------------------------------------------------------------
+
+
+def test_active_components_none_when_no_pruning(three_model_results):
+    """active_components should be None when no component_threshold is set."""
+    # three_model_results is built without pruning
+    assert three_model_results.active_components is None
+
+
+def test_active_components_stored_on_pruned_results():
+    """active_components should be populated when pruning occurs."""
+    rng = np.random.default_rng(0)
+    S, C = 200, 40
+    # Build a results object with active_components set manually
+    ll = jnp.array(rng.normal(-2.0, 0.3, (S, C)), dtype=jnp.float32)
+    active_mask = np.array([True, True, False, False])  # 2 of 4 components active
+
+    mc = ScribeModelComparisonResults(
+        model_names=["MixtureModel"],
+        log_liks_cell=[ll],
+        n_cells=C,
+        n_genes=10,
+        active_components=[active_mask],
+    )
+
+    assert mc.active_components is not None
+    assert mc.active_components[0] is active_mask
+
+
+def test_repr_shows_pruning_arrow():
+    """__repr__ should include the K_orig→K_pruned annotation when pruned."""
+    rng = np.random.default_rng(0)
+    S, C = 100, 30
+    ll = jnp.array(rng.normal(-2.0, 0.3, (S, C)), dtype=jnp.float32)
+    active_mask = np.array([True, True, False, False])  # 4 original, 2 kept
+
+    mc = ScribeModelComparisonResults(
+        model_names=["ZINBVCP"],
+        log_liks_cell=[ll],
+        n_cells=C,
+        n_genes=5,
+        active_components=[active_mask],
+    )
+
+    r = repr(mc)
+    # Should show the 4→2 annotation with the unicode arrow
+    assert "4" in r and "2" in r
+    assert "→" in r or "->" in r or "\u2192" in r
+
+
+def test_repr_no_arrow_when_no_pruning(two_model_results):
+    """__repr__ should not contain any arrow when no pruning occurred."""
+    r = repr(two_model_results)
+    assert "→" not in r
+    assert "\u2192" not in r

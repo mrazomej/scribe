@@ -19,6 +19,10 @@ Design decisions
   recommended criterion for reliable model comparison.
 - Gene-level comparison requires gene-level log-likelihoods computed separately
   with ``return_by="gene"``.
+- Dead component pruning: mixture models can develop "dead" components whose
+  posterior-mean mixing weight is below a user-specified threshold.  These are
+  removed before computing log-likelihoods to prevent their parameter-variance
+  noise from inflating ``p_waic_2`` and the PSIS-LOO effective parameter count.
 """
 
 from __future__ import annotations
@@ -68,6 +72,13 @@ class ScribeModelComparisonResults:
         Number of cells (observations).
     n_genes : int
         Number of genes.
+    active_components : list of np.ndarray or None, optional
+        Per-model boolean masks recording which mixture components survived the
+        dead-component pruning step (see :func:`compare_models` parameter
+        ``component_threshold``).  Entry ``k`` has shape ``(K_original_k,)``
+        and is set to ``None`` when no pruning was applied (non-mixture model
+        or all components active).  ``None`` for the whole list when pruning
+        was not requested.
     dtype : numpy dtype, default=np.float64
         Precision used for PSIS-LOO computations.
 
@@ -100,11 +111,21 @@ class ScribeModelComparisonResults:
     gene_names: Optional[List[str]] = None
     n_cells: int = 0
     n_genes: int = 0
+    # Per-model boolean masks of surviving components after dead-component
+    # pruning; None per entry means the model was not pruned (non-mixture or all
+    # active).
+    active_components: Optional[List[Optional[np.ndarray]]] = field(
+        default=None, repr=False
+    )
     dtype: type = field(default=np.float64, repr=False)
 
     # --- Private cache (not shown in repr) ---
-    _waic_cache: Optional[List[dict]] = field(default=None, repr=False, init=False)
-    _psis_loo_cache: Optional[List[dict]] = field(default=None, repr=False, init=False)
+    _waic_cache: Optional[List[dict]] = field(
+        default=None, repr=False, init=False
+    )
+    _psis_loo_cache: Optional[List[dict]] = field(
+        default=None, repr=False, init=False
+    )
     _stacking_weights_cache: Optional[np.ndarray] = field(
         default=None, repr=False, init=False
     )
@@ -160,7 +181,9 @@ class ScribeModelComparisonResults:
     # PSIS-LOO
     # ------------------------------------------------------------------
 
-    def psis_loo(self, model_idx: Optional[int] = None) -> Union[dict, List[dict]]:
+    def psis_loo(
+        self, model_idx: Optional[int] = None
+    ) -> Union[dict, List[dict]]:
         """Compute PSIS-LOO statistics for one or all models.
 
         PSIS-LOO is computed using NumPy/SciPy (Pareto fitting is not JIT-
@@ -290,12 +313,15 @@ class ScribeModelComparisonResults:
             n_bad = [r["n_bad"] for r in loo_results]
         elif criterion in ("waic_2", "waic_1"):
             waic_results = self.waic()
-            elppd_key = "elppd_waic_2" if criterion == "waic_2" else "elppd_waic_1"
+            elppd_key = (
+                "elppd_waic_2" if criterion == "waic_2" else "elppd_waic_1"
+            )
             p_key = "p_waic_2" if criterion == "waic_2" else "p_waic_1"
             elpd_values = np.array([r[elppd_key] for r in waic_results])
             p_eff_values = np.array([r[p_key] for r in waic_results])
             # For SE computation: use per-observation lppd differences
-            # We need pointwise WAIC contributions, so recompute with aggregate=False
+            # We need pointwise WAIC contributions, so recompute with
+            # aggregate=False
             elpd_pointwise = []
             for ll in self.log_liks_cell:
                 pw_stats = compute_waic_stats(ll, aggregate=False)
@@ -394,7 +420,8 @@ class ScribeModelComparisonResults:
         Returns
         -------
         pd.DataFrame
-            Per-gene comparison table from :func:`~scribe.mc._gene_level.gene_level_comparison`.
+            Per-gene comparison table from
+            :func:`~scribe.mc._gene_level.gene_level_comparison`.
 
         Raises
         ------
@@ -494,19 +521,134 @@ class ScribeModelComparisonResults:
     # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
-        """Concise representation of the model comparison."""
+        """Concise representation of the model comparison.
+
+        When dead-component pruning was applied, the repr shows the original
+        and surviving component counts per model, e.g. ``'ZINBVCP(4→2)'``.
+        """
+        # Build per-model labels, annotating pruned mixture models
+        labels = []
+        for k, name in enumerate(self.model_names):
+            mask = (
+                self.active_components[k]
+                if self.active_components is not None
+                else None
+            )
+            if mask is not None:
+                k_orig = int(mask.shape[0])
+                k_pruned = int(mask.sum())
+                labels.append(f"{name}({k_orig}\u2192{k_pruned})")
+            else:
+                labels.append(name)
+
         return (
             f"ScribeModelComparisonResults("
             f"K={self.K}, "
             f"n_cells={self.n_cells}, "
             f"n_genes={self.n_genes}, "
-            f"models={self.model_names})"
+            f"models={labels})"
         )
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _prune_dead_components(results, threshold: float):
+    """
+    Remove mixture components whose posterior-mean mixing weight is too small.
+
+    A "dead" component (posterior-mean φ_k < threshold) contributes negligible
+    predictive mass but still adds parameter-variance noise to ``p_waic_2`` and
+    inflates the PSIS-LOO IS weight variance.  Pruning and renormalizing the
+    surviving components gives the *effective* model that the posterior has
+    converged to, enabling fairer comparison.
+
+    Only mixture models are pruned (``n_components > 1``).  Non-mixture models,
+    and models whose posterior samples do not contain mixing weights, are
+    returned unchanged.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults or ScribeMCMCResults
+        Fitted model results object with ``posterior_samples`` populated.
+    threshold : float
+        Fraction in ``[0, 1)``.  Components with posterior-mean mixing weight
+        strictly below this value are removed.  ``0.0`` disables pruning.
+
+    Returns
+    -------
+    pruned_results : same type as ``results``
+        Either the original object (if no pruning needed) or a new object
+        returned by ``results.get_component(active_mask, renormalize=True)``
+        with renormalized mixing weights.
+    active_mask : np.ndarray of bool, shape ``(K,)``, or None
+        Boolean mask indicating surviving components, or ``None`` if pruning
+        was not applied (threshold zero, non-mixture, or all components active).
+    """
+    import warnings
+
+    # Skip non-mixture models and disabled threshold
+    if threshold <= 0.0:
+        return results, None
+    n_comp = getattr(results, "n_components", None)
+    if n_comp is None or n_comp <= 1:
+        return results, None
+
+    # Retrieve posterior-mean mixing weights
+    ps = getattr(results, "posterior_samples", None)
+    mw = None
+    if ps is not None:
+        if "mixing_weights" in ps:
+            # Shape (S, K) → mean over samples
+            mw = np.asarray(jnp.mean(ps["mixing_weights"], axis=0))
+        elif "mixing_logits_unconstrained" in ps:
+            # Convert logits to weights via softmax
+            from jax.nn import softmax
+
+            logits = ps["mixing_logits_unconstrained"]  # (S, K) or (K,)
+            if logits.ndim == 2:
+                mw = np.asarray(jnp.mean(softmax(logits, axis=-1), axis=0))
+            else:
+                mw = np.asarray(softmax(logits))
+
+    if mw is None:
+        # Cannot determine mixing weights — skip pruning
+        warnings.warn(
+            f"Cannot prune dead components: 'mixing_weights' not found in "
+            f"posterior_samples for model with n_components={n_comp}. "
+            "Skipping pruning.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return results, None
+
+    # Build boolean active mask
+    active = mw >= threshold  # shape (K,)
+
+    # No pruning needed when all components are active
+    if bool(active.all()):
+        return results, None
+
+    # Safety guard: if the threshold is too aggressive and kills every component,
+    # keep the single largest one and warn rather than producing an empty model.
+    if not bool(active.any()):
+        best = int(np.argmax(mw))
+        active = np.zeros(n_comp, dtype=bool)
+        active[best] = True
+        warnings.warn(
+            f"component_threshold={threshold} would remove all {n_comp} "
+            f"components (max weight = {mw.max():.4f}). "
+            f"Keeping the largest component (index {best}) only.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    # Prune via ComponentMixin.get_component — returns a new results object
+    # with subset posterior_samples and renormalized mixing weights.
+    pruned = results.get_component(active, renormalize=True)
+    return pruned, active
 
 
 def _resolve_model_idx(model: Union[int, str], model_names: List[str]) -> int:
@@ -531,7 +673,9 @@ def _resolve_model_idx(model: Union[int, str], model_names: List[str]) -> int:
     """
     if isinstance(model, int):
         if model < 0 or model >= len(model_names):
-            raise ValueError(f"Model index {model} out of range (K={len(model_names)}).")
+            raise ValueError(
+                f"Model index {model} out of range (K={len(model_names)})."
+            )
         return model
     if isinstance(model, str):
         if model not in model_names:
@@ -602,6 +746,7 @@ def compare_models(
     batch_size: Optional[int] = None,
     compute_gene_liks: bool = False,
     ignore_nans: bool = False,
+    component_threshold: float = 0.0,
     dtype_lik: jnp.dtype = jnp.float32,
     dtype_psis: type = np.float64,
 ) -> ScribeModelComparisonResults:
@@ -644,6 +789,20 @@ def compare_models(
     ignore_nans : bool, default=False
         If ``True``, discard posterior samples that produce NaN log-likelihoods.
         Useful when the model occasionally produces degenerate samples.
+    component_threshold : float, default=0.0
+        Dead-component pruning threshold for mixture models.  Any mixture
+        component whose **posterior-mean mixing weight** is strictly below
+        this fraction is removed before log-likelihood computation; the
+        remaining weights are renormalized to sum to one.  This prevents dead
+        components from inflating ``p_waic_2`` and the PSIS-LOO effective
+        parameter count.
+
+        - ``0.0`` (default): no pruning; behavior is unchanged.
+        - Typical value: ``0.01`` (prune components below 1 %).
+        - Non-mixture models are always passed through unmodified.
+        - The pruning decision is stored in
+          :attr:`ScribeModelComparisonResults.active_components` for
+          transparency.
     dtype_lik : jnp.dtype, default=jnp.float32
         Precision for log-likelihood computation.
     dtype_psis : numpy dtype, default=np.float64
@@ -692,6 +851,9 @@ def compare_models(
     # Compute per-cell log-likelihoods for each model
     log_liks_cell = []
     log_liks_gene = [] if compute_gene_liks else None
+    # Track dead-component pruning info (None per model = no pruning applied)
+    active_masks: List[Optional[np.ndarray]] = []
+    any_pruned = False
 
     # Split RNG keys so each model gets an independent key
     rng_keys = jrandom.split(rng_key, K)
@@ -709,13 +871,32 @@ def compare_models(
                 # MCMC: no arguments needed (samples come from MCMC run)
                 results.get_posterior_samples()
 
+        # Dead-component pruning: replace results with a leaner effective model
+        # when mixture components fall below component_threshold.
+        results_eff, active_mask = _prune_dead_components(
+            results, component_threshold
+        )
+        active_masks.append(active_mask)
+        if active_mask is not None:
+            any_pruned = True
+            k_orig = int(active_mask.shape[0])
+            k_kept = int(active_mask.sum())
+            print(
+                f"  Pruned {k_orig - k_kept} dead component(s) for {name} "
+                f"({k_orig} → {k_kept} components)."
+            )
+
         # Per-cell log-likelihoods: shape (S, C)
-        ll_cell = _get_log_liks(results, counts, "cell", batch_size, dtype_lik, ignore_nans)
+        ll_cell = _get_log_liks(
+            results_eff, counts, "cell", batch_size, dtype_lik, ignore_nans
+        )
         log_liks_cell.append(ll_cell)
 
         # Per-gene log-likelihoods: shape (S, G) — optional
         if compute_gene_liks:
-            ll_gene = _get_log_liks(results, counts, "gene", batch_size, dtype_lik, ignore_nans)
+            ll_gene = _get_log_liks(
+                results_eff, counts, "gene", batch_size, dtype_lik, ignore_nans
+            )
             log_liks_gene.append(ll_gene)
 
     return ScribeModelComparisonResults(
@@ -725,5 +906,7 @@ def compare_models(
         gene_names=gene_names,
         n_cells=n_cells,
         n_genes=n_genes,
+        # Store masks only when at least one model was pruned, otherwise None
+        active_components=active_masks if any_pruned else None,
         dtype=dtype_psis,
     )
