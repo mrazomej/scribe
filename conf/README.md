@@ -324,6 +324,13 @@ python infer.py -m model=zinb n_components=2,3,5
 python infer.py -m inference.n_steps=25000,50000,100000
 ```
 
+When launching sweeps through `slurm_infer.py` with `hydra/launcher=joblib`,
+`hydra.launcher.n_jobs` controls how many worker processes run concurrently.
+CPU placement is still governed by SLURM (`--cpus-per-task`) and per-worker
+thread limits (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS`),
+so requesting more CPUs in SLURM can improve throughput when each sweep worker
+is CPU-heavy.
+
 ### Mixture Model Analysis
 
 ```bash
