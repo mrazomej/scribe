@@ -6,6 +6,7 @@ from slurm_infer import (
     SlurmConfig,
     apply_slurm_default_overrides,
     build_batch_script,
+    resolve_inference_script,
 )
 
 
@@ -53,6 +54,7 @@ def test_build_batch_script_multirun_sets_loky_cpu_count_to_slurm_allocation():
         hydra_overrides=["data=bleo_study01_bleomycin"],
         project_dir=Path("/tmp/project"),
         is_multirun=True,
+        inference_script="infer.py",
     )
     assert "export LOKY_MAX_CPU_COUNT=32" in batch
     assert "export LOKY_MAX_CPU_COUNT=4" not in batch
@@ -66,7 +68,58 @@ def test_build_batch_script_multirun_partitions_threads_per_worker():
         hydra_overrides=["data=bleo_study01_bleomycin"],
         project_dir=Path("/tmp/project"),
         is_multirun=True,
+        inference_script="infer.py",
     )
     assert "export OMP_NUM_THREADS=8" in batch
     assert "export MKL_NUM_THREADS=8" in batch
     assert "export OPENBLAS_NUM_THREADS=8" in batch
+
+
+def test_resolve_inference_script_uses_split_entrypoint_when_split_by_present(
+    tmp_path: Path,
+):
+    """Select infer_split.py when data config contains split_by."""
+    conf_data_dir = tmp_path / "conf" / "data" / "lung_bleo"
+    conf_data_dir.mkdir(parents=True, exist_ok=True)
+    config_path = conf_data_dir / "lung_bleo_splits.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "# @package data",
+                "name: lung_bleo",
+                "path: /tmp/mock.h5ad",
+                "split_by: exp_condition",
+            ]
+        )
+    )
+
+    script = resolve_inference_script(
+        overrides=["data=lung_bleo/lung_bleo_splits"],
+        project_dir=tmp_path,
+    )
+    assert script == "infer_split.py"
+
+
+def test_resolve_inference_script_falls_back_when_split_by_is_null_override(
+    tmp_path: Path,
+):
+    """Use infer.py when user explicitly disables split_by."""
+    conf_data_dir = tmp_path / "conf" / "data"
+    conf_data_dir.mkdir(parents=True, exist_ok=True)
+    config_path = conf_data_dir / "mock_data.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "# @package data",
+                "name: mock_data",
+                "path: /tmp/mock.h5ad",
+                "split_by: condition",
+            ]
+        )
+    )
+
+    script = resolve_inference_script(
+        overrides=["data=mock_data", "data.split_by=null"],
+        project_dir=tmp_path,
+    )
+    assert script == "infer.py"

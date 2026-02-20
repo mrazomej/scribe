@@ -30,6 +30,8 @@ support
 - **Seamless Integration**: Works with AnnData and the scanpy ecosystem
 - **Professional Visualization**: Comprehensive plotting tools for results
   analysis
+- **Split-Safe UMAP Caching**: Visualization cache keys include dataset split
+  metadata to avoid cross-split cache reuse
 
 ## Available Models
 
