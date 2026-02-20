@@ -28,6 +28,7 @@ class LikelihoodMixin:
         split_components: bool = False,
         weights: Optional[jnp.ndarray] = None,
         weight_type: Optional[str] = None,
+        r_floor: float = 1e-6,
         dtype: jnp.dtype = jnp.float32,
     ) -> jnp.ndarray:
         """
@@ -56,6 +57,15 @@ class LikelihoodMixin:
             How to apply weights. Must be one of:
                 - 'multiplicative': multiply log probabilities by weights
                 - 'additive': add weights to log probabilities
+        r_floor : float, default=1e-6
+            Minimum value clamped onto the NB dispersion parameter ``r``
+            before evaluating the log-likelihood.  Posterior samples from a
+            wide variational guide can occasionally produce ``r`` values that
+            underflow to zero (or become negative in float32), causing
+            ``lgamma(r)`` to return NaN.  Setting a small positive floor
+            (e.g. ``1e-6``) neutralises those degenerate samples without
+            meaningfully changing the likelihood for well-behaved ones.
+            Set to ``0.0`` to disable the floor entirely.
         dtype : jnp.dtype, default=jnp.float32
             Data type for numerical precision in computations
 
@@ -112,6 +122,7 @@ class LikelihoodMixin:
                     split_components=split_components,
                     weights=weights,
                     weight_type=weight_type,
+                    r_floor=r_floor,
                     dtype=dtype,
                 )
             else:
@@ -121,6 +132,7 @@ class LikelihoodMixin:
                     batch_size=batch_size,
                     cells_axis=cells_axis,
                     return_by=return_by,
+                    r_floor=r_floor,
                     dtype=dtype,
                 )
 

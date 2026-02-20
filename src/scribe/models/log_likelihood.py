@@ -23,6 +23,7 @@ def nbdm_log_likelihood(
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
     return_by: str = "cell",
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -47,6 +48,14 @@ def nbdm_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities using the NBDM model (default)
             - 'gene': returns log probabilities using independent NB per gene
+    r_floor : float, default=1e-6
+        Minimum value for the dispersion parameter ``r`` after casting to
+        ``dtype``.  Posterior samples drawn from a wide variational guide can
+        occasionally underflow to zero or become negative in the constrained
+        space, causing ``lgamma(r)`` to return NaN and discarding the entire
+        sample.  Clamping ``r`` to this small positive value neutralises those
+        degenerate samples at negligible cost to the likelihood.  Set to
+        ``0.0`` to disable the floor entirely.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -64,6 +73,9 @@ def nbdm_log_likelihood(
     # Extract parameters from dictionary - handle both old and new formats
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
 
     # Extract dimensions
     if cells_axis == 0:
@@ -147,6 +159,7 @@ def zinb_log_likelihood(
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
     return_by: str = "cell",
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -171,6 +184,11 @@ def zinb_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the dispersion parameter ``r`` after
+        casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
+        posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -187,6 +205,9 @@ def zinb_log_likelihood(
     # Extract parameters from dictionary
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
     gate = jnp.squeeze(params["gate"]).astype(dtype)
 
     # Extract dimensions
@@ -278,6 +299,7 @@ def nbvcp_log_likelihood(
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
     return_by: str = "cell",
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -303,6 +325,11 @@ def nbvcp_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the dispersion parameter ``r`` after
+        casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
+        posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -320,6 +347,9 @@ def nbvcp_log_likelihood(
     # Extract parameters from dictionary
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
     # Handle both p_capture and phi_capture (odds_ratio parameterization)
     if "phi_capture" in params:
         # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
@@ -427,6 +457,7 @@ def zinbvcp_log_likelihood(
     batch_size: Optional[int] = None,
     cells_axis: int = 0,
     return_by: str = "cell",
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -453,6 +484,11 @@ def zinbvcp_log_likelihood(
         Specifies how to return the log probabilities. Must be one of:
             - 'cell': returns log probabilities summed over genes (default)
             - 'gene': returns log probabilities summed over cells
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the dispersion parameter ``r`` after
+        casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
+        posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -470,6 +506,9 @@ def zinbvcp_log_likelihood(
     # Extract parameters from dictionary
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
     # Handle both p_capture and phi_capture (odds_ratio parameterization)
     if "phi_capture" in params:
         # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
@@ -592,6 +631,7 @@ def nbdm_mixture_log_likelihood(
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -628,6 +668,11 @@ def nbdm_mixture_log_likelihood(
             - 'multiplicative': applies as p^weight (weight * log(p) in log
               space)
             - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the dispersion parameter ``r`` after
+        casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
+        posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -661,6 +706,9 @@ def nbdm_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
     mixing_weights = jnp.squeeze(params["mixing_weights"]).astype(dtype)
     n_components = mixing_weights.shape[0]
 
@@ -802,6 +850,7 @@ def zinb_mixture_log_likelihood(
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -836,6 +885,11 @@ def zinb_mixture_log_likelihood(
         How to apply weights to probabilities. Must be one of:
             - 'multiplicative': applies as p^weight (weight * log(p) in log space)
             - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the dispersion parameter ``r`` after
+        casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
+        posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -867,6 +921,9 @@ def zinb_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
     gate = jnp.asarray(params["gate"]).astype(dtype)
     if gate.ndim < 2:
         gate = gate[jnp.newaxis, :]  # (n_genes,) -> (1, n_genes)
@@ -1019,6 +1076,7 @@ def nbvcp_mixture_log_likelihood(
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -1055,6 +1113,11 @@ def nbvcp_mixture_log_likelihood(
             - 'multiplicative': applies as p^weight (weight * log(p) in log
               space)
             - 'additive': applies as exp(weight)*p (weight + log(p) in log space)
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the dispersion parameter ``r`` after
+        casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
+        posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -1088,6 +1151,9 @@ def nbvcp_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
     # Handle both p_capture and phi_capture (odds_ratio parameterization)
     if "phi_capture" in params:
         # Convert phi_capture (odds ratio) to p_capture: p = 1 / (1 + phi)
@@ -1280,6 +1346,7 @@ def zinbvcp_mixture_log_likelihood(
     split_components: bool = False,
     weights: Optional[jnp.ndarray] = None,
     weight_type: Optional[str] = None,
+    r_floor: float = 1e-6,
     dtype: jnp.dtype = jnp.float32,
 ) -> jnp.ndarray:
     """
@@ -1316,6 +1383,11 @@ def zinbvcp_mixture_log_likelihood(
         How to apply weights. Must be one of:
             - 'multiplicative': multiply log probabilities by weights
             - 'additive': add weights to log probabilities
+    r_floor : float, default=1e-6
+        Minimum value clamped onto the dispersion parameter ``r`` after
+        casting to ``dtype``.  Prevents NaN log-likelihoods from degenerate
+        posterior samples where ``r`` underflows to zero.  Set to ``0.0`` to
+        disable.
     dtype: jnp.dtype, default=jnp.float32
         Data type for numerical precision in computations
 
@@ -1349,6 +1421,9 @@ def zinbvcp_mixture_log_likelihood(
     # Extract parameters
     p = jnp.squeeze(params["p"]).astype(dtype)
     r = jnp.squeeze(params["r"]).astype(dtype)  # shape (n_components, n_genes)
+    # Guard against degenerate posterior samples where r underflows to 0
+    if r_floor > 0.0:
+        r = jnp.maximum(r, r_floor)
     if "phi_capture" in params:
         phi_capture = jnp.squeeze(params["phi_capture"]).astype(dtype)
         p_capture = 1.0 / (1.0 + phi_capture)
