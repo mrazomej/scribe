@@ -348,15 +348,19 @@ component_entropy = results.mixture_component_entropy()
 assignment_entropy = results.assignment_entropy_map()
 cell_type_probs = results.cell_type_probabilities()
 
-# Access individual mixture components
+# Access single or multiple mixture components
 component_0 = results.get_component(0)
+components_12 = results.get_components([1, 2])  # renormalize=True by default
+components_12_raw = results.get_components([1, 2], renormalize=False)
 ```
 
 **Data Subsetting:**
 ```python
-# Subset results by genes or cells
-gene_subset = results[:, :100]  # First 100 genes
-cell_subset = results[:500, :]  # First 500 cells
+# Subset by genes
+gene_subset = results[:100]  # First 100 genes
+
+# Two-axis indexing: results[genes, components]
+gene_component_subset = results[1:4, [1, 2]]
 ```
 
 #### Advanced Features
@@ -600,6 +604,13 @@ results = SVIInferenceEngine.run_inference(
 for i in range(3):
     component = results.get_component(i)
     print(f"Component {i} parameters:", component.get_map())
+
+# Multi-component selection with optional renormalization
+components = results.get_components([1, 2])  # renormalize=True default
+components_no_renorm = results.get_components([1, 2], renormalize=False)
+
+# Tuple indexing: first genes, second components
+subset = results[1:4, [1, 2]]
 
 # Get cell type assignments
 cell_probs = results.cell_type_probabilities()

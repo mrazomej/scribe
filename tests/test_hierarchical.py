@@ -1331,6 +1331,57 @@ class TestHierarchicalComponentSubsetting:
         np.testing.assert_allclose(comp1.params["phi_loc"], 2.0)
         np.testing.assert_allclose(comp2.params["phi_loc"], 3.0)
 
+    def test_get_components_reduces_n_components(
+        self, hierarchical_mixture_results
+    ):
+        """get_components should preserve mixture type and reduce K."""
+        results = hierarchical_mixture_results
+        comps = results.get_components([0, 2])
+
+        assert comps.n_components == 2
+        assert comps.model_type == results.model_type
+        assert comps.params["phi_loc"].shape == (2, results.n_genes)
+
+    def test_tuple_indexing_genes_components_hierarchical(
+        self, hierarchical_mixture_results
+    ):
+        """Tuple indexing should apply gene subset then component subset."""
+        results = hierarchical_mixture_results
+        subset = results[jnp.array([0, 2, 4]), [0, 2]]
+
+        assert subset.n_genes == 3
+        assert subset.n_components == 2
+        assert subset.params["phi_loc"].shape == (2, 3)
+
+    def test_get_components_renormalization_toggle(
+        self, hierarchical_mixture_results
+    ):
+        """Renormalization should be optional for selected mixing weights."""
+        results = hierarchical_mixture_results
+        # Inject deterministic posterior samples so weight behavior can be
+        # checked directly without relying on inference randomness.
+        results.posterior_samples = {
+            "phi": jnp.ones((2, 3, results.n_genes)),
+            "mu": jnp.ones((2, 3, results.n_genes)),
+            "mixing_weights": jnp.array(
+                [[0.2, 0.3, 0.5], [0.1, 0.4, 0.5]]
+            ),
+            "mixing_logits_unconstrained": jnp.log(
+                jnp.array([[0.2, 0.3, 0.5], [0.1, 0.4, 0.5]])
+            ),
+        }
+
+        renorm = results.get_components([0, 2], renormalize=True)
+        no_renorm = results.get_components([0, 2], renormalize=False)
+
+        renorm_mass = jnp.sum(renorm.posterior_samples["mixing_weights"], axis=-1)
+        no_renorm_mass = jnp.sum(
+            no_renorm.posterior_samples["mixing_weights"], axis=-1
+        )
+
+        np.testing.assert_allclose(renorm_mass, np.ones_like(np.array(renorm_mass)))
+        assert jnp.all(no_renorm_mass < 1.0)
+
 
 # ==========================================================================
 # Metadata-driven component subsetting
