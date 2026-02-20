@@ -21,6 +21,8 @@ for model diagnostics and result interpretation.
 
 import os
 import math
+import re
+import hashlib
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -146,6 +148,96 @@ def _get_config_values(cfg, results=None):
         "method": method,
         "model_type": model_type,
     }
+
+
+# ------------------------------------------------------------------------------
+
+
+def _sanitize_cache_token(value, max_len=48):
+    """Create a filesystem-friendly token for cache filenames.
+
+    Parameters
+    ----------
+    value : object
+        Raw value to sanitize (typically a config field value).
+    max_len : int, default=48
+        Maximum token length after sanitization and trimming.
+
+    Returns
+    -------
+    str
+        Sanitized token containing only letters, numbers, underscores,
+        hyphens, and periods. Empty values become ``"none"``.
+    """
+    # Convert to string and normalize whitespace.
+    as_str = str(value).strip()
+    if as_str == "":
+        return "none"
+
+    # Replace unsafe filename characters while preserving readability.
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", as_str)
+    token = token.strip("._-")
+    if token == "":
+        token = "none"
+    if len(token) > max_len:
+        token = token[:max_len]
+    return token
+
+
+def _build_umap_cache_path(cfg, cache_umap):
+    """Build a split-aware path for persisted UMAP reducer caches.
+
+    The cache filename is keyed by dataset stem and split metadata
+    (``subset_column`` / ``subset_value``).  A short hash suffix is included
+    to avoid collisions when sanitized subset values truncate to similar
+    strings.
+
+    Parameters
+    ----------
+    cfg : DictConfig
+        Inference configuration that includes ``data.path`` and optionally
+        ``data.subset_column`` / ``data.subset_value``.
+    cache_umap : bool
+        Whether UMAP caching is enabled.
+
+    Returns
+    -------
+    str or None
+        Absolute path to the cache file when caching is enabled and
+        ``cfg.data.path`` exists, otherwise ``None``.
+    """
+    if not cache_umap:
+        return None
+
+    data_cfg = cfg.data if hasattr(cfg, "data") else None
+    data_path = data_cfg.path if data_cfg is not None else None
+    if not data_path:
+        return None
+
+    data_dir = os.path.dirname(data_path)
+    data_stem = os.path.splitext(os.path.basename(data_path))[0]
+    subset_column = data_cfg.get("subset_column", None)
+    subset_value = data_cfg.get("subset_value", None)
+
+    # Include subset identity in cache filename so split runs do not share
+    # the same reducer cache when they come from one source .h5ad file.
+    if subset_column is not None and subset_value is not None:
+        subset_col_token = _sanitize_cache_token(subset_column)
+        subset_val_token = _sanitize_cache_token(subset_value)
+        cache_identity = (
+            f"{os.path.abspath(data_path)}|{subset_column}|{subset_value}"
+        )
+        cache_hash = hashlib.sha1(cache_identity.encode("utf-8")).hexdigest()[
+            :12
+        ]
+        cache_name = (
+            f"{data_stem}_umap_{subset_col_token}_{subset_val_token}_"
+            f"{cache_hash}.pkl"
+        )
+    else:
+        cache_name = f"{data_stem}_umap_full.pkl"
+
+    return os.path.join(data_dir, cache_name)
 
 
 # ------------------------------------------------------------------------------
@@ -668,13 +760,11 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
         # Fallback to matplotlib color names
         pass
 
-    # Determine cache path (same directory as data file, named after it)
-    data_path = cfg.data.path if hasattr(cfg, "data") else None
-    cache_path = None
-    if data_path and cache_umap:
-        data_dir = os.path.dirname(data_path)
-        data_stem = os.path.splitext(os.path.basename(data_path))[0]
-        cache_path = os.path.join(data_dir, f"{data_stem}_umap.pkl")
+    # Determine split-aware cache path (same data directory, subset-specific).
+    cache_path = _build_umap_cache_path(cfg, cache_umap)
+    data_cfg = cfg.data if hasattr(cfg, "data") else None
+    subset_column = data_cfg.get("subset_column", None) if data_cfg else None
+    subset_value = data_cfg.get("subset_value", None) if data_cfg else None
 
     # Current UMAP parameters for cache validation
     current_params = {
@@ -691,6 +781,8 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
         "pca_n_comps": pca_n_comps,
         "n_cells": counts.shape[0],
         "n_genes": counts.shape[1],
+        "subset_column": subset_column,
+        "subset_value": subset_value,
     }
 
     # Try to load cached UMAP
