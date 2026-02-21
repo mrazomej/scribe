@@ -291,6 +291,24 @@ large_results = scribe.fit(
 )
 ```
 
+## SLURM Utilities
+
+Use the helper scripts in `scripts/` to submit jobs to SLURM.
+
+- Submit a marimo notebook export job (always requests one GPU):
+
+```bash
+./scripts/slurm_marimo.sh altos/exploratory/bleo_splits/bleo_splits_de_eda.py
+```
+
+This submits a job that runs:
+
+```bash
+marimo export html <notebook>.py -o <notebook>.html
+```
+
+and writes logs under `slurm_logs/`.
+
 ## Documentation
 
 Comprehensive documentation is available in each module:
