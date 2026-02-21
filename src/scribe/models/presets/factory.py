@@ -716,6 +716,7 @@ def _extract_guides_from_param_specs(
     for spec in param_specs:
         if hasattr(spec, "guide") and spec.guide is not None:
             guides[spec.name] = spec.guide
+    return guides
 
 
 # ------------------------------------------------------------------------------
