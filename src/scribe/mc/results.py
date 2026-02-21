@@ -763,7 +763,7 @@ def compare_models(
     n_samples: int = 1000,
     rng_key=None,
     batch_size: Optional[int] = None,
-    posterior_sample_chunk_size: Optional[int] = 64,
+    posterior_sample_chunk_size: Optional[int] = 8,
     compute_gene_liks: bool = False,
     ignore_nans: bool = False,
     component_threshold: float = 0.0,
