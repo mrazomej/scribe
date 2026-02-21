@@ -19,6 +19,9 @@ from scribe.mc import (
 )
 from scribe.mc._stacking import stacking_summary
 from scribe.mc._gene_level import format_gene_comparison_table
+from scribe.models.log_likelihood import nbdm_log_likelihood
+from scribe.mcmc.results import _compute_log_likelihood
+from scribe.svi._likelihood import LikelihoodMixin
 
 
 # --------------------------------------------------------------------------
@@ -168,7 +171,14 @@ def test_rank_returns_dataframe(three_model_results):
 def test_rank_has_required_columns(three_model_results):
     """rank() DataFrame should have required columns."""
     df = three_model_results.rank()
-    required = {"model", "elpd", "p_eff", "elpd_diff", "elpd_diff_se", "z_score"}
+    required = {
+        "model",
+        "elpd",
+        "p_eff",
+        "elpd_diff",
+        "elpd_diff_se",
+        "z_score",
+    }
     assert required.issubset(set(df.columns))
 
 
@@ -176,7 +186,9 @@ def test_rank_sorted_by_elpd(three_model_results):
     """rank() should sort models by elpd descending (best first)."""
     df = three_model_results.rank()
     elpd_vals = df["elpd"].values
-    assert all(elpd_vals[i] >= elpd_vals[i + 1] for i in range(len(elpd_vals) - 1))
+    assert all(
+        elpd_vals[i] >= elpd_vals[i + 1] for i in range(len(elpd_vals) - 1)
+    )
 
 
 def test_rank_best_model_has_diff_zero(three_model_results):
@@ -311,7 +323,9 @@ def test_gene_level_comparison_by_index(three_model_results):
 def test_gene_level_comparison_invalid_name_raises(three_model_results):
     """Invalid model name should raise ValueError."""
     with pytest.raises(ValueError, match="not found"):
-        three_model_results.gene_level_comparison("NBDM_DOES_NOT_EXIST", "ModelC")
+        three_model_results.gene_level_comparison(
+            "NBDM_DOES_NOT_EXIST", "ModelC"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -380,6 +394,7 @@ def test_mc_imports():
         compute_stacking_weights,
         stacking_summary,
     )
+
     # If all imports succeed, the module is properly set up
     assert ScribeModelComparisonResults is not None
 
@@ -387,6 +402,7 @@ def test_mc_imports():
 def test_scribe_mc_accessible_from_top_level():
     """scribe.mc and scribe.compare_models should be importable from scribe."""
     import scribe
+
     assert hasattr(scribe, "mc")
     assert hasattr(scribe, "compare_models")
     assert hasattr(scribe, "ScribeModelComparisonResults")
@@ -468,7 +484,9 @@ def test_prune_dead_components_reduces_k(mock_mixture_4comp):
     # active mask should exist and flag exactly 2 surviving components
     assert active is not None, "Pruning should have been applied"
     assert active.dtype == bool
-    assert int(active.sum()) == 2, f"Expected 2 survivors, got {int(active.sum())}"
+    assert (
+        int(active.sum()) == 2
+    ), f"Expected 2 survivors, got {int(active.sum())}"
 
     # Pruned model should have n_components == 2
     assert pruned.n_components == 2
@@ -503,21 +521,27 @@ def test_prune_dead_components_all_active_unchanged(mock_mixture_all_active):
     """When all components exceed the threshold, nothing should be pruned."""
     from scribe.mc.results import _prune_dead_components
 
-    pruned, active = _prune_dead_components(mock_mixture_all_active, threshold=0.01)
+    pruned, active = _prune_dead_components(
+        mock_mixture_all_active, threshold=0.01
+    )
 
     # All three components have weight >> 0.01, so no pruning
     assert pruned is mock_mixture_all_active
     assert active is None
 
 
-def test_prune_dead_components_aggressive_threshold_keeps_best(mock_mixture_4comp):
+def test_prune_dead_components_aggressive_threshold_keeps_best(
+    mock_mixture_4comp,
+):
     """A threshold that kills all components should fall back to keeping the best."""
     from scribe.mc.results import _prune_dead_components
     import warnings
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        pruned, active = _prune_dead_components(mock_mixture_4comp, threshold=0.99)
+        pruned, active = _prune_dead_components(
+            mock_mixture_4comp, threshold=0.99
+        )
 
     # Should warn and keep exactly 1 component
     assert active is not None
@@ -572,7 +596,9 @@ def test_active_components_stored_on_pruned_results():
     S, C = 200, 40
     # Build a results object with active_components set manually
     ll = jnp.array(rng.normal(-2.0, 0.3, (S, C)), dtype=jnp.float32)
-    active_mask = np.array([True, True, False, False])  # 2 of 4 components active
+    active_mask = np.array(
+        [True, True, False, False]
+    )  # 2 of 4 components active
 
     mc = ScribeModelComparisonResults(
         model_names=["MixtureModel"],
@@ -612,3 +638,63 @@ def test_repr_no_arrow_when_no_pruning(two_model_results):
     r = repr(two_model_results)
     assert "→" not in r
     assert "\u2192" not in r
+
+
+def test_svi_likelihood_chunking_matches_full_vmap():
+    """Chunked SVI likelihood should match unchunked evaluation."""
+
+    class _DummySVI(LikelihoodMixin):
+        def __init__(self, posterior_samples):
+            self.posterior_samples = posterior_samples
+            self.n_components = None
+
+        def _log_likelihood_fn(self):
+            return nbdm_log_likelihood
+
+    _rng = np.random.default_rng(42)
+    _counts = jnp.array(_rng.poisson(2.0, (7, 4)), dtype=jnp.float32)
+    _posterior = {
+        "p": jnp.full((9,), 0.3, dtype=jnp.float32),
+        "r": jnp.full((9, 4), 1.2, dtype=jnp.float32),
+    }
+    _results = _DummySVI(_posterior)
+
+    _ll_full = _results.log_likelihood(
+        _counts, return_by="cell", sample_chunk_size=None
+    )
+    _ll_chunk = _results.log_likelihood(
+        _counts, return_by="cell", sample_chunk_size=3
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(_ll_full), np.asarray(_ll_chunk), rtol=1e-6
+    )
+
+
+def test_mcmc_likelihood_chunking_matches_full_vmap():
+    """Chunked MCMC helper likelihood should match unchunked evaluation."""
+    _rng = np.random.default_rng(7)
+    _counts = jnp.array(_rng.poisson(2.5, (6, 3)), dtype=jnp.float32)
+    _samples = {
+        "p": jnp.full((8,), 0.25, dtype=jnp.float32),
+        "r": jnp.full((8, 3), 1.4, dtype=jnp.float32),
+    }
+
+    _ll_full = _compute_log_likelihood(
+        _samples,
+        _counts,
+        model_type="nbdm",
+        sample_chunk_size=None,
+        return_by="cell",
+    )
+    _ll_chunk = _compute_log_likelihood(
+        _samples,
+        _counts,
+        model_type="nbdm",
+        sample_chunk_size=2,
+        return_by="cell",
+    )
+
+    np.testing.assert_allclose(
+        np.asarray(_ll_full), np.asarray(_ll_chunk), rtol=1e-6
+    )
