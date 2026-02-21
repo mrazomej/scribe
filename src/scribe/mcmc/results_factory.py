@@ -5,8 +5,9 @@ This module handles the packaging of MCMC results into ScribeMCMCResults
 objects.
 """
 
-from typing import Union, Optional, Dict, Any
+from typing import Optional, Dict, Any
 import jax.numpy as jnp
+
 from ..mcmc.results import ScribeMCMCResults
 from ..models.config import ModelConfig
 
@@ -26,53 +27,50 @@ class MCMCResultsFactory:
         n_components: Optional[int],
         prior_params: Dict[str, Any],
     ) -> ScribeMCMCResults:
-        """
-        Package MCMC results into ScribeMCMCResults object.
+        """Package MCMC results into a ``ScribeMCMCResults`` object.
 
         Parameters
         ----------
-        mcmc_results : Any
-            Raw MCMC results from numpyro
+        mcmc_results : numpyro.infer.MCMC
+            Raw MCMC results from NumPyro.
         model_config : ModelConfig
-            Model configuration object
+            Model configuration object.
         adata : Optional[AnnData]
-            Original AnnData object (if provided)
+            Original AnnData object (if provided).
         count_data : jnp.ndarray
-            Processed count data
+            Processed count data.
         n_cells : int
-            Number of cells
+            Number of cells.
         n_genes : int
-            Number of genes
+            Number of genes.
         model_type : str
-            Type of model
+            Type of model.
         n_components : Optional[int]
-            Number of mixture components
+            Number of mixture components.
         prior_params : Dict[str, Any]
-            Dictionary of prior parameters
+            Dictionary of prior parameters.
 
         Returns
         -------
         ScribeMCMCResults
-            Packaged results object
+            Packaged results object.
         """
         if adata is not None:
-            results = ScribeMCMCResults.from_anndata(
+            return ScribeMCMCResults.from_anndata(
+                mcmc=mcmc_results,
                 adata=adata,
-                mcmc=mcmc_results,
-                model_type=model_type,
-                model_config=model_config,
-                n_components=n_components,
-                prior_params=prior_params,
-            )
-        else:
-            results = ScribeMCMCResults(
-                mcmc=mcmc_results,
-                n_cells=n_cells,
-                n_genes=n_genes,
                 model_type=model_type,
                 model_config=model_config,
                 n_components=n_components,
                 prior_params=prior_params,
             )
 
-        return results
+        return ScribeMCMCResults.from_mcmc(
+            mcmc=mcmc_results,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type=model_type,
+            model_config=model_config,
+            n_components=n_components,
+            prior_params=prior_params,
+        )

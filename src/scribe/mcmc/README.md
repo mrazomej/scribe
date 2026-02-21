@@ -5,6 +5,57 @@ SCRIBE models. MCMC provides exact Bayesian inference by generating samples from
 the true posterior distribution, offering the most accurate uncertainty
 quantification available in SCRIBE.
 
+## Architecture
+
+`ScribeMCMCResults` is a **`@dataclass`** that wraps a NumPyro `MCMC` object
+(composition, not inheritance) and composes analysis functionality from eight
+mixin classes -- the same pattern used by the SVI results module.
+
+### File structure
+
+```
+src/scribe/mcmc/
+  __init__.py                 # Public exports
+  inference_engine.py         # NUTS execution
+  results_factory.py          # Factory: MCMC -> ScribeMCMCResults
+  results.py                  # ScribeMCMCResults @dataclass (~120 lines)
+  _parameter_extraction.py    # ParameterExtractionMixin
+  _gene_subsetting.py         # GeneSubsettingMixin
+  _component.py               # ComponentMixin
+  _model_helpers.py           # ModelHelpersMixin
+  _sampling.py                # SamplingMixin
+  _likelihood.py              # LikelihoodMixin
+  _normalization.py           # NormalizationMixin
+  _mixture_analysis.py        # MixtureAnalysisMixin
+```
+
+### Composition over inheritance
+
+Previous versions of `ScribeMCMCResults` inherited from `numpyro.infer.MCMC`
+and required a separate `ScribeMCMCSubset` dataclass for gene/component
+subsets. The current design wraps the MCMC object as an optional `_mcmc` field:
+
+- Subsetting (gene or component) returns another `ScribeMCMCResults`, not a
+  different type.
+- `print_summary()` and `get_extra_fields()` delegate to `_mcmc` when
+  available.
+- `_mcmc` is `None` on subsets (MCMC diagnostics are only meaningful for
+  the full run).
+
+### Mixin diagram
+
+```
+ScribeMCMCResults(@dataclass)
+ ├── ParameterExtractionMixin   # quantiles, MAP, component-specificity checks
+ ├── GeneSubsettingMixin        # __getitem__ gene indexing
+ ├── ComponentMixin             # get_component, get_components
+ ├── ModelHelpersMixin          # _model(), _log_likelihood_fn()
+ ├── SamplingMixin              # PPC, biological PPC, denoising, prior predictive
+ ├── LikelihoodMixin            # log_likelihood()
+ ├── NormalizationMixin         # normalize_counts()
+ └── MixtureAnalysisMixin       # cell_type_probabilities()
+```
+
 ## Overview
 
 The MCMC module provides:
@@ -79,8 +130,8 @@ results = ScribeMCMCResults.from_anndata(
 
 #### Core Attributes
 
-- **`mcmc`**: NumPyro MCMC object with samples and diagnostics
-- **`samples`**: Dictionary of posterior samples for all parameters
+- **`samples`**: Dictionary of raw posterior samples for all parameters
+- **`_mcmc`**: Wrapped NumPyro MCMC object (for diagnostics; `None` on subsets)
 - **`model_config`**: Model configuration used for inference
 - **`n_cells`**, **`n_genes`**: Dataset dimensions
 - **`obs`**, **`var`**, **`uns`**: Metadata from AnnData objects
@@ -89,8 +140,10 @@ results = ScribeMCMCResults.from_anndata(
 
 **Posterior Access:**
 ```python
-# Get posterior samples in canonical form
-samples = results.get_posterior_samples(canonical=True)
+# Get posterior samples (already in canonical form -- derived parameters
+# are registered as numpyro.deterministic sites and unconstrained specs
+# sample via TransformedDistribution in constrained space)
+samples = results.get_posterior_samples()
 
 # Get samples grouped by chain for diagnostics
 chain_samples = results.get_samples(group_by_chain=True)
@@ -105,39 +158,29 @@ quantiles = results.get_posterior_quantiles(
 **Point Estimates:**
 ```python
 # Maximum a posteriori (MAP) estimates
-map_estimates = results.get_map(canonical=True)
+map_estimates = results.get_map()
 ```
 
 **Model Evaluation:**
 ```python
 # Compute log-likelihood using posterior samples
-log_lik = results.log_likelihood(
-    n_samples=1000,
-    seed=42
-)
+log_lik = results.log_likelihood(counts=count_data)
 ```
 
 **Predictive Analysis:**
 ```python
 # Posterior predictive checks (includes technical noise)
-ppc_samples = results.get_ppc_samples(
-    n_samples=500,
-    seed=42
-)
+ppc_samples = results.get_ppc_samples(rng_key=rng_key)
 
 # Biological (denoised) PPC — strips capture probability and
 # zero-inflation gate, sampling from the base NB(r, p) only.
-# For NBDM models this is equivalent to standard PPC.
 bio_ppc = results.get_ppc_samples_biological(
     rng_key=rng_key,
-    cell_batch_size=2048,  # Optional cell batching for memory
+    cell_batch_size=2048,
 )
 
 # Prior predictive samples
-prior_samples = results.get_prior_predictive_samples(
-    n_samples=500,
-    seed=42
-)
+prior_samples = results.get_prior_predictive_samples(rng_key=rng_key)
 ```
 
 **Bayesian Denoising of Observed Counts:**
@@ -146,11 +189,9 @@ Takes observed counts and computes the posterior of the true (pre-capture,
 pre-dropout) transcript counts using the MCMC posterior samples.
 
 ```python
-# Denoise using all MCMC posterior draws (returns one denoised
-# matrix per draw; average for a Bayesian point estimate)
 denoised = results.denoise_counts(
     counts=observed_counts,
-    method="mean",          # "mean", "mode", or "sample"
+    method="mean",
     rng_key=rng_key,
 )
 # denoised.shape == (n_posterior_samples, n_cells, n_genes)
@@ -168,21 +209,29 @@ result = results.denoise_counts(
 **Mixture Model Analysis:**
 ```python
 # For mixture models, analyze cell type assignments
-cell_type_probs = results.cell_type_probabilities()
+cell_type_probs = results.cell_type_probabilities(counts=count_data)
 
 # Access one or multiple mixture components
 component_0 = results.get_component(0)
-components_12 = results.get_components([1, 2])  # renormalize=True default
-components_12_raw = results.get_components([1, 2], renormalize=False)
+components_12 = results.get_components([1, 2])
 ```
 
 **Data Subsetting:**
 ```python
-# Subset by genes
-gene_subset = results[:100]  # First 100 genes
+# Subset by genes -- always returns ScribeMCMCResults
+gene_subset = results[:100]
 
 # Two-axis indexing: results[genes, components]
 gene_component_subset = results[1:4, [1, 2]]
+```
+
+**MCMC Diagnostics:**
+```python
+# Print summary with R-hat statistics (delegates to wrapped MCMC)
+results.print_summary()
+
+# Get extra fields (potential energy, divergences, etc.)
+extra = results.get_extra_fields()
 ```
 
 ### MCMCResultsFactory (`results_factory.py`)
@@ -192,11 +241,10 @@ Factory class for creating and packaging MCMC results:
 ```python
 from scribe.mcmc import MCMCResultsFactory
 
-# Package raw MCMC results into ScribeMCMCResults
 results = MCMCResultsFactory.create_results(
     mcmc_results=raw_mcmc,
     model_config=config,
-    adata=adata,  # Optional
+    adata=adata,
     count_data=data,
     n_cells=n_cells,
     n_genes=n_genes,
@@ -239,126 +287,15 @@ mcmc_results = MCMCInferenceEngine.run_inference(
 )
 ```
 
-### Advanced MCMC Configuration
-
-```python
-# Custom NUTS parameters for challenging models
-mcmc_kwargs = {
-    "target_accept_prob": 0.9,    # Higher acceptance rate
-    "max_tree_depth": 12,         # Deeper trees for complex geometry
-    "adapt_step_size": True,      # Adaptive step size tuning
-    "adapt_mass_matrix": True,    # Adaptive mass matrix
-}
-
-mcmc_results = MCMCInferenceEngine.run_inference(
-    model_config=config,
-    count_data=count_data,
-    n_cells=n_cells,
-    n_genes=n_genes,
-    n_samples=5000,
-    n_warmup=2500,
-    n_chains=6,  # More chains for better diagnostics
-    mcmc_kwargs=mcmc_kwargs,
-    seed=42
-)
-```
-
 ### Convergence Diagnostics
 
 ```python
-# Access MCMC object for diagnostics
-mcmc = mcmc_results.mcmc
-
 # Print summary with R-hat statistics
-mcmc.print_summary()
+mcmc_results.print_summary()
 
-# Get R-hat values for manual inspection
-r_hat = mcmc.get_extra_fields()['r_hat']
-
-# Check effective sample size
-n_eff = mcmc.get_extra_fields()['n_eff']
-
-# Identify problematic parameters
-problematic_params = []
-for param, r_hat_val in r_hat.items():
-    if jnp.any(r_hat_val > 1.1):  # R-hat > 1.1 indicates poor convergence
-        problematic_params.append(param)
-        print(f"Parameter {param} has poor convergence (R-hat > 1.1)")
-```
-
-### Posterior Analysis
-
-```python
-# Get posterior samples
-samples = mcmc_results.get_posterior_samples(canonical=True)
-
-# Analyze parameter distributions
-import matplotlib.pyplot as plt
-
-# Plot posterior distributions
-fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-
-# Success probabilities
-p_samples = samples['p']
-axes[0, 0].hist(p_samples.flatten(), bins=50, alpha=0.7)
-axes[0, 0].set_title('Posterior: Success Probabilities')
-axes[0, 0].set_xlabel('p')
-
-# Dispersion parameters
-r_samples = samples['r']
-axes[0, 1].hist(r_samples.flatten(), bins=50, alpha=0.7)
-axes[0, 1].set_title('Posterior: Dispersion Parameters')
-axes[0, 1].set_xlabel('r')
-
-# Trace plots for convergence
-axes[1, 0].plot(p_samples[:, 0])  # First gene
-axes[1, 0].set_title('Trace Plot: p[0]')
-axes[1, 0].set_xlabel('Sample')
-
-axes[1, 1].plot(r_samples[:, 0])  # First gene
-axes[1, 1].set_title('Trace Plot: r[0]')
-axes[1, 1].set_xlabel('Sample')
-
-plt.tight_layout()
-plt.show()
-```
-
-### Model Comparison with MCMC
-
-```python
-# Compare models using exact Bayesian inference
-models = ["nbdm", "zinb", "nbvcp"]
-mcmc_results = {}
-log_likelihoods = {}
-
-for model_type in models:
-    config = ModelConfig(
-        base_model=model_type,
-        inference_method="mcmc"
-    )
-    
-    # Run MCMC
-    result = MCMCInferenceEngine.run_inference(
-        model_config=config,
-        count_data=count_data,
-        n_cells=n_cells,
-        n_genes=n_genes,
-        n_samples=2000,
-        n_warmup=1000,
-        n_chains=4
-    )
-    
-    mcmc_results[model_type] = result
-    
-    # Compute log-likelihood
-    log_likelihoods[model_type] = result.log_likelihood(
-        n_samples=1000,
-        seed=42
-    )
-
-# Compare models
-for model, ll in log_likelihoods.items():
-    print(f"{model}: log-likelihood = {ll:.2f}")
+# Get diagnostic fields
+extra = mcmc_results.get_extra_fields()
+potential_energy = extra.get("potential_energy")
 ```
 
 ### Mixture Model Analysis
@@ -384,52 +321,14 @@ mcmc_results = MCMCInferenceEngine.run_inference(
 )
 
 # Analyze mixture components
-cell_type_probs = mcmc_results.cell_type_probabilities()
+cell_type_probs = mcmc_results.cell_type_probabilities(counts=count_data)
 
 # Multi-component selection with optional renormalization
-components = mcmc_results.get_components([1, 2])  # renormalize=True default
-components_no_renorm = mcmc_results.get_components(
-    [1, 2], renormalize=False
-)
+components = mcmc_results.get_components([1, 2])
+components_no_renorm = mcmc_results.get_components([1, 2], renormalize=False)
 
 # Tuple indexing: first genes, second components
 subset = mcmc_results[1:4, [1, 2]]
-
-# Plot cell type assignments
-import matplotlib.pyplot as plt
-plt.figure(figsize=(10, 6))
-plt.imshow(cell_type_probs.T, aspect='auto', cmap='viridis')
-plt.colorbar(label='Assignment Probability')
-plt.xlabel('Cells')
-plt.ylabel('Components')
-plt.title('Cell Type Assignment Probabilities')
-plt.show()
-```
-
-### Uncertainty Quantification
-
-```python
-# Get credible intervals for all parameters
-samples = mcmc_results.get_posterior_samples(canonical=True)
-
-# Compute 95% credible intervals
-credible_intervals = {}
-for param_name, param_samples in samples.items():
-    lower = jnp.percentile(param_samples, 2.5, axis=0)
-    upper = jnp.percentile(param_samples, 97.5, axis=0)
-    credible_intervals[param_name] = {
-        'lower': lower,
-        'upper': upper,
-        'width': upper - lower
-    }
-
-# Identify parameters with high uncertainty
-high_uncertainty_genes = []
-for i, width in enumerate(credible_intervals['p']['width']):
-    if width > 0.5:  # Threshold for high uncertainty
-        high_uncertainty_genes.append(i)
-
-print(f"Found {len(high_uncertainty_genes)} genes with high uncertainty in p")
 ```
 
 ## MCMC vs SVI Comparison
@@ -458,49 +357,26 @@ print(f"Found {len(high_uncertainty_genes)} genes with high uncertainty in p")
 - Real-time or interactive analysis
 - Computational resources are limited
 
-## Optimization and Diagnostics
+## Migration Notes
 
-### Improving Convergence
+**`ScribeMCMCSubset` has been removed.** All subsetting operations (gene
+indexing, component selection) now return `ScribeMCMCResults` instances.
+Code that previously type-checked for `ScribeMCMCSubset` should use
+`ScribeMCMCResults` instead.
 
-```python
-# For difficult models, try these strategies:
+**`ScribeMCMCResults` no longer inherits from `numpyro.infer.MCMC`.**
+Code that relied on `isinstance(results, MCMC)` should be updated.
+MCMC-specific methods like `print_summary()` and `get_extra_fields()`
+are still available via delegation to the wrapped `_mcmc` object.
 
-# 1. Longer warmup
-mcmc_kwargs = {
-    "target_accept_prob": 0.95,  # Higher acceptance rate
-    "max_tree_depth": 15,        # Deeper exploration
-}
-
-# 2. More chains and samples
-n_chains = 8
-n_samples = 5000
-n_warmup = 3000
-
-# 3. Parameter initialization
-# (Advanced: custom initialization strategies)
-```
-
-### Diagnostic Checks
-
-```python
-# Essential diagnostic checks:
-
-# 1. R-hat convergence diagnostic
-r_hat = mcmc.get_extra_fields()['r_hat']
-max_r_hat = max([jnp.max(r) for r in r_hat.values()])
-print(f"Maximum R-hat: {max_r_hat:.3f}")
-if max_r_hat > 1.1:
-    print("Warning: Poor convergence detected!")
-
-# 2. Effective sample size
-n_eff = mcmc.get_extra_fields()['n_eff']
-min_n_eff = min([jnp.min(n) for n in n_eff.values()])
-print(f"Minimum effective sample size: {min_n_eff:.0f}")
-
-# 3. Divergent transitions
-divergences = mcmc.get_extra_fields().get('diverging', 0)
-print(f"Number of divergent transitions: {divergences}")
-```
+**`_convert_to_canonical` has been removed.** MCMC samples already contain
+canonical parameters (`p`, `r`, `mixing_weights`, etc.) because derived
+parameters are registered as `numpyro.deterministic` sites and
+unconstrained specs sample via `TransformedDistribution` in constrained
+space. The `canonical` parameter has been removed from
+`get_posterior_samples()`, `get_samples()`, `get_posterior_quantiles()`,
+and `get_map()`. Code that passed `canonical=True` should simply drop
+that argument.
 
 ## Integration with Other Modules
 

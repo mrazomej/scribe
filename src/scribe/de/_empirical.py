@@ -186,7 +186,7 @@ def _extract_mu(map_estimates: dict) -> jnp.ndarray:
     Parameters
     ----------
     map_estimates : dict
-        MAP parameter dictionary returned by ``get_map(canonical=True)``.
+        MAP parameter dictionary returned by ``get_map()``.
 
     Returns
     -------

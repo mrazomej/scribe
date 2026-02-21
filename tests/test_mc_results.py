@@ -20,7 +20,7 @@ from scribe.mc import (
 from scribe.mc._stacking import stacking_summary
 from scribe.mc._gene_level import format_gene_comparison_table
 from scribe.models.log_likelihood import nbdm_log_likelihood
-from scribe.mcmc.results import _compute_log_likelihood
+from scribe.mcmc._likelihood import _compute_log_likelihood
 from scribe.svi._likelihood import LikelihoodMixin
 
 
