@@ -28,7 +28,7 @@ def _validate_mixture_component_shapes(
         is ``(..., n_genes, n_components)``.
     probs : jnp.ndarray
         Success-probability tensor (`p_hat`) after capture adjustment. Expected
-        trailing axis layout is ``(..., n_genes or 1, n_components)``.
+        trailing axis layout is ``(..., n_genes or 1, n_components or 1)``.
     n_components : int
         Number of active mixture components implied by ``mixing_weights``.
     context : str
@@ -52,7 +52,7 @@ def _validate_mixture_component_shapes(
             f"Expected r.shape[-1] == {n_components}, got r.shape={tuple(r.shape)}."
         )
 
-    if probs.shape[-1] != n_components:
+    if probs.shape[-1] not in (1, n_components):
         hint = ""
         if probs.ndim >= 2 and probs.shape[-2] == n_components:
             hint = (
@@ -61,7 +61,7 @@ def _validate_mixture_component_shapes(
             )
         raise ValueError(
             f"{context}: probability tensor has incompatible component axis. "
-            f"Expected probs.shape[-1] == {n_components}, got probs.shape="
+            f"Expected probs.shape[-1] in {{1, {n_components}}}, got probs.shape="
             f"{tuple(probs.shape)}.{hint}"
         )
 
