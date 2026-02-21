@@ -21,6 +21,10 @@ from scribe.models.presets.registry import (
     build_capture_spec,
     build_gate_spec,
 )
+from scribe.models.presets.factory import (
+    _extract_priors_from_param_specs,
+    _extract_guides_from_param_specs,
+)
 
 
 # ==============================================================================
@@ -1415,3 +1419,94 @@ class TestMixtureParamsValidation:
         # Should not raise
         model, guide, _ = create_model(config, validate=False)
         assert callable(model)
+
+
+# ==============================================================================
+# Test ParamSpec Extraction Helpers
+# ==============================================================================
+
+
+class _FakeSpec:
+    """Minimal stand-in for a ParamSpec with optional prior/guide attrs."""
+
+    def __init__(self, name, prior=None, guide=None, *, has_prior=True, has_guide=True):
+        self.name = name
+        if has_prior:
+            self.prior = prior
+        if has_guide:
+            self.guide = guide
+
+
+class TestExtractPriorsFromParamSpecs:
+    """Tests for _extract_priors_from_param_specs."""
+
+    def test_empty_list_returns_empty_dict(self):
+        """An empty param_specs list should yield an empty dict."""
+        assert _extract_priors_from_param_specs([]) == {}
+
+    def test_extracts_prior_values(self):
+        """Specs whose prior is not None should be included."""
+        specs = [
+            _FakeSpec("r", prior=(1.0, 2.0)),
+            _FakeSpec("p", prior=(0.5,)),
+        ]
+        result = _extract_priors_from_param_specs(specs)
+        assert result == {"r": (1.0, 2.0), "p": (0.5,)}
+
+    def test_skips_none_priors(self):
+        """Specs with prior=None should be excluded."""
+        specs = [
+            _FakeSpec("r", prior=(1.0, 2.0)),
+            _FakeSpec("p", prior=None),
+        ]
+        result = _extract_priors_from_param_specs(specs)
+        assert result == {"r": (1.0, 2.0)}
+
+    def test_skips_specs_without_prior_attr(self):
+        """Specs lacking a 'prior' attribute entirely should be skipped."""
+        specs = [
+            _FakeSpec("r", prior=(1.0,), has_prior=False),
+            _FakeSpec("p", prior=(0.5,)),
+        ]
+        result = _extract_priors_from_param_specs(specs)
+        assert result == {"p": (0.5,)}
+
+
+class TestExtractGuidesFromParamSpecs:
+    """Tests for _extract_guides_from_param_specs."""
+
+    def test_empty_list_returns_empty_dict(self):
+        """An empty param_specs list should yield an empty dict."""
+        assert _extract_guides_from_param_specs([]) == {}
+
+    def test_extracts_guide_values(self):
+        """Specs whose guide is not None should be included."""
+        specs = [
+            _FakeSpec("r", guide=(3.0, 4.0)),
+            _FakeSpec("p", guide=(0.1,)),
+        ]
+        result = _extract_guides_from_param_specs(specs)
+        assert result == {"r": (3.0, 4.0), "p": (0.1,)}
+
+    def test_skips_none_guides(self):
+        """Specs with guide=None should be excluded."""
+        specs = [
+            _FakeSpec("r", guide=(3.0,)),
+            _FakeSpec("p", guide=None),
+        ]
+        result = _extract_guides_from_param_specs(specs)
+        assert result == {"r": (3.0,)}
+
+    def test_skips_specs_without_guide_attr(self):
+        """Specs lacking a 'guide' attribute entirely should be skipped."""
+        specs = [
+            _FakeSpec("r", guide=(3.0,), has_guide=False),
+            _FakeSpec("p", guide=(0.1,)),
+        ]
+        result = _extract_guides_from_param_specs(specs)
+        assert result == {"p": (0.1,)}
+
+    def test_returns_dict_not_none(self):
+        """Verify the function returns a dict (regression for missing return)."""
+        result = _extract_guides_from_param_specs([])
+        assert isinstance(result, dict)
