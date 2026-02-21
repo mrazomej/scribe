@@ -813,6 +813,14 @@ def compare_models(
         components from inflating ``p_waic_2`` and the PSIS-LOO effective
         parameter count.
 
+        Implementation note:
+        Component pruning currently relies on runtime tensor-shape inference
+        plus explicit mixture metadata from ``param_specs`` to keep canonical
+        tensors (e.g. ``p``/``r``) aligned after subsetting.  A potential
+        long-term refactor is to drive this entirely from derived-parameter
+        lineage metadata (``DerivedParam`` dependencies), if that metadata is
+        persisted as a first-class runtime contract.
+
         - ``0.0`` (default): no pruning; behavior is unchanged.
         - Typical value: ``0.01`` (prune components below 1 %).
         - Non-mixture models are always passed through unmodified.

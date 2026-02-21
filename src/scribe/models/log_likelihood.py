@@ -12,6 +12,59 @@ import numpyro.distributions as dist
 # Import typing
 from typing import Dict, Optional
 
+
+def _validate_mixture_component_shapes(
+    r: jnp.ndarray,
+    probs: jnp.ndarray,
+    n_components: int,
+    context: str,
+) -> None:
+    """Validate component-axis alignment for mixture NB likelihood tensors.
+
+    Parameters
+    ----------
+    r : jnp.ndarray
+        Dispersion tensor after mixture reshaping. Expected trailing axis layout
+        is ``(..., n_genes, n_components)``.
+    probs : jnp.ndarray
+        Success-probability tensor (`p_hat`) after capture adjustment. Expected
+        trailing axis layout is ``(..., n_genes or 1, n_components)``.
+    n_components : int
+        Number of active mixture components implied by ``mixing_weights``.
+    context : str
+        Human-readable caller context to include in error messages.
+
+    Raises
+    ------
+    ValueError
+        Raised when tensors do not agree on the active component axis.
+
+    Notes
+    -----
+    This explicit check provides a clear error when component pruning produced
+    inconsistent posterior tensors (for example, `mixing_weights` pruned to
+    ``K=3`` while canonical `p`/`r` stayed at ``K=4``), instead of surfacing
+    a low-level JAX broadcasting failure.
+    """
+    if r.shape[-1] != n_components:
+        raise ValueError(
+            f"{context}: dispersion tensor has incompatible component axis. "
+            f"Expected r.shape[-1] == {n_components}, got r.shape={tuple(r.shape)}."
+        )
+
+    if probs.shape[-1] != n_components:
+        hint = ""
+        if probs.ndim >= 2 and probs.shape[-2] == n_components:
+            hint = (
+                " Detected component-like size on probs.shape[-2], suggesting "
+                "a swapped or stale component axis after mixture pruning."
+            )
+        raise ValueError(
+            f"{context}: probability tensor has incompatible component axis. "
+            f"Expected probs.shape[-1] == {n_components}, got probs.shape="
+            f"{tuple(probs.shape)}.{hint}"
+        )
+
 # ------------------------------------------------------------------------------
 # Negative Binomial-Dirichlet Multinomial (NBDM) likelihood
 # ------------------------------------------------------------------------------
@@ -1306,6 +1359,12 @@ def nbvcp_mixture_log_likelihood(
     # p_hat = p * p_capture / (1 - p * (1 - p_capture))
     # Broadcasts to (n_cells, n_genes, n_components) or (n_cells, 1, n_components)
     p_hat = p * p_capture / (1 - p * (1 - p_capture))
+    _validate_mixture_component_shapes(
+        r=r,
+        probs=p_hat,
+        n_components=n_components,
+        context="nbvcp_mixture_log_likelihood",
+    )
     # Clip effective probability away from 0 and 1 to prevent NaN
     if p_floor > 0.0:
         p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
@@ -1357,6 +1416,12 @@ def nbvcp_mixture_log_likelihood(
                 batch_p_capture = p_capture[start_idx:end_idx]
                 batch_p_hat = (
                     p * batch_p_capture / (1 - p * (1 - batch_p_capture))
+                )
+                _validate_mixture_component_shapes(
+                    r=r,
+                    probs=batch_p_hat,
+                    n_components=n_components,
+                    context="nbvcp_mixture_log_likelihood (batched)",
                 )
 
                 # Create base NB distribution for batch
@@ -1413,6 +1478,12 @@ def nbvcp_mixture_log_likelihood(
                 batch_p_capture = p_capture[start_idx:end_idx]
                 batch_p_hat = (
                     p * batch_p_capture / (1 - p * (1 - batch_p_capture))
+                )
+                _validate_mixture_component_shapes(
+                    r=r,
+                    probs=batch_p_hat,
+                    n_components=n_components,
+                    context="nbvcp_mixture_log_likelihood (batched)",
                 )
 
                 # Create base NB distribution for batch
@@ -1584,6 +1655,12 @@ def zinbvcp_mixture_log_likelihood(
 
     # p_hat broadcasts to (n_cells, n_genes, n_components) or (n_cells, 1, n_components)
     p_hat = p * p_capture / (1 - p * (1 - p_capture))
+    _validate_mixture_component_shapes(
+        r=r,
+        probs=p_hat,
+        n_components=n_components,
+        context="zinbvcp_mixture_log_likelihood",
+    )
     # Clip effective probability away from 0 and 1 to prevent NaN
     if p_floor > 0.0:
         p_hat = jnp.clip(p_hat, p_floor, 1.0 - p_floor)
