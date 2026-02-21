@@ -22,6 +22,7 @@ class LikelihoodMixin:
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
+        sample_chunk_size: Optional[int] = None,
         return_by: str = "cell",
         cells_axis: int = 0,
         ignore_nans: bool = False,
@@ -41,6 +42,12 @@ class LikelihoodMixin:
             Count data to evaluate likelihood on
         batch_size : Optional[int], default=None
             Size of mini-batches used for likelihood computation
+        sample_chunk_size : Optional[int], default=None
+            Number of posterior samples evaluated per chunk. When set, the
+            method computes log-likelihoods in sequential chunks to bound peak
+            memory usage; this is slower but avoids OOM for large
+            ``(n_samples, n_cells, n_genes)`` workloads. ``None`` keeps the
+            previous all-samples-at-once ``vmap`` behavior.
         return_by : str, default='cell'
             Specifies how to return the log probabilities. Must be one of:
                 - 'cell': returns log probabilities summed over genes
@@ -154,8 +161,19 @@ class LikelihoodMixin:
                     dtype=dtype,
                 )
 
-        # Use vmap for parallel computation (more memory intensive)
-        log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+        # Use chunked vmap to reduce peak memory when requested.
+        if (
+            sample_chunk_size is None
+            or sample_chunk_size <= 0
+            or sample_chunk_size >= n_samples
+        ):
+            log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+        else:
+            chunks = []
+            for start in range(0, n_samples, sample_chunk_size):
+                end = min(start + sample_chunk_size, n_samples)
+                chunks.append(vmap(compute_sample_lik)(jnp.arange(start, end)))
+            log_liks = jnp.concatenate(chunks, axis=0)
 
         # Handle NaNs if requested
         if ignore_nans:

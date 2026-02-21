@@ -691,6 +691,7 @@ def _get_log_liks(
     counts: jnp.ndarray,
     return_by: str,
     batch_size: Optional[int],
+    sample_chunk_size: Optional[int],
     dtype: jnp.dtype,
     ignore_nans: bool = False,
     r_floor: float = 1e-6,
@@ -711,6 +712,9 @@ def _get_log_liks(
         ``'cell'`` for shape ``(S, C)`` or ``'gene'`` for shape ``(S, G)``.
     batch_size : int, optional
         Mini-batch size for memory-efficient log-likelihood computation.
+    sample_chunk_size : int, optional
+        Posterior-sample chunk size for memory-bounded likelihood computation.
+        When provided, posterior samples are evaluated in sequential chunks.
     dtype : jnp.dtype
         Floating-point precision.
     ignore_nans : bool, default=False
@@ -735,6 +739,7 @@ def _get_log_liks(
     return results.log_likelihood(
         counts,
         batch_size=batch_size,
+        sample_chunk_size=sample_chunk_size,
         return_by=return_by,
         cells_axis=0,
         ignore_nans=ignore_nans,
@@ -758,6 +763,7 @@ def compare_models(
     n_samples: int = 1000,
     rng_key=None,
     batch_size: Optional[int] = None,
+    posterior_sample_chunk_size: Optional[int] = 64,
     compute_gene_liks: bool = False,
     ignore_nans: bool = False,
     component_threshold: float = 0.0,
@@ -799,6 +805,11 @@ def compare_models(
     batch_size : int, optional
         Mini-batch size for log-likelihood computation.  ``None`` uses the
         full dataset (fast but memory-intensive).
+    posterior_sample_chunk_size : int, optional, default=64
+        Posterior-sample chunk size passed to ``results.log_likelihood`` to
+        bound peak memory. Smaller values reduce memory pressure (important for
+        large cell-by-gene matrices) at the cost of longer runtime. Set to
+        ``None`` or ``0`` to evaluate all posterior samples in one ``vmap``.
     compute_gene_liks : bool, default=False
         If ``True``, also compute per-gene log-likelihoods (shape ``(S, G)``)
         for gene-level model comparison.  Doubles the computation time.
@@ -932,14 +943,30 @@ def compare_models(
 
         # Per-cell log-likelihoods: shape (S, C)
         ll_cell = _get_log_liks(
-            results_eff, counts, "cell", batch_size, dtype_lik, ignore_nans, r_floor, p_floor
+            results_eff,
+            counts,
+            "cell",
+            batch_size,
+            posterior_sample_chunk_size,
+            dtype_lik,
+            ignore_nans,
+            r_floor,
+            p_floor,
         )
         log_liks_cell.append(ll_cell)
 
         # Per-gene log-likelihoods: shape (S, G) — optional
         if compute_gene_liks:
             ll_gene = _get_log_liks(
-                results_eff, counts, "gene", batch_size, dtype_lik, ignore_nans, r_floor, p_floor
+                results_eff,
+                counts,
+                "gene",
+                batch_size,
+                posterior_sample_chunk_size,
+                dtype_lik,
+                ignore_nans,
+                r_floor,
+                p_floor,
             )
             log_liks_gene.append(ll_gene)
 

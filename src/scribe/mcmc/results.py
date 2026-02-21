@@ -551,6 +551,7 @@ class ScribeMCMCSubset:
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
+        sample_chunk_size: Optional[int] = None,
         return_by: str = "cell",
         cells_axis: int = 0,
         ignore_nans: bool = False,
@@ -569,6 +570,7 @@ class ScribeMCMCSubset:
             self.model_type,
             n_components=self.n_components,
             batch_size=batch_size,
+            sample_chunk_size=sample_chunk_size,
             return_by=return_by,
             cells_axis=cells_axis,
             ignore_nans=ignore_nans,
@@ -1637,6 +1639,7 @@ class ScribeMCMCResults(MCMC):
         self,
         counts: jnp.ndarray,
         batch_size: Optional[int] = None,
+        sample_chunk_size: Optional[int] = None,
         return_by: str = "cell",
         cells_axis: int = 0,
         ignore_nans: bool = False,
@@ -1702,6 +1705,7 @@ class ScribeMCMCResults(MCMC):
             self.model_type,
             n_components=self.n_components,
             batch_size=batch_size,
+            sample_chunk_size=sample_chunk_size,
             return_by=return_by,
             cells_axis=cells_axis,
             ignore_nans=ignore_nans,
@@ -2167,6 +2171,7 @@ def _compute_log_likelihood(
     model_type: str,
     n_components: Optional[int] = None,
     batch_size: Optional[int] = None,
+    sample_chunk_size: Optional[int] = None,
     return_by: str = "cell",
     cells_axis: int = 0,
     ignore_nans: bool = False,
@@ -2213,8 +2218,19 @@ def _compute_log_likelihood(
                 dtype=dtype,
             )
 
-    # Use vmap for parallel computation (more memory intensive)
-    log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+    # Use chunked vmap to reduce peak memory when requested.
+    if (
+        sample_chunk_size is None
+        or sample_chunk_size <= 0
+        or sample_chunk_size >= n_samples
+    ):
+        log_liks = vmap(compute_sample_lik)(jnp.arange(n_samples))
+    else:
+        chunks = []
+        for start in range(0, n_samples, sample_chunk_size):
+            end = min(start + sample_chunk_size, n_samples)
+            chunks.append(vmap(compute_sample_lik)(jnp.arange(start, end)))
+        log_liks = jnp.concatenate(chunks, axis=0)
 
     # Handle NaNs if requested
     if ignore_nans:
