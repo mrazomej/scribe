@@ -36,6 +36,8 @@ Class hierarchy
   ALR parameters.
 - ``ScribeEmpiricalDEResults`` — Monte Carlo path from posterior CLR
   difference samples.
+- ``ScribeShrinkageDEResults`` — empirical Bayes shrinkage on top of
+  the Monte Carlo path (scale mixture of normals prior).
 
 Other components
 ----------------
@@ -45,6 +47,7 @@ Other components
 - Coordinate transformations (ALR, CLR, ILR).
 - Gaussianity diagnostics (skewness, kurtosis, Jarque-Bera).
 - Empirical DE from posterior samples (non-parametric).
+- Empirical Bayes shrinkage for improved per-gene inference.
 """
 
 # Results class hierarchy and factory
@@ -52,6 +55,7 @@ from .results import (
     ScribeDEResults,
     ScribeParametricDEResults,
     ScribeEmpiricalDEResults,
+    ScribeShrinkageDEResults,
     compare,
 )
 
@@ -98,11 +102,18 @@ from ._empirical import (
     compute_expression_mask,
 )
 
+# Empirical Bayes shrinkage
+from ._shrinkage import (
+    fit_scale_mixture_prior,
+    shrinkage_differential_expression,
+)
+
 __all__ = [
     # Results hierarchy
     "ScribeDEResults",
     "ScribeParametricDEResults",
     "ScribeEmpiricalDEResults",
+    "ScribeShrinkageDEResults",
     "compare",
     # Extraction
     "extract_alr_params",
@@ -130,4 +141,7 @@ __all__ = [
     "compute_clr_differences",
     "empirical_differential_expression",
     "compute_expression_mask",
+    # Empirical Bayes shrinkage
+    "fit_scale_mixture_prior",
+    "shrinkage_differential_expression",
 ]
