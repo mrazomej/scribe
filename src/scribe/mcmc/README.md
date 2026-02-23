@@ -365,6 +365,22 @@ mcmc_results = scribe.fit(
 )
 ```
 
+### Via Hydra CLI
+
+```bash
+# First run SVI, which saves scribe_results.pkl
+python infer.py data=singer inference=svi
+
+# Then run MCMC initialized from the SVI results
+python infer.py data=singer inference=mcmc \
+    svi_init=outputs/singer/nbdm/svi/default/scribe_results.pkl
+
+# Cross-parameterization: SVI linked -> MCMC odds_ratio
+python infer.py data=singer inference=mcmc \
+    parameterization=odds_ratio \
+    svi_init=outputs/singer/nbdm/svi/parameterization=mean_odds/scribe_results.pkl
+```
+
 ### Via engine directly (power users)
 
 ```python
@@ -429,6 +445,22 @@ results = scribe.fit(counts, inference_method="svi", enable_x64=True)
 The setting uses a `jax.enable_x64()` context manager so it does **not**
 permanently change the JAX global configuration. Running SVI (float32) then
 MCMC (float64) in the same notebook session works correctly.
+
+### Via Hydra CLI
+
+The `enable_x64` setting is in the inference config and defaults to `true`
+for MCMC and `null` (= false) for SVI/VAE:
+
+```bash
+# MCMC with float64 (default — no override needed)
+python infer.py data=singer inference=mcmc
+
+# Disable float64 for MCMC
+python infer.py data=singer inference=mcmc inference.enable_x64=false
+
+# Enable float64 for SVI
+python infer.py data=singer inference=svi inference.enable_x64=true
+```
 
 ## MCMC vs SVI Comparison
 

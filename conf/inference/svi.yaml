@@ -6,6 +6,11 @@
 
 method: svi
 
+# Run in float64 (double) precision
+# null = use method default (false for SVI). Set to true for edge cases
+# requiring higher precision (extreme probabilities, model comparison).
+enable_x64: null
+
 # Maximum number of optimization steps
 # Training may stop earlier if early stopping is enabled and convergence is detected
 n_steps: 50_000

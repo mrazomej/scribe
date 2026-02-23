@@ -192,6 +192,66 @@ def _build_priors_dict(priors_cfg):
     } or None
 
 
+# ------------------------------------------------------------------------------
+
+
+def _load_svi_init(svi_init_path, console: Console = None):
+    """Load a pickled ``ScribeSVIResults`` file for MCMC initialization.
+
+    Parameters
+    ----------
+    svi_init_path : str or None
+        Path to a pickled results file (typically ``scribe_results.pkl``
+        from a previous SVI run).  Resolved to an absolute path via
+        ``hydra.utils.to_absolute_path``.  If ``None``, returns ``None``.
+    console : Console, optional
+        Rich console for logging.  If ``None``, messages are suppressed.
+
+    Returns
+    -------
+    ScribeSVIResults or None
+        The loaded SVI results object, or ``None`` if no path was given.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the resolved path does not exist.
+    TypeError
+        If the loaded object is not a ``ScribeSVIResults`` instance.
+    """
+    if svi_init_path is None:
+        return None
+
+    from scribe.svi.results import ScribeSVIResults
+
+    abs_path = hydra.utils.to_absolute_path(str(svi_init_path))
+
+    if not os.path.isfile(abs_path):
+        raise FileNotFoundError(f"svi_init file not found: {abs_path}")
+
+    if console:
+        console.print(
+            f"[dim]Loading SVI init from:[/dim] [cyan]{abs_path}[/cyan]"
+        )
+
+    with open(abs_path, "rb") as f:
+        svi_results = pickle.load(f)
+
+    if not isinstance(svi_results, ScribeSVIResults):
+        raise TypeError(
+            f"svi_init file must contain a ScribeSVIResults object, "
+            f"got {type(svi_results).__name__}"
+        )
+
+    if console:
+        console.print(
+            "[green]✓[/green] [bold green]SVI results loaded for "
+            "MCMC initialization[/bold green]"
+        )
+
+    return svi_results
+
+
 # ==============================================================================
 # Main Function
 # ==============================================================================
@@ -341,6 +401,9 @@ def main(cfg: DictConfig) -> None:
             annotation_component_order, resolve=True
         )
 
+    # Load SVI results for MCMC chain initialization (if path is provided)
+    svi_init_results = _load_svi_init(cfg.get("svi_init"), console)
+
     # Build kwargs for scribe.fit()
     kwargs = {
         # Model configuration
@@ -361,6 +424,8 @@ def main(cfg: DictConfig) -> None:
         "annotation_min_cells": cfg.get("annotation_min_cells"),
         # Inference configuration
         "inference_method": inference_method,
+        # SVI-to-MCMC initialization
+        "svi_init": svi_init_results,
         # Data configuration
         "cells_axis": cfg.cells_axis,
         "layer": cfg.data.get("layer", cfg.layer),
@@ -377,6 +442,10 @@ def main(cfg: DictConfig) -> None:
     console.print(
         f"[dim]Inference method:[/dim] [bold]{kwargs['inference_method']}[/bold]"
     )
+    if kwargs.get("enable_x64"):
+        console.print("[dim]Float64 precision:[/dim] [bold]enabled[/bold]")
+    if svi_init_results is not None:
+        console.print("[dim]MCMC init:[/dim] [bold]from SVI results[/bold]")
     if kwargs.get("n_components"):
         console.print(
             f"[dim]Mixture components:[/dim] [bold]{kwargs['n_components']}[/bold]"
