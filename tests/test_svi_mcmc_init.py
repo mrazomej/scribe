@@ -557,6 +557,90 @@ class TestFitSVIInit:
 
     # ------------------------------------------------------------------
 
+    def test_svi_init_promotes_to_float64_when_x64(self):
+        """Init values should be float64 when enable_x64 is active (default
+        for MCMC), preventing dtype mismatches in NUTS tree-building."""
+        from numpyro.infer import initialization as _init_mod
+
+        from scribe.api import fit
+
+        mock_svi = MagicMock()
+        mock_svi.model_config = _make_model_config(inference_method="svi")
+        mock_svi.get_map.return_value = {
+            "p": jnp.full((), 0.4, dtype=jnp.float32),
+            "r": jnp.full((5,), 3.0, dtype=jnp.float32),
+        }
+
+        # Intercept init_to_value at the numpyro module level to capture
+        # the values dict that fit() passes in.
+        captured = {}
+        _real_init_to_value = _init_mod.init_to_value
+
+        def _spy(*, values):
+            captured.update(values)
+            return _real_init_to_value(values=values)
+
+        with (
+            patch("scribe.api._run_inference") as mock_run,
+            patch.object(_init_mod, "init_to_value", side_effect=_spy),
+        ):
+            mock_run.return_value = MagicMock()
+            fit(
+                counts=jnp.zeros((10, 5)),
+                model="nbdm",
+                inference_method="mcmc",
+                svi_init=mock_svi,
+            )
+
+        assert len(captured) > 0, "init_to_value should have been called"
+        for name, arr in captured.items():
+            assert arr.dtype == jnp.float64, (
+                f"{name} should be float64, got {arr.dtype}"
+            )
+
+    # ------------------------------------------------------------------
+
+    def test_svi_init_stays_float32_when_x64_disabled(self):
+        """Init values should stay float32 when enable_x64=False."""
+        from numpyro.infer import initialization as _init_mod
+
+        from scribe.api import fit
+
+        mock_svi = MagicMock()
+        mock_svi.model_config = _make_model_config(inference_method="svi")
+        mock_svi.get_map.return_value = {
+            "p": jnp.full((), 0.4, dtype=jnp.float32),
+            "r": jnp.full((5,), 3.0, dtype=jnp.float32),
+        }
+
+        captured = {}
+        _real_init_to_value = _init_mod.init_to_value
+
+        def _spy(*, values):
+            captured.update(values)
+            return _real_init_to_value(values=values)
+
+        with (
+            patch("scribe.api._run_inference") as mock_run,
+            patch.object(_init_mod, "init_to_value", side_effect=_spy),
+        ):
+            mock_run.return_value = MagicMock()
+            fit(
+                counts=jnp.zeros((10, 5)),
+                model="nbdm",
+                inference_method="mcmc",
+                svi_init=mock_svi,
+                enable_x64=False,
+            )
+
+        assert len(captured) > 0
+        for name, arr in captured.items():
+            assert arr.dtype == jnp.float32, (
+                f"{name} should be float32, got {arr.dtype}"
+            )
+
+    # ------------------------------------------------------------------
+
     def test_svi_init_cross_parameterization(self):
         """SVI linked → MCMC odds_ratio: phi and mu should be in init."""
         from scribe.api import fit
