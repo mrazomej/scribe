@@ -1,0 +1,948 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+## Empirical Bayes Shrinkage for Differential Expression {#sec-diffexp-eb}
+
+The empirical differential expression framework developed in
+@sec-diffexp-nonparametric treats each gene as an isolated inference problem.
+For each gene $g$, we obtain a posterior mean effect $\hat{\Delta}_g$ and a
+posterior standard deviation $s_g$ from the $N$ Monte Carlo samples of the CLR
+difference. The local false sign rate is computed from gene $g$'s samples alone,
+without any reference to the behaviour of the remaining $D - 1$ genes.
+
+In this section, we develop an **empirical Bayes shrinkage** layer that uses the
+joint distribution of effects across all $D$ genes to improve per-gene
+inference. The key idea is simple: if we know (or can estimate) the
+*population-level* distribution of true effects---how many genes are null, how
+large the non-null effects tend to be---then we can feed this global information
+back into each gene's posterior, obtaining sharper and better-calibrated
+estimates.
+
+### Motivation: from per-gene to genome-wide inference {#sec-diffexp-eb-motivation}
+
+After running the empirical pipeline from @sec-diffexp-nonparametric, we have,
+for each gene $g = 1, 2, \ldots, D$:
+
+- A posterior mean CLR difference
+  $\hat{\Delta}_g = \frac{1}{N}\sum_{s=1}^{N} \Delta_g^{(s)}$.
+- A posterior standard deviation
+  $s_g = \sqrt{\frac{1}{N-1}\sum_{s=1}^{N}(\Delta_g^{(s)} - \hat{\Delta}_g)^2}$.
+
+These are the sufficient statistics for gene $g$'s effect. The empirical lfsr
+(@eq-diffexp-np-lfsr) is computed from the $N$ samples $\Delta_g^{(1)}, \ldots,
+\Delta_g^{(N)}$ by counting the fraction with the minority sign.
+
+Consider now the collection of all $D$ pairs
+$\{(\hat{\Delta}_1, s_1), (\hat{\Delta}_2, s_2), \ldots,
+(\hat{\Delta}_D, s_D)\}$. In a typical differential expression analysis, the
+vast majority of genes are not differentially expressed: their true CLR effects
+are zero or negligibly small. Only a small fraction exhibit genuine biological
+differences between conditions. This global structure is visible in the
+histogram of $\hat{\Delta}_g$ values, which typically shows a large central peak
+(the null genes) with sparse tails (the truly DE genes).
+
+The per-gene empirical lfsr does not exploit this structure. A gene with
+$\hat{\Delta}_g = 0.15$ and $s_g = 0.10$ (a z-score of 1.5) receives the same
+lfsr regardless of whether 2% or 50% of all genes are DE. Yet the two scenarios
+carry very different implications for how sceptical we should be about a modest
+effect: in a mostly-null genome, the prior odds heavily favour the null
+hypothesis.
+
+The empirical Bayes approach developed below remedies this by learning the
+population-level effect-size distribution $\pi(\beta)$ from all $D$ genes
+simultaneously, and then updating each gene's posterior in light of this learned
+distribution. The result is **shrinkage**: noisy effect estimates are pulled
+toward zero, with the degree of shrinkage determined by the data themselves.
+
+### The two-level observation model {#sec-diffexp-eb-model}
+
+We formalize the above intuition with a two-level hierarchical model.
+
+**Level 1: the observation model.** For each gene $g$, the posterior mean CLR
+difference $\hat{\Delta}_g$ is treated as a noisy observation of the true
+(unknown) effect $\beta_g$:
+
+$$
+\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2),
+\quad g = 1, 2, \ldots, D.
+$${#eq-diffexp-eb-observation}
+
+Here $\beta_g$ is the true CLR log-fold-change for gene $g$---the quantity we
+ultimately wish to estimate---and $s_g$ is the known standard error. The
+Gaussian assumption for the observation model is justified by the central limit
+theorem: $\hat{\Delta}_g$ is the average of $N$ posterior samples, and for
+typical sample sizes $N \geq 1{,}000$, the sampling distribution of the mean
+is well-approximated by a Gaussian regardless of the shape of the individual
+$\Delta_g^{(s)}$ samples. This is precisely the regime where the CLT is most
+reliable.
+
+**Level 2: the prior on true effects.** Rather than treating each $\beta_g$ as
+a completely free parameter, we assume that all $D$ true effects are drawn
+independently from a common *population-level* distribution:
+
+$$
+\beta_g \sim \pi(\beta),
+\quad g = 1, 2, \ldots, D,
+$${#eq-diffexp-eb-prior}
+
+where $\pi(\beta)$ is a distribution over true effect sizes that is shared
+across all genes. This distribution encodes the global structure of differential
+expression: how many genes are null, and how large the non-null effects tend to
+be.
+
+**The full joint model.** Combining the two levels, the joint distribution of
+the observed effects and the true effects is
+
+$$
+\pi(\hat{\Delta}_1, \ldots, \hat{\Delta}_D, \beta_1, \ldots, \beta_D \mid
+\pi) = \prod_{g=1}^{D} \mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2)
+\cdot \pi(\beta_g).
+$${#eq-diffexp-eb-joint}
+
+Note that the genes are conditionally independent given their true effects
+$\beta_g$, and the true effects are independently drawn from the shared
+prior $\pi$. The dependence between genes enters only through the shared
+prior, which is what enables information sharing across the genome.
+
+**Graphical model.** The hierarchical structure is summarized in the following
+plate diagram. The distribution $\pi$ (with its parameters $\underline{w}$) sits
+at the top of the hierarchy. Each gene draws a true effect $\beta_g$ from $\pi$,
+and the observed effect $\hat{\Delta}_g$ is generated from $\beta_g$ with known
+variance $s_g^2$.
+
+```{.tikz caption="Graphical model for the empirical Bayes shrinkage. White nodes are latent, gray nodes are observed. The plate replicates across $D$ genes. The prior $\\pi$ (parameterized by $\\underline{w}$) is shared across all genes and estimated from the data." label="fig-eb-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+\begin{tikzpicture}[
+  >=stealth,
+  node distance=10mm and 12mm,
+  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
+  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  plate/.style={draw, rounded corners, inner sep=4mm}
+]
+  % Hyperparameters
+  \node[latent] (w) {$\underline{w}$};
+
+  % Gene-level latent
+  \node[latent, below=of w] (beta) {$\beta_g$};
+
+  % Known standard error
+  \node[obs, right=15mm of beta] (sg) {$s_g$};
+
+  % Observed effect
+  \node[obs, below=of beta] (delta) {$\hat{\Delta}_g$};
+
+  % Edges
+  \draw[->] (w) -- (beta);
+  \draw[->] (beta) -- (delta);
+  \draw[->] (sg) -- (delta);
+
+  % Gene plate
+  \begin{scope}[on background layer]
+    \node[plate, fit=(beta)(delta)(sg), label={[yshift=1mm]north east:$g=1,\ldots,D$}] (geneplate) {};
+  \end{scope}
+\end{tikzpicture}
+```
+
+### The scale mixture of normals prior {#sec-diffexp-eb-prior}
+
+The prior $\pi(\beta)$ must satisfy two desiderata: (i) it should be
+concentrated at or near zero, reflecting the belief that most genes are not DE,
+and (ii) it should have flexible tails to accommodate the range of non-null
+effect sizes. A natural choice that satisfies both requirements is a **scale
+mixture of zero-centred Gaussians**:
+
+$$
+\pi(\beta \mid \underline{w}) = \sum_{k=0}^{K} w_k \,
+\mathcal{N}(\beta \mid 0, \sigma_k^2),
+$${#eq-diffexp-eb-scale-mixture}
+
+where:
+
+- $\sigma_0, \sigma_1, \ldots, \sigma_K$ is a **fixed grid** of scale
+  parameters with $\sigma_0 \approx 0 < \sigma_1 < \sigma_2 < \cdots <
+  \sigma_K$.
+- $\underline{w} = (w_0, w_1, \ldots, w_K)$ is a vector of **mixture
+  weights** satisfying $w_k \geq 0$ and $\sum_{k=0}^{K} w_k = 1$.
+- The component $k = 0$ with $\sigma_0 \approx 0$ approximates a point mass at
+  zero: $\mathcal{N}(\beta \mid 0, \sigma_0^2) \approx \delta_0(\beta)$. This
+  is the **null component** representing genes with no differential expression.
+
+The grid of scales $\sigma_0, \ldots, \sigma_K$ is fixed in advance (we
+describe the default construction in @sec-diffexp-eb-complexity). Only the
+weights $\underline{w}$ are estimated from the data. The weight $w_0$ on the
+null component is of particular scientific interest: it estimates the fraction
+of genes that are truly non-DE.
+
+This prior family has three important properties. First, it is **unimodal at
+zero**, encoding the symmetry assumption that up-regulation and down-regulation
+are equally likely a priori. Second, it is **conjugate** with the Gaussian
+observation model (@eq-diffexp-eb-observation), which means all posterior
+computations have closed-form solutions (as we will derive below). Third, it is
+**flexible**: by using a fine grid of scales, any unimodal symmetric
+distribution can be approximated to arbitrary accuracy.
+
+#### Marginal density of the observed effect
+
+The marginal density of the observed effect $\hat{\Delta}_g$ is obtained by
+integrating out the true effect $\beta_g$ over the prior. Starting from the
+joint model,
+
+$$
+f(\hat{\Delta}_g \mid \underline{w}) = \int_{-\infty}^{\infty}
+\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
+\pi(\beta_g \mid \underline{w}) \, d\beta_g.
+$${#eq-diffexp-eb-marginal-integral}
+
+Substituting the scale mixture prior from @eq-diffexp-eb-scale-mixture, we can
+exchange the sum and the integral (since the sum is finite):
+
+$$
+f(\hat{\Delta}_g \mid \underline{w}) = \sum_{k=0}^{K} w_k
+\int_{-\infty}^{\infty} \mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2)
+\cdot \mathcal{N}(\beta_g \mid 0, \sigma_k^2) \, d\beta_g.
+$${#eq-diffexp-eb-marginal-sum-integral}
+
+The integral inside the sum is the convolution of two Gaussian densities. We now
+derive this convolution explicitly. Writing out both Gaussian densities:
+
+$$
+\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) =
+\frac{1}{\sqrt{2\pi s_g^2}}
+\exp\left(-\frac{(\hat{\Delta}_g - \beta_g)^2}{2 s_g^2}\right),
+$${#eq-diffexp-eb-gaussian-likelihood}
+
+$$
+\mathcal{N}(\beta_g \mid 0, \sigma_k^2) =
+\frac{1}{\sqrt{2\pi \sigma_k^2}}
+\exp\left(-\frac{\beta_g^2}{2 \sigma_k^2}\right).
+$${#eq-diffexp-eb-gaussian-prior}
+
+Their product is proportional to a Gaussian in $\beta_g$. To see this, we
+collect the terms in the exponent:
+
+$$
+-\frac{(\hat{\Delta}_g - \beta_g)^2}{2 s_g^2}
+-\frac{\beta_g^2}{2 \sigma_k^2}
+= -\frac{1}{2}\left[
+\frac{\beta_g^2 - 2 \hat{\Delta}_g \beta_g + \hat{\Delta}_g^2}{s_g^2}
++ \frac{\beta_g^2}{\sigma_k^2}
+\right].
+$${#eq-diffexp-eb-exponent-expanded}
+
+Grouping by powers of $\beta_g$:
+
+$$
+= -\frac{1}{2}\left[
+\beta_g^2 \left(\frac{1}{s_g^2} + \frac{1}{\sigma_k^2}\right)
+- 2 \beta_g \frac{\hat{\Delta}_g}{s_g^2}
++ \frac{\hat{\Delta}_g^2}{s_g^2}
+\right].
+$${#eq-diffexp-eb-exponent-grouped}
+
+Define the **precision** (inverse variance) of the posterior:
+
+$$
+\tau_{gk} = \frac{1}{s_g^2} + \frac{1}{\sigma_k^2}
+= \frac{\sigma_k^2 + s_g^2}{\sigma_k^2 \, s_g^2}.
+$${#eq-diffexp-eb-precision}
+
+The posterior variance is the reciprocal:
+
+$$
+v_{gk} = \frac{1}{\tau_{gk}} =
+\frac{\sigma_k^2 \, s_g^2}{\sigma_k^2 + s_g^2}.
+$${#eq-diffexp-eb-posterior-variance}
+
+The posterior mean is obtained by completing the square in the exponent. The
+coefficient of $\beta_g$ in @eq-diffexp-eb-exponent-grouped is
+$\hat{\Delta}_g / s_g^2$. Dividing by the coefficient of $\beta_g^2$ (which is
+$\tau_{gk}$) gives the posterior mean:
+
+$$
+m_{gk} = \frac{\hat{\Delta}_g / s_g^2}{\tau_{gk}}
+= \hat{\Delta}_g \cdot \frac{\sigma_k^2}{\sigma_k^2 + s_g^2}.
+$${#eq-diffexp-eb-posterior-mean}
+
+The completed-square form of the exponent is
+
+$$
+-\frac{1}{2}\left[
+\tau_{gk} (\beta_g - m_{gk})^2
++ \hat{\Delta}_g^2 \left(
+    \frac{1}{s_g^2} - \frac{1}{s_g^2} \cdot \frac{\sigma_k^2}{\sigma_k^2 + s_g^2}
+\right)
+\right].
+$${#eq-diffexp-eb-completed-square}
+
+To verify the residual term, note that
+
+$$
+\frac{1}{s_g^2} - \frac{1}{s_g^2} \cdot
+\frac{\sigma_k^2}{\sigma_k^2 + s_g^2}
+= \frac{1}{s_g^2} \cdot \frac{s_g^2}{\sigma_k^2 + s_g^2}
+= \frac{1}{\sigma_k^2 + s_g^2}.
+$${#eq-diffexp-eb-residual}
+
+Therefore the exponent becomes
+
+$$
+-\frac{1}{2}\left[
+\tau_{gk} (\beta_g - m_{gk})^2
++ \frac{\hat{\Delta}_g^2}{\sigma_k^2 + s_g^2}
+\right].
+$${#eq-diffexp-eb-exponent-final}
+
+The first term, $\tau_{gk}(\beta_g - m_{gk})^2$, is the kernel of a Gaussian in
+$\beta_g$ with mean $m_{gk}$ and variance $v_{gk}$. The second term,
+$\hat{\Delta}_g^2 / (\sigma_k^2 + s_g^2)$, does not depend on $\beta_g$ and
+therefore factors out of the integral.
+
+Integrating over $\beta_g$, the Gaussian kernel contributes
+$\sqrt{2\pi v_{gk}}$, and the prefactors from
+@eq-diffexp-eb-gaussian-likelihood and @eq-diffexp-eb-gaussian-prior contribute
+$(2\pi s_g^2)^{-1/2} (2\pi \sigma_k^2)^{-1/2}$. Combining:
+
+$$
+\int_{-\infty}^{\infty}
+\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
+\mathcal{N}(\beta_g \mid 0, \sigma_k^2) \, d\beta_g
+= \frac{1}{\sqrt{2\pi(\sigma_k^2 + s_g^2)}}
+\exp\left(-\frac{\hat{\Delta}_g^2}{2(\sigma_k^2 + s_g^2)}\right).
+$${#eq-diffexp-eb-convolution-result}
+
+The right-hand side is exactly $\mathcal{N}(\hat{\Delta}_g \mid 0,
+\sigma_k^2 + s_g^2)$: a zero-centred Gaussian with variance equal to the sum
+of the prior variance and the observation variance. This is the standard
+Gaussian convolution identity: the convolution of
+$\mathcal{N}(0, \sigma_k^2)$ and $\mathcal{N}(0, s_g^2)$ is
+$\mathcal{N}(0, \sigma_k^2 + s_g^2)$.
+
+Substituting @eq-diffexp-eb-convolution-result back into
+@eq-diffexp-eb-marginal-sum-integral, the marginal density of $\hat{\Delta}_g$
+under the scale mixture prior is
+
+$$
+\boxed{
+f(\hat{\Delta}_g \mid \underline{w}) = \sum_{k=0}^{K} w_k \,
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2).
+}
+$${#eq-diffexp-eb-marginal-density}
+
+This is itself a mixture of Gaussians, but with **gene-specific variances**
+$\sigma_k^2 + s_g^2$. The observation noise $s_g^2$ "inflates" each prior
+component by a gene-specific amount, reflecting the fact that noisier genes
+produce more dispersed marginal distributions.
+
+### Maximum marginal likelihood via EM {#sec-diffexp-eb-em}
+
+The mixture weights $\underline{w}$ are the only free parameters in our model
+(the grid $\sigma_0, \ldots, \sigma_K$ is fixed). We estimate $\underline{w}$
+by maximizing the **marginal log-likelihood** across all $D$ genes:
+
+$$
+\mathcal{L}(\underline{w}) = \sum_{g=1}^{D}
+\log f(\hat{\Delta}_g \mid \underline{w})
+= \sum_{g=1}^{D} \log \left[
+\sum_{k=0}^{K} w_k \,
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
+\right].
+$${#eq-diffexp-eb-log-likelihood}
+
+Direct maximization of @eq-diffexp-eb-log-likelihood is complicated by the
+logarithm of a sum. The standard approach is to use the
+**expectation-maximization (EM) algorithm**, which introduces latent
+component-indicator variables and iteratively maximizes a lower bound on the
+log-likelihood.
+
+#### Latent variable formulation
+
+For each gene $g$, introduce a latent indicator $c_g \in \{0, 1, \ldots, K\}$
+that specifies which mixture component generated gene $g$'s true effect. The
+complete-data generative model is:
+
+$$
+c_g \sim \text{Categorical}(\underline{w}),
+$${#eq-diffexp-eb-latent-indicator}
+
+$$
+\beta_g \mid c_g = k \sim \mathcal{N}(0, \sigma_k^2),
+$${#eq-diffexp-eb-conditional-prior}
+
+$$
+\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2).
+$${#eq-diffexp-eb-conditional-observation}
+
+Marginalizing over $\beta_g$, the conditional density of $\hat{\Delta}_g$ given
+$c_g = k$ is
+
+$$
+f(\hat{\Delta}_g \mid c_g = k) =
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2),
+$${#eq-diffexp-eb-conditional-marginal}
+
+which follows directly from the convolution result in
+@eq-diffexp-eb-convolution-result.
+
+The complete-data log-likelihood (if we observed both $\hat{\Delta}_g$ and
+$c_g$) is
+
+$$
+\mathcal{L}_{\text{complete}}(\underline{w}) = \sum_{g=1}^{D}
+\left[
+\log w_{c_g} +
+\log \mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_{c_g}^2 + s_g^2)
+\right].
+$${#eq-diffexp-eb-complete-loglik}
+
+Since we do not observe the $c_g$, the EM algorithm proceeds by iterating
+between an E-step (computing the expected value of
+@eq-diffexp-eb-complete-loglik given the current weights) and an M-step
+(maximizing this expected value to obtain updated weights).
+
+#### E-step: posterior component probabilities
+
+Given the current estimate of the weights $\underline{w}^{(t)}$ at iteration
+$t$, we compute the posterior probability that gene $g$ was generated by
+component $k$. By Bayes' theorem:
+
+$$
+\gamma_{gk}^{(t)} = P(c_g = k \mid \hat{\Delta}_g, \underline{w}^{(t)})
+= \frac{P(\hat{\Delta}_g \mid c_g = k) \cdot P(c_g = k \mid
+\underline{w}^{(t)})}
+{P(\hat{\Delta}_g \mid \underline{w}^{(t)})}.
+$${#eq-diffexp-eb-estep-bayes}
+
+The numerator is the product of the conditional marginal
+(@eq-diffexp-eb-conditional-marginal) and the prior weight:
+
+$$
+P(\hat{\Delta}_g \mid c_g = k) \cdot P(c_g = k \mid \underline{w}^{(t)})
+= w_k^{(t)} \cdot
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2).
+$${#eq-diffexp-eb-estep-numerator}
+
+The denominator is the marginal density from @eq-diffexp-eb-marginal-density:
+
+$$
+P(\hat{\Delta}_g \mid \underline{w}^{(t)}) =
+f(\hat{\Delta}_g \mid \underline{w}^{(t)}) =
+\sum_{j=0}^{K} w_j^{(t)} \cdot
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2).
+$${#eq-diffexp-eb-estep-denominator}
+
+Substituting @eq-diffexp-eb-estep-numerator and
+@eq-diffexp-eb-estep-denominator into @eq-diffexp-eb-estep-bayes:
+
+$$
+\boxed{
+\gamma_{gk}^{(t)} = \frac{
+w_k^{(t)} \cdot
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
+}{
+\sum_{j=0}^{K} w_j^{(t)} \cdot
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2)
+}.
+}
+$${#eq-diffexp-eb-estep-result}
+
+The matrix $\underline{\underline{\gamma}}^{(t)} \in \mathbb{R}^{D \times
+(K+1)}$ with entries $\gamma_{gk}^{(t)}$ is the **responsibility matrix**: it
+quantifies how much each component is "responsible" for each gene. By
+construction, $\gamma_{gk}^{(t)} \geq 0$ and $\sum_{k=0}^{K}
+\gamma_{gk}^{(t)} = 1$ for each $g$.
+
+#### M-step: updating the mixture weights
+
+Given the responsibilities $\gamma_{gk}^{(t)}$, we maximize the expected
+complete-data log-likelihood with respect to $\underline{w}$, subject to the
+simplex constraint $\sum_{k=0}^{K} w_k = 1$, $w_k \geq 0$.
+
+The expected complete-data log-likelihood is
+
+$$
+Q(\underline{w} \mid \underline{w}^{(t)}) =
+\sum_{g=1}^{D} \sum_{k=0}^{K} \gamma_{gk}^{(t)}
+\left[
+\log w_k + \log \mathcal{N}(\hat{\Delta}_g \mid 0,
+\sigma_k^2 + s_g^2)
+\right].
+$${#eq-diffexp-eb-Q-function}
+
+The second term inside the brackets does not depend on $\underline{w}$, so
+maximizing $Q$ over $\underline{w}$ is equivalent to maximizing
+
+$$
+\sum_{g=1}^{D} \sum_{k=0}^{K} \gamma_{gk}^{(t)} \log w_k
+= \sum_{k=0}^{K} \left(\sum_{g=1}^{D} \gamma_{gk}^{(t)}\right) \log w_k
+= \sum_{k=0}^{K} N_k^{(t)} \log w_k,
+$${#eq-diffexp-eb-mstep-objective}
+
+where $N_k^{(t)} = \sum_{g=1}^{D} \gamma_{gk}^{(t)}$ is the effective number
+of genes assigned to component $k$. Note that $\sum_{k=0}^{K} N_k^{(t)} = D$.
+
+We introduce a Lagrange multiplier $\lambda$ to enforce $\sum_k w_k = 1$ and
+form the Lagrangian:
+
+$$
+\mathcal{J}(\underline{w}, \lambda) =
+\sum_{k=0}^{K} N_k^{(t)} \log w_k -
+\lambda \left(\sum_{k=0}^{K} w_k - 1\right).
+$${#eq-diffexp-eb-lagrangian}
+
+Taking the partial derivative with respect to $w_k$ and setting it to zero:
+
+$$
+\frac{\partial \mathcal{J}}{\partial w_k} =
+\frac{N_k^{(t)}}{w_k} - \lambda = 0
+\quad \implies \quad
+w_k = \frac{N_k^{(t)}}{\lambda}.
+$${#eq-diffexp-eb-lagrange-derivative}
+
+Summing over $k$ and using the constraint $\sum_k w_k = 1$:
+
+$$
+\sum_{k=0}^{K} w_k = \frac{1}{\lambda} \sum_{k=0}^{K} N_k^{(t)}
+= \frac{D}{\lambda} = 1
+\quad \implies \quad
+\lambda = D.
+$${#eq-diffexp-eb-lagrange-multiplier}
+
+Substituting back:
+
+$$
+\boxed{
+w_k^{(t+1)} = \frac{N_k^{(t)}}{D}
+= \frac{1}{D} \sum_{g=1}^{D} \gamma_{gk}^{(t)}.
+}
+$${#eq-diffexp-eb-mstep-result}
+
+The updated weight for component $k$ is simply the average responsibility of
+component $k$ across all genes. This is intuitive: if component $k$ is
+responsible for a large fraction of genes, it should receive a large weight.
+
+#### Convergence
+
+The EM algorithm alternates between the E-step
+(@eq-diffexp-eb-estep-result) and the M-step (@eq-diffexp-eb-mstep-result)
+until the change in the log-likelihood
+$|\mathcal{L}(\underline{w}^{(t+1)}) - \mathcal{L}(\underline{w}^{(t)})|$
+falls below a tolerance $\varepsilon$, or a maximum number of iterations is
+reached.
+
+A classical result in the EM literature guarantees that the marginal
+log-likelihood $\mathcal{L}(\underline{w}^{(t)})$ is **non-decreasing** at each
+iteration: $\mathcal{L}(\underline{w}^{(t+1)}) \geq
+\mathcal{L}(\underline{w}^{(t)})$. This follows from Jensen's inequality
+applied to the concavity of the logarithm. Since $\mathcal{L}$ is also bounded
+above (being a log-likelihood of a normalized density), the sequence
+$\{\mathcal{L}(\underline{w}^{(t)})\}$ converges. In practice, convergence is
+typically rapid: 20--100 iterations suffice for most genomic datasets.
+
+### The shrinkage posterior {#sec-diffexp-eb-posterior}
+
+Having estimated the mixture weights $\underline{w}^*$ via EM, we now derive
+the posterior distribution of each gene's true effect $\beta_g$ given its
+observed effect $\hat{\Delta}_g$.
+
+By Bayes' theorem, the posterior is
+
+$$
+\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
+\frac{
+\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
+\pi(\beta_g \mid \underline{w}^*)
+}{
+f(\hat{\Delta}_g \mid \underline{w}^*)
+}.
+$${#eq-diffexp-eb-posterior-bayes}
+
+Substituting the scale mixture prior (@eq-diffexp-eb-scale-mixture) for
+$\pi(\beta_g \mid \underline{w}^*)$ and using the marginal density
+(@eq-diffexp-eb-marginal-density) for the denominator:
+
+$$
+\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
+\frac{
+\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
+\sum_{k=0}^{K} w_k^* \, \mathcal{N}(\beta_g \mid 0, \sigma_k^2)
+}{
+\sum_{j=0}^{K} w_j^* \,
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2)
+}.
+$${#eq-diffexp-eb-posterior-expanded}
+
+We can bring the sum over $k$ in the numerator outside the ratio:
+
+$$
+\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
+\sum_{k=0}^{K}
+\underbrace{
+\frac{
+w_k^* \, \mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
+}{
+\sum_{j=0}^{K} w_j^* \,
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_j^2 + s_g^2)
+}
+}_{\gamma_{gk}^*}
+\cdot
+\underbrace{
+\frac{
+\mathcal{N}(\hat{\Delta}_g \mid \beta_g, s_g^2) \cdot
+\mathcal{N}(\beta_g \mid 0, \sigma_k^2)
+}{
+\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)
+}
+}_{\mathcal{N}(\beta_g \mid m_{gk}, v_{gk})}.
+$${#eq-diffexp-eb-posterior-mixture}
+
+The first factor is the posterior component probability $\gamma_{gk}^*$ from the
+E-step (@eq-diffexp-eb-estep-result), evaluated at the converged weights
+$\underline{w}^*$. The second factor is the posterior of $\beta_g$
+*within component $k$*: a Gaussian with mean $m_{gk}$ and variance $v_{gk}$
+as derived in @eq-diffexp-eb-posterior-mean and @eq-diffexp-eb-posterior-variance.
+To verify, recall that the product of the two Gaussians in the numerator of the
+second factor integrates to
+$\mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)$ (the convolution
+result from @eq-diffexp-eb-convolution-result), which is exactly the
+denominator. Therefore the ratio is a proper density in $\beta_g$, and by the
+completing-the-square derivation, it is
+$\mathcal{N}(\beta_g \mid m_{gk}, v_{gk})$.
+
+The posterior is therefore a **mixture of Gaussians**:
+
+$$
+\boxed{
+\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
+\sum_{k=0}^{K} \gamma_{gk}^* \,
+\mathcal{N}(\beta_g \mid m_{gk}, v_{gk}),
+}
+$${#eq-diffexp-eb-posterior-final}
+
+where the component parameters are
+
+$$
+m_{gk} = \hat{\Delta}_g \cdot \frac{\sigma_k^2}{\sigma_k^2 + s_g^2},
+\qquad
+v_{gk} = \frac{\sigma_k^2 \, s_g^2}{\sigma_k^2 + s_g^2}.
+$${#eq-diffexp-eb-component-params}
+
+#### Shrinkage interpretation
+
+The posterior mean within component $k$, given by @eq-diffexp-eb-posterior-mean,
+has a revealing structure. Define the **shrinkage factor** for component $k$:
+
+$$
+\alpha_{gk} = \frac{\sigma_k^2}{\sigma_k^2 + s_g^2} \in [0, 1].
+$${#eq-diffexp-eb-shrinkage-factor}
+
+Then $m_{gk} = \alpha_{gk} \cdot \hat{\Delta}_g$. This factor interpolates
+between two extremes:
+
+- **Null component** ($\sigma_k \approx 0$): $\alpha_{gk} \approx 0$, so
+  $m_{gk} \approx 0$. The posterior mean is shrunk all the way to zero. Gene
+  $g$'s observed effect is entirely attributed to noise.
+
+- **Large-scale component** ($\sigma_k \gg s_g$): $\alpha_{gk} \approx 1$, so
+  $m_{gk} \approx \hat{\Delta}_g$. The posterior mean equals the observed
+  effect. Gene $g$'s observation is trusted as-is.
+
+The overall posterior mean is a weighted combination of these shrinkage levels:
+
+$$
+\mathbb{E}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*] =
+\sum_{k=0}^{K} \gamma_{gk}^* \, m_{gk} =
+\hat{\Delta}_g \sum_{k=0}^{K} \gamma_{gk}^* \, \alpha_{gk}.
+$${#eq-diffexp-eb-shrunk-mean}
+
+The effective shrinkage applied to gene $g$ is therefore
+$\bar{\alpha}_g = \sum_k \gamma_{gk}^* \alpha_{gk}$, which is a
+responsibility-weighted average of the component-specific shrinkage factors.
+Genes with strong evidence of being DE (large $|\hat{\Delta}_g| / s_g$) will
+have most of their responsibility assigned to large-scale components, resulting
+in $\bar{\alpha}_g \approx 1$ (little shrinkage). Genes with weak evidence will
+have most responsibility on the null component, resulting in
+$\bar{\alpha}_g \approx 0$ (strong shrinkage toward zero).
+
+#### Marginal posterior variance
+
+The posterior variance is computed using the **law of total variance** for
+mixture distributions. For a mixture $\sum_k \gamma_k p_k(\beta)$ with
+component means $m_k$ and component variances $v_k$:
+
+$$
+\text{Var}[\beta \mid \text{data}] =
+\underbrace{\sum_{k} \gamma_k \, v_k}_{\text{within-component variance}}
++ \underbrace{\sum_{k} \gamma_k \, m_k^2
+- \left(\sum_{k} \gamma_k \, m_k\right)^2}_{\text{between-component variance}}.
+$${#eq-diffexp-eb-law-total-variance}
+
+For our specific posterior, this becomes
+
+$$
+\text{Var}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*] =
+\sum_{k=0}^{K} \gamma_{gk}^* \, v_{gk}
++ \sum_{k=0}^{K} \gamma_{gk}^* \, m_{gk}^2
+- \left(\sum_{k=0}^{K} \gamma_{gk}^* \, m_{gk}\right)^2.
+$${#eq-diffexp-eb-posterior-total-variance}
+
+The first term is the average within-component uncertainty. The second and third
+terms together form the between-component variance, which captures the
+additional uncertainty from not knowing which mixture component gene $g$ belongs
+to. When a single component dominates (one $\gamma_{gk}^* \approx 1$), the
+between-component variance vanishes and the posterior variance reduces to the
+within-component variance $v_{gk}$ of the dominant component.
+
+The posterior standard deviation is
+
+$$
+\text{sd}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*] =
+\sqrt{\text{Var}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*]}.
+$${#eq-diffexp-eb-posterior-sd}
+
+### Shrunk lfsr and practical significance {#sec-diffexp-eb-lfsr}
+
+The shrinkage posterior (@eq-diffexp-eb-posterior-final) allows us to compute
+refined versions of all the gene-level DE statistics from
+@sec-diffexp-nonparametric. The most important is the **shrunk local false sign
+rate**.
+
+#### Posterior probability of positive effect
+
+The posterior probability that the true effect $\beta_g$ is positive is
+
+$$
+P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*) =
+\int_0^{\infty} \pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) \, d\beta_g.
+$${#eq-diffexp-eb-prob-positive-integral}
+
+Substituting the mixture posterior from @eq-diffexp-eb-posterior-final and using
+the linearity of integration:
+
+$$
+P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*) =
+\sum_{k=0}^{K} \gamma_{gk}^*
+\int_0^{\infty} \mathcal{N}(\beta_g \mid m_{gk}, v_{gk}) \, d\beta_g.
+$${#eq-diffexp-eb-prob-positive-sum}
+
+The integral $\int_0^{\infty} \mathcal{N}(\beta_g \mid m, v) \, d\beta_g$ is
+the probability that a $\mathcal{N}(m, v)$ random variable exceeds zero, which
+is
+
+$$
+\int_0^{\infty} \mathcal{N}(\beta_g \mid m, v) \, d\beta_g =
+\Phi\!\left(\frac{m}{\sqrt{v}}\right),
+$${#eq-diffexp-eb-gaussian-cdf}
+
+where $\Phi(\cdot)$ is the standard normal cumulative distribution function.
+This follows from the substitution $z = (\beta_g - m) / \sqrt{v}$, which gives
+$\int_0^{\infty} \mathcal{N}(\beta_g \mid m, v) \, d\beta_g =
+\int_{-m/\sqrt{v}}^{\infty} \phi(z) \, dz = 1 - \Phi(-m/\sqrt{v}) =
+\Phi(m/\sqrt{v})$.
+
+Substituting @eq-diffexp-eb-gaussian-cdf into @eq-diffexp-eb-prob-positive-sum:
+
+$$
+\boxed{
+P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*) =
+\sum_{k=0}^{K} \gamma_{gk}^* \,
+\Phi\!\left(\frac{m_{gk}}{\sqrt{v_{gk}}}\right).
+}
+$${#eq-diffexp-eb-prob-positive}
+
+#### Shrunk lfsr
+
+The shrunk local false sign rate is defined exactly as in
+@eq-diffexp-np-lfsr---the posterior probability of the minority sign---but
+computed from the shrinkage posterior rather than by empirical counting:
+
+$$
+\text{lfsr}_g^{\text{shrunk}} = \min\!\left(
+P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*), \;
+1 - P(\beta_g > 0 \mid \hat{\Delta}_g, \underline{w}^*)
+\right).
+$${#eq-diffexp-eb-lfsr}
+
+Since the posterior has been updated with the global effect-size distribution,
+the shrunk lfsr accounts for the base rate of true effects across the genome.
+When the null proportion $w_0^*$ is large, the posterior is pulled toward zero,
+increasing the lfsr relative to the raw empirical estimate. When $w_0^*$ is
+small, the shrinkage is minimal and the shrunk lfsr is close to the raw
+estimate.
+
+#### Practical significance with threshold $\tau$
+
+For a practical significance threshold $\tau \geq 0$, the shrunk probabilities
+of upward and downward practical effects are
+
+$$
+P(\beta_g > \tau \mid \hat{\Delta}_g, \underline{w}^*) =
+\sum_{k=0}^{K} \gamma_{gk}^* \,
+\Phi\!\left(\frac{m_{gk} - \tau}{\sqrt{v_{gk}}}\right),
+$${#eq-diffexp-eb-prob-above-tau}
+
+$$
+P(\beta_g < -\tau \mid \hat{\Delta}_g, \underline{w}^*) =
+\sum_{k=0}^{K} \gamma_{gk}^* \,
+\Phi\!\left(\frac{-(m_{gk} + \tau)}{\sqrt{v_{gk}}}\right),
+$${#eq-diffexp-eb-prob-below-tau}
+
+and the shrunk practical-significance lfsr is
+
+$$
+\text{lfsr}_g^{\text{shrunk}}(\tau) = 1 - \max\!\left(
+P(\beta_g > \tau \mid \hat{\Delta}_g, \underline{w}^*), \;
+P(\beta_g < -\tau \mid \hat{\Delta}_g, \underline{w}^*)
+\right).
+$${#eq-diffexp-eb-lfsr-tau}
+
+When $\tau = 0$, this reduces to @eq-diffexp-eb-lfsr.
+
+### Compatibility with the existing framework {#sec-diffexp-eb-compatibility}
+
+The shrunk lfsr values from @eq-diffexp-eb-lfsr have exactly the same
+mathematical properties as the raw empirical lfsr values from
+@eq-diffexp-np-lfsr: they are numbers in $[0, 1/2]$ representing the posterior
+probability of the minority sign. The PEFP error control machinery developed in
+Section 6 operates exclusively on these numerical values---it does not depend on
+how they were computed. Therefore:
+
+- The PEFP formula $\text{PEFP}(S) = \frac{1}{|S|}\sum_{g \in S}
+  \text{lfsr}_g$ applies directly to shrunk lfsr values.
+- The threshold-finding algorithm (sorting lfsr values and computing the
+  cumulative mean) works identically.
+- The monotonicity proof carries over unchanged.
+
+This means the same ``call_de_genes``, ``compute_pefp``, and
+``find_lfsr_threshold`` functions can be used with shrunk lfsr values with no
+modification whatsoever.
+
+#### Backward compatibility
+
+When the estimated null proportion $w_0^*$ is very small---that is, the data
+suggest that nearly all genes are DE---the prior places negligible mass on the
+null component. In this regime, $\gamma_{g0}^* \approx 0$ for all genes, so the
+dominant components are the large-scale ones with
+$\alpha_{gk} \approx 1$. The shrunk posterior mean
+$\mathbb{E}[\beta_g \mid \hat{\Delta}_g] \approx \hat{\Delta}_g$, and the
+shrunk lfsr converges to the raw empirical lfsr. The shrinkage layer becomes
+a no-op, ensuring backward compatibility.
+
+#### Diagnostic: the null proportion
+
+The estimated weight $w_0^*$ on the null component is a data-driven estimate of
+the fraction of genes that are truly non-DE. This quantity is scientifically
+interpretable and provides a global summary of the strength of the treatment
+effect:
+
+- $w_0^* \approx 1$: the treatment has negligible genome-wide effect (almost all
+  genes are null).
+- $w_0^* \approx 0$: the treatment has pervasive effects (most genes respond).
+- Intermediate values provide a nuanced summary that is directly comparable
+  across experiments.
+
+### Computational complexity {#sec-diffexp-eb-complexity}
+
+The empirical Bayes shrinkage layer is computationally lightweight relative to
+the upstream model fitting and Dirichlet sampling steps.
+
+**Default scale grid construction.** Given the vector of observed standard errors
+$s_1, s_2, \ldots, s_D$, a default grid of $K + 1$ scales is constructed as a
+geometric sequence:
+
+$$
+\sigma_k = \sigma_{\min} \cdot \left(\frac{\sigma_{\max}}{\sigma_{\min}}\right)^{k/K},
+\quad k = 0, 1, \ldots, K,
+$${#eq-diffexp-eb-grid}
+
+where $\sigma_{\min}$ is a small value (e.g., $10^{-6}$) approximating the null
+point mass and $\sigma_{\max}$ is several times the maximum observed
+$|\hat{\Delta}_g|$. Typical values are $K = 20$--$30$ grid points.
+
+**Per-iteration cost.** Each EM iteration requires:
+
+1. Computing the $(D \times (K+1))$ matrix of Gaussian log-densities
+   $\log \mathcal{N}(\hat{\Delta}_g \mid 0, \sigma_k^2 + s_g^2)$: $O(D(K+1))$.
+2. Normalizing to obtain responsibilities $\gamma_{gk}$: $O(D(K+1))$.
+3. Summing responsibilities to update weights: $O(D(K+1))$.
+
+Total per iteration: $O(D(K+1))$.
+
+**Overall cost.**
+
+| **Operation**              | **Cost**              | **Typical values**                       |
+| -------------------------- | --------------------- | ---------------------------------------- |
+| EM (T iterations)          | $O(TD(K+1))$         | $T \leq 100$, $K = 20$, $D = 20{,}000$  |
+| Posterior computation      | $O(D(K+1))$          | One-time after EM converges              |
+| Shrunk lfsr (CDF evals)    | $O(D(K+1))$          | $K + 1$ CDF calls per gene              |
+| **Total**                  | $O(TD(K+1))$         | $\approx 4 \times 10^7$ operations      |
+
+For comparison, the upstream Dirichlet sampling in the empirical DE pipeline
+costs $O(ND)$ where $N$ is the number of posterior samples (typically
+$N = 10{,}000$), giving $\approx 2 \times 10^8$ operations. The shrinkage
+layer is therefore approximately one order of magnitude cheaper than the
+sampling step that produces its input, and adds negligible wall-clock time.
+
+All operations are fully vectorized across the gene dimension and execute as
+matrix operations on GPU hardware.
+
+### Summary {#sec-diffexp-eb-summary}
+
+We collect the key results of this section for reference.
+
+**Observation model.** The observed posterior mean CLR difference for gene $g$
+is modelled as
+
+$$
+\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2),
+$${#eq-diffexp-eb-summary-obs}
+
+where $\beta_g$ is the true effect and $s_g$ is the known posterior standard
+deviation.
+
+**Scale mixture prior.** The true effects are drawn from a shared prior
+
+$$
+\beta_g \sim \pi(\beta \mid \underline{w}) =
+\sum_{k=0}^{K} w_k \, \mathcal{N}(0, \sigma_k^2),
+$${#eq-diffexp-eb-summary-prior}
+
+with fixed grid $\sigma_0 \approx 0 < \sigma_1 < \cdots < \sigma_K$ and
+learned weights $\underline{w}$.
+
+**EM updates.** E-step: $\gamma_{gk} = w_k \mathcal{N}(\hat{\Delta}_g \mid 0,
+\sigma_k^2 + s_g^2) \big/ \sum_j w_j \mathcal{N}(\hat{\Delta}_g \mid 0,
+\sigma_j^2 + s_g^2)$. M-step: $w_k \leftarrow \frac{1}{D}\sum_g \gamma_{gk}$.
+
+**Shrinkage posterior.** A mixture of Gaussians:
+
+$$
+\pi(\beta_g \mid \hat{\Delta}_g, \underline{w}^*) =
+\sum_{k=0}^{K} \gamma_{gk}^* \, \mathcal{N}(\beta_g \mid m_{gk}, v_{gk}),
+$${#eq-diffexp-eb-summary-posterior}
+
+with $m_{gk} = \hat{\Delta}_g \sigma_k^2 / (\sigma_k^2 + s_g^2)$ and
+$v_{gk} = \sigma_k^2 s_g^2 / (\sigma_k^2 + s_g^2)$.
+
+**Shrunk lfsr.**
+
+$$
+\text{lfsr}_g^{\text{shrunk}} = \min\!\left(
+\sum_k \gamma_{gk}^* \Phi\!\left(\frac{m_{gk}}{\sqrt{v_{gk}}}\right), \;
+1 - \sum_k \gamma_{gk}^* \Phi\!\left(\frac{m_{gk}}{\sqrt{v_{gk}}}\right)
+\right).
+$${#eq-diffexp-eb-summary-lfsr}
+
+| **Quantity** | **Raw empirical** | **With shrinkage** |
+| --- | --- | --- |
+| Effect estimate | $\hat{\Delta}_g$ | $\sum_k \gamma_{gk}^* m_{gk}$ |
+| Standard deviation | $s_g$ | Law of total variance (mixture) |
+| lfsr | Counting over $N$ samples | Mixture CDF evaluation |
+| PEFP compatibility | Yes | Yes (identical machinery) |
+| Distributional assumption | None on $\Delta_g^{(s)}$ | Gaussian on $\hat{\Delta}_g$ (CLT) |
+| Information shared | None across genes | Global effect-size distribution |
