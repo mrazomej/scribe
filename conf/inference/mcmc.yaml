@@ -11,3 +11,9 @@ n_warmup: 1_000
 
 # Number of parallel chains
 n_chains: 1
+
+# Run in float64 (double) precision
+# NUTS Hamiltonian dynamics benefit from double precision for numerical
+# stability during leapfrog integration and mass-matrix adaptation.
+# Set to false to use float32 (faster but may cause divergent transitions).
+enable_x64: true

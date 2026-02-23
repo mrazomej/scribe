@@ -90,6 +90,12 @@ annotation_component_order: null
 # prior. Labels with fewer cells are treated as unlabeled (zero bias).
 annotation_min_cells: null
 
+# --- SVI-to-MCMC Initialization ---
+# Path to a pickled ScribeSVIResults file to initialize MCMC chains.
+# The SVI MAP estimates are extracted and used as starting values for NUTS.
+# Only valid when inference=mcmc.  null = no initialization (default).
+svi_init: null
+
 # --- General Settings ---
 seed: 42
 
@@ -141,5 +147,7 @@ hydra:
           - viz.mixture_ppc_opts
           - viz.annotation_ppc_opts
           - output_dir
+          - svi_init
+          - inference.enable_x64
           - inference.early_stopping.enabled
           - inference.log_progress_lines
