@@ -768,9 +768,29 @@ def fit(
                 # Clamp to strict interior of support — float32 SVI MAP
                 # estimates can sit exactly on boundaries (e.g. phi_capture=0)
                 init_values = clamp_init_values(init_values)
+
+                # Promote to float64 when MCMC will run under x64 (the
+                # default).  SVI stores float32; NUTS tree-building requires
+                # matching dtypes across all JAX cond branches.
+                if enable_x64 is not False:
+                    import jax
+
+                    with jax.enable_x64(True):
+                        init_values = {
+                            k: jnp.asarray(v, dtype=jnp.float64)
+                            for k, v in init_values.items()
+                        }
+
                 svi_init_kwargs["init_strategy"] = init_to_value(
                     values=init_values
                 )
+
+                # Free SVI arrays that are no longer needed — every bit
+                # of GPU memory matters for high-dimensional MCMC.
+                del svi_map, init_values, svi_init
+                import gc
+
+                gc.collect()
 
             mcmc_config = MCMCConfig(
                 n_samples=n_samples,
