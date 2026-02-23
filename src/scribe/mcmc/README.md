@@ -408,6 +408,28 @@ mcmc = MCMCInferenceEngine.run_inference(
 - `use_mean=True` avoids NaN MAP values that can occur with LogNormal when
   sigma is large.
 
+## Float64 Precision
+
+MCMC inference runs in **float64 (double) precision** by default. The
+Hamiltonian dynamics in NUTS (leapfrog integration, mass-matrix adaptation)
+are sensitive to numerical precision, and float32 can cause divergent
+transitions or poor mixing.
+
+```python
+# MCMC: float64 is on by default — no action needed
+results = scribe.fit(counts, inference_method="mcmc")
+
+# Opt out if you know your model is numerically safe in float32
+results = scribe.fit(counts, inference_method="mcmc", enable_x64=False)
+
+# SVI: float32 by default, but float64 can be enabled for edge cases
+results = scribe.fit(counts, inference_method="svi", enable_x64=True)
+```
+
+The setting uses a `jax.enable_x64()` context manager so it does **not**
+permanently change the JAX global configuration. Running SVI (float32) then
+MCMC (float64) in the same notebook session works correctly.
+
 ## MCMC vs SVI Comparison
 
 | Aspect | MCMC | SVI |
