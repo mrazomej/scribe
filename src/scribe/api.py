@@ -250,6 +250,8 @@ def fit(
     annotation_confidence: float = 3.0,
     annotation_component_order: Optional[List[str]] = None,
     annotation_min_cells: Optional[int] = None,
+    # SVI-to-MCMC initialization
+    svi_init: Optional[ScribeSVIResults] = None,
     # Power user: explicit configs override above
     model_config: Optional[ModelConfig] = None,
     inference_config: Optional[InferenceConfig] = None,
@@ -445,6 +447,19 @@ def fit(
         automatically, only labels meeting this threshold are counted.
         If ``None`` (default), no filtering is applied.
 
+    svi_init : ScribeSVIResults, optional
+        SVI results to use for initializing MCMC chains.  When provided,
+        MAP estimates are extracted via ``get_map(use_mean=True,
+        canonical=True)`` and converted to the target parameterization
+        using ``compute_init_values``.  The resulting values are injected
+        as ``init_to_value`` into the NUTS kernel, so all chains start
+        near the SVI optimum.  Only valid when
+        ``inference_method="mcmc"``.
+
+        Cross-parameterization initialization is fully supported: for
+        example, SVI run with ``parameterization="linked"`` can initialize
+        MCMC with ``parameterization="odds_ratio"``.
+
     model_config : ModelConfig, optional
         Fully configured model configuration object.
         If provided, overrides model, parameterization, unconstrained,
@@ -504,6 +519,17 @@ def fit(
     ...     n_chains=4,
     ... )
 
+    Initialize MCMC from SVI results (same or different parameterization):
+
+    >>> svi_results = scribe.fit(adata, model="nbdm", parameterization="linked")
+    >>> mcmc_results = scribe.fit(
+    ...     adata,
+    ...     model="nbdm",
+    ...     parameterization="odds_ratio",
+    ...     inference_method="mcmc",
+    ...     svi_init=svi_results,
+    ... )
+
     See Also
     --------
     run_scribe : Lower-level inference function with more options.
@@ -539,6 +565,19 @@ def fit(
                 f"Unknown inference_method: '{inference_method}'. "
                 f"Valid methods are: "
                 f"{', '.join(sorted(VALID_INFERENCE_METHODS))}"
+            )
+
+    # Validate svi_init: only allowed with MCMC
+    if svi_init is not None:
+        _effective_method = (
+            inference_method.lower()
+            if inference_config is None
+            else inference_config.method.value
+        )
+        if _effective_method != "mcmc":
+            raise ValueError(
+                f"svi_init is only supported with inference_method='mcmc', "
+                f"got '{_effective_method}'."
             )
 
     # ==========================================================================
@@ -673,10 +712,35 @@ def fit(
                     "inference methods. Ignoring for MCMC.",
                     UserWarning,
                 )
+
+            # Build mcmc_kwargs, optionally injecting SVI init strategy
+            svi_init_kwargs: Dict[str, Any] = {}
+            if svi_init is not None:
+                from numpyro.infer.initialization import init_to_value
+
+                from .mcmc._init_from_svi import compute_init_values
+
+                if (
+                    svi_init.model_config.base_model
+                    != model_config.base_model
+                ):
+                    warnings.warn(
+                        f"SVI base model '{svi_init.model_config.base_model}' "
+                        f"differs from MCMC target "
+                        f"'{model_config.base_model}'.",
+                        UserWarning,
+                    )
+                svi_map = svi_init.get_map(use_mean=True, canonical=True)
+                init_values = compute_init_values(svi_map, model_config)
+                svi_init_kwargs["init_strategy"] = init_to_value(
+                    values=init_values
+                )
+
             mcmc_config = MCMCConfig(
                 n_samples=n_samples,
                 n_warmup=n_warmup,
                 n_chains=n_chains,
+                mcmc_kwargs=svi_init_kwargs or None,
             )
             inference_config = InferenceConfig.from_mcmc(mcmc_config)
         elif method == InferenceMethod.VAE:

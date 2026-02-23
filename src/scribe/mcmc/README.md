@@ -16,9 +16,10 @@ mixin classes -- the same pattern used by the SVI results module.
 ```
 src/scribe/mcmc/
   __init__.py                 # Public exports
-  inference_engine.py         # NUTS execution
+  inference_engine.py         # NUTS execution (supports init_values)
   results_factory.py          # Factory: MCMC -> ScribeMCMCResults
   results.py                  # ScribeMCMCResults @dataclass (~120 lines)
+  _init_from_svi.py           # SVI-to-MCMC cross-parameterization init
   _parameter_extraction.py    # ParameterExtractionMixin
   _gene_subsetting.py         # GeneSubsettingMixin
   _component.py               # ComponentMixin
@@ -330,6 +331,82 @@ components_no_renorm = mcmc_results.get_components([1, 2], renormalize=False)
 # Tuple indexing: first genes, second components
 subset = mcmc_results[1:4, [1, 2]]
 ```
+
+## Initializing MCMC from SVI Results
+
+MCMC chains can be initialized from SVI results using `init_to_value`, which
+starts all chains near the SVI optimum. This typically improves warmup
+convergence and reduces the number of warmup samples needed.
+
+### Via `fit()` API
+
+```python
+import scribe
+
+# Same parameterization
+svi_results = scribe.fit(adata, model="nbdm", parameterization="linked")
+mcmc_results = scribe.fit(
+    adata, model="nbdm", parameterization="linked",
+    inference_method="mcmc", svi_init=svi_results,
+)
+
+# Cross-parameterization: SVI linked -> MCMC odds_ratio
+# (phi and mu are automatically derived from canonical p, r)
+mcmc_results = scribe.fit(
+    adata, model="nbdm", parameterization="odds_ratio",
+    inference_method="mcmc", svi_init=svi_results,
+)
+
+# Cross-constrained: SVI constrained -> MCMC unconstrained
+# (works seamlessly -- same site names, same constrained-space values)
+mcmc_results = scribe.fit(
+    adata, model="nbdm", unconstrained=True,
+    inference_method="mcmc", svi_init=svi_results,
+)
+```
+
+### Via engine directly (power users)
+
+```python
+from scribe.mcmc import MCMCInferenceEngine, compute_init_values
+
+# Extract MAP and convert to target parameterization
+map_values = svi_results.get_map(use_mean=True, canonical=True)
+init_values = compute_init_values(map_values, target_model_config)
+
+# Pass to the inference engine
+mcmc = MCMCInferenceEngine.run_inference(
+    model_config=target_model_config,
+    count_data=data,
+    n_cells=n_cells,
+    n_genes=n_genes,
+    init_values=init_values,
+)
+```
+
+### How it works
+
+1. SVI MAP estimates are extracted via `get_map(use_mean=True, canonical=True)`.
+2. `compute_init_values()` ensures the init dict contains all sampled parameters
+   for the target MCMC parameterization. Missing parameters are derived from
+   canonical `(p, r)`:
+   - `mu = r * p / (1 - p)` for mean_prob / mean_odds targets
+   - `phi = (1 - p) / p` for mean_odds targets
+   - `phi_capture` / `p_capture` conversion for VCP models
+3. `init_to_value(values=init_values)` is set as the NUTS `init_strategy`.
+   NumPyro maps constrained-space values to unconstrained space internally.
+4. All chains start at the same MAP point. NUTS warmup adaptation will
+   diverge the chains.
+
+### Notes
+
+- **Constrained vs unconstrained** is transparent -- site names and value spaces
+  are identical regardless of the `unconstrained` flag.
+- **Hierarchical hyperparameters** (`logit_p_loc`, `log_phi_scale`, etc.) cannot
+  be reliably converted across parameterizations. They fall back to
+  `init_to_uniform`.
+- `use_mean=True` avoids NaN MAP values that can occur with LogNormal when
+  sigma is large.
 
 ## MCMC vs SVI Comparison
 
