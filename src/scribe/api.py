@@ -252,6 +252,8 @@ def fit(
     annotation_min_cells: Optional[int] = None,
     # SVI-to-MCMC initialization
     svi_init: Optional[ScribeSVIResults] = None,
+    # Float64 precision — defaults to True for MCMC, False for SVI/VAE
+    enable_x64: Optional[bool] = None,
     # Power user: explicit configs override above
     model_config: Optional[ModelConfig] = None,
     inference_config: Optional[InferenceConfig] = None,
@@ -459,6 +461,21 @@ def fit(
         Cross-parameterization initialization is fully supported: for
         example, SVI run with ``parameterization="linked"`` can initialize
         MCMC with ``parameterization="odds_ratio"``.
+
+    enable_x64 : bool, optional
+        Whether to run inference in float64 (double) precision.  When
+        ``None`` (the default), the effective value is determined by the
+        inference method:
+
+        - **MCMC** → ``True`` — Hamiltonian dynamics in NUTS benefit from
+          double precision for numerical stability during leapfrog
+          integration and mass-matrix adaptation.
+        - **SVI / VAE** → ``False`` — float32 is sufficient and faster.
+
+        Pass an explicit ``True`` or ``False`` to override the default
+        for any method.  The setting is implemented via a
+        ``jax.enable_x64()`` context manager so it does not permanently
+        alter the JAX global configuration.
 
     model_config : ModelConfig, optional
         Fully configured model configuration object.
@@ -760,7 +777,17 @@ def fit(
         validate_inference_config_match(model_config, inference_config)
 
     # ==========================================================================
-    # Step 5: Run inference
+    # Step 5: Resolve float64 precision default per inference method
+    # ==========================================================================
+    # MCMC (NUTS) benefits from float64 for Hamiltonian dynamics stability;
+    # SVI/VAE run faster in float32 and rarely need double precision.
+    if enable_x64 is None:
+        effective_x64 = inference_config.method == InferenceMethod.MCMC
+    else:
+        effective_x64 = enable_x64
+
+    # ==========================================================================
+    # Step 6: Run inference
     # ==========================================================================
     return _run_inference(
         inference_config.method,
@@ -773,4 +800,5 @@ def fit(
         data_config=data_config,
         seed=seed,
         annotation_prior_logits=annotation_prior_logits,
+        enable_x64=effective_x64,
     )

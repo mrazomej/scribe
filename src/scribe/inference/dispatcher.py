@@ -187,6 +187,7 @@ def _run_inference(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    enable_x64: bool = False,
 ) -> Any:
     """Route inference execution to the appropriate handler.
 
@@ -214,6 +215,13 @@ def _run_inference(
         Data processing configuration.
     seed : int
         Random seed for reproducibility.
+    annotation_prior_logits : Optional[jnp.ndarray], default=None
+        Prior logits for annotation-guided mixture models.
+    enable_x64 : bool, default=False
+        If True, run inference under ``jax.experimental.enable_x64()``
+        and cast *count_data* to float64.  The context manager restores
+        the previous x64 setting on exit so other code in the same
+        session is unaffected.
 
     Returns
     -------
@@ -273,7 +281,7 @@ def _run_inference(
             f"{list(_INFERENCE_HANDLERS.keys())}"
         )
 
-    return handler(
+    handler_kwargs = dict(
         model_config=model_config,
         count_data=count_data,
         adata=adata,
@@ -284,3 +292,13 @@ def _run_inference(
         seed=seed,
         annotation_prior_logits=annotation_prior_logits,
     )
+
+    if enable_x64:
+        import jax
+
+        # Cast must happen inside the context so float64 dtype is available
+        with jax.enable_x64(True):
+            handler_kwargs["count_data"] = count_data.astype(jnp.float64)
+            return handler(**handler_kwargs)
+
+    return handler(**handler_kwargs)
