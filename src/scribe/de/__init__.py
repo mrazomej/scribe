@@ -11,21 +11,20 @@ expression analysis that is:
 
 Quick start
 -----------
-Parametric (analytic Gaussian):
+Results-object interface (recommended for empirical / shrinkage):
 
 >>> from scribe.de import compare
->>> de = compare(model_A, model_B, gene_names=gene_names)
+>>> de = compare(
+...     results_bleo, results_ctrl,
+...     method="empirical",
+...     component_A=0, component_B=0,
+... )
 >>> results = de.gene_level(tau=jnp.log(1.1))
 >>> is_de = de.call_genes(lfsr_threshold=0.05)
 
-Empirical (non-parametric):
+Parametric (analytic Gaussian, requires pre-fitted logistic-normal):
 
->>> de = compare(
-...     r_samples_A, r_samples_B,
-...     method="empirical",
-...     component_A=0, component_B=0,
-...     gene_names=gene_names,
-... )
+>>> de = compare(model_A, model_B, gene_names=gene_names)
 >>> results = de.gene_level(tau=jnp.log(1.1))
 
 Class hierarchy

@@ -56,17 +56,33 @@ The recommended entry point.  Returns a `ScribeParametricDEResults`,
 `method=`:
 
 ```python
-# Parametric (default)
+# Results-object interface (recommended for empirical / shrinkage).
+# Automatically extracts r, p (for hierarchical models), and gene names.
+de = compare(results_bleo, results_ctrl,
+             method="empirical",
+             component_A=0, component_B=0)
+
+# Shrinkage with results objects
+de = compare(results_bleo, results_ctrl,
+             method="shrinkage",
+             component_A=0, component_B=0)
+
+# Parametric (requires pre-fitted logistic-normal models)
 de = compare(model_A, model_B, gene_names=names)
 
-# Empirical (non-parametric)
+# Raw-array interface (still supported for full control)
 de = compare(r_A, r_B, method="empirical", component_A=0, component_B=0,
-             gene_names=names)
-
-# Shrinkage (empirical Bayes)
-de = compare(r_A, r_B, method="shrinkage", component_A=0, component_B=0,
-             gene_names=names)
+             gene_names=names, p_samples_A=p_A, p_samples_B=p_B)
 ```
+
+When results objects are passed, `compare()`:
+
+- Extracts `r` samples from `posterior_samples["r"]`
+- Auto-detects hierarchical models (gene-specific `p`) via
+  `model_config.is_hierarchical` and extracts `posterior_samples["p"]`
+- Infers gene names from `results.var.index`
+- Silently drops `gene_mask` when gene-specific `p` is present
+  (the two are mutually exclusive)
 
 **Common methods (all subclasses):**
 

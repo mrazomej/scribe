@@ -747,3 +747,266 @@ class TestCompareGeneMask:
         assert result["delta_mean"].shape == (D_kept,)
         assert result["lfsr"].shape == (D_kept,)
         assert len(result["gene_names"]) == D_kept
+
+
+# --------------------------------------------------------------------------
+# Tests: Results-object dispatch for compare()
+# --------------------------------------------------------------------------
+
+
+class _MockModelConfig:
+    """Lightweight mock of ModelConfig with is_hierarchical property."""
+
+    def __init__(self, is_hierarchical=False):
+        self._is_hierarchical = is_hierarchical
+
+    @property
+    def is_hierarchical(self):
+        return self._is_hierarchical
+
+
+class _MockResults:
+    """Lightweight mock of ScribeSVIResults for testing compare() dispatch."""
+
+    def __init__(
+        self,
+        r_samples,
+        p_samples=None,
+        gene_names=None,
+        is_hierarchical=False,
+    ):
+        self.posterior_samples = {"r": r_samples}
+        if p_samples is not None:
+            self.posterior_samples["p"] = p_samples
+        self.model_config = _MockModelConfig(is_hierarchical=is_hierarchical)
+        import pandas as pd
+        if gene_names is not None:
+            self.var = pd.DataFrame(index=gene_names)
+        else:
+            self.var = None
+
+
+class TestResultsObjectDispatch:
+    """Tests for passing ScribeSVIResults / ScribeMCMCResults to compare()."""
+
+    def test_standard_model_uses_dirichlet(self, rng):
+        """Non-hierarchical results use standard Dirichlet (no p_samples)."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        names = [f"gene_{i}" for i in range(D)]
+
+        res_A = _MockResults(r, gene_names=names, is_hierarchical=False)
+        res_B = _MockResults(r, gene_names=names, is_hierarchical=False)
+
+        de = compare(res_A, res_B, method="empirical", rng_key=rng)
+        result = de.gene_level(tau=0.0)
+
+        assert result["delta_mean"].shape == (D,)
+        assert result["lfsr"].shape == (D,)
+        assert de.gene_names == names
+        # All finite (no NaN)
+        assert np.all(np.isfinite(np.array(result["delta_mean"])))
+
+    def test_hierarchical_model_uses_gamma(self, rng):
+        """Hierarchical results auto-detect gene-specific p."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        # Gene-specific p in (0, 1)
+        p = jax.nn.sigmoid(random.normal(random.PRNGKey(1), (100, D)))
+        names = [f"gene_{i}" for i in range(D)]
+
+        res_A = _MockResults(
+            r, p_samples=p, gene_names=names, is_hierarchical=True
+        )
+        res_B = _MockResults(
+            r, p_samples=p, gene_names=names, is_hierarchical=True
+        )
+
+        de = compare(res_A, res_B, method="empirical", rng_key=rng)
+        result = de.gene_level(tau=0.0)
+
+        assert result["delta_mean"].shape == (D,)
+        assert np.all(np.isfinite(np.array(result["delta_mean"])))
+
+    def test_hierarchical_mixture_model(self, rng):
+        """Hierarchical mixture model with component slicing."""
+        D, K = 5, 3
+        r = jnp.abs(random.normal(rng, (100, K, D))) + 1.0
+        p = jax.nn.sigmoid(random.normal(random.PRNGKey(1), (100, K, D)))
+        names = [f"gene_{i}" for i in range(D)]
+
+        res_A = _MockResults(
+            r, p_samples=p, gene_names=names, is_hierarchical=True
+        )
+        res_B = _MockResults(
+            r, p_samples=p, gene_names=names, is_hierarchical=True
+        )
+
+        de = compare(
+            res_A, res_B,
+            method="empirical",
+            component_A=0, component_B=1,
+            rng_key=rng,
+        )
+        result = de.gene_level(tau=0.0)
+        assert result["delta_mean"].shape == (D,)
+        assert np.all(np.isfinite(np.array(result["delta_mean"])))
+
+    def test_gene_names_auto_extracted(self, rng):
+        """Gene names are taken from results.var.index when not provided."""
+        D = 4
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        names = ["Gapdh", "Actb", "Rpl13a", "Hprt"]
+
+        res_A = _MockResults(r, gene_names=names, is_hierarchical=False)
+        res_B = _MockResults(r, gene_names=names, is_hierarchical=False)
+
+        de = compare(res_A, res_B, method="empirical", rng_key=rng)
+        assert de.gene_names == names
+
+    def test_explicit_gene_names_override(self, rng):
+        """Explicitly passed gene_names take precedence over results.var."""
+        D = 4
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        results_names = ["a", "b", "c", "d"]
+        override_names = ["x", "y", "z", "w"]
+
+        res_A = _MockResults(r, gene_names=results_names, is_hierarchical=False)
+        res_B = _MockResults(r, gene_names=results_names, is_hierarchical=False)
+
+        de = compare(
+            res_A, res_B,
+            method="empirical",
+            gene_names=override_names,
+            rng_key=rng,
+        )
+        assert de.gene_names == override_names
+
+    def test_gene_mask_silently_dropped_for_hierarchical(self, rng):
+        """gene_mask is ignored with a warning for hierarchical models."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        p = jax.nn.sigmoid(random.normal(random.PRNGKey(1), (100, D)))
+        names = [f"gene_{i}" for i in range(D)]
+        mask = jnp.array([True, True, False, True, True])
+
+        res_A = _MockResults(
+            r, p_samples=p, gene_names=names, is_hierarchical=True
+        )
+        res_B = _MockResults(
+            r, p_samples=p, gene_names=names, is_hierarchical=True
+        )
+
+        # Should warn but not raise
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            de = compare(
+                res_A, res_B,
+                method="empirical",
+                gene_mask=mask,
+                rng_key=rng,
+            )
+            assert len(w) == 1
+            assert "gene_mask" in str(w[0].message).lower()
+
+        # Should still produce valid results for all D genes
+        result = de.gene_level(tau=0.0)
+        assert result["delta_mean"].shape == (D,)
+
+    def test_parametric_method_raises_for_results_objects(self, rng):
+        """method='parametric' rejects results objects."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        res = _MockResults(r, is_hierarchical=False)
+
+        with pytest.raises(ValueError, match="parametric"):
+            compare(res, res, method="parametric")
+
+    def test_mixed_types_raises(self, rng):
+        """Mixing a results object with a raw array raises TypeError."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        res = _MockResults(r, is_hierarchical=False)
+
+        with pytest.raises(TypeError, match="Both model_A and model_B"):
+            compare(res, r, method="empirical", rng_key=rng)
+
+    def test_no_posterior_samples_raises(self, rng):
+        """Results with posterior_samples=None raises ValueError."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        res_A = _MockResults(r, is_hierarchical=False)
+        res_B = _MockResults(r, is_hierarchical=False)
+        res_A.posterior_samples = None
+
+        with pytest.raises(ValueError, match="posterior samples"):
+            compare(res_A, res_B, method="empirical", rng_key=rng)
+
+    def test_shrinkage_with_results_objects(self, rng):
+        """method='shrinkage' works with results objects."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        names = [f"gene_{i}" for i in range(D)]
+
+        res_A = _MockResults(r, gene_names=names, is_hierarchical=False)
+        res_B = _MockResults(r, gene_names=names, is_hierarchical=False)
+
+        de = compare(res_A, res_B, method="shrinkage", rng_key=rng)
+        result = de.gene_level(tau=0.0)
+        assert result["delta_mean"].shape == (D,)
+
+
+# --------------------------------------------------------------------------
+# Tests: NaN guards in _batched_gamma_normalize
+# --------------------------------------------------------------------------
+
+
+class TestGammaNormalizeSafety:
+    """Edge cases for the Gamma-based composition sampling."""
+
+    def test_p_near_zero(self, rng):
+        """p near zero should not produce NaN."""
+        D = 5
+        r = jnp.ones((50, D)) * 2.0
+        # p very close to 0 — without guards, p/(1-p) -> 0/1 = 0
+        # total could be 0 -> NaN
+        p = jnp.ones((50, D)) * 1e-9
+
+        from scribe.de._empirical import _batched_gamma_normalize
+        result = _batched_gamma_normalize(r, p, 1, rng, 2048)
+        assert result.shape == (50, D)
+        assert np.all(np.isfinite(np.array(result)))
+
+    def test_p_near_one(self, rng):
+        """p near one should not produce NaN (p/(1-p) -> inf guarded)."""
+        D = 5
+        r = jnp.ones((50, D)) * 2.0
+        p = jnp.ones((50, D)) * (1.0 - 1e-9)
+
+        from scribe.de._empirical import _batched_gamma_normalize
+        result = _batched_gamma_normalize(r, p, 1, rng, 2048)
+        assert result.shape == (50, D)
+        assert np.all(np.isfinite(np.array(result)))
+
+    def test_p_exactly_zero_and_one(self, rng):
+        """Exact 0 and 1 are clamped — no NaN."""
+        D = 4
+        r = jnp.ones((30, D)) * 2.0
+        p = jnp.array([[0.0, 1.0, 0.5, 0.3]] * 30)
+
+        from scribe.de._empirical import _batched_gamma_normalize
+        result = _batched_gamma_normalize(r, p, 1, rng, 2048)
+        assert result.shape == (30, D)
+        assert np.all(np.isfinite(np.array(result)))
+
+    def test_multi_sample_gamma_safe(self, rng):
+        """n_samples_dirichlet > 1 path also has NaN guards."""
+        D = 5
+        r = jnp.ones((20, D)) * 2.0
+        p = jnp.ones((20, D)) * 1e-9
+
+        from scribe.de._empirical import _batched_gamma_normalize
+        result = _batched_gamma_normalize(r, p, 3, rng, 2048)
+        assert result.shape == (60, D)  # 20 * 3
+        assert np.all(np.isfinite(np.array(result)))

@@ -247,6 +247,14 @@ class ModelConfig(BaseModel):
 
     @computed_field
     @property
+    def is_hierarchical(self) -> bool:
+        """Check if this model uses a hierarchical (gene-specific p) parameterization."""
+        return str(self.parameterization).startswith("hierarchical")
+
+    # --------------------------------------------------------------------------
+
+    @computed_field
+    @property
     def active_parameters(self) -> Set[str]:
         """Get the set of active parameters for this configuration."""
         return get_active_parameters(
@@ -395,6 +403,7 @@ class ModelConfig(BaseModel):
                 "is_mixture",
                 "is_zero_inflated",
                 "uses_variable_capture",
+                "is_hierarchical",
                 "active_parameters",
             },
         )
