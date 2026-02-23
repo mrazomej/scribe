@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from scribe.mcmc._init_from_svi import compute_init_values
+from scribe.mcmc._init_from_svi import clamp_init_values, compute_init_values
 from scribe.models.config import ModelConfig
 from scribe.models.config.enums import Parameterization
 
@@ -44,6 +44,62 @@ def _canonical_map(p_val=0.4, r_val=3.0, n_genes=5):
         "p": jnp.full((), p_val),
         "r": jnp.full((n_genes,), r_val),
     }
+
+
+# ==========================================================================
+# Tests for clamp_init_values — boundary clamping
+# ==========================================================================
+
+
+class TestClampInitValues:
+    """Tests for the ``clamp_init_values`` boundary clamping utility."""
+
+    def test_clamps_probability_params_to_open_unit_interval(self):
+        """p and p_capture should be clamped to (eps, 1-eps)."""
+        init = {
+            "p": jnp.array([0.0, 0.5, 1.0]),
+            "p_capture": jnp.array([0.0, 1.0]),
+        }
+        result = clamp_init_values(init)
+
+        assert jnp.all(result["p"] > 0)
+        assert jnp.all(result["p"] < 1)
+        assert jnp.all(result["p_capture"] > 0)
+        assert jnp.all(result["p_capture"] < 1)
+
+    def test_clamps_positive_params_away_from_zero(self):
+        """phi, phi_capture, mu, r should be clamped to (eps, inf)."""
+        init = {
+            "phi": jnp.array([0.0, 1.0]),
+            "phi_capture": jnp.array([0.0, 0.5]),
+            "mu": jnp.array([0.0, 2.0]),
+            "r": jnp.array([0.0, 3.0]),
+        }
+        result = clamp_init_values(init)
+
+        for name in ("phi", "phi_capture", "mu", "r"):
+            assert jnp.all(result[name] > 0), f"{name} should be > 0"
+
+    def test_leaves_unknown_params_untouched(self):
+        """Parameters not in the support map should pass through."""
+        init = {
+            "p": jnp.array([0.5]),
+            "custom_param": jnp.array([-1.0, 0.0, 1.0]),
+        }
+        result = clamp_init_values(init)
+
+        np.testing.assert_array_equal(
+            result["custom_param"], init["custom_param"]
+        )
+
+    def test_does_not_mutate_input(self):
+        """Should return a new dict, not modify the original."""
+        init = {"phi_capture": jnp.array([0.0])}
+        result = clamp_init_values(init)
+
+        assert result is not init
+        assert float(init["phi_capture"][0]) == 0.0
+        assert float(result["phi_capture"][0]) > 0.0
 
 
 # ==========================================================================
@@ -264,6 +320,39 @@ class TestVCPCaptureConversion:
         assert "p_capture" not in result
         assert "phi_capture" not in result
 
+    # ------------------------------------------------------------------
+
+    def test_boundary_p_capture_clamped(self):
+        """p_capture=1.0 should produce phi_capture > 0 (not exactly 0)."""
+        svi_map = {
+            "p": jnp.full((), 0.4),
+            "r": jnp.full((5,), 3.0),
+            "p_capture": jnp.ones((10,)),  # boundary: p_capture = 1.0
+        }
+        cfg = _make_model_config(
+            base_model="nbvcp", parameterization="mean_odds"
+        )
+
+        result = compute_init_values(svi_map, cfg)
+
+        # phi_capture must be strictly positive (BetaPrime support)
+        assert jnp.all(result["phi_capture"] > 0)
+
+    # ------------------------------------------------------------------
+
+    def test_boundary_p_values_clamped(self):
+        """p=1.0 should produce phi > 0 (not exactly 0)."""
+        svi_map = {
+            "p": jnp.full((), 1.0),  # boundary
+            "r": jnp.full((5,), 3.0),
+        }
+        cfg = _make_model_config(parameterization="mean_odds")
+
+        result = compute_init_values(svi_map, cfg)
+
+        assert jnp.all(result["phi"] > 0)
+        assert jnp.all(jnp.isfinite(result["mu"]))
+
 
 # ==========================================================================
 # Tests for MCMCInferenceEngine.run_inference — init_values parameter
@@ -437,8 +526,8 @@ class TestFitSVIInit:
     # ------------------------------------------------------------------
 
     def test_svi_init_extracts_map_and_injects_strategy(self):
-        """Verify that fit() calls get_map(use_mean=True, canonical=True)
-        and creates MCMCConfig with init_strategy in mcmc_kwargs."""
+        """Same parameterization: get_map(canonical=False) is used directly
+        (skips the lossy canonical round-trip)."""
         from scribe.api import fit
         from scribe.models.config import MCMCConfig
 
@@ -446,7 +535,6 @@ class TestFitSVIInit:
         mock_svi.model_config = _make_model_config(inference_method="svi")
         mock_svi.get_map.return_value = _canonical_map()
 
-        # Patch _run_inference to capture the InferenceConfig
         with patch("scribe.api._run_inference") as mock_run:
             mock_run.return_value = MagicMock()
             fit(
@@ -456,12 +544,11 @@ class TestFitSVIInit:
                 svi_init=mock_svi,
             )
 
-        # Verify get_map was called with the right arguments
+        # Same parameterization → canonical=False to skip round-trip
         mock_svi.get_map.assert_called_once_with(
-            use_mean=True, canonical=True
+            use_mean=True, canonical=False
         )
 
-        # Verify the InferenceConfig passed to _run_inference has init_strategy
         call_kwargs = mock_run.call_args[1]
         inf_config = call_kwargs["inference_config"]
         mcmc_kwargs = inf_config.mcmc.mcmc_kwargs
