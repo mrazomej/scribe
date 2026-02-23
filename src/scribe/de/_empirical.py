@@ -689,11 +689,16 @@ def _batched_gamma_normalize(
 
         key_batch = random.fold_in(rng_key, start)
 
+        # Clamp p away from 0 and 1 to avoid inf/nan in p/(1-p)
+        p_batch = jnp.clip(p_batch, 1e-7, 1.0 - 1e-7)
+
         if n_samples_dirichlet == 1:
             # Draw Gamma(r, 1) and scale by p / (1 - p)
             gamma_raw = jax.random.gamma(key_batch, r_batch)  # (B, D)
             lambda_scaled = gamma_raw * p_batch / (1.0 - p_batch)
-            total = lambda_scaled.sum(axis=-1, keepdims=True)
+            total = jnp.maximum(
+                lambda_scaled.sum(axis=-1, keepdims=True), 1e-30
+            )
             samples = lambda_scaled / total  # (B, D)
         else:
             keys = random.split(key_batch, end - start)
@@ -704,7 +709,9 @@ def _batched_gamma_normalize(
                 )
                 # alpha has shape (D,); gamma_raw has shape (S, D)
                 lambda_scaled = gamma_raw * p_gene / (1.0 - p_gene)
-                total = lambda_scaled.sum(axis=-1, keepdims=True)
+                total = jnp.maximum(
+                    lambda_scaled.sum(axis=-1, keepdims=True), 1e-30
+                )
                 return lambda_scaled / total  # (S, D)
 
             # (B, S, D)

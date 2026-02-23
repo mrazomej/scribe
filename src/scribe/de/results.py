@@ -34,6 +34,74 @@ from ._error_control import (
 
 
 # --------------------------------------------------------------------------
+# Results-object input extraction
+# --------------------------------------------------------------------------
+
+
+def _is_results_object(obj) -> bool:
+    """Check if an object is a scribe results object (SVI, MCMC, or VAE)."""
+    return (
+        hasattr(obj, "posterior_samples")
+        and hasattr(obj, "model_config")
+        and hasattr(obj, "var")
+    )
+
+
+def _extract_de_inputs(results, component=None):
+    """Extract DE-relevant arrays from a scribe results object.
+
+    Reads the posterior samples from a ``ScribeSVIResults`` or
+    ``ScribeMCMCResults`` object and returns the arrays that
+    ``compute_clr_differences`` needs, automatically detecting
+    hierarchical (gene-specific p) models.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults or ScribeMCMCResults
+        A fitted results object with ``posterior_samples`` populated.
+    component : int, optional
+        Mixture component index.  Not applied here — passed through
+        so that ``compute_clr_differences`` can handle the slicing.
+
+    Returns
+    -------
+    r_samples : jnp.ndarray
+        Posterior samples of the dispersion parameter ``r``.
+        Shape ``(N, D)`` or ``(N, K, D)`` for mixture models.
+    p_samples : jnp.ndarray or None
+        Posterior samples of the gene-specific success probability
+        ``p`` if the model is hierarchical; ``None`` otherwise.
+    gene_names : list of str or None
+        Gene names from ``results.var.index``, or ``None`` if
+        ``results.var`` is not available.
+
+    Raises
+    ------
+    ValueError
+        If ``posterior_samples`` is ``None`` (samples not yet drawn).
+    """
+    if results.posterior_samples is None:
+        raise ValueError(
+            "Results object has no posterior samples. "
+            "Call results.get_posterior_samples() first."
+        )
+
+    r_samples = results.posterior_samples["r"]
+
+    # Hierarchical models have gene-specific p stored as a
+    # numpyro.deterministic site (derived from phi for mean_odds).
+    p_samples = None
+    if results.model_config.is_hierarchical:
+        p_samples = results.posterior_samples.get("p")
+
+    gene_names = None
+    if results.var is not None:
+        gene_names = results.var.index.tolist()
+
+    return r_samples, p_samples, gene_names
+
+
+# --------------------------------------------------------------------------
 # Base class
 # --------------------------------------------------------------------------
 
@@ -844,16 +912,19 @@ def compare(
     This factory function dispatches to either the parametric (Gaussian)
     or empirical (sample-based) DE path depending on ``method``.
 
+    **Results-object interface (recommended):** For ``method="empirical"``
+    or ``method="shrinkage"``, pass ``ScribeSVIResults`` or
+    ``ScribeMCMCResults`` objects directly.  The function auto-extracts
+    ``r`` and ``p`` posterior samples, detects hierarchical models, and
+    infers gene names from ``results.var.index``.
+
     Parameters
     ----------
-    model_A : dict, Distribution, or ndarray
-        For ``method="parametric"``: fitted logistic-normal model for
-        condition A (dict with ``loc``/``cov_factor``/``cov_diag``, or
-        a ``LowRankLogisticNormal`` / ``SoftmaxNormal`` distribution).
-        For ``method="empirical"``: posterior samples of Dirichlet
-        concentration parameters, shape ``(N, D)`` or ``(N, K, D)``
-        for mixture models.
-    model_B : dict, Distribution, or ndarray
+    model_A : ScribeSVIResults, ScribeMCMCResults, dict, Distribution, or ndarray
+        A scribe results object (recommended for empirical/shrinkage),
+        or raw inputs: dict/Distribution for ``method="parametric"``,
+        ndarray for ``method="empirical"``/``"shrinkage"``.
+    model_B : ScribeSVIResults, ScribeMCMCResults, dict, Distribution, or ndarray
         Same as ``model_A`` for condition B.
     gene_names : list of str, optional
         Gene names.  If ``None``, generic names are generated.
@@ -961,7 +1032,80 @@ def compare(
     ...     gene_names=names,
     ... )
     >>> print(f"Null proportion: {de.null_proportion:.2%}")
+
+    Results-object interface (recommended for empirical/shrinkage):
+
+    >>> de = compare(
+    ...     results_bleo, results_ctrl,
+    ...     method="empirical",
+    ...     component_A=0, component_B=0,
+    ... )
+
+    The function auto-detects hierarchical models and extracts
+    ``r``, ``p``, and gene names from the results objects.
     """
+    # ------------------------------------------------------------------
+    # Results-object dispatch: when model_A and model_B are scribe
+    # results objects (ScribeSVIResults, ScribeMCMCResults, etc.),
+    # auto-extract r_samples, p_samples, and gene_names.
+    # ------------------------------------------------------------------
+    _a_is_results = _is_results_object(model_A)
+    _b_is_results = _is_results_object(model_B)
+
+    if _a_is_results or _b_is_results:
+        if not (_a_is_results and _b_is_results):
+            raise TypeError(
+                "Both model_A and model_B must be results objects, "
+                "or both must be raw arrays/dicts. "
+                f"Got types: {type(model_A).__name__}, "
+                f"{type(model_B).__name__}."
+            )
+
+        if method == "parametric":
+            raise ValueError(
+                "method='parametric' requires pre-fitted logistic-normal "
+                "models (dicts or distributions), not results objects. "
+                "Use method='empirical' or method='shrinkage' with "
+                "results objects."
+            )
+
+        # Extract arrays from results objects
+        r_A, p_A, names_A = _extract_de_inputs(model_A, component_A)
+        r_B, p_B, names_B = _extract_de_inputs(model_B, component_B)
+
+        # Use gene_names from the results if not explicitly provided
+        if gene_names is None:
+            gene_names = names_A
+
+        # Use auto-detected p_samples unless the user explicitly provided
+        # their own (explicit overrides take precedence).
+        if p_samples_A is None:
+            p_samples_A = p_A
+        if p_samples_B is None:
+            p_samples_B = p_B
+
+        # gene_mask and gene-specific p are mutually exclusive in
+        # compute_clr_differences; when p is gene-specific, silently
+        # drop gene_mask so the user doesn't have to know about this
+        # constraint.
+        if gene_mask is not None and p_samples_A is not None:
+            import warnings
+
+            warnings.warn(
+                "gene_mask is incompatible with gene-specific p_samples "
+                "(hierarchical model). Ignoring gene_mask.",
+                UserWarning,
+                stacklevel=2,
+            )
+            gene_mask = None
+
+        # Replace model_A/model_B with raw r_samples for downstream
+        model_A = r_A
+        model_B = r_B
+
+    # ------------------------------------------------------------------
+    # Standard dispatch by method
+    # ------------------------------------------------------------------
     if method == "parametric":
         return _compare_parametric(
             model_A,
