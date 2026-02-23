@@ -202,6 +202,12 @@ Examples:
         default=None,
         help="Number of posterior samples for PPC (default: 1500)",
     )
+    parser.add_argument(
+        "--umap-ppc-samples",
+        type=int,
+        default=None,
+        help="Number of PPC samples for UMAP overlay (default: 50)",
+    )
 
     return parser.parse_args()
 
@@ -326,6 +332,8 @@ def _build_viz_config(args):
         viz_cfg.ppc_opts.n_cols = args.ppc_cols
     if args.ppc_samples is not None:
         viz_cfg.ppc_opts.n_samples = args.ppc_samples
+    if args.umap_ppc_samples is not None:
+        viz_cfg.umap_opts.n_ppc_samples = args.umap_ppc_samples
 
     return viz_cfg
 

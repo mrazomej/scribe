@@ -38,6 +38,7 @@ viz:
     use_pca: true  # Run PCA before UMAP (standard Scanpy workflow)
     pca_n_comps: 50  # Number of PCs used as UMAP input
     batch_size: 1000  # Batch size for PPC sampling (None = no batching, use for memory efficiency)
+    n_ppc_samples: 50  # Number of posterior predictive samples for UMAP overlay
     data_color: "dark_blue"  # Color for experimental data
     synthetic_color: "dark_red"  # Color for synthetic data
     cache_umap: true  # Cache fitted UMAP in data directory (avoids re-fitting for same data)

@@ -709,6 +709,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
     hvg_flavor = umap_opts.get("hvg_flavor", "seurat")
     use_pca = bool(umap_opts.get("use_pca", True))
     pca_n_comps = int(umap_opts.get("pca_n_comps", 50))
+    n_ppc_samples = int(umap_opts.get("n_ppc_samples", 50))
 
     if force_refit:
         console.print(
@@ -968,76 +969,65 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
                 )
 
     console.print(
-        "[dim]Generating single predictive sample for synthetic dataset...[/dim]"
+        f"[dim]Generating {n_ppc_samples} predictive sample(s) for "
+        f"synthetic dataset...[/dim]"
     )
 
     # Get batch_size from config for memory-efficient sampling
     batch_size = umap_opts.get("batch_size", None)
 
-    # For UMAP, we need samples for ALL genes (not just the subset used in PPC
-    # plots). Use the memory-efficient MAP-based sampling method.
-    if results.predictive_samples is None:
-        console.print(
-            "[dim]Using MAP estimates for memory-efficient predictive sampling...[/dim]"
-        )
-        if batch_size is not None:
-            console.print(
-                f"[dim]Using cell_batch_size={batch_size} for cell batching...[/dim]"
-            )
+    # Gene-subset the results to only the genes that pass the detection
+    # filter.  This avoids generating counts for genes that are immediately
+    # discarded, keeping peak memory at (1, n_cells, n_gene_mask_genes)
+    # regardless of n_ppc_samples.
+    gene_mask_indices = np.where(gene_mask)[0]
+    results_sub = results[gene_mask_indices]
 
-        # Use the new memory-efficient method that samples using MAP estimates
-        # and processes cells in batches to avoid OOM for VCP models
-        # Pass full counts matrix for amortized capture probability
-        # The amortizer needs total UMI count per cell, which is computed across all genes
-        predictive_samples = results.get_map_ppc_samples(
-            rng_key=random.PRNGKey(42),
+    console.print(
+        f"[dim]Gene-subsetted results to {int(gene_mask.sum())} detected "
+        f"genes (out of {len(gene_mask)})[/dim]"
+    )
+
+    # Generate n_ppc_samples MAP-based PPC draws one at a time.  Each
+    # sample is immediately preprocessed (normalize → HVG → PCA) and
+    # projected through the fitted UMAP so only the 2-D coordinates are
+    # kept, bounding memory to a single (n_cells, n_gene_mask_genes) array.
+    all_umap_synthetic = []
+    for i in range(n_ppc_samples):
+        sample_arr = results_sub.get_map_ppc_samples(
+            rng_key=random.PRNGKey(42 + i),
             n_samples=1,
             cell_batch_size=batch_size or 1000,
             use_mean=True,
-            store_samples=True,
-            verbose=True,
+            store_samples=False,
+            verbose=(i == 0),
             counts=counts,
         )
-        # Extract single sample: shape is (1, n_cells, n_genes) -> (n_cells, n_genes)
-        synthetic_data = predictive_samples[0, :, :]
-    else:
-        # Use existing predictive samples
-        console.print("[dim]Using existing predictive samples...[/dim]")
-        # Extract single sample: shape should be (n_cells, n_genes)
-        # predictive_samples shape is (n_samples, n_cells, n_genes)
-        if results.predictive_samples.ndim == 3:
-            synthetic_data = results.predictive_samples[0, :, :]
-        else:
-            # If shape is (n_cells, n_genes), use directly
-            synthetic_data = results.predictive_samples
 
-    # Convert to numpy array (CPU) to avoid memory issues and for UMAP
-    # compatibility
-    if hasattr(synthetic_data, "block_until_ready"):
-        # JAX array - convert to numpy
-        synthetic_data = np.array(synthetic_data)
-    elif not isinstance(synthetic_data, np.ndarray):
-        # Other array type - convert to numpy
-        synthetic_data = np.array(synthetic_data)
+        # (1, n_cells, n_gene_mask_genes) → (n_cells, n_gene_mask_genes)
+        synth_i = np.array(sample_arr[0, :, :], dtype=np.float64)
 
-    # Apply the same library-size normalisation + log1p to synthetic data
-    console.print(
-        "[dim]Applying matched preprocessing to synthetic "
-        "counts...[/dim]"
-    )
-    synthetic_data = synthetic_data.astype(np.float64)
-    synthetic_filtered = synthetic_data[:, gene_mask]
-    synthetic_norm = _normalize_log1p(synthetic_filtered)
-    synthetic_embed = synthetic_norm[:, hvg_mask]
-    if pca_model is not None:
-        synthetic_embed = pca_model.transform(synthetic_embed)
+        # Matched preprocessing: library-size normalize + log1p, HVG, PCA
+        synth_norm = _normalize_log1p(synth_i)
+        synth_embed = synth_norm[:, hvg_mask]
+        if pca_model is not None:
+            synth_embed = pca_model.transform(synth_embed)
 
-    console.print("[dim]Projecting synthetic data onto UMAP space...[/dim]")
+        all_umap_synthetic.append(umap_reducer.transform(synth_embed))
 
-    # Project synthetic data onto the same UMAP space
-    umap_synthetic = umap_reducer.transform(synthetic_embed)
+        if (i + 1) % max(1, n_ppc_samples // 5) == 0 or i == n_ppc_samples - 1:
+            console.print(
+                f"[dim]  PPC sample {i + 1}/{n_ppc_samples} projected[/dim]"
+            )
+
+    # (n_ppc_samples * n_cells, 2)
+    umap_synthetic = np.concatenate(all_umap_synthetic, axis=0)
 
     console.print("[dim]Creating overlay plot...[/dim]")
+
+    # Scale scatter alpha and size for denser multi-sample synthetic cloud
+    synth_alpha = 0.6 if n_ppc_samples == 1 else max(0.05, 0.6 / n_ppc_samples)
+    synth_size = 1 if n_ppc_samples == 1 else max(0.2, 1.0 / np.sqrt(n_ppc_samples))
 
     # Create overlay plot
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -1052,14 +1042,14 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
         label="experimental data",
     )
 
-    # Plot synthetic data
+    # Plot synthetic data (alpha/size reduced for multi-sample overlays)
     ax.scatter(
         umap_synthetic[:, 0],
         umap_synthetic[:, 1],
         c=synthetic_color,
-        alpha=0.6,
-        s=1,
-        label="synthetic data",
+        alpha=synth_alpha,
+        s=synth_size,
+        label=f"synthetic data ({n_ppc_samples} sample{'s' if n_ppc_samples > 1 else ''})",
     )
 
     ax.set_xlabel("UMAP 1")
