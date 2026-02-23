@@ -1,7 +1,6 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
 csl: ieee.csl
 format:
   html:
@@ -75,13 +74,18 @@ $$
 $${#eq-diffexp-eb-observation}
 
 Here $\beta_g$ is the true CLR log-fold-change for gene $g$---the quantity we
-ultimately wish to estimate---and $s_g$ is the known standard error. The
-Gaussian assumption for the observation model is justified by the central limit
-theorem: $\hat{\Delta}_g$ is the average of $N$ posterior samples, and for
-typical sample sizes $N \geq 1{,}000$, the sampling distribution of the mean
-is well-approximated by a Gaussian regardless of the shape of the individual
-$\Delta_g^{(s)}$ samples. This is precisely the regime where the CLT is most
-reliable.
+ultimately wish to estimate---and $s_g$ is the known posterior standard
+deviation from the upstream empirical pipeline. The Gaussian observation model
+is justified by the approximate Gaussianity of the upstream posterior: for
+each gene $g$, the posterior distribution of the CLR difference is
+well-approximated by $\mathcal{N}(\hat{\Delta}_g, s_g^2)$, either by
+Bernstein--von Mises arguments or simply because the Dirichlet-Multinomial
+posterior concentrates in the large-count regime. Given this approximate
+Gaussian posterior, the pair $(\hat{\Delta}_g, s_g^2)$ serves as a sufficient
+statistic, and we can equivalently encode it as a Gaussian pseudo-likelihood
+$\hat{\Delta}_g \mid \beta_g \sim \mathcal{N}(\beta_g, s_g^2)$ with a flat
+prior on $\beta_g$. The empirical Bayes layer then replaces this flat prior
+with the learned mixture prior $\pi(\beta \mid \underline{w})$.
 
 **Level 2: the prior on true effects.** Rather than treating each $\beta_g$ as
 a completely free parameter, we assume that all $D$ true effects are drawn
