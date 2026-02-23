@@ -555,10 +555,14 @@ class SamplingMixin:
             else:
                 p_batch = p
 
-            # Handle gate parameter if present
+            # Handle gate parameter if present.
+            # gate is (n_components, n_genes) when in mixture_params,
+            # otherwise (n_genes,) shared across components.
             if has_gate:
-                # gate: (n_components, n_genes) -> (n_samples, batch_size, n_genes)
-                gate_batch = gate[components]
+                if gate.ndim == 2 and gate.shape[0] == n_components:
+                    gate_batch = gate[components]
+                else:
+                    gate_batch = gate
             else:
                 gate_batch = None
 
