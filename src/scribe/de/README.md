@@ -51,8 +51,9 @@ print(de.summary(sort_by='lfsr', top_n=20))
 
 ### `compare()` factory
 
-The recommended entry point.  Returns a `ScribeParametricDEResults` or
-`ScribeEmpiricalDEResults` depending on `method=`:
+The recommended entry point.  Returns a `ScribeParametricDEResults`,
+`ScribeEmpiricalDEResults`, or `ScribeShrinkageDEResults` depending on
+`method=`:
 
 ```python
 # Parametric (default)
@@ -60,6 +61,10 @@ de = compare(model_A, model_B, gene_names=names)
 
 # Empirical (non-parametric)
 de = compare(r_A, r_B, method="empirical", component_A=0, component_B=0,
+             gene_names=names)
+
+# Shrinkage (empirical Bayes)
+de = compare(r_A, r_B, method="shrinkage", component_A=0, component_B=0,
              gene_names=names)
 ```
 
@@ -366,13 +371,71 @@ lfsr = 0.01.
 
 ```
 ScribeDEResults (base)
-├── ScribeParametricDEResults  — analytic Gaussian (loc, W, d)
-└── ScribeEmpiricalDEResults   — Monte Carlo counting (delta_samples)
+├── ScribeParametricDEResults   — analytic Gaussian (loc, W, d)
+├── ScribeEmpiricalDEResults    — Monte Carlo counting (delta_samples)
+└── ScribeShrinkageDEResults    — empirical Bayes shrinkage (extends Empirical)
 ```
 
 The `compare()` factory returns the appropriate subclass based on `method=`.
 All shared methods (`call_genes`, `compute_pefp`, `find_threshold`, `summary`)
-work identically on both.
+work identically on all three.
+
+## Empirical Bayes Shrinkage
+
+When using the empirical path, the per-gene lfsr values are computed
+independently for each gene.  The **shrinkage** method improves on this by
+learning a genome-wide effect-size distribution (a scale mixture of normals)
+and using it to update each gene's posterior.  The result is adaptive shrinkage:
+noisy effect estimates are pulled toward zero, with the degree of shrinkage
+determined by the data.
+
+### Quick start
+
+```python
+from scribe.de import compare
+
+de = compare(
+    posterior_samples_bleo["r"],
+    posterior_samples_ctrl["r"],
+    method="shrinkage",
+    component_A=0, component_B=0,
+    gene_names=gene_names,
+    label_A="Bleomycin", label_B="Control",
+)
+
+results = de.gene_level(tau=jnp.log(1.1))
+print(f"Estimated null proportion: {de.null_proportion:.2%}")
+print(de.summary(sort_by="lfsr", top_n=20))
+```
+
+### How it works
+
+1. Runs the full empirical pipeline (Dirichlet sampling, CLR transform,
+   paired differences) to produce `delta_samples`.
+2. Computes `delta_mean` and `delta_sd` per gene from the samples.
+3. Fits a scale mixture of normals prior via EM:
+   `pi(beta) = sum_k w_k N(0, sigma_k^2)` where the grid `sigma_k` is fixed
+   and the weights `w_k` are estimated.
+4. Computes the shrinkage posterior per gene (a mixture of Gaussians) and
+   derives shrunk lfsr values from the mixture CDF.
+
+### When to use it
+
+- When you suspect that most genes are not DE and want the analysis to
+  account for this (adaptive shrinkage toward zero).
+- When you want a data-driven estimate of the null proportion (`w_0`).
+- The computational overhead is negligible relative to the upstream sampling.
+
+### Compatibility
+
+The shrunk lfsr values are fully compatible with the existing PEFP
+error-control machinery.  All methods (`call_genes`, `compute_pefp`,
+`find_threshold`, `summary`) work identically.
+
+### Mathematical details
+
+See Section 10 of the paper (`paper/_diffexp10.qmd`) for the full
+derivation.
 
 ## Module Layout
 
@@ -384,6 +447,7 @@ de/
 ├── _transforms.py       # ALR ↔ CLR ↔ ILR transformations
 ├── _gene_level.py       # Per-gene DE (analytic Gaussian)
 ├── _empirical.py        # Per-gene DE (empirical Monte Carlo)
+├── _shrinkage.py        # Empirical Bayes shrinkage (scale mixture of normals)
 ├── _set_level.py        # Gene-set/pathway analysis
 ├── _error_control.py    # Bayesian error control, formatting
 ├── _gaussianity.py      # Gaussianity diagnostics

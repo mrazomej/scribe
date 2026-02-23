@@ -385,8 +385,14 @@ class ScribeParametricDEResults(ScribeDEResults):
 
         # Drop "other" pseudo-gene (last column) when gene_mask was used
         if self._drop_last_gene:
-            for key in ("delta_mean", "delta_sd", "prob_positive",
-                        "prob_effect", "lfsr", "lfsr_tau"):
+            for key in (
+                "delta_mean",
+                "delta_sd",
+                "prob_positive",
+                "prob_effect",
+                "lfsr",
+                "lfsr_tau",
+            ):
                 if key in results:
                     results[key] = results[key][:-1]
             # Drop the last auto-generated name
@@ -654,6 +660,157 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
 
 
 # --------------------------------------------------------------------------
+# Shrinkage (empirical Bayes) subclass
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class ScribeShrinkageDEResults(ScribeEmpiricalDEResults):
+    """Empirical Bayes shrinkage DE results.
+
+    Extends ``ScribeEmpiricalDEResults`` by applying a scale-mixture-of-normals
+    empirical Bayes layer on top of the raw Monte Carlo CLR differences.  The
+    shrinkage uses the genome-wide distribution of effects to improve per-gene
+    lfsr estimates by encoding the assumption that most genes are not
+    differentially expressed.
+
+    The ``gene_level()`` method returns *shrunk* statistics (posterior mean, sd,
+    lfsr, etc.) that account for the global null proportion. All base-class
+    methods (``call_genes``, ``compute_pefp``, ``find_threshold``, ``summary``)
+    delegate to ``gene_level()`` and therefore automatically use the shrunk
+    values.
+
+    Parameters
+    ----------
+    delta_samples : jnp.ndarray, shape ``(N, D)``
+        CLR-space posterior differences (inherited from parent).
+    gene_names : list of str, optional
+        Gene names for output.
+    label_A : str
+        Human-readable label for condition A.
+    label_B : str
+        Human-readable label for condition B.
+    sigma_grid : jnp.ndarray, optional
+        Prior scale grid.  If ``None``, a default grid is constructed
+        from the data.
+    shrinkage_max_iter : int
+        Maximum number of EM iterations.
+    shrinkage_tol : float
+        EM convergence tolerance.
+
+    Attributes
+    ----------
+    null_proportion : float or None
+        Estimated fraction of truly null genes (set after first
+        ``gene_level()`` call).
+    prior_weights : jnp.ndarray or None
+        Estimated mixture weights (set after first ``gene_level()``
+        call).
+
+    Examples
+    --------
+    >>> from scribe.de import compare
+    >>> de = compare(
+    ...     r_samples_bleo, r_samples_ctrl,
+    ...     method="shrinkage",
+    ...     component_A=0, component_B=0,
+    ...     gene_names=gene_names,
+    ... )
+    >>> results = de.gene_level(tau=jnp.log(1.1))
+    >>> print(f"Null proportion: {de.null_proportion:.2%}")
+    """
+
+    # --- Shrinkage configuration ---
+    sigma_grid: Optional[jnp.ndarray] = field(default=None, repr=False)
+    shrinkage_max_iter: int = field(default=200, repr=False)
+    shrinkage_tol: float = field(default=1e-8, repr=False)
+
+    # --- Fitted shrinkage results (populated after gene_level()) ---
+    null_proportion: Optional[float] = field(
+        default=None, repr=True, init=False
+    )
+    prior_weights: Optional[jnp.ndarray] = field(
+        default=None, repr=False, init=False
+    )
+
+    def __post_init__(self):
+        """Set method identifier."""
+        super().__post_init__()
+        self.method = "shrinkage"
+
+    # ------------------------------------------------------------------
+    # Gene-level analysis (shrinkage)
+    # ------------------------------------------------------------------
+
+    def gene_level(
+        self,
+        tau: float = 0.0,
+        coordinate: str = "clr",
+    ) -> dict:
+        """Compute gene-level DE via empirical Bayes shrinkage.
+
+        First computes raw empirical summary statistics from the posterior CLR
+        difference samples, then applies the scale-mixture shrinkage to produce
+        improved estimates.
+
+        Parameters
+        ----------
+        tau : float, default=0.0
+            Practical significance threshold (log-scale).
+        coordinate : str, default='clr'
+            Coordinate system.  Only ``'clr'`` is supported.
+
+        Returns
+        -------
+        dict
+            Gene-level DE results with shrunk estimates.  Contains all
+            standard keys (``delta_mean``, ``delta_sd``, ``lfsr``, etc.)
+            plus shrinkage extras (``null_proportion``,
+            ``prior_weights``, ``sigma_grid``, ``em_converged``,
+            ``em_n_iter``, ``em_log_likelihood``).
+        """
+        from ._shrinkage import shrinkage_differential_expression
+
+        # Raw empirical summary stats from the delta_samples
+        raw_mean = jnp.mean(self.delta_samples, axis=0)
+        raw_sd = jnp.std(self.delta_samples, axis=0, ddof=1)
+
+        self._cached_tau = tau
+        self._gene_results = shrinkage_differential_expression(
+            delta_mean=raw_mean,
+            delta_sd=raw_sd,
+            tau=tau,
+            gene_names=self.gene_names,
+            sigma_grid=self.sigma_grid,
+            max_iter=self.shrinkage_max_iter,
+            tol=self.shrinkage_tol,
+        )
+
+        # Store fitted shrinkage metadata on the results object
+        self.null_proportion = self._gene_results.get("null_proportion")
+        self.prior_weights = self._gene_results.get("prior_weights")
+
+        return self._gene_results
+
+    # ------------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        """Concise representation of the shrinkage DE comparison."""
+        null_str = (
+            f", null_proportion={self.null_proportion:.2%}"
+            if self.null_proportion is not None
+            else ""
+        )
+        return (
+            f"ScribeShrinkageDEResults("
+            f"D={self.D}, "
+            f"n_samples={self.n_samples}"
+            f"{null_str}, "
+            f"labels='{self.label_A}' vs '{self.label_B}')"
+        )
+
+
+# --------------------------------------------------------------------------
 # Factory function
 # --------------------------------------------------------------------------
 
@@ -677,6 +834,10 @@ def compare(
     # --- Hierarchical model: gene-specific p ---
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
+    # --- Shrinkage parameters ---
+    sigma_grid: Optional[jnp.ndarray] = None,
+    shrinkage_max_iter: int = 200,
+    shrinkage_tol: float = 1e-8,
 ) -> ScribeDEResults:
     """Create a DE results object from two fitted models or posterior samples.
 
@@ -702,7 +863,9 @@ def compare(
         Human-readable label for condition B.
     method : str, default='parametric'
         DE method.  ``"parametric"`` uses analytic Gaussian posteriors;
-        ``"empirical"`` uses Monte Carlo counting on posterior samples.
+        ``"empirical"`` uses Monte Carlo counting on posterior samples;
+        ``"shrinkage"`` runs the empirical pipeline then applies
+        empirical Bayes shrinkage via a scale mixture of normals.
     component_A : int, optional
         For ``method="empirical"`` with mixture models: index of the
         component to use from model A.  Required if ``model_A`` is 3D.
@@ -738,12 +901,20 @@ def compare(
         composition sampling is used instead of Dirichlet.
     p_samples_B : jnp.ndarray, optional
         Same as ``p_samples_A`` for condition B.
+    sigma_grid : jnp.ndarray, shape ``(K+1,)``, optional
+        For ``method="shrinkage"``: grid of prior standard deviations
+        for the scale mixture.  If ``None``, a default geometric grid
+        is constructed from the data.
+    shrinkage_max_iter : int, default=200
+        For ``method="shrinkage"``: maximum EM iterations.
+    shrinkage_tol : float, default=1e-8
+        For ``method="shrinkage"``: EM convergence tolerance.
 
     Returns
     -------
     ScribeDEResults
-        Either ``ScribeParametricDEResults`` or
-        ``ScribeEmpiricalDEResults`` depending on ``method``.
+        ``ScribeParametricDEResults``, ``ScribeEmpiricalDEResults``,
+        or ``ScribeShrinkageDEResults`` depending on ``method``.
 
     Examples
     --------
@@ -780,10 +951,24 @@ def compare(
     ...     p_samples_A=p_A, p_samples_B=p_B,
     ...     gene_names=names,
     ... )
+
+    Shrinkage (empirical Bayes):
+
+    >>> de = compare(
+    ...     r_samples_A, r_samples_B,
+    ...     method="shrinkage",
+    ...     component_A=0, component_B=0,
+    ...     gene_names=names,
+    ... )
+    >>> print(f"Null proportion: {de.null_proportion:.2%}")
     """
     if method == "parametric":
         return _compare_parametric(
-            model_A, model_B, gene_names, label_A, label_B,
+            model_A,
+            model_B,
+            gene_names,
+            label_A,
+            label_B,
             gene_mask=gene_mask,
         )
     elif method == "empirical":
@@ -803,9 +988,30 @@ def compare(
             p_samples_A=p_samples_A,
             p_samples_B=p_samples_B,
         )
+    elif method == "shrinkage":
+        return _compare_shrinkage(
+            model_A,
+            model_B,
+            gene_names=gene_names,
+            label_A=label_A,
+            label_B=label_B,
+            component_A=component_A,
+            component_B=component_B,
+            paired=paired,
+            n_samples_dirichlet=n_samples_dirichlet,
+            rng_key=rng_key,
+            batch_size=batch_size,
+            gene_mask=gene_mask,
+            p_samples_A=p_samples_A,
+            p_samples_B=p_samples_B,
+            sigma_grid=sigma_grid,
+            shrinkage_max_iter=shrinkage_max_iter,
+            shrinkage_tol=shrinkage_tol,
+        )
     else:
         raise ValueError(
-            f"Unknown method '{method}'. Use 'parametric' or 'empirical'."
+            f"Unknown method '{method}'. "
+            f"Use 'parametric', 'empirical', or 'shrinkage'."
         )
 
 
@@ -871,10 +1077,9 @@ def _compare_parametric(
     # If gene_mask is provided, filter gene_names to kept genes
     if gene_mask is not None and gene_names is not None:
         import numpy as _np
+
         gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
-        gene_names = [
-            n for n, m in zip(gene_names, gene_mask_arr) if m
-        ]
+        gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
 
     if gene_names is None:
         gene_names = [f"gene_{i}" for i in range(D_user)]
@@ -977,6 +1182,7 @@ def _compare_empirical(
     # Filter gene_names to match kept genes when gene_mask is provided
     if gene_mask is not None and gene_names is not None:
         import numpy as _np
+
         gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
         gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
 
@@ -995,4 +1201,118 @@ def _compare_empirical(
         gene_names=gene_names,
         label_A=label_A,
         label_B=label_B,
+    )
+
+
+# --------------------------------------------------------------------------
+# Shrinkage (empirical Bayes) dispatcher
+# --------------------------------------------------------------------------
+
+
+def _compare_shrinkage(
+    r_samples_A: jnp.ndarray,
+    r_samples_B: jnp.ndarray,
+    gene_names: Optional[List[str]],
+    label_A: str,
+    label_B: str,
+    component_A: Optional[int],
+    component_B: Optional[int],
+    paired: bool,
+    n_samples_dirichlet: int,
+    rng_key,
+    batch_size: int,
+    gene_mask: Optional[jnp.ndarray] = None,
+    p_samples_A: Optional[jnp.ndarray] = None,
+    p_samples_B: Optional[jnp.ndarray] = None,
+    sigma_grid: Optional[jnp.ndarray] = None,
+    shrinkage_max_iter: int = 200,
+    shrinkage_tol: float = 1e-8,
+) -> ScribeShrinkageDEResults:
+    """Build a shrinkage DE comparison from posterior r samples.
+
+    First runs the empirical CLR difference pipeline, then wraps the
+    result in a ``ScribeShrinkageDEResults`` which applies empirical
+    Bayes shrinkage when ``gene_level()`` is called.
+
+    Parameters
+    ----------
+    r_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+        Dirichlet concentration samples for condition A.
+    r_samples_B : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``
+        Dirichlet concentration samples for condition B.
+    gene_names : list of str, optional
+        Gene names.
+    label_A : str
+        Label for condition A.
+    label_B : str
+        Label for condition B.
+    component_A : int, optional
+        Mixture component index for condition A.
+    component_B : int, optional
+        Mixture component index for condition B.
+    paired : bool
+        Whether to preserve sample pairing.
+    n_samples_dirichlet : int
+        Number of Dirichlet draws per posterior sample.
+    rng_key : jax.random.PRNGKey or None
+        JAX PRNG key.
+    batch_size : int
+        Batch size for Dirichlet sampling.
+    gene_mask : jnp.ndarray, optional
+        Boolean gene mask.
+    p_samples_A : jnp.ndarray, optional
+        Gene-specific success probability samples for condition A.
+    p_samples_B : jnp.ndarray, optional
+        Gene-specific success probability samples for condition B.
+    sigma_grid : jnp.ndarray, optional
+        Prior scale grid for the shrinkage layer.
+    shrinkage_max_iter : int
+        Maximum EM iterations.
+    shrinkage_tol : float
+        EM convergence tolerance.
+
+    Returns
+    -------
+    ScribeShrinkageDEResults
+    """
+    from ._empirical import compute_clr_differences
+
+    delta_samples = compute_clr_differences(
+        r_samples_A=r_samples_A,
+        r_samples_B=r_samples_B,
+        component_A=component_A,
+        component_B=component_B,
+        paired=paired,
+        n_samples_dirichlet=n_samples_dirichlet,
+        rng_key=rng_key,
+        batch_size=batch_size,
+        gene_mask=gene_mask,
+        p_samples_A=p_samples_A,
+        p_samples_B=p_samples_B,
+    )
+
+    # Filter gene_names when gene_mask is provided
+    if gene_mask is not None and gene_names is not None:
+        import numpy as _np
+
+        gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
+        gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
+
+    D = delta_samples.shape[1]
+    if gene_names is None:
+        gene_names = [f"gene_{i}" for i in range(D)]
+    elif len(gene_names) != D:
+        raise ValueError(
+            f"gene_names has length {len(gene_names)} but samples have "
+            f"D={D} genes."
+        )
+
+    return ScribeShrinkageDEResults(
+        delta_samples=delta_samples,
+        gene_names=gene_names,
+        label_A=label_A,
+        label_B=label_B,
+        sigma_grid=sigma_grid,
+        shrinkage_max_iter=shrinkage_max_iter,
+        shrinkage_tol=shrinkage_tol,
     )
