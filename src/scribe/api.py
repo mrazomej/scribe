@@ -735,7 +735,10 @@ def fit(
             if svi_init is not None:
                 from numpyro.infer.initialization import init_to_value
 
-                from .mcmc._init_from_svi import compute_init_values
+                from .mcmc._init_from_svi import (
+                    clamp_init_values,
+                    compute_init_values,
+                )
 
                 if (
                     svi_init.model_config.base_model
@@ -747,8 +750,24 @@ def fit(
                         f"'{model_config.base_model}'.",
                         UserWarning,
                     )
-                svi_map = svi_init.get_map(use_mean=True, canonical=True)
-                init_values = compute_init_values(svi_map, model_config)
+                # When parameterizations match, pass native MAP values
+                # directly to avoid a lossy canonical round-trip (float32
+                # precision loss at distribution boundaries).
+                same_param = (
+                    svi_init.model_config.parameterization
+                    == model_config.parameterization
+                )
+                svi_map = svi_init.get_map(
+                    use_mean=True, canonical=not same_param
+                )
+                init_values = (
+                    svi_map
+                    if same_param
+                    else compute_init_values(svi_map, model_config)
+                )
+                # Clamp to strict interior of support — float32 SVI MAP
+                # estimates can sit exactly on boundaries (e.g. phi_capture=0)
+                init_values = clamp_init_values(init_values)
                 svi_init_kwargs["init_strategy"] = init_to_value(
                     values=init_values
                 )

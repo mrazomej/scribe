@@ -21,6 +21,10 @@ import jax.numpy as jnp
 from ..models.config.base import ModelConfig
 from ..models.config.enums import Parameterization
 
+# Small epsilon for clamping derived init values away from distribution
+# support boundaries.  NumPyro rejects boundary values during
+# initialization because the log-probability is -inf there.
+_EPS = 1e-6
 
 # Parameterization enum values that correspond to "mean_odds" family
 _MEAN_ODDS_PARAMETERIZATIONS = {
@@ -35,6 +39,51 @@ _MEAN_PROB_PARAMETERIZATIONS = {
     Parameterization.LINKED,
     Parameterization.HIERARCHICAL_MEAN_PROB,
 }
+
+# Known parameter names and their distribution support types.
+# "unit" → Beta(0, 1);  "positive" → (0, ∞)
+_SUPPORT: Dict[str, str] = {
+    "p": "unit",
+    "p_capture": "unit",
+    "p_hat": "unit",
+    "phi": "positive",
+    "phi_capture": "positive",
+    "mu": "positive",
+    "r": "positive",
+}
+
+# ------------------------------------------------------------------------------
+
+
+def clamp_init_values(
+    init: Dict[str, jnp.ndarray],
+) -> Dict[str, jnp.ndarray]:
+    """Clamp init values away from distribution support boundaries.
+
+    SVI MAP estimates (stored in float32) can land exactly on support
+    boundaries — e.g. ``phi_capture = 0.0`` or ``p = 1.0`` — where the
+    log-probability is ``-inf``.  This makes ``init_to_value`` reject
+    the initialization.
+
+    Parameters
+    ----------
+    init : Dict[str, jnp.ndarray]
+        Init values keyed by parameter name.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        A shallow copy with boundary values nudged into the interior.
+    """
+    out = dict(init)
+    for name, arr in out.items():
+        support = _SUPPORT.get(name)
+        if support == "unit":
+            out[name] = jnp.clip(arr, _EPS, 1.0 - _EPS)
+        elif support == "positive":
+            out[name] = jnp.clip(arr, _EPS, None)
+    return out
+
 
 # ------------------------------------------------------------------------------
 
@@ -90,13 +139,13 @@ def compute_init_values(
     # Ensure canonical (p, r) are present
     # ------------------------------------------------------------------
     if "p" not in init and "phi" in init:
-        init["p"] = 1.0 / (1.0 + init["phi"])
+        init["p"] = jnp.clip(1.0 / (1.0 + init["phi"]), _EPS, 1.0 - _EPS)
     if "r" not in init:
         if "mu" in init and "p" in init:
             p = init["p"]
-            init["r"] = init["mu"] * (1.0 - p) / p
+            init["r"] = jnp.clip(init["mu"] * (1.0 - p) / p, _EPS, None)
         elif "mu" in init and "phi" in init:
-            init["r"] = init["mu"] * init["phi"]
+            init["r"] = jnp.clip(init["mu"] * init["phi"], _EPS, None)
 
     if "p" not in init or "r" not in init:
         raise ValueError(
@@ -105,23 +154,31 @@ def compute_init_values(
             "Use svi_results.get_map(canonical=True)."
         )
 
+    # Clamp canonical values away from support boundaries.  SVI MAP
+    # estimates can land exactly on boundaries (e.g. p = 1.0) which
+    # makes derived quantities like mu = r*p/(1-p) blow up.
+    init["p"] = jnp.clip(init["p"], _EPS, 1.0 - _EPS)
+    init["r"] = jnp.clip(init["r"], _EPS, None)
+
     p = init["p"]
     r = init["r"]
 
     # ------------------------------------------------------------------
-    # Derive missing core parameters for the target parameterization
+    # Derive missing core parameters for the target parameterization.
+    # All derived values are clamped away from distribution support
+    # boundaries so that NumPyro's init_to_value can compute finite
+    # log-probabilities.
     # ------------------------------------------------------------------
     if (
         target_param in _MEAN_ODDS_PARAMETERIZATIONS
         or target_param in _MEAN_PROB_PARAMETERIZATIONS
     ):
-        # Both families need mu
         if "mu" not in init:
-            init["mu"] = r * p / (1.0 - p)
+            init["mu"] = jnp.clip(r * p / (1.0 - p), _EPS, None)
 
     if target_param in _MEAN_ODDS_PARAMETERIZATIONS:
         if "phi" not in init:
-            init["phi"] = (1.0 - p) / p
+            init["phi"] = jnp.clip((1.0 - p) / p, _EPS, None)
 
     # ------------------------------------------------------------------
     # Handle VCP capture-parameter name differences
@@ -156,12 +213,14 @@ def _convert_capture_params(
     target_uses_phi_capture = target_param in _MEAN_ODDS_PARAMETERIZATIONS
 
     if target_uses_phi_capture:
-        # Target expects phi_capture
+        # Target expects phi_capture (BetaPrime support: (0, inf))
         if "phi_capture" not in init and "p_capture" in init:
             p_cap = init["p_capture"]
-            init["phi_capture"] = (1.0 - p_cap) / p_cap
+            init["phi_capture"] = jnp.clip((1.0 - p_cap) / p_cap, _EPS, None)
     else:
-        # Target expects p_capture
+        # Target expects p_capture (Beta support: (0, 1))
         if "p_capture" not in init and "phi_capture" in init:
             phi_cap = init["phi_capture"]
-            init["p_capture"] = 1.0 / (1.0 + phi_cap)
+            init["p_capture"] = jnp.clip(
+                1.0 / (1.0 + phi_cap), _EPS, 1.0 - _EPS
+            )
