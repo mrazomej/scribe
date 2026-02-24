@@ -18,7 +18,9 @@ from .dispatch import (
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
     """Select genes with highest divergence across components, binned by expression."""
-    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    map_estimates = _get_map_estimates_for_plot(
+        results, counts=counts, use_mean=False
+    )
 
     parameterization = results.model_config.parameterization
     if parameterization in ["linked", "mean_prob", "odds_ratio", "mean_odds"]:
@@ -738,7 +740,10 @@ def plot_mixture_composition(
                 f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
             )
         assignment_probs = _get_cell_assignment_probabilities_for_plot(
-            results, counts=counts, batch_size=assignment_batch_size
+            results,
+            counts=counts,
+            batch_size=assignment_batch_size,
+            use_mean=False,
         )
         assignments = np.argmax(assignment_probs, axis=1)
         assignment_counts = np.bincount(assignments, minlength=n_components)
@@ -874,7 +879,10 @@ def plot_mixture_composition(
                     f"batch_size={assignment_batch_size} fallback[/yellow]"
                 )
             assignment_probs = _get_cell_assignment_probabilities_for_plot(
-                results, counts=counts, batch_size=assignment_batch_size
+                results,
+                counts=counts,
+                batch_size=assignment_batch_size,
+                use_mean=False,
             )
             assignments = np.argmax(assignment_probs, axis=1)
             hard_counts = np.bincount(assignments, minlength=n_components)
