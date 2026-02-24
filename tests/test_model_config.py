@@ -658,3 +658,78 @@ class TestDefaultPriors:
         assert config.priors.p == (0.0, 1.0)
         assert config.priors.r == (0.0, 1.0)
         assert config.priors.mixing == (0.0, 0.0)
+
+
+class TestMixingScalarExpansion:
+    """Test scalar-to-vector broadcast for the mixing (Dirichlet) prior."""
+
+    def test_scalar_float_expanded_to_n_components(self):
+        """A single float is broadcast to all n_components."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .as_mixture(n_components=3)
+            .with_priors(mixing=5.0)
+            .build()
+        )
+
+        assert config.priors.mixing == (5.0, 5.0, 5.0)
+
+    def test_scalar_int_expanded_to_n_components(self):
+        """An int scalar is also accepted and broadcast."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .as_mixture(n_components=4)
+            .with_priors(mixing=2)
+            .build()
+        )
+
+        assert config.priors.mixing == (2.0, 2.0, 2.0, 2.0)
+
+    def test_full_tuple_still_works(self):
+        """An explicit per-component tuple is kept as-is."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .as_mixture(n_components=3)
+            .with_priors(mixing=(2.0, 3.0, 4.0))
+            .build()
+        )
+
+        assert config.priors.mixing == (2.0, 3.0, 4.0)
+
+    def test_wrong_length_tuple_still_errors(self):
+        """A tuple with the wrong number of elements still raises."""
+        with pytest.raises(ValueError, match="single scalar"):
+            (
+                ModelConfigBuilder()
+                .for_model("nbdm")
+                .as_mixture(n_components=3)
+                .with_priors(mixing=(1.0, 2.0))
+                .build()
+            )
+
+    def test_scalar_via_preset_builder(self):
+        """Scalar expansion works through build_config_from_preset."""
+        from scribe.inference.preset_builder import build_config_from_preset
+
+        config = build_config_from_preset(
+            model="nbdm",
+            n_components=3,
+            priors={"mixing": 5.0},
+        )
+
+        assert config.priors.mixing == (5.0, 5.0, 5.0)
+
+    def test_scalar_via_single_element_list(self):
+        """A single-element list [5.0] is also expanded."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .as_mixture(n_components=2)
+            .with_priors(mixing=[5.0])
+            .build()
+        )
+
+        assert config.priors.mixing == (5.0, 5.0)

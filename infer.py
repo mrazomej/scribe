@@ -180,13 +180,18 @@ def _resolve_model_type(cfg: DictConfig) -> str:
 
 
 def _build_priors_dict(priors_cfg):
-    """Convert OmegaConf priors config to dict, filtering out None values."""
+    """Convert OmegaConf priors config to dict, filtering out None values.
+
+    Scalar values (e.g. ``priors.mixing=5``) are passed through as-is so
+    that downstream expansion (e.g. broadcasting a single Dirichlet
+    concentration to all mixture components) is handled by the builder.
+    """
     if priors_cfg is None:
         return None
     priors = OmegaConf.to_container(priors_cfg, resolve=True)
-    # Filter out None values and convert lists to tuples
+    # Filter out None values; convert lists to tuples, pass scalars through
     return {
-        k: tuple(v) if v is not None else None
+        k: tuple(v) if isinstance(v, (list, tuple)) else v
         for k, v in priors.items()
         if v is not None
     } or None

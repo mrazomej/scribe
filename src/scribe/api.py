@@ -315,7 +315,10 @@ def fit(
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
         should be tuples of prior hyperparameters. Example: {"p": (1.0, 1.0),
-        "r": (0.0, 1.0)}
+        "r": (0.0, 1.0)}.  For ``"mixing"``, a single scalar is broadcast
+        to all ``n_components`` (symmetric Dirichlet), e.g.
+        ``{"mixing": 5.0}`` is equivalent to ``{"mixing": (5.0, 5.0, 5.0)}``
+        for a 3-component model.
 
     amortize_capture : bool, default=False
         Whether to use amortized inference for capture probability. When True,

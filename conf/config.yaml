@@ -62,6 +62,8 @@ priors:
   p_capture: null   # Beta(alpha, beta) for capture probability
   phi_capture: null # BetaPrime(alpha, beta) for capture odds
   mixing: null      # Dirichlet concentrations for mixture weights
+                    # Accepts a list [a1, a2, ...] of length n_components,
+                    # or a single scalar (e.g. 5.0) broadcast to all components.
 
 # --- Amortization Configuration (for VCP models) ---
 # Amortized inference uses a neural network to predict variational parameters
