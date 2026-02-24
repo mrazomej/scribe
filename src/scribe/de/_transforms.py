@@ -216,6 +216,177 @@ def build_ilr_basis(D: int) -> jnp.ndarray:
 
 
 # --------------------------------------------------------------------------
+# ILR balance vector for a two-group partition (pathway vs complement)
+# --------------------------------------------------------------------------
+
+
+def build_ilr_balance(
+    gene_set_indices: jnp.ndarray, D: int
+) -> jnp.ndarray:
+    """Build the ILR-normalized balance vector for a pathway-vs-complement partition.
+
+    Given a gene set (pathway) and the total number of genes, constructs a
+    unit-norm, sum-to-zero vector that represents the compositional balance
+    between the geometric means of the two groups.
+
+    The balance vector entries are::
+
+        v_g = +sqrt(n_- / (n_+ * (n_+ + n_-)))   if g in pathway
+        v_g = -sqrt(n_+ / (n_- * (n_+ + n_-)))   if g not in pathway
+
+    where ``n_+`` = pathway size, ``n_-`` = complement size, ``n_+ + n_- = D``.
+
+    Parameters
+    ----------
+    gene_set_indices : jnp.ndarray
+        Integer indices of genes in the pathway, shape ``(n_+,)``.
+        Must be non-empty and a proper subset of ``{0, ..., D-1}``.
+    D : int
+        Total number of genes (components).
+
+    Returns
+    -------
+    v : jnp.ndarray
+        ILR balance vector, shape ``(D,)``, with unit norm and zero sum.
+
+    Raises
+    ------
+    ValueError
+        If the gene set is empty or contains all genes.
+
+    Notes
+    -----
+    The balance vector is a positive scalar multiple of the unnormalized CLR
+    contrast used in ``build_balance_contrast``. The scaling factor is
+    ``alpha = sqrt(n_+ * n_- / (n_+ + n_-))``. Because the scaling is
+    positive, the empirical lfsr is identical under either normalization.
+
+    Examples
+    --------
+    >>> v = build_ilr_balance(jnp.array([0, 2]), D=5)
+    >>> assert v.shape == (5,)
+    >>> assert jnp.allclose(jnp.sum(v**2), 1.0)
+    >>> assert jnp.allclose(jnp.sum(v), 0.0)
+    """
+    gene_set_indices = jnp.asarray(gene_set_indices, dtype=jnp.int32)
+    n_plus = gene_set_indices.shape[0]
+    n_minus = D - n_plus
+    if n_plus == 0 or n_minus == 0:
+        raise ValueError(
+            f"Gene set must be a proper subset: got n_+={n_plus}, "
+            f"n_-={n_minus}, D={D}."
+        )
+
+    # Positive coefficient for pathway genes, negative for complement
+    pos_val = jnp.sqrt(n_minus / (n_plus * (n_plus + n_minus)))
+    neg_val = -jnp.sqrt(n_plus / (n_minus * (n_plus + n_minus)))
+
+    # Start with complement value everywhere, then overwrite pathway positions
+    v = jnp.full(D, neg_val)
+    v = v.at[gene_set_indices].set(pos_val)
+    return v
+
+
+# --------------------------------------------------------------------------
+# Pathway-aware sequential binary partition (SBP) basis
+# --------------------------------------------------------------------------
+
+
+def build_pathway_sbp_basis(
+    gene_set_indices: jnp.ndarray, D: int
+) -> jnp.ndarray:
+    """Build a pathway-aware ILR basis via sequential binary partition.
+
+    Constructs a ``(D-1) x D`` orthonormal matrix organized into three blocks:
+
+    - **Row 0**: the pathway-vs-complement balance (from ``build_ilr_balance``).
+    - **Rows 1 to n_+-1**: Helmert basis within the pathway genes
+      (``n_+ - 1`` rows with non-zero entries only at pathway positions).
+    - **Rows n_+ to D-2**: Helmert basis within the complement genes
+      (``n_- - 1`` rows with non-zero entries only at complement positions).
+
+    The three blocks are mutually orthogonal (disjoint support) and internally
+    orthonormal (Helmert construction), giving an overall orthonormal basis.
+
+    Parameters
+    ----------
+    gene_set_indices : jnp.ndarray
+        Integer indices of genes in the pathway, shape ``(n_+,)``.
+        Must be non-empty, a proper subset of ``{0, ..., D-1}``, and
+        the pathway must contain at least 2 genes (otherwise the
+        within-pathway subspace is empty).
+    D : int
+        Total number of genes (components).
+
+    Returns
+    -------
+    V_sbp : jnp.ndarray
+        Pathway-aware SBP basis, shape ``(D-1, D)``, with orthonormal rows.
+
+    Raises
+    ------
+    ValueError
+        If the gene set is empty, contains all genes, or has fewer than
+        2 genes (making the within-pathway subspace trivial).
+
+    Notes
+    -----
+    The within-pathway Helmert rows have zero entries for complement genes
+    and vice versa. Row 0 coincides with ``build_ilr_balance``.
+
+    Examples
+    --------
+    >>> V = build_pathway_sbp_basis(jnp.array([0, 2, 4]), D=6)
+    >>> assert V.shape == (5, 6)
+    >>> assert jnp.allclose(V @ V.T, jnp.eye(5), atol=1e-6)
+    >>> assert jnp.allclose(V.sum(axis=1), 0.0, atol=1e-6)
+    """
+    gene_set_indices = jnp.asarray(gene_set_indices, dtype=jnp.int32)
+    n_plus = gene_set_indices.shape[0]
+    n_minus = D - n_plus
+    if n_plus == 0 or n_minus == 0:
+        raise ValueError(
+            f"Gene set must be a proper subset: got n_+={n_plus}, "
+            f"n_-={n_minus}, D={D}."
+        )
+    if n_plus < 2:
+        raise ValueError(
+            f"Pathway must contain at least 2 genes for a non-trivial "
+            f"within-pathway subspace, got n_+={n_plus}."
+        )
+
+    V_sbp = jnp.zeros((D - 1, D))
+
+    # Row 0: pathway-vs-complement balance
+    V_sbp = V_sbp.at[0].set(build_ilr_balance(gene_set_indices, D))
+
+    # Complement indices (sorted for deterministic ordering)
+    all_indices = jnp.arange(D)
+    mask = jnp.ones(D, dtype=bool)
+    mask = mask.at[gene_set_indices].set(False)
+    complement_indices = all_indices[mask]
+
+    # Within-pathway Helmert basis (n_+ - 1 rows over n_+ positions)
+    H_pathway = build_ilr_basis(n_plus)  # (n_+-1, n_+)
+    for i in range(n_plus - 1):
+        row_idx = 1 + i
+        for j in range(n_plus):
+            V_sbp = V_sbp.at[row_idx, gene_set_indices[j]].set(H_pathway[i, j])
+
+    # Within-complement Helmert basis (n_- - 1 rows over n_- positions)
+    if n_minus >= 2:
+        H_complement = build_ilr_basis(n_minus)  # (n_--1, n_-)
+        for i in range(n_minus - 1):
+            row_idx = n_plus + i
+            for j in range(n_minus):
+                V_sbp = V_sbp.at[row_idx, complement_indices[j]].set(
+                    H_complement[i, j]
+                )
+
+    return V_sbp
+
+
+# --------------------------------------------------------------------------
 # Project CLR → ILR (orthonormal basis)
 # --------------------------------------------------------------------------
 
