@@ -717,6 +717,52 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
 
     # ------------------------------------------------------------------
 
+    def shrink(
+        self,
+        sigma_grid: Optional[jnp.ndarray] = None,
+        shrinkage_max_iter: int = 200,
+        shrinkage_tol: float = 1e-8,
+    ) -> "ScribeShrinkageDEResults":
+        """Wrap these empirical results with an empirical Bayes shrinkage layer.
+
+        Returns a ``ScribeShrinkageDEResults`` that **shares** the same
+        ``delta_samples`` array — no extra GPU memory is allocated.
+        The shrinkage EM is deferred until ``gene_level()`` is called on
+        the returned object.
+
+        Parameters
+        ----------
+        sigma_grid : jnp.ndarray, optional
+            Prior scale grid for the scale-mixture-of-normals.  If ``None``,
+            a default grid is constructed from the data.
+        shrinkage_max_iter : int, default=200
+            Maximum number of EM iterations.
+        shrinkage_tol : float, default=1e-8
+            EM convergence tolerance.
+
+        Returns
+        -------
+        ScribeShrinkageDEResults
+            A shrinkage results object reusing the underlying CLR samples.
+
+        Examples
+        --------
+        >>> de_emp = compare(results_A, results_B, method="empirical", ...)
+        >>> de_shrink = de_emp.shrink()
+        >>> de_shrink.gene_level(tau=jnp.log(1.1))
+        """
+        return ScribeShrinkageDEResults(
+            delta_samples=self.delta_samples,
+            gene_names=self.gene_names,
+            label_A=self.label_A,
+            label_B=self.label_B,
+            sigma_grid=sigma_grid,
+            shrinkage_max_iter=shrinkage_max_iter,
+            shrinkage_tol=shrinkage_tol,
+        )
+
+    # ------------------------------------------------------------------
+
     def __repr__(self) -> str:
         """Concise representation of the empirical DE comparison."""
         return (

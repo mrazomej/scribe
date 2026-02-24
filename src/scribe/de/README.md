@@ -62,10 +62,16 @@ de = compare(results_bleo, results_ctrl,
              method="empirical",
              component_A=0, component_B=0)
 
-# Shrinkage with results objects
+# Shrinkage with results objects (runs CLR sampling from scratch)
 de = compare(results_bleo, results_ctrl,
              method="shrinkage",
              component_A=0, component_B=0)
+
+# Preferred: run empirical first, then wrap with .shrink() (zero-copy)
+de_emp = compare(results_bleo, results_ctrl,
+                 method="empirical",
+                 component_A=0, component_B=0)
+de_shrink = de_emp.shrink()  # reuses delta_samples — no extra GPU memory
 
 # Parametric (requires pre-fitted logistic-normal models)
 de = compare(model_A, model_B, gene_names=names)

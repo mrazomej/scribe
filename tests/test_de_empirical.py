@@ -958,6 +958,77 @@ class TestResultsObjectDispatch:
 
 
 # --------------------------------------------------------------------------
+# Tests: .shrink() zero-copy upgrade
+# --------------------------------------------------------------------------
+
+
+class TestShrinkMethod:
+    """Tests for ScribeEmpiricalDEResults.shrink() zero-copy wrapper."""
+
+    def test_shrink_shares_delta_samples(self, rng):
+        """shrink() returns a ScribeShrinkageDEResults sharing delta_samples."""
+        D = 10
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        names = [f"gene_{i}" for i in range(D)]
+
+        res_A = _MockResults(r, gene_names=names, is_hierarchical=False)
+        res_B = _MockResults(r, gene_names=names, is_hierarchical=False)
+
+        de_emp = compare(res_A, res_B, method="empirical", rng_key=rng)
+        de_shrink = de_emp.shrink()
+
+        from scribe.de.results import ScribeShrinkageDEResults
+        assert isinstance(de_shrink, ScribeShrinkageDEResults)
+        # Same underlying buffer — no extra GPU memory
+        assert de_shrink.delta_samples is de_emp.delta_samples
+        assert de_shrink.gene_names == de_emp.gene_names
+        assert de_shrink.label_A == de_emp.label_A
+        assert de_shrink.label_B == de_emp.label_B
+        assert de_shrink.n_samples == de_emp.n_samples
+
+    def test_shrink_gene_level_runs(self, rng):
+        """gene_level() on a shrink()-produced object returns valid stats."""
+        D = 10
+        r = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        names = [f"gene_{i}" for i in range(D)]
+
+        res_A = _MockResults(r, gene_names=names, is_hierarchical=False)
+        res_B = _MockResults(r, gene_names=names, is_hierarchical=False)
+
+        de_emp = compare(res_A, res_B, method="empirical", rng_key=rng)
+        de_shrink = de_emp.shrink()
+        result = de_shrink.gene_level(tau=0.0)
+
+        assert result["delta_mean"].shape == (D,)
+        assert result["lfsr"].shape == (D,)
+        assert np.all(np.isfinite(np.array(result["delta_mean"])))
+        assert de_shrink.method == "shrinkage"
+
+    def test_shrink_custom_params(self, rng):
+        """Custom sigma_grid and EM params are forwarded correctly."""
+        D = 5
+        r = jnp.abs(random.normal(rng, (60, D))) + 1.0
+        names = [f"gene_{i}" for i in range(D)]
+
+        res_A = _MockResults(r, gene_names=names, is_hierarchical=False)
+        res_B = _MockResults(r, gene_names=names, is_hierarchical=False)
+
+        de_emp = compare(res_A, res_B, method="empirical", rng_key=rng)
+        _grid = jnp.array([0.0, 0.1, 0.5, 1.0, 2.0])
+        de_shrink = de_emp.shrink(
+            sigma_grid=_grid,
+            shrinkage_max_iter=50,
+            shrinkage_tol=1e-6,
+        )
+
+        assert jnp.array_equal(de_shrink.sigma_grid, _grid)
+        assert de_shrink.shrinkage_max_iter == 50
+        assert de_shrink.shrinkage_tol == 1e-6
+        # Still shares buffer
+        assert de_shrink.delta_samples is de_emp.delta_samples
+
+
+# --------------------------------------------------------------------------
 # Tests: NaN guards in _batched_gamma_normalize
 # --------------------------------------------------------------------------
 
