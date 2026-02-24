@@ -1,0 +1,759 @@
+---
+editor:
+    render-on-save: true
+bibliography: references.bib
+csl: ieee.csl
+---
+
+# Mixing Weight Identifiability in High-Dimensional Mixture Models {#sec-mixture-weights-svi}
+
+In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model for
+single-cell RNA-seq data, showing that the transcriptional profile of a cell can
+be modeled as a product of independent negative binomial distributions sharing a
+common probability parameter $\hat{p}$. When dealing with heterogeneous cell
+populations, a natural extension is to define a *finite mixture model* in which
+each cell belongs to one of $K$ components, each with its own set of parameters.
+This section addresses a subtle but important issue that arises when performing
+stochastic variational inference (SVI) on such mixture models: **the mixing
+weights become practically non-identifiable in high-dimensional observation
+spaces**.
+
+We first formalize the mixture model setup, then provide a rigorous analysis of
+why this non-identifiability occurs, and finally derive a principled correction
+based on the conditional posterior of the mixing weights given the
+well-identified component parameters.
+
+## The finite mixture model
+
+### Setup
+
+Consider a dataset of $C$ cells, where each cell $c$ has a gene expression
+profile $\underline{u}_c = (u_{c1}, u_{c2}, \ldots, u_{cG})$ consisting of UMI
+counts across $G$ genes. We assume that the population consists of $K$ distinct
+cell types (components), each characterized by its own set of parameters
+$\underline{\theta}_k$ for $k \in \{1, 2, \ldots, K\}$.
+
+The generative process for the mixture model proceeds as follows. First, each
+cell $c$ is assigned to a component $z_c$ drawn from a categorical distribution
+parameterized by the mixing weights $\underline{\pi} = (\pi_1, \pi_2, \ldots,
+\pi_K)$,
+
+$$
+z_c \sim \text{Categorical}(\underline{\pi}),
+$${#eq-mix-assignment}
+
+where $\underline{\pi}$ lies on the $(K-1)$-dimensional simplex,
+
+$$
+\Delta^{K-1} = \left\{\underline{\pi} \in \mathbb{R}^K : 
+\pi_k \geq 0 \text{ for all } k, \; \sum_{k=1}^{K} \pi_k = 1\right\}.
+$${#eq-mix-simplex}
+
+Conditioned on the assignment $z_c = k$, the gene expression profile is drawn
+from the component-specific distribution,
+
+$$
+\underline{u}_c \mid z_c = k \sim 
+\prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{kg}),
+$${#eq-mix-conditional-likelihood}
+
+where $\pi(u_{cg} \mid \theta_{kg})$ is the likelihood for gene $g$ under
+component $k$. For the negative binomial model derived in
+@sec-dirichlet-multinomial, each component has parameters $\underline{\theta}_k =
+(\underline{r}_k, \hat{p}_k)$, and the per-gene likelihood is
+
+$$
+\pi(u_{cg} \mid r_{kg}, \hat{p}_k) = 
+\text{NB}(u_{cg} \mid r_{kg}, \hat{p}_k).
+$${#eq-mix-nb-likelihood}
+
+### Marginal likelihood
+
+Since the component assignments $z_c$ are latent (unobserved), we must
+marginalize over them to obtain the marginal likelihood for each cell. This
+marginal likelihood is the weighted sum of the component-specific likelihoods,
+
+$$
+\pi(\underline{u}_c \mid \underline{\theta}, \underline{\pi}) = 
+\sum_{k=1}^{K} \pi_k \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{kg}).
+$${#eq-mix-marginal-likelihood}
+
+Taking the logarithm of @eq-mix-marginal-likelihood, we obtain
+
+$$
+\log \pi(\underline{u}_c \mid \underline{\theta}, \underline{\pi}) = 
+\log \sum_{k=1}^{K} \pi_k \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{kg}).
+$${#eq-mix-log-marginal-likelihood}
+
+It is convenient to express this using the log-sum-exp function. Let us define
+the per-component log-likelihood for cell $c$ under component $k$ as
+
+$$
+\ell_{ck} = \log \pi_k + \sum_{g=1}^{G} \log \pi(u_{cg} \mid \theta_{kg}).
+$${#eq-mix-per-component-log-lik}
+
+Then the log marginal likelihood becomes
+
+$$
+\log \pi(\underline{u}_c \mid \underline{\theta}, \underline{\pi}) = 
+\text{logsumexp}_{k}(\ell_{ck}) = 
+\log \sum_{k=1}^{K} \exp(\ell_{ck}).
+$${#eq-mix-logsumexp}
+
+### Prior on mixing weights
+
+A natural prior for the mixing weights is the Dirichlet distribution,
+
+$$
+\underline{\pi} \sim \text{Dirichlet}(\underline{\alpha}_0),
+$${#eq-mix-dirichlet-prior}
+
+where $\underline{\alpha}_0 = (\alpha_{01}, \alpha_{02}, \ldots, \alpha_{0K})$
+are the concentration parameters. The probability density function of the
+Dirichlet distribution is
+
+$$
+\pi(\underline{\pi} \mid \underline{\alpha}_0) = 
+\frac{\Gamma\left(\sum_{k=1}^{K} \alpha_{0k}\right)}{
+\prod_{k=1}^{K} \Gamma(\alpha_{0k})} 
+\prod_{k=1}^{K} \pi_k^{\alpha_{0k} - 1}.
+$${#eq-mix-dirichlet-pdf}
+
+A symmetric Dirichlet prior with $\alpha_{0k} = \alpha_0$ for all $k$ encodes
+the assumption that, *a priori*, all components are equally likely.
+
+### Posterior cell-to-component assignment
+
+Given model parameters $\underline{\theta}$ and mixing weights
+$\underline{\pi}$, the posterior probability that cell $c$ belongs to component
+$k$ follows from Bayes' rule applied to the latent assignment,
+
+$$
+\gamma_{ck} \equiv 
+p(z_c = k \mid \underline{u}_c, \underline{\theta}, \underline{\pi}) = 
+\frac{
+    \pi_k \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{kg})
+}{
+    \sum_{j=1}^{K} \pi_j \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{jg})
+}.
+$${#eq-mix-responsibility}
+
+These quantities $\gamma_{ck}$ are known as the *responsibilities*. They
+represent the soft assignment of each cell to each component. In terms of the
+per-component log-likelihoods from @eq-mix-per-component-log-lik, the
+responsibilities can be computed as
+
+$$
+\gamma_{ck} = \text{softmax}_k(\ell_{c1}, \ell_{c2}, \ldots, \ell_{cK}) = 
+\frac{\exp(\ell_{ck})}{\sum_{j=1}^{K} \exp(\ell_{cj})}.
+$${#eq-mix-responsibility-softmax}
+
+## Scale analysis: why mixing weights are overwhelmed
+
+### Decomposing the per-component log-likelihood
+
+The per-component log-likelihood from @eq-mix-per-component-log-lik has two
+additive contributions,
+
+$$
+\ell_{ck} = 
+\underbrace{\log \pi_k}_{\text{mixing weight}} + 
+\underbrace{\sum_{g=1}^{G} \log \pi(u_{cg} \mid \theta_{kg})}_{\text{data 
+log-likelihood}}.
+$${#eq-mix-decomposition}
+
+Let us define the data log-likelihood term as
+
+$$
+S_{ck} = \sum_{g=1}^{G} \log \pi(u_{cg} \mid \theta_{kg}),
+$${#eq-mix-data-loglik}
+
+so that $\ell_{ck} = \log \pi_k + S_{ck}$.
+
+### Magnitude of the two terms
+
+The mixing weight term $\log \pi_k$ is bounded. Since $\pi_k \in (0, 1]$, we
+have
+
+$$
+-\infty < \log \pi_k \leq 0.
+$${#eq-mix-weight-bound}
+
+For practical values, consider a $K = 4$ component model. Even in extreme cases,
+the mixing weight term is modest in magnitude,
+
+$$
+\log \pi_k \in \begin{cases}
+\approx 0 & \text{if } \pi_k \approx 1, \\
+\approx -1.4 & \text{if } \pi_k = 0.25 \text{ (uniform)}, \\
+\approx -4.6 & \text{if } \pi_k = 0.01, \\
+\approx -6.9 & \text{if } \pi_k = 0.001.
+\end{cases}
+$${#eq-mix-weight-examples}
+
+The data log-likelihood term $S_{ck}$, on the other hand, is the sum of $G$
+per-gene log-probabilities. For single-cell RNA-seq data with $G \approx 2{,}000$
+to $30{,}000$ genes, each gene contributing $\log \pi(u_{cg} \mid \theta_{kg})
+\approx -3$ to $-5$ nats on average, the total magnitude is
+
+$$
+|S_{ck}| \approx G \times 4 \approx 8{,}000 \text{ to } 120{,}000 \text{ nats}.
+$${#eq-mix-data-loglik-magnitude}
+
+### Dominance of data log-likelihood in cell assignment
+
+The responsibility from @eq-mix-responsibility-softmax depends on the
+*differences* between per-component log-likelihoods. Consider two competing
+components $k_1$ and $k_2$ for cell $c$. The log-ratio of their responsibilities
+is
+
+$$
+\log \frac{\gamma_{ck_1}}{\gamma_{ck_2}} = \ell_{ck_1} - \ell_{ck_2} = 
+(\log \pi_{k_1} - \log \pi_{k_2}) + (S_{ck_1} - S_{ck_2}).
+$${#eq-mix-log-ratio-responsibilities}
+
+The mixing weight contribution to this difference is
+
+$$
+\Delta_{\pi} = \log \pi_{k_1} - \log \pi_{k_2},
+$${#eq-mix-weight-difference}
+
+which, even for extreme values like $\pi_{k_1} = 0.9$ and $\pi_{k_2} = 0.001$,
+amounts to
+
+$$
+\Delta_{\pi} = \log 0.9 - \log 0.001 \approx -0.1 - (-6.9) = 6.8 
+\text{ nats}.
+$${#eq-mix-weight-difference-extreme}
+
+The data contribution to this difference is
+
+$$
+\Delta_{S} = S_{ck_1} - S_{ck_2} = 
+\sum_{g=1}^{G} \left[
+    \log \pi(u_{cg} \mid \theta_{k_1 g}) - 
+    \log \pi(u_{cg} \mid \theta_{k_2 g})
+\right].
+$${#eq-mix-data-difference}
+
+Even if each gene contributes only a small average difference of $\delta$ nats
+between the two components, the total difference grows linearly with $G$,
+
+$$
+|\Delta_{S}| \approx G \cdot \delta.
+$${#eq-mix-data-difference-scaling}
+
+For $G = 2{,}000$ genes and a modest $\delta = 0.1$ nats per gene,
+
+$$
+|\Delta_{S}| \approx 2{,}000 \times 0.1 = 200 \text{ nats}.
+$${#eq-mix-data-difference-typical}
+
+Comparing this with the mixing weight contribution of at most $\approx 7$ nats
+from @eq-mix-weight-difference-extreme, we see that
+
+$$
+\frac{|\Delta_{\pi}|}{|\Delta_{S}|} \approx 
+\frac{7}{200} = 0.035.
+$${#eq-mix-ratio}
+
+The mixing weight term contributes roughly $3.5\%$ of the signal that determines
+cell assignment. In practical terms, the data log-likelihood completely
+determines which component each cell is assigned to, irrespective of the mixing
+weights. This is why the responsibilities satisfy $\gamma_{ck} \approx 0$ or
+$\gamma_{ck} \approx 1$ for all cells---a phenomenon known as the
+*hard-assignment regime*.
+
+## Impact on stochastic variational inference
+
+### The ELBO for mixture models
+
+As derived in @sec-vi_primer, stochastic variational inference optimizes the
+Evidence Lower Bound (ELBO). For the mixture model, the ELBO takes the form
+
+$$
+\text{ELBO}(\phi) = 
+\mathbb{E}_{q_\phi(\underline{\theta}, \underline{\pi})}
+\left[
+    \sum_{c=1}^{C} \log \pi(\underline{u}_c \mid \underline{\theta}, 
+    \underline{\pi})
+\right] - 
+\text{KL}\left(
+    q_\phi(\underline{\theta}, \underline{\pi}) \,\|\, 
+    \pi(\underline{\theta}, \underline{\pi})
+\right),
+$${#eq-mix-elbo}
+
+where $q_\phi(\underline{\theta}, \underline{\pi})$ is the variational
+posterior parameterized by $\phi$, and the KL divergence is between the
+variational posterior and the prior.
+
+### Gradient of the ELBO with respect to mixing weights
+
+To understand why SVI struggles with mixing weights, let us examine the gradient
+of the ELBO with respect to the variational parameters governing
+$\underline{\pi}$. Specifically, consider the variational posterior for the
+mixing weights as $q(\underline{\pi}) = \text{Dirichlet}(\underline{\alpha})$,
+where $\underline{\alpha} = (\alpha_1, \alpha_2, \ldots, \alpha_K)$ are the
+variational concentration parameters.
+
+The ELBO gradient with respect to $\alpha_k$ decomposes into a likelihood term
+and a KL term,
+
+$$
+\frac{\partial \text{ELBO}}{\partial \alpha_k} = 
+\underbrace{
+    \frac{\partial}{\partial \alpha_k} \mathbb{E}_{q}
+    \left[
+        \sum_{c=1}^{C} \log \pi(\underline{u}_c \mid \underline{\theta}, 
+        \underline{\pi})
+    \right]
+}_{\text{likelihood gradient}} - 
+\underbrace{
+    \frac{\partial}{\partial \alpha_k} 
+    \text{KL}(q(\underline{\pi}) \,\|\, \pi(\underline{\pi}))
+}_{\text{KL gradient}}.
+$${#eq-mix-elbo-gradient}
+
+### The likelihood gradient is near zero
+
+For a single cell $c$, the log marginal likelihood from @eq-mix-logsumexp is
+$\text{logsumexp}_k(\ell_{ck})$. The gradient of this expression with respect to
+$\pi_k$ is
+
+$$
+\frac{\partial}{\partial \pi_k} 
+\log \pi(\underline{u}_c \mid \underline{\theta}, \underline{\pi}) = 
+\frac{
+    \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{kg})
+}{
+    \sum_{j=1}^{K} \pi_j \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{jg})
+}.
+$${#eq-mix-gradient-pi}
+
+Comparing @eq-mix-gradient-pi with @eq-mix-responsibility, we recognize this as
+
+$$
+\frac{\partial}{\partial \pi_k} 
+\log \pi(\underline{u}_c \mid \underline{\theta}, \underline{\pi}) = 
+\frac{\gamma_{ck}}{\pi_k}.
+$${#eq-mix-gradient-pi-responsibility}
+
+Summing over all cells, the full gradient of the log-likelihood with respect to
+$\pi_k$ is
+
+$$
+\frac{\partial}{\partial \pi_k} 
+\sum_{c=1}^{C} \log \pi(\underline{u}_c \mid \underline{\theta}, 
+\underline{\pi}) = 
+\frac{1}{\pi_k} \sum_{c=1}^{C} \gamma_{ck} = 
+\frac{N_k^{\text{soft}}}{\pi_k},
+$${#eq-mix-gradient-pi-total}
+
+where
+
+$$
+N_k^{\text{soft}} = \sum_{c=1}^{C} \gamma_{ck}
+$${#eq-mix-soft-counts}
+
+is the *effective number of cells* (soft count) assigned to component $k$.
+
+At first glance, @eq-mix-gradient-pi-total appears to provide a strong gradient
+signal: $N_k^{\text{soft}} / \pi_k$ scales with the number of cells. However, the
+crucial subtlety is that this gradient is with respect to $\pi_k$ *directly*. In
+SVI, we optimize the variational concentration parameters
+$\underline{\alpha}$, not $\underline{\pi}$ directly.
+
+The gradient with respect to $\alpha_k$ involves the reparameterization of the
+Dirichlet distribution through a composition of Gamma random variables. The
+Dirichlet sample $\underline{\pi}$ is generated as
+
+$$
+\gamma_k \sim \text{Gamma}(\alpha_k, 1), \quad 
+\pi_k = \frac{\gamma_k}{\sum_{j=1}^{K} \gamma_j},
+$${#eq-mix-dirichlet-reparam}
+
+and the gradient $\partial \text{ELBO} / \partial \alpha_k$ must flow through this
+reparameterization. The implicit reparameterization of the Gamma distribution
+introduces additional variance into the gradient estimate, which, combined with
+mini-batch stochastic optimization, degrades the signal-to-noise ratio for the
+mixing weight parameters relative to the thousands of gene-level parameters.
+
+### The mean-field bottleneck
+
+As discussed in @sec-reparam, mean-field variational inference assumes that the
+variational posterior factorizes,
+
+$$
+q_\phi(\underline{\theta}, \underline{\pi}) = 
+q(\underline{\pi} \mid \underline{\alpha}) 
+\prod_k q(\underline{\theta}_k \mid \underline{\phi}_k).
+$${#eq-mix-mean-field}
+
+This factorization breaks the coupling between mixing weights and component
+parameters. In the true posterior, the mixing weights and component parameters
+are strongly correlated: changing which cells a component "owns" simultaneously
+changes both the optimal component parameters and the optimal mixing weights.
+The mean-field assumption prevents the variational posterior from capturing this
+coupling.
+
+Even with a low-rank variational guide (see @sec-reparam), which introduces
+some correlation structure, the coupling between mixing weights and the
+high-dimensional component parameters is difficult to capture because it
+involves complex, data-dependent interactions.
+
+### The combined effect
+
+The non-identifiability of mixing weights under SVI arises from the combination
+of three factors:
+
+1. **Scale mismatch**: The mixing weight contribution to cell assignment is
+negligible compared to the data log-likelihood, as shown in
+@eq-mix-ratio. The ELBO landscape is therefore essentially flat in the
+mixing weight direction.
+
+2. **Gradient noise**: The reparameterized gradient for Dirichlet parameters
+has high variance relative to its magnitude, and mini-batch stochastic
+optimization further degrades the signal.
+
+3. **Mean-field decoupling**: The factorized variational family prevents the
+optimizer from jointly updating mixing weights and component parameters in a
+coordinated manner.
+
+The net result is that SVI can converge to solutions where the component-specific
+parameters $\underline{\theta}_k$ are well-learned (because they have strong,
+high-dimensional gradient signal from all $G$ genes), while the mixing weights
+$\underline{\pi}$ drift to values that bear little relation to the true
+component proportions.
+
+## Comparison with Hamiltonian Monte Carlo
+
+It is instructive to contrast SVI's behavior with that of Hamiltonian Monte
+Carlo (HMC), which does not suffer from this non-identifiability.
+
+### The conditional posterior for mixing weights
+
+In HMC, we sample from the full joint posterior $\pi(\underline{\theta},
+\underline{\pi} \mid \underline{\underline{U}})$ using Hamiltonian dynamics.
+Consider the conditional posterior of $\underline{\pi}$ given the component
+parameters $\underline{\theta}$ and the data,
+
+$$
+\pi(\underline{\pi} \mid \underline{\underline{U}}, \underline{\theta}) \propto 
+\pi(\underline{\underline{U}} \mid \underline{\theta}, \underline{\pi}) \cdot 
+\pi(\underline{\pi} \mid \underline{\alpha}_0).
+$${#eq-mix-conditional-posterior}
+
+In the hard-assignment regime established in the previous section, each cell is
+essentially assigned to its best-fitting component with probability $\approx 1$.
+Let $k^*(c)$ denote the best-fitting component for cell $c$,
+
+$$
+k^*(c) = \underset{k}{\text{argmax}} \; S_{ck}.
+$${#eq-mix-hard-assignment}
+
+Under hard assignments, the marginal likelihood from @eq-mix-marginal-likelihood
+simplifies as follows. Since $\gamma_{ck} \approx 1$ for $k = k^*(c)$ and
+$\gamma_{ck} \approx 0$ otherwise, the marginal likelihood for cell $c$ is
+dominated by a single term,
+
+$$
+\pi(\underline{u}_c \mid \underline{\theta}, \underline{\pi}) = 
+\sum_{k=1}^{K} \pi_k \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{kg}) 
+\approx 
+\pi_{k^*(c)} \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{k^*(c) g}).
+$${#eq-mix-hard-marginal}
+
+Taking the product over all cells, the $\underline{\pi}$-dependent part of the
+full likelihood is
+
+$$
+\prod_{c=1}^{C} \pi(\underline{u}_c \mid \underline{\theta}, \underline{\pi}) 
+\propto 
+\prod_{c=1}^{C} \pi_{k^*(c)} = 
+\prod_{k=1}^{K} \pi_k^{N_k},
+$${#eq-mix-hard-likelihood-pi}
+
+where
+
+$$
+N_k = \left|\{c : k^*(c) = k\}\right|
+$${#eq-mix-hard-counts}
+
+is the number of cells assigned to component $k$.
+
+### Conjugate Dirichlet update
+
+Combining the likelihood @eq-mix-hard-likelihood-pi with the Dirichlet prior
+@eq-mix-dirichlet-pdf, the conditional posterior becomes
+
+$$
+\pi(\underline{\pi} \mid \underline{\underline{U}}, \underline{\theta}) \propto 
+\prod_{k=1}^{K} \pi_k^{N_k} \cdot 
+\prod_{k=1}^{K} \pi_k^{\alpha_{0k} - 1} = 
+\prod_{k=1}^{K} \pi_k^{\alpha_{0k} + N_k - 1}.
+$${#eq-mix-conjugate-update}
+
+We immediately recognize @eq-mix-conjugate-update as the kernel of a Dirichlet
+distribution. Therefore, the conditional posterior is
+
+$$
+\underline{\pi} \mid \underline{\underline{U}}, \underline{\theta} \sim 
+\text{Dirichlet}(\underline{\alpha}_0 + \underline{N}),
+$${#eq-mix-conditional-dirichlet}
+
+where $\underline{N} = (N_1, N_2, \ldots, N_K)$ is the vector of hard cell
+counts.
+
+The mean of this conditional posterior is
+
+$$
+\mathbb{E}[\pi_k \mid \underline{\underline{U}}, \underline{\theta}] = 
+\frac{\alpha_{0k} + N_k}{\sum_{j=1}^{K} \alpha_{0j} + C},
+$${#eq-mix-conditional-mean}
+
+where $C = \sum_{k=1}^{K} N_k$ is the total number of cells. For a symmetric
+prior with $\alpha_{0k} = \alpha_0$ and a dataset with $C \gg K\alpha_0$, the
+posterior mean approaches the empirical proportion,
+
+$$
+\mathbb{E}[\pi_k] \approx \frac{N_k}{C}.
+$${#eq-mix-conditional-mean-approx}
+
+This shows that HMC, by sampling from the correct posterior, naturally recovers
+mixing weights that reflect the empirical cell proportions---in stark contrast
+to SVI, where the mixing weights can drift to arbitrary values.
+
+### Why HMC succeeds where SVI fails
+
+The gradient of the log-posterior with respect to $\underline{\pi}$ is the same
+in both HMC and SVI. From @eq-mix-gradient-pi-total, the gradient signal
+$N_k^{\text{soft}} / \pi_k$ is informative in both cases. The difference lies
+not in the gradient itself, but in how it is used:
+
+- **HMC** uses the gradient to construct Hamiltonian dynamics that evolve a
+state $(\underline{\theta}, \underline{\pi})$ through phase space. The leapfrog
+integrator, combined with the mass matrix adaptation, properly scales the step
+sizes for each parameter dimension. The resulting trajectory explores the full
+joint posterior, including the correct conditional for $\underline{\pi}$.
+
+- **SVI** uses the gradient to update *variational parameters* through
+stochastic optimization. The factorized variational family, combined with noisy
+mini-batch gradient estimates and the challenging Dirichlet reparameterization,
+prevents the optimizer from finding the correct mixing weight posterior. The
+optimizer has no mechanism to jointly update mixing weights and component
+parameters in the coordinated way that the true posterior demands.
+
+## Deriving data-driven mixing weights for SVI
+
+### Motivation
+
+The analysis in the previous sections suggests a natural remedy for the SVI
+mixing weight pathology: after SVI has converged and produced well-identified
+component parameters $\underline{\theta}_{\text{MAP}}$, compute the conditional
+posterior of $\underline{\pi}$ given those parameters and the data. This is
+precisely what HMC would sample if the component parameters were held fixed.
+
+### The conditional posterior
+
+Let $\underline{\theta}_{\text{MAP}}$ denote the MAP estimates of the
+component-specific parameters obtained from SVI. We seek the conditional
+posterior from @eq-mix-conditional-posterior,
+
+$$
+\pi(\underline{\pi} \mid \underline{\underline{U}}, 
+\underline{\theta}_{\text{MAP}}) \propto 
+\pi(\underline{\underline{U}} \mid \underline{\theta}_{\text{MAP}}, 
+\underline{\pi}) \cdot 
+\pi(\underline{\pi} \mid \underline{\alpha}_0).
+$${#eq-mix-empirical-posterior}
+
+As we showed in @eq-mix-conjugate-update, in the hard-assignment regime this
+conditional posterior takes the form of a Dirichlet distribution. For the more
+general case with soft assignments, we proceed as follows.
+
+### Expectation-Maximization interpretation
+
+The computation of data-driven mixing weights can be viewed as a single
+iteration of the Expectation-Maximization (EM) algorithm with the component
+parameters held fixed at $\underline{\theta}_{\text{MAP}}$.
+
+**E-step**: Compute the responsibilities for each cell under each component.
+To avoid circular dependence on the poorly-learned SVI mixing weights, we use
+uniform mixing weights $\pi_k^{(0)} = 1/K$ in the responsibility computation,
+
+$$
+\gamma_{ck}^{(0)} = 
+\frac{
+    \frac{1}{K} \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{\text{MAP},kg})
+}{
+    \sum_{j=1}^{K} \frac{1}{K} \prod_{g=1}^{G} \pi(u_{cg} \mid 
+    \theta_{\text{MAP},jg})
+}.
+$${#eq-mix-e-step}
+
+Since the factor $1/K$ appears in both numerator and denominator, it cancels,
+yielding
+
+$$
+\gamma_{ck}^{(0)} = 
+\frac{
+    \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{\text{MAP},kg})
+}{
+    \sum_{j=1}^{K} \prod_{g=1}^{G} \pi(u_{cg} \mid \theta_{\text{MAP},jg})
+} = 
+\frac{\exp(S_{ck})}{\sum_{j=1}^{K} \exp(S_{cj})},
+$${#eq-mix-e-step-simplified}
+
+where $S_{ck}$ is the data log-likelihood from @eq-mix-data-loglik computed with
+the MAP component parameters. These responsibilities depend *only* on the gene
+expression fit, with no mixing weight bias.
+
+**M-step**: Given the responsibilities, the Bayesian update for the mixing
+weights with a Dirichlet prior yields the conditional posterior. The effective
+soft counts are
+
+$$
+N_k^{\text{soft}} = \sum_{c=1}^{C} \gamma_{ck}^{(0)},
+$${#eq-mix-soft-counts-empirical}
+
+and the conditional posterior is
+
+$$
+\underline{\pi} \mid \underline{\underline{U}}, 
+\underline{\theta}_{\text{MAP}} \sim 
+\text{Dirichlet}(\underline{\alpha}_0 + \underline{N}^{\text{soft}}).
+$${#eq-mix-empirical-dirichlet}
+
+The posterior mean provides a principled point estimate for the mixing weights,
+
+$$
+\hat{\pi}_k = 
+\frac{\alpha_{0k} + N_k^{\text{soft}}}{
+    \sum_{j=1}^{K} \alpha_{0j} + C
+},
+$${#eq-mix-empirical-weights}
+
+where $C = \sum_{k=1}^{K} N_k^{\text{soft}}$ equals the total number of cells
+(since responsibilities sum to 1 for each cell).
+
+### Why one iteration suffices
+
+In standard EM, the E-step and M-step are iterated until convergence. The
+E-step computes responsibilities given the current $\underline{\pi}$, and the
+M-step updates $\underline{\pi}$ given the responsibilities. The question
+arises: do we need multiple iterations?
+
+In the hard-assignment regime, the answer is no. To see this, suppose we
+performed a second E-step using the updated weights $\hat{\underline{\pi}}$ from
+@eq-mix-empirical-weights. The new responsibilities would be
+
+$$
+\gamma_{ck}^{(1)} = 
+\frac{
+    \hat{\pi}_k \exp(S_{ck})
+}{
+    \sum_{j=1}^{K} \hat{\pi}_j \exp(S_{cj})
+} = 
+\frac{
+    \exp(\log \hat{\pi}_k + S_{ck})
+}{
+    \sum_{j=1}^{K} \exp(\log \hat{\pi}_j + S_{cj})
+}.
+$${#eq-mix-second-e-step}
+
+The difference between $\gamma_{ck}^{(1)}$ and $\gamma_{ck}^{(0)}$ depends on
+the mixing weight contributions $\log \hat{\pi}_k$. From our scale analysis in
+@eq-mix-ratio, these contributions are negligible compared to the data
+log-likelihoods $S_{ck}$. Therefore,
+
+$$
+\gamma_{ck}^{(1)} \approx \gamma_{ck}^{(0)},
+$${#eq-mix-convergence}
+
+and a single iteration gives essentially the converged result.
+
+More precisely, the maximum change in any responsibility between iterations is
+bounded by
+
+$$
+\max_{c,k} \left|\gamma_{ck}^{(1)} - \gamma_{ck}^{(0)}\right| \leq 
+\frac{1}{4} \max_{k_1, k_2} \left|\log \hat{\pi}_{k_1} - 
+\log \hat{\pi}_{k_2}\right| \cdot 
+\max_c \gamma_{c,k_1}^{(0)}(1 - \gamma_{c,k_1}^{(0)}).
+$${#eq-mix-convergence-bound}
+
+In the hard-assignment regime, $\gamma_{ck}^{(0)} \approx 0$ or $1$, so the
+factor $\gamma_{ck}^{(0)}(1 - \gamma_{ck}^{(0)}) \approx 0$, confirming that a
+single iteration converges.
+
+### Properties of the empirical mixing weights
+
+The data-driven mixing weights from @eq-mix-empirical-weights have several
+desirable properties:
+
+1. **Consistency with cell assignments**: By construction, the empirical weights
+reflect the proportions observed in the data through the component-specific
+parameter fits. If $35\%$ of cells have gene expression profiles best matching
+component $k$, then $\hat{\pi}_k \approx 0.35$.
+
+2. **Prior regularization**: The Dirichlet prior $\underline{\alpha}_0$ provides
+regularization. For components with very few assigned cells, the prior prevents
+$\hat{\pi}_k$ from collapsing to zero. This is particularly important for rare
+cell types.
+
+3. **Full posterior distribution**: Beyond the point estimate
+$\hat{\underline{\pi}}$, we have the full conditional posterior
+$\text{Dirichlet}(\underline{\alpha}_0 + \underline{N}^{\text{soft}})$, which
+quantifies uncertainty in the mixing weights. For a dataset with $C$ cells and
+prior concentration $\alpha_0$, the posterior variance for each component is
+
+$$
+\text{Var}(\pi_k) = 
+\frac{(\alpha_{0k} + N_k^{\text{soft}})
+(\sum_{j} \alpha_{0j} + C - \alpha_{0k} - N_k^{\text{soft}})}{
+(\sum_{j} \alpha_{0j} + C)^2
+(\sum_{j} \alpha_{0j} + C + 1)},
+$${#eq-mix-empirical-variance}
+
+which decreases with the number of cells, as expected.
+
+4. **Equivalence with HMC conditional**: The empirical weights are exactly what
+an HMC sampler would produce for $\underline{\pi}$ if the component parameters
+were fixed at $\underline{\theta}_{\text{MAP}}$. This provides the statistical
+justification: we are computing the correct conditional posterior, not an ad-hoc
+correction.
+
+5. **Computational efficiency**: The procedure requires a single pass through
+the data to compute per-component log-likelihoods (which are already computed
+during standard SVI diagnostics), followed by trivial $O(CK)$ operations for
+the softmax and summation. No additional optimization or sampling is needed.
+
+## Summary
+
+In mixture models for high-dimensional single-cell RNA-seq data, the mixing
+weights $\underline{\pi}$ are practically non-identifiable under stochastic
+variational inference due to the massive scale mismatch between the mixing weight
+contribution ($\sim 7$ nats) and the data log-likelihood ($\sim 10^4$ nats) in
+cell assignment. While the component-specific parameters
+$\underline{\theta}_k$ are well-learned because they receive strong gradient
+signal from all $G$ genes, the mixing weights can drift to arbitrary values on a
+flat ELBO landscape.
+
+The remedy is to compute the conditional posterior
+$\pi(\underline{\pi} \mid \underline{\underline{U}},
+\underline{\theta}_{\text{MAP}})$, which is a Dirichlet distribution with
+concentration parameters $\underline{\alpha}_0 + \underline{N}^{\text{soft}}$.
+This provides mixing weights that are:
+
+- **Principled**: derived from the exact conditional posterior, equivalent to
+what HMC would sample.
+- **Data-driven**: reflecting the actual cell proportions as determined by gene
+expression fit.
+- **Prior-respecting**: incorporating the Dirichlet prior for regularization.
+- **Practical**: requiring only a single pass through the data with no
+additional optimization.
+
+These empirical mixing weights can then be used in place of the SVI-learned
+weights for all downstream analyses, including posterior predictive checks,
+cell type composition summaries, and predictive sampling from the mixture model.
