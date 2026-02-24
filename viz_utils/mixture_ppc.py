@@ -653,11 +653,46 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     del results_subset
 
 
-def plot_mixture_composition(results, counts, figs_dir, cfg, viz_cfg):
+def _reconstruct_label_map_for_composition(cell_labels, component_order=None):
+    """Build label-to-component mapping used for composition comparison plots.
+
+    Parameters
+    ----------
+    cell_labels : array-like
+        Per-cell annotation labels.
+    component_order : sequence of str, optional
+        Explicit component order from configuration.
+
+    Returns
+    -------
+    dict
+        Mapping from label string to component index.
+    """
+    import pandas as pd
+
+    annotations = pd.Series(cell_labels)
+    labels = annotations.dropna()
+
+    if component_order is not None:
+        return {str(label): idx for idx, label in enumerate(component_order)}
+
+    unique_sorted = sorted(str(label) for label in labels.unique())
+    return {label: idx for idx, label in enumerate(unique_sorted)}
+
+
+def plot_mixture_composition(
+    results, counts, figs_dir, cfg, viz_cfg, cell_labels=None
+):
     """Plot MAP component composition for mixture models.
 
     This figure summarizes each component's composition as the fraction of cells
     assigned to that component under MAP-like assignment probabilities.
+
+    When ``cell_labels`` are provided, this plot switches to a side-by-side
+    comparison per label:
+
+    - observed fraction of each label in the dataset
+    - predicted fraction from model assignments mapped to that label's component
     """
     console.print("[dim]Plotting mixture component composition...[/dim]")
 
@@ -668,59 +703,212 @@ def plot_mixture_composition(results, counts, figs_dir, cfg, viz_cfg):
         )
         return
 
-    # Reuse existing assignment batching infrastructure for large datasets.
-    ppc_opts = viz_cfg.get("ppc_opts", {})
-    mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
-    composition_opts = viz_cfg.get("mixture_composition_opts", {})
-    assignment_batch_size = composition_opts.get(
-        "assignment_batch_size",
-        mixture_ppc_opts.get(
+    # Extract MAP mixture weights (global composition prior at MAP).
+    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    mixing_weights = map_estimates.get("mixing_weights")
+    weight_fractions = None
+    if mixing_weights is not None:
+        weight_fractions = np.array(mixing_weights, dtype=float).reshape(-1)
+        if weight_fractions.shape[0] != n_components:
+            weight_fractions = weight_fractions[:n_components]
+        weight_fractions = np.clip(weight_fractions, a_min=0.0, a_max=None)
+        weight_fractions = weight_fractions / max(
+            np.sum(weight_fractions), 1e-12
+        )
+
+    fig, ax = plt.subplots(1, 1, figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0))
+
+    if cell_labels is not None:
+        # Compute assignment-based fractions per component. These reflect
+        # p(z_i | x_i, theta_map) and are the natural model-predicted label mix.
+        ppc_opts = viz_cfg.get("ppc_opts", {})
+        mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
+        composition_opts = viz_cfg.get("mixture_composition_opts", {})
+        assignment_batch_size = composition_opts.get(
             "assignment_batch_size",
-            mixture_ppc_opts.get("batch_size", ppc_opts.get("batch_size", 512)),
-        ),
-    )
-    if assignment_batch_size is not None and assignment_batch_size <= 0:
-        assignment_batch_size = None
-    if assignment_batch_size is not None:
-        console.print(
-            f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
+            mixture_ppc_opts.get(
+                "assignment_batch_size",
+                mixture_ppc_opts.get("batch_size", ppc_opts.get("batch_size", 512)),
+            ),
+        )
+        if assignment_batch_size is not None and assignment_batch_size <= 0:
+            assignment_batch_size = None
+        if assignment_batch_size is not None:
+            console.print(
+                f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
+            )
+        assignment_probs = _get_cell_assignment_probabilities_for_plot(
+            results, counts=counts, batch_size=assignment_batch_size
+        )
+        assignments = np.argmax(assignment_probs, axis=1)
+        assignment_counts = np.bincount(assignments, minlength=n_components)
+        assigned_fractions = assignment_counts / max(
+            1, int(np.sum(assignment_counts))
         )
 
-    assignment_probs = _get_cell_assignment_probabilities_for_plot(
-        results, counts=counts, batch_size=assignment_batch_size
-    )
-    assignments = np.argmax(assignment_probs, axis=1)
-    hard_counts = np.bincount(assignments, minlength=n_components)
-    hard_fractions = hard_counts / max(1, int(np.sum(hard_counts)))
+        # Compare observed annotation proportions against model-predicted
+        # proportions by mapping each annotation to its configured component.
+        annotations = np.asarray(cell_labels).astype(str)
+        component_order = cfg.get("annotation_component_order", None)
+        label_map = _reconstruct_label_map_for_composition(
+            cell_labels=annotations, component_order=component_order
+        )
+        labels_by_component = sorted(label_map.keys(), key=lambda x: label_map[x])
+        labels_by_component = [
+            label
+            for label in labels_by_component
+            if 0 <= int(label_map[label]) < n_components
+        ]
 
-    fig_width = max(6.0, 1.1 * n_components + 2.0)
-    fig, ax = plt.subplots(1, 1, figsize=(fig_width, 4.0))
-    component_ids = np.arange(1, n_components + 1)
-    bars = ax.bar(
-        component_ids,
-        hard_fractions,
-        color=plt.get_cmap("Blues")(np.linspace(0.45, 0.85, n_components)),
-        edgecolor="black",
-        linewidth=0.6,
-    )
+        observed_fracs = np.array(
+            [np.mean(annotations == label) for label in labels_by_component]
+        )
+        assigned_fracs_by_label = np.array(
+            [
+                assigned_fractions[int(label_map[label])]
+                for label in labels_by_component
+            ]
+        )
+        weight_fracs_by_label = None
+        if weight_fractions is not None:
+            weight_fracs_by_label = np.array(
+                [
+                    weight_fractions[int(label_map[label])]
+                    for label in labels_by_component
+                ]
+            )
 
-    for idx, bar in enumerate(bars):
-        frac = hard_fractions[idx]
-        n_cells = int(hard_counts[idx])
-        ax.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            frac + 0.01,
-            f"{frac * 100:.1f}%\n(n={n_cells})",
-            ha="center",
-            va="bottom",
-            fontsize=8,
+        x = np.arange(len(labels_by_component))
+        width = 0.25
+        obs_bars = ax.bar(
+            x - width,
+            observed_fracs,
+            width=width,
+            label="Observed labels",
+            color="#4C78A8",
+            edgecolor="black",
+            linewidth=0.6,
+        )
+        assigned_bars = ax.bar(
+            x,
+            assigned_fracs_by_label,
+            width=width,
+            label="Assigned MAP",
+            color="#F58518",
+            edgecolor="black",
+            linewidth=0.6,
+        )
+        if weight_fracs_by_label is not None:
+            weight_bars = ax.bar(
+                x + width,
+                weight_fracs_by_label,
+                width=width,
+                label="MAP mixing weights",
+                color="#54A24B",
+                edgecolor="black",
+                linewidth=0.6,
+            )
+        else:
+            weight_bars = []
+
+        for bars, fractions in (
+            (obs_bars, observed_fracs),
+            (assigned_bars, assigned_fracs_by_label),
+            (weight_bars, weight_fracs_by_label),
+        ):
+            if fractions is None:
+                continue
+            for idx, bar in enumerate(bars):
+                frac = fractions[idx]
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    frac + 0.01,
+                    f"{frac * 100:.1f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                )
+
+        ax.set_xlabel("Annotation label")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels_by_component, rotation=30, ha="right")
+        ax.legend(frameon=False, fontsize=8)
+        ax.set_title("Label Composition: Observed vs Assigned MAP vs Weights")
+        y_max = max(
+            0.12,
+            float(np.max(observed_fracs)) if len(observed_fracs) else 0.0,
+            float(np.max(assigned_fracs_by_label))
+            if len(assigned_fracs_by_label)
+            else 0.0,
+            float(np.max(weight_fracs_by_label))
+            if weight_fracs_by_label is not None and len(weight_fracs_by_label)
+            else 0.0,
+        )
+        ax.set_ylim(0.0, min(1.05, y_max + 0.15))
+    else:
+        # Global component-only view: prefer MAP weights and fall back to
+        # assignment fractions if weights are unavailable.
+        if weight_fractions is not None:
+            component_fractions = weight_fractions
+            hard_counts = np.rint(
+                component_fractions * int(results.n_cells)
+            ).astype(int)
+        else:
+            ppc_opts = viz_cfg.get("ppc_opts", {})
+            mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
+            composition_opts = viz_cfg.get("mixture_composition_opts", {})
+            assignment_batch_size = composition_opts.get(
+                "assignment_batch_size",
+                mixture_ppc_opts.get(
+                    "assignment_batch_size",
+                    mixture_ppc_opts.get(
+                        "batch_size", ppc_opts.get("batch_size", 512)
+                    ),
+                ),
+            )
+            if assignment_batch_size is not None and assignment_batch_size <= 0:
+                assignment_batch_size = None
+            if assignment_batch_size is not None:
+                console.print(
+                    f"[yellow]mixing_weights missing; using assignment "
+                    f"batch_size={assignment_batch_size} fallback[/yellow]"
+                )
+            assignment_probs = _get_cell_assignment_probabilities_for_plot(
+                results, counts=counts, batch_size=assignment_batch_size
+            )
+            assignments = np.argmax(assignment_probs, axis=1)
+            hard_counts = np.bincount(assignments, minlength=n_components)
+            component_fractions = hard_counts / max(1, int(np.sum(hard_counts)))
+
+        component_ids = np.arange(1, n_components + 1)
+        bars = ax.bar(
+            component_ids,
+            component_fractions,
+            color=plt.get_cmap("Blues")(np.linspace(0.45, 0.85, n_components)),
+            edgecolor="black",
+            linewidth=0.6,
         )
 
-    ax.set_xlabel("Component")
+        for idx, bar in enumerate(bars):
+            frac = component_fractions[idx]
+            n_cells = int(hard_counts[idx])
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                frac + 0.01,
+                f"{frac * 100:.1f}%\n(n={n_cells})",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
+
+        ax.set_xlabel("Component")
+        ax.set_xticks(component_ids)
+        ax.set_title("Mixture Composition (MAP Assignments)")
+        ax.set_ylim(
+            0.0, min(1.05, max(0.12, np.max(component_fractions) + 0.15))
+        )
+
     ax.set_ylabel("Cell fraction")
-    ax.set_ylim(0.0, min(1.05, max(0.12, np.max(hard_fractions) + 0.15)))
-    ax.set_xticks(component_ids)
-    ax.set_title("Mixture Composition (MAP Assignments)")
 
     output_format = viz_cfg.get("format", "png")
     config_vals = _get_config_values(cfg, results=results)
