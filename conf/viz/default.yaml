@@ -11,6 +11,7 @@ viz:
   umap: false  # Disabled by default (can be slow for large datasets)
   heatmap: false  # Disabled by default (requires posterior sampling which can be slow)
   mixture_ppc: false  # Only runs when mixture_model=true, shows genes differing between components
+  mixture_composition: false  # Only runs when mixture_model=true; barplot of MAP component composition
   annotation_ppc: false  # Only runs when annotation_key is set; per-annotation component PPC
   format: png  # Output format: png, pdf, svg, eps
 
@@ -55,6 +56,10 @@ viz:
     n_rows: 5  # Number of rows in the grid
     n_cols: 5  # Number of columns in the grid
     n_samples: 1500  # Number of PPC samples per component
+
+  # Mixture composition plot options
+  mixture_composition_opts:
+    assignment_batch_size: 512  # Batch size for component assignment probability computation
 
   # Annotation PPC options (per-annotation component PPC)
   annotation_ppc_opts:

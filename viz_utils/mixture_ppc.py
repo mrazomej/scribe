@@ -651,3 +651,91 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     )
 
     del results_subset
+
+
+def plot_mixture_composition(results, counts, figs_dir, cfg, viz_cfg):
+    """Plot MAP component composition for mixture models.
+
+    This figure summarizes each component's composition as the fraction of cells
+    assigned to that component under MAP-like assignment probabilities.
+    """
+    console.print("[dim]Plotting mixture component composition...[/dim]")
+
+    n_components = results.n_components
+    if n_components is None or n_components <= 1:
+        console.print(
+            "[yellow]Not a mixture model, skipping composition plot...[/yellow]"
+        )
+        return
+
+    # Reuse existing assignment batching infrastructure for large datasets.
+    ppc_opts = viz_cfg.get("ppc_opts", {})
+    mixture_ppc_opts = viz_cfg.get("mixture_ppc_opts", {})
+    composition_opts = viz_cfg.get("mixture_composition_opts", {})
+    assignment_batch_size = composition_opts.get(
+        "assignment_batch_size",
+        mixture_ppc_opts.get(
+            "assignment_batch_size",
+            mixture_ppc_opts.get("batch_size", ppc_opts.get("batch_size", 512)),
+        ),
+    )
+    if assignment_batch_size is not None and assignment_batch_size <= 0:
+        assignment_batch_size = None
+    if assignment_batch_size is not None:
+        console.print(
+            f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
+        )
+
+    assignment_probs = _get_cell_assignment_probabilities_for_plot(
+        results, counts=counts, batch_size=assignment_batch_size
+    )
+    assignments = np.argmax(assignment_probs, axis=1)
+    hard_counts = np.bincount(assignments, minlength=n_components)
+    hard_fractions = hard_counts / max(1, int(np.sum(hard_counts)))
+
+    fig_width = max(6.0, 1.1 * n_components + 2.0)
+    fig, ax = plt.subplots(1, 1, figsize=(fig_width, 4.0))
+    component_ids = np.arange(1, n_components + 1)
+    bars = ax.bar(
+        component_ids,
+        hard_fractions,
+        color=plt.get_cmap("Blues")(np.linspace(0.45, 0.85, n_components)),
+        edgecolor="black",
+        linewidth=0.6,
+    )
+
+    for idx, bar in enumerate(bars):
+        frac = hard_fractions[idx]
+        n_cells = int(hard_counts[idx])
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            frac + 0.01,
+            f"{frac * 100:.1f}%\n(n={n_cells})",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+
+    ax.set_xlabel("Component")
+    ax.set_ylabel("Cell fraction")
+    ax.set_ylim(0.0, min(1.05, max(0.12, np.max(hard_fractions) + 0.15)))
+    ax.set_xticks(component_ids)
+    ax.set_title("Mixture Composition (MAP Assignments)")
+
+    output_format = viz_cfg.get("format", "png")
+    config_vals = _get_config_values(cfg, results=results)
+    base_fname = (
+        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['model_type'].replace('_', '-')}_"
+        f"{config_vals['n_components']:02d}components_"
+        f"{config_vals['run_size_token']}"
+    )
+    output_path = os.path.join(
+        figs_dir, f"{base_fname}_mixture_composition.{output_format}"
+    )
+    fig.savefig(output_path, bbox_inches="tight")
+    console.print(
+        f"[green]✓[/green] [dim]Saved mixture composition to[/dim] "
+        f"[cyan]{output_path}[/cyan]"
+    )
+    plt.close(fig)
