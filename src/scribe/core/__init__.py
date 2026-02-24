@@ -11,6 +11,7 @@ from .annotation_prior import (
     build_annotation_prior_logits,
     validate_annotation_prior_logits,
 )
+from .serialization import make_model_config_pickle_safe
 
 # Differential expression module has moved to scribe.de (top-level)
 
@@ -29,6 +30,7 @@ __all__ = [
     "fit_logistic_normal_from_posterior",
     "build_annotation_prior_logits",
     "validate_annotation_prior_logits",
+    "make_model_config_pickle_safe",
     # "de" has moved to scribe.de (top-level)
     "compute_cell_type_probabilities",
     "compute_cell_type_probabilities_map",

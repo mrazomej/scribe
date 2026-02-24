@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import pandas as pd
 
 from ..models.config import ModelConfig
+from ..core.serialization import make_model_config_pickle_safe
 
 try:
     from anndata import AnnData
@@ -117,3 +118,21 @@ class ScribeSVIResults(
     # param_specs set). When present, _subset_params and
     # _subset_posterior_samples use this instead of heuristics.
     _gene_axis_by_key: Optional[Dict[str, int]] = None
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Return pickle-safe state for ``ScribeSVIResults``.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Instance state with a serialization-safe ``model_config``.
+        """
+        state = dict(self.__dict__)
+        state["model_config"] = make_model_config_pickle_safe(
+            state.get("model_config")
+        )
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Restore instance state after unpickling."""
+        self.__dict__.update(state)

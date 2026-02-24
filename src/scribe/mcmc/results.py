@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import pandas as pd
 
 from ..models.config import ModelConfig
+from ..core.serialization import make_model_config_pickle_safe
 
 # Mixin imports
 from ._parameter_extraction import ParameterExtractionMixin
@@ -326,3 +327,26 @@ class ScribeMCMCResults(
     def posterior_samples(self) -> Dict:
         """Posterior samples (read-only property)."""
         return self.get_posterior_samples()
+
+    # -------------------------------------------------------------------------
+    # Pickle support
+    # -------------------------------------------------------------------------
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Return pickle-safe state for ``ScribeMCMCResults``.
+
+        Notes
+        -----
+        The wrapped ``_mcmc`` object retains local closure functions from model
+        building and is intentionally dropped to ensure portability.
+        """
+        state = dict(self.__dict__)
+        state["_mcmc"] = None
+        state["model_config"] = make_model_config_pickle_safe(
+            state.get("model_config")
+        )
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Restore instance state after unpickling."""
+        self.__dict__.update(state)

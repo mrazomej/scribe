@@ -173,19 +173,25 @@ def _get_map_estimates_for_plot(results, *, counts=None):
 
 
 @dispatch(scribe.ScribeSVIResults)
-def _get_cell_assignment_probabilities_for_plot(results, *, counts):
+def _get_cell_assignment_probabilities_for_plot(
+    results, *, counts, batch_size=None
+):
     """Get MAP component-assignment probabilities from SVI results."""
+    # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities_map(
-        counts=counts, verbose=False
+        counts=counts, batch_size=batch_size, verbose=False
     )
     return np.array(assignment_info["probabilities"])
 
 
 @dispatch(scribe.ScribeMCMCResults)
-def _get_cell_assignment_probabilities_for_plot(results, *, counts):
+def _get_cell_assignment_probabilities_for_plot(
+    results, *, counts, batch_size=None
+):
     """Get component-assignment probabilities from MCMC results."""
+    # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities(
-        counts=counts, verbose=False
+        counts=counts, batch_size=batch_size, verbose=False
     )
     if "mean_probabilities" in assignment_info:
         return np.array(assignment_info["mean_probabilities"])

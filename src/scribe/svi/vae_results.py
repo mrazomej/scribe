@@ -26,6 +26,7 @@ import pandas as pd
 from jax import random
 
 from ..models.config import ModelConfig
+from ..core.serialization import make_model_config_pickle_safe
 from ._core import CoreResultsMixin
 from ._gene_subsetting import GeneSubsettingMixin
 from ._latent_space import (
@@ -202,6 +203,18 @@ class ScribeVAEResults(
                 f"Latent spec has a flow prior but params dict "
                 f"missing '{_FLOW_KEY}'."
             )
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Return pickle-safe state for composable VAE results."""
+        state = dict(self.__dict__)
+        state["model_config"] = make_model_config_pickle_safe(
+            state.get("model_config")
+        )
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Restore state after unpickling."""
+        self.__dict__.update(state)
 
     # ------------------------------------------------------------------
     # Gene subsetting override
