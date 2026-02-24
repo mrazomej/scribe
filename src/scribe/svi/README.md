@@ -352,6 +352,21 @@ cell_type_probs = results.cell_type_probabilities()
 component_0 = results.get_component(0)
 components_12 = results.get_components([1, 2])  # renormalize=True by default
 components_12_raw = results.get_components([1, 2], renormalize=False)
+
+# Empirical (data-driven) mixing weights — corrects for SVI
+# non-identifiability of Dirichlet mixing weights by computing
+# the conditional posterior Dir(alpha_0 + N_soft).
+emp = results.compute_empirical_mixing_weights(counts=count_data)
+print("Empirical weights:", emp["weights"])
+print("Posterior concentrations:", emp["concentrations"])
+
+# Substitute empirical weights directly into MAP estimates
+map_with_emp = results.get_map(empirical_mixing=True, counts=count_data)
+
+# Use empirical weights for predictive sampling
+ppc = results.get_map_ppc_samples(
+    empirical_mixing=True, counts=count_data, n_samples=5
+)
 ```
 
 **Data Subsetting:**
@@ -480,9 +495,12 @@ ScribeSVIResults
    - Methods:
      - `mixture_component_entropy()`: Entropy of component assignments
      - `assignment_entropy_map()`: MAP-based assignment entropy
+     - `compute_empirical_mixing_weights()`: Data-driven mixing weights
+       via the conditional posterior Dir(alpha_0 + N_soft), correcting
+       for the SVI non-identifiability of Dirichlet mixing weights
      - `cell_type_probabilities()`: Component probabilities from samples
      - `cell_type_probabilities_map()`: Component probabilities from MAP
-   - Dependencies: Uses `LikelihoodMixin`
+   - Dependencies: Uses `LikelihoodMixin`, `ParameterExtractionMixin`
 
 9. **NormalizationMixin** (`_normalization.py`)
    - Purpose: Count normalization methods
@@ -614,6 +632,22 @@ subset = results[1:4, [1, 2]]
 
 # Get cell type assignments
 cell_probs = results.cell_type_probabilities()
+
+# --- Empirical mixing weights ---
+# SVI-learned Dirichlet mixing weights can be poorly identified because
+# gene-level log-likelihoods overwhelm the mixing weight contribution.
+# compute_empirical_mixing_weights() fixes this by computing the
+# conditional posterior Dir(alpha_0 + N_soft), where N_soft are the
+# purely data-driven soft cell counts.
+emp = results.compute_empirical_mixing_weights(counts=count_data)
+print("Empirical weights:", emp["weights"])
+
+# The empirical weights can also be substituted automatically into
+# get_map() and get_map_ppc_samples() via the empirical_mixing flag:
+map_est = results.get_map(empirical_mixing=True, counts=count_data)
+ppc = results.get_map_ppc_samples(
+    empirical_mixing=True, counts=count_data, n_samples=5
+)
 ```
 
 ### Model Comparison

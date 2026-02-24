@@ -203,6 +203,7 @@ class ParameterExtractionMixin:
         canonical: bool = True,
         verbose: bool = True,
         counts: Optional[jnp.ndarray] = None,
+        empirical_mixing: bool = False,
     ) -> Dict[str, jnp.ndarray]:
         """
         Get the maximum a posteriori (MAP) estimates from the variational
@@ -229,6 +230,11 @@ class ParameterExtractionMixin:
             by summing across ALL genes, so it requires the full data.
 
             For non-amortized models, this can be None. Default: None.
+        empirical_mixing : bool, default=False
+            If True and the model is a mixture, replace the SVI-learned
+            mixing weights with data-driven weights computed from the
+            conditional posterior ``Dir(alpha_0 + N_soft)``.  Requires
+            ``counts`` to be provided.
 
         Returns
         -------
@@ -426,6 +432,26 @@ class ParameterExtractionMixin:
                 map_estimates, verbose=verbose
             )
 
+        # Substitute empirical (data-driven) mixing weights when requested.
+        # This replaces the SVI-learned Dirichlet weights with the
+        # conditional posterior mean Dir(alpha_0 + N_soft).
+        if empirical_mixing and "mixing_weights" in map_estimates:
+            is_mixture = (
+                self.n_components is not None and self.n_components > 1
+            )
+            if is_mixture:
+                if counts is None:
+                    raise ValueError(
+                        "counts must be provided when "
+                        "empirical_mixing=True"
+                    )
+                emp = self.compute_empirical_mixing_weights(
+                    counts=counts,
+                    use_mean=use_mean,
+                    verbose=verbose,
+                )
+                map_estimates["mixing_weights"] = emp["weights"]
+
         return map_estimates
 
     # --------------------------------------------------------------------------
@@ -472,9 +498,14 @@ class ParameterExtractionMixin:
                 # mu of shape (n_components, n_genes).  For hierarchical
                 # models, p is already (n_genes,) or (n_components,
                 # n_genes) and broadcasts element-wise with mu.
+                # NOTE: mixture_params=None means *all* params are
+                # mixture-specific (the default), so we treat None the
+                # same as the param being listed explicitly.
+                _mp = self.model_config.mixture_params
+                _p_is_mixture = _mp is None or "p" in _mp
                 if (
                     self.n_components is not None
-                    and "p" in (self.model_config.mixture_params or [])
+                    and _p_is_mixture
                     and p.ndim == 1
                     and p.shape[0] == self.n_components
                 ):
@@ -518,9 +549,13 @@ class ParameterExtractionMixin:
                 # (n_components,) and needs reshaping.  For hierarchical
                 # models, phi is already (n_genes,) or (n_components,
                 # n_genes) and broadcasts element-wise with mu.
+                # NOTE: mixture_params=None means *all* params are
+                # mixture-specific (see note above for p).
+                _mp = self.model_config.mixture_params
+                _phi_is_mixture = _mp is None or "phi" in _mp
                 if (
                     self.n_components is not None
-                    and "phi" in (self.model_config.mixture_params or [])
+                    and _phi_is_mixture
                     and estimates["phi"].ndim == 1
                     and estimates["phi"].shape[0] == self.n_components
                 ):

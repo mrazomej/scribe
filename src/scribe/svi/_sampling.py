@@ -272,6 +272,7 @@ class SamplingMixin:
         store_samples: bool = True,
         verbose: bool = True,
         counts: Optional[jnp.ndarray] = None,
+        empirical_mixing: bool = False,
     ) -> jnp.ndarray:
         """
         Generate predictive samples using MAP parameter estimates with cell
@@ -309,6 +310,10 @@ class SamplingMixin:
             by summing across ALL genes, so it requires the full data.
 
             For non-amortized models, this can be None. Default: None.
+        empirical_mixing : bool, default=False
+            If True and the model is a mixture, use data-driven mixing
+            weights from the conditional posterior ``Dir(alpha_0 + N_soft)``
+            instead of the SVI-learned weights.  Requires ``counts``.
 
         Returns
         -------
@@ -334,9 +339,14 @@ class SamplingMixin:
         if verbose:
             print("Getting MAP estimates...")
 
-        # Get MAP estimates with canonical parameters
+        # Get MAP estimates with canonical parameters (optionally with
+        # empirical mixing weights substituted in).
         map_estimates = self.get_map(
-            use_mean=use_mean, canonical=True, verbose=False, counts=counts
+            use_mean=use_mean,
+            canonical=True,
+            verbose=False,
+            counts=counts,
+            empirical_mixing=empirical_mixing,
         )
 
         # Extract common parameters

@@ -2,10 +2,11 @@
 Mixture analysis mixin for SVI results.
 
 This mixin provides methods for analyzing mixture models, including entropy
-calculations and cell type probability assignments.
+calculations, cell type probability assignments, and data-driven mixing
+weight estimation via the conditional posterior.
 """
 
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax.nn import softmax
@@ -252,6 +253,135 @@ class MixtureAnalysisMixin:
         entropy = -jnp.sum(probs * jnp.log(probs + eps), axis=-1)
 
         return entropy
+
+    # --------------------------------------------------------------------------
+    # Empirical mixing weights via conditional posterior
+    # --------------------------------------------------------------------------
+
+    def compute_empirical_mixing_weights(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        use_mean: bool = False,
+        verbose: bool = True,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> Dict[str, Any]:
+        """
+        Compute data-driven mixing weights via the conditional posterior.
+
+        In high-dimensional mixture models the SVI-learned Dirichlet mixing
+        weights are practically non-identifiable because the per-gene
+        log-likelihoods overwhelm the mixing-weight contribution when
+        assigning cells to components.  This method corrects for that by
+        computing the conditional posterior
+
+            pi | U, theta_MAP  ~  Dirichlet(alpha_0 + N_soft)
+
+        where ``alpha_0`` are the prior concentrations and ``N_soft`` are the
+        soft cell counts obtained from purely data-driven responsibilities
+        (i.e., with the SVI mixing-weight bias removed).
+
+        This is equivalent to one E-step + Bayesian M-step of variational EM
+        with the component parameters held fixed at their MAP values.  In the
+        hard-assignment regime that holds for high-dimensional gene-expression
+        data, a single iteration is sufficient because the responsibilities
+        do not depend on the mixing weights.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Observed count matrix of shape ``(n_cells, n_genes)``.
+        batch_size : Optional[int], default=None
+            Mini-batch size for the log-likelihood computation.
+        use_mean : bool, default=False
+            Passed to ``log_likelihood_map``; if True, undefined MAP values
+            (NaN) are replaced with posterior means.
+        verbose : bool, default=True
+            Print progress messages.
+        dtype : jnp.dtype, default=jnp.float32
+            Numerical precision for computations.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with keys:
+
+            - ``"weights"`` : jnp.ndarray, shape ``(n_components,)``
+                Posterior-mean mixing weights (point estimate).
+            - ``"concentrations"`` : jnp.ndarray, shape ``(n_components,)``
+                Full Dirichlet posterior concentrations
+                ``alpha_0 + N_soft``.
+            - ``"effective_counts"`` : jnp.ndarray, shape ``(n_components,)``
+                Soft cell counts per component (``N_soft``).
+            - ``"prior_concentrations"`` : jnp.ndarray, shape ``(n_components,)``
+                The Dirichlet prior concentrations ``alpha_0``.
+
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model.
+        """
+        if self.n_components is None or self.n_components <= 1:
+            raise ValueError(
+                "Empirical mixing weights only apply to mixture models "
+                "with multiple components."
+            )
+
+        n_components = self.n_components
+
+        # ---- 1. Per-component log-likelihoods (include SVI mixing weights)
+        if verbose:
+            print("Computing per-component log-likelihoods at MAP...")
+
+        log_liks = self.log_likelihood_map(
+            counts,
+            batch_size=batch_size,
+            return_by="cell",
+            split_components=True,
+            use_mean=use_mean,
+            verbose=verbose,
+            dtype=dtype,
+        )
+
+        # ---- 2. Remove SVI mixing-weight bias so responsibilities are
+        #         purely data-driven (equivalent to using uniform weights).
+        map_estimates = self.get_map(
+            use_mean=use_mean, canonical=True, verbose=False, counts=counts
+        )
+        learned_weights = map_estimates.get("mixing_weights")
+        if learned_weights is not None:
+            log_liks = log_liks - jnp.log(
+                jnp.clip(jnp.asarray(learned_weights, dtype=dtype), 1e-30)
+            )
+
+        # ---- 3. Softmax → responsibilities  (n_cells, n_components)
+        responsibilities = softmax(log_liks, axis=-1)
+
+        # ---- 4. Effective soft counts per component
+        n_soft = jnp.sum(responsibilities, axis=0)
+
+        # ---- 5. Dirichlet prior concentrations from model config
+        mixing_prior = self.model_config.priors.mixing
+        alpha_0 = jnp.array(mixing_prior, dtype=dtype)
+        if alpha_0.shape[0] != n_components:
+            alpha_0 = jnp.full(n_components, alpha_0[0], dtype=dtype)
+
+        # ---- 6. Conditional posterior  Dir(alpha_0 + N_soft)
+        concentrations = alpha_0 + n_soft
+        weights = concentrations / jnp.sum(concentrations)
+
+        if verbose:
+            print(
+                f"Empirical mixing weights: "
+                f"{[f'{w:.3f}' for w in weights.tolist()]}"
+            )
+
+        return {
+            "weights": weights,
+            "concentrations": concentrations,
+            "effective_counts": n_soft,
+            "prior_concentrations": alpha_0,
+        }
 
     # --------------------------------------------------------------------------
     # Cell type assignment method for mixture models
