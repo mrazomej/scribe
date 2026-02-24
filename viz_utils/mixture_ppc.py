@@ -1,5 +1,6 @@
 """Mixture model PPC plotting."""
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from jax import random
@@ -483,6 +484,14 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     n_samples = mixture_ppc_opts.get(
         "n_samples", ppc_opts.get("n_samples", 1500)
     )
+    # Use explicit assignment batching when provided to avoid OOM in
+    # cell-to-component probability computation on large datasets.
+    assignment_batch_size = mixture_ppc_opts.get(
+        "assignment_batch_size",
+        mixture_ppc_opts.get("batch_size", ppc_opts.get("batch_size", 512)),
+    )
+    if assignment_batch_size is not None and assignment_batch_size <= 0:
+        assignment_batch_size = None
     console.print(
         f"[dim]Selecting high-CV genes from {n_rows} expression bins "
         f"({n_cols} genes/bin) across {n_components} components...[/dim]"
@@ -548,8 +557,12 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     counts_np = np.array(counts)
 
     console.print("[dim]Computing MAP cell-to-component assignments...[/dim]")
+    if assignment_batch_size is not None:
+        console.print(
+            f"[dim]Using assignment batch_size={assignment_batch_size}[/dim]"
+        )
     assignment_probs = _get_cell_assignment_probabilities_for_plot(
-        results, counts=counts
+        results, counts=counts, batch_size=assignment_batch_size
     )
     assignments = np.argmax(assignment_probs, axis=1)
 

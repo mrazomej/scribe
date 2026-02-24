@@ -23,6 +23,7 @@ import numpy as np
 from ..svi.results import ScribeSVIResults
 from .architectures import VAE, VAEConfig, dpVAE, EncoderVCP
 from ..sampling import sample_variational_posterior, generate_predictive_samples
+from ..core.serialization import make_model_config_pickle_safe
 
 try:
     from anndata import AnnData
@@ -77,6 +78,22 @@ class ScribeVAEResults(ScribeSVIResults):
         # Check if prior-specific parameters are present
         if self.model_config.vae_prior_type == "decoupled":
             self.prior_type = "decoupled"
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Return pickle-safe state for VAE results.
+
+        Notes
+        -----
+        ``_vae_model`` is runtime cache and is dropped because it can contain
+        non-picklable framework state. It is reconstructed lazily from
+        ``params`` via the ``vae_model`` property.
+        """
+        state = dict(super().__getstate__())
+        state["_vae_model"] = None
+        state["model_config"] = make_model_config_pickle_safe(
+            state.get("model_config")
+        )
+        return state
 
     # --------------------------------------------------------------------------
     # Model and guide access

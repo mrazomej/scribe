@@ -508,8 +508,22 @@ def main(cfg: DictConfig) -> None:
     console.print(f"[dim]Output directory:[/dim] [cyan]{output_dir}[/cyan]")
     console.print(f"[dim]Saving results to:[/dim] [cyan]{output_file}[/cyan]")
 
-    with open(output_file, "wb") as f:
-        pickle.dump(results, f)
+    # Use an atomic write pattern so failed serialization never leaves a
+    # partially-written final results file.
+    tmp_output_file = f"{output_file}.tmp"
+    try:
+        with open(tmp_output_file, "wb") as f:
+            pickle.dump(results, f)
+        os.replace(tmp_output_file, output_file)
+    except Exception as exc:
+        if os.path.exists(tmp_output_file):
+            try:
+                os.remove(tmp_output_file)
+            except OSError:
+                pass
+        raise RuntimeError(
+            f"Failed to serialize/save results to '{output_file}': {exc}"
+        ) from exc
     console.print(
         "[green]✓[/green] [bold green]Results saved successfully![/bold green]"
     )
