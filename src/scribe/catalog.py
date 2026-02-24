@@ -6,7 +6,7 @@ import os
 import pickle
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Callable
 import yaml
 from dataclasses import dataclass
 import hydra
@@ -237,8 +237,28 @@ class ExperimentCatalog:
         if not dirname or dirname == "":
             return metadata
 
-        # Split by comma and parse each key=value pair
-        for pair in dirname.split(","):
+        # Split only on commas that start a new key=value segment.
+        # This preserves comma-delimited values such as
+        # "mixture_params=phi,mu,gate" as one logical entry.
+        pairs = []
+        current_pair = ""
+        for part in dirname.split(","):
+            part = part.strip()
+            if not part:
+                continue
+
+            if "=" in part:
+                if current_pair:
+                    pairs.append(current_pair)
+                current_pair = part
+            elif current_pair:
+                current_pair = f"{current_pair},{part}"
+
+        if current_pair:
+            pairs.append(current_pair)
+
+        # Parse each recovered key=value pair.
+        for pair in pairs:
             if "=" in pair:
                 key, value = pair.split("=", 1)  # Split only on first =
 
@@ -273,6 +293,40 @@ class ExperimentCatalog:
                     metadata[key] = value
 
         return metadata
+
+    # --------------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_comma_delimited_value(value: Any) -> Any:
+        """Normalize comma-delimited list-like filter values.
+
+        Parameters
+        ----------
+        value : Any
+            Raw filter value provided by the caller, or stored metadata value.
+
+        Returns
+        -------
+        Any
+            If ``value`` encodes a comma-delimited list (for example
+            ``"phi,mu,gate"`` or ``["phi,mu,gate"]``), returns a normalized
+            ``list[str]``. Otherwise, returns ``value`` unchanged.
+        """
+        # Normalize singleton list values like ["a,b,c"] into ["a", "b", "c"].
+        if isinstance(value, list) and len(value) == 1:
+            singleton = value[0]
+            if isinstance(singleton, str) and "," in singleton:
+                return [
+                    piece.strip()
+                    for piece in singleton.split(",")
+                    if piece.strip()
+                ]
+
+        # Normalize string values like "a,b,c" into ["a", "b", "c"].
+        if isinstance(value, str) and "," in value:
+            return [piece.strip() for piece in value.split(",") if piece.strip()]
+
+        return value
 
     # --------------------------------------------------------------------------
 
@@ -517,6 +571,10 @@ class ExperimentCatalog:
             matches = True
 
             for key, value in filters.items():
+                normalized_filter_value = self._normalize_comma_delimited_value(
+                    value
+                )
+
                 # Handle nested keys
                 if "." in key:
                     parts = key.split(".")
@@ -524,14 +582,21 @@ class ExperimentCatalog:
                     try:
                         for part in parts:
                             current = current[part]
-                        if current != value:
+                        normalized_current = self._normalize_comma_delimited_value(
+                            current
+                        )
+                        if normalized_current != normalized_filter_value:
                             matches = False
                             break
                     except (KeyError, TypeError):
                         matches = False
                         break
                 else:
-                    if exp.metadata.get(key) != value:
+                    current = exp.metadata.get(key)
+                    normalized_current = self._normalize_comma_delimited_value(
+                        current
+                    )
+                    if normalized_current != normalized_filter_value:
                         matches = False
                         break
 
@@ -539,6 +604,48 @@ class ExperimentCatalog:
                 matching_experiments.append(exp)
 
         return matching_experiments
+
+    # --------------------------------------------------------------------------
+
+    def filter(
+        self,
+        predicate: Callable[[ExperimentRun], bool],
+        experiments: Optional[List[ExperimentRun]] = None,
+    ) -> List[ExperimentRun]:
+        """Filter experiments using a user-provided callable predicate.
+
+        Parameters
+        ----------
+        predicate : Callable[[ExperimentRun], bool]
+            Callable that receives an ``ExperimentRun`` and returns ``True`` for
+            runs that should be kept. This supports flexible lambda-based logic,
+            including path-name checks, metadata combinations, and arbitrary
+            custom predicates.
+        experiments : Optional[List[ExperimentRun]], default None
+            Optional source list to filter. If ``None``, filters the full
+            catalog (``self.experiments``).
+
+        Returns
+        -------
+        List[ExperimentRun]
+            Experiments that satisfy the predicate.
+
+        Raises
+        ------
+        TypeError
+            If ``predicate`` is not callable.
+        """
+        # Validate callable input early so usage errors are explicit.
+        if not callable(predicate):
+            raise TypeError(
+                "predicate must be callable and accept an ExperimentRun."
+            )
+
+        # Support filtering either the full catalog or an intermediate subset.
+        source_experiments = (
+            self.experiments if experiments is None else experiments
+        )
+        return [exp for exp in source_experiments if predicate(exp)]
 
     # --------------------------------------------------------------------------
 
