@@ -1,7 +1,7 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
+# bibliography: references.bib
 csl: ieee.csl
 ---
 
@@ -315,7 +315,7 @@ $$
 }_{\text{KL gradient}}.
 $${#eq-mix-elbo-gradient}
 
-### The likelihood gradient is near zero
+### The likelihood gradient is absorbed by reparameterization noise
 
 For a single cell $c$, the log marginal likelihood from @eq-mix-logsumexp is
 $\text{logsumexp}_k(\ell_{ck})$. The gradient of this expression with respect to
@@ -369,8 +369,8 @@ Dirichlet distribution through a composition of Gamma random variables. The
 Dirichlet sample $\underline{\pi}$ is generated as
 
 $$
-\gamma_k \sim \text{Gamma}(\alpha_k, 1), \quad 
-\pi_k = \frac{\gamma_k}{\sum_{j=1}^{K} \gamma_j},
+\tilde{g}_k \sim \text{Gamma}(\alpha_k, 1), \quad 
+\pi_k = \frac{\tilde{g}_k}{\sum_{j=1}^{K} \tilde{g}_j},
 $${#eq-mix-dirichlet-reparam}
 
 and the gradient $\partial \text{ELBO} / \partial \alpha_k$ must flow through this
@@ -680,7 +680,7 @@ $$
 \max_{c,k} \left|\gamma_{ck}^{(1)} - \gamma_{ck}^{(0)}\right| \leq 
 \frac{1}{4} \max_{k_1, k_2} \left|\log \hat{\pi}_{k_1} - 
 \log \hat{\pi}_{k_2}\right| \cdot 
-\max_c \gamma_{c,k_1}^{(0)}(1 - \gamma_{c,k_1}^{(0)}).
+\max_{c,k} \gamma_{ck}^{(0)}(1 - \gamma_{ck}^{(0)}).
 $${#eq-mix-convergence-bound}
 
 In the hard-assignment regime, $\gamma_{ck}^{(0)} \approx 0$ or $1$, so the
