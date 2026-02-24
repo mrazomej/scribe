@@ -158,19 +158,65 @@ def _get_map_like_predictive_samples_for_plot(
 
 
 @dispatch(scribe.ScribeSVIResults)
-def _get_map_estimates_for_plot(results, *, counts=None, use_mean=True):
+def _get_map_estimates_for_plot(
+    results, *, counts=None, use_mean=True, empirical_mixing=False
+):
     """Get plot-ready MAP estimates from SVI results."""
     return results.get_map(
-        use_mean=use_mean, canonical=True, verbose=False, counts=counts
+        use_mean=use_mean,
+        canonical=True,
+        verbose=False,
+        counts=counts,
+        empirical_mixing=empirical_mixing,
     )
 
 
 @dispatch(scribe.ScribeMCMCResults)
-def _get_map_estimates_for_plot(results, *, counts=None, use_mean=True):
-    """Get plot-ready MAP estimates from MCMC results."""
+def _get_map_estimates_for_plot(
+    results, *, counts=None, use_mean=True, empirical_mixing=False
+):
+    """Get plot-ready MAP estimates from MCMC results.
+
+    The ``empirical_mixing`` flag is accepted for API compatibility but
+    ignored — MCMC mixing weights are already well-identified.
+    """
     _ = counts
     _ = use_mean
+    _ = empirical_mixing
     return results.get_map()
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_empirical_mixing_weights_for_plot(
+    results, *, counts, use_mean=False, batch_size=None
+):
+    """Compute data-driven mixing weights from SVI results.
+
+    Uses the conditional posterior Dir(alpha_0 + N_soft) to replace the
+    SVI-learned Dirichlet mixing weights.
+    """
+    emp = results.compute_empirical_mixing_weights(
+        counts=counts,
+        use_mean=use_mean,
+        verbose=False,
+        batch_size=batch_size,
+    )
+    return np.array(emp["weights"])
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_empirical_mixing_weights_for_plot(
+    results, *, counts, use_mean=False, batch_size=None
+):
+    """Return standard MAP mixing weights for MCMC results.
+
+    MCMC mixing weights are already well-identified, so no correction
+    is needed.
+    """
+    _ = use_mean
+    _ = batch_size
+    map_est = results.get_map()
+    return np.array(map_est.get("mixing_weights"))
 
 
 @dispatch(scribe.ScribeSVIResults)

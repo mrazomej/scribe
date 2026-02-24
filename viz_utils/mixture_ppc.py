@@ -13,6 +13,7 @@ from .dispatch import (
     _get_map_estimates_for_plot,
     _get_map_like_predictive_samples_for_plot,
     _get_cell_assignment_probabilities_for_plot,
+    _get_empirical_mixing_weights_for_plot,
 )
 
 
@@ -718,6 +719,31 @@ def plot_mixture_composition(
             np.sum(weight_fractions), 1e-12
         )
 
+    # Optionally compute empirical (conditional-posterior) mixing weights.
+    # Enabled by default; disable via mixture_composition_opts.show_empirical_weights.
+    composition_opts = viz_cfg.get("mixture_composition_opts", {})
+    show_empirical = composition_opts.get("show_empirical_weights", True)
+    empirical_fractions = None
+    if show_empirical:
+        try:
+            empirical_raw = _get_empirical_mixing_weights_for_plot(
+                results,
+                counts=counts,
+                batch_size=composition_opts.get("assignment_batch_size"),
+            )
+            if empirical_raw is not None:
+                empirical_fractions = np.array(empirical_raw, dtype=float).reshape(-1)
+                if empirical_fractions.shape[0] != n_components:
+                    empirical_fractions = empirical_fractions[:n_components]
+                empirical_fractions = np.clip(empirical_fractions, a_min=0.0, a_max=None)
+                empirical_fractions = empirical_fractions / max(
+                    np.sum(empirical_fractions), 1e-12
+                )
+        except Exception as exc:
+            console.print(
+                f"[yellow]Could not compute empirical mixing weights: {exc}[/yellow]"
+            )
+
     fig, ax = plt.subplots(1, 1, figsize=(max(6.0, 1.1 * n_components + 2.0), 4.0))
 
     if cell_labels is not None:
@@ -783,10 +809,34 @@ def plot_mixture_composition(
                 ]
             )
 
+        empirical_fracs_by_label = None
+        if empirical_fractions is not None:
+            empirical_fracs_by_label = np.array(
+                [
+                    empirical_fractions[int(label_map[label])]
+                    for label in labels_by_component
+                ]
+            )
+
+        # Determine bar count and width depending on available data
+        n_bars = 2  # observed + assigned always present
+        if weight_fracs_by_label is not None:
+            n_bars += 1
+        if empirical_fracs_by_label is not None:
+            n_bars += 1
+        width = min(0.25, 0.85 / max(n_bars, 1))
+
         x = np.arange(len(labels_by_component))
-        width = 0.25
+        # Centre the bar group around each x tick
+        offsets = np.linspace(
+            -(n_bars - 1) * width / 2,
+            (n_bars - 1) * width / 2,
+            n_bars,
+        )
+        bar_idx = 0
+
         obs_bars = ax.bar(
-            x - width,
+            x + offsets[bar_idx],
             observed_fracs,
             width=width,
             label="Observed labels",
@@ -794,8 +844,10 @@ def plot_mixture_composition(
             edgecolor="black",
             linewidth=0.6,
         )
+        bar_idx += 1
+
         assigned_bars = ax.bar(
-            x,
+            x + offsets[bar_idx],
             assigned_fracs_by_label,
             width=width,
             label="Assigned MAP",
@@ -803,9 +855,12 @@ def plot_mixture_composition(
             edgecolor="black",
             linewidth=0.6,
         )
+        bar_idx += 1
+
+        weight_bars = []
         if weight_fracs_by_label is not None:
             weight_bars = ax.bar(
-                x + width,
+                x + offsets[bar_idx],
                 weight_fracs_by_label,
                 width=width,
                 label="MAP mixing weights",
@@ -813,13 +868,26 @@ def plot_mixture_composition(
                 edgecolor="black",
                 linewidth=0.6,
             )
-        else:
-            weight_bars = []
+            bar_idx += 1
+
+        empirical_bars = []
+        if empirical_fracs_by_label is not None:
+            empirical_bars = ax.bar(
+                x + offsets[bar_idx],
+                empirical_fracs_by_label,
+                width=width,
+                label="Empirical weights",
+                color="#E45756",
+                edgecolor="black",
+                linewidth=0.6,
+            )
+            bar_idx += 1
 
         for bars, fractions in (
             (obs_bars, observed_fracs),
             (assigned_bars, assigned_fracs_by_label),
             (weight_bars, weight_fracs_by_label),
+            (empirical_bars, empirical_fracs_by_label),
         ):
             if fractions is None:
                 continue
@@ -838,17 +906,17 @@ def plot_mixture_composition(
         ax.set_xticks(x)
         ax.set_xticklabels(labels_by_component, rotation=30, ha="right")
         ax.legend(frameon=False, fontsize=8)
-        ax.set_title("Label Composition: Observed vs Assigned MAP vs Weights")
-        y_max = max(
-            0.12,
-            float(np.max(observed_fracs)) if len(observed_fracs) else 0.0,
-            float(np.max(assigned_fracs_by_label))
-            if len(assigned_fracs_by_label)
-            else 0.0,
-            float(np.max(weight_fracs_by_label))
-            if weight_fracs_by_label is not None and len(weight_fracs_by_label)
-            else 0.0,
-        )
+        ax.set_title("Label Composition: Observed vs Assigned vs Weights")
+        all_maxes = [0.12]
+        if len(observed_fracs):
+            all_maxes.append(float(np.max(observed_fracs)))
+        if len(assigned_fracs_by_label):
+            all_maxes.append(float(np.max(assigned_fracs_by_label)))
+        if weight_fracs_by_label is not None and len(weight_fracs_by_label):
+            all_maxes.append(float(np.max(weight_fracs_by_label)))
+        if empirical_fracs_by_label is not None and len(empirical_fracs_by_label):
+            all_maxes.append(float(np.max(empirical_fracs_by_label)))
+        y_max = max(all_maxes)
         ax.set_ylim(0.0, min(1.05, y_max + 0.15))
     else:
         # Global component-only view: prefer MAP weights and fall back to
