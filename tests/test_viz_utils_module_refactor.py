@@ -22,6 +22,7 @@ from viz_utils import (
     plot_correlation_heatmap,
     plot_ecdf,
     plot_loss,
+    plot_mixture_composition,
     plot_mixture_ppc,
     plot_ppc,
     plot_umap,
@@ -60,6 +61,7 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_umap)
     assert callable(plot_correlation_heatmap)
     assert callable(plot_mixture_ppc)
+    assert callable(plot_mixture_composition)
     assert callable(plot_annotation_ppc)
     assert callable(_get_config_values)
     assert callable(_get_predictive_samples_for_plot)

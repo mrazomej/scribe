@@ -45,6 +45,7 @@ from viz_utils import (
     plot_umap,
     plot_correlation_heatmap,
     plot_mixture_ppc,
+    plot_mixture_composition,
     plot_annotation_ppc,
 )
 
@@ -140,6 +141,13 @@ Examples:
         help="Enable mixture model PPC (for mixture models only)",
     )
     parser.add_argument(
+        "--mixture-composition",
+        action="store_true",
+        default=None,
+        help="Enable mixture component composition barplot "
+        "(for mixture models only)",
+    )
+    parser.add_argument(
         "--annotation-ppc",
         action="store_true",
         default=None,
@@ -151,7 +159,8 @@ Examples:
         "--all",
         action="store_true",
         dest="all_plots",
-        help="Enable all plots (loss, ECDF, PPC, UMAP, heatmap, mixture PPC)",
+        help="Enable all plots (loss, ECDF, PPC, UMAP, heatmap, "
+        "mixture PPC, mixture composition, annotation PPC)",
     )
 
     # Recursive mode
@@ -241,6 +250,7 @@ def _load_default_viz_config():
                 "umap": False,
                 "heatmap": False,
                 "mixture_ppc": False,
+                "mixture_composition": False,
                 "annotation_ppc": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
@@ -273,6 +283,9 @@ def _load_default_viz_config():
                     "n_cols": 6,
                     "n_samples": 1500,
                 },
+                "mixture_composition_opts": {
+                    "assignment_batch_size": 512,
+                },
                 "annotation_ppc_opts": {
                     "n_rows": 5,
                     "n_cols": 5,
@@ -303,6 +316,7 @@ def _build_viz_config(args):
         viz_cfg.umap = True
         viz_cfg.heatmap = True
         viz_cfg.mixture_ppc = True
+        viz_cfg.mixture_composition = True
         viz_cfg.annotation_ppc = True
 
     # Apply boolean overrides only when flags are explicitly provided.
@@ -318,6 +332,8 @@ def _build_viz_config(args):
         viz_cfg.heatmap = True
     if args.mixture_ppc:
         viz_cfg.mixture_ppc = True
+    if args.mixture_composition:
+        viz_cfg.mixture_composition = True
     if args.annotation_ppc:
         viz_cfg.annotation_ppc = True
 
@@ -801,6 +817,39 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 "(not a mixture model)[/yellow]"
             )
 
+    if viz_cfg.mixture_composition:
+        if is_mixture:
+            if not overwrite and _plot_exists(
+                figs_dir, "_mixture_composition", fmt
+            ):
+                plots_skipped.append("mixture composition")
+                console.print(
+                    "[yellow]  Skipping mixture composition "
+                    "(already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating mixture composition plot...[/dim]"
+                )
+                try:
+                    plot_mixture_composition(
+                        results, counts, figs_dir, orig_cfg, viz_cfg
+                    )
+                    plots_generated.append("mixture composition")
+                    console.print(
+                        "[green]  Mixture composition saved[/green]"
+                    )
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate mixture "
+                        f"composition: {e}[/red]"
+                    )
+        else:
+            console.print(
+                "[yellow]  Skipping mixture composition "
+                "(not a mixture model)[/yellow]"
+            )
+
     if viz_cfg.annotation_ppc:
         if is_mixture and cell_labels is not None:
             if not overwrite and _plot_exists(
@@ -898,6 +947,8 @@ def main() -> None:
         enabled_plots.append("heatmap")
     if viz_cfg.mixture_ppc:
         enabled_plots.append("mixture PPC")
+    if viz_cfg.mixture_composition:
+        enabled_plots.append("mixture composition")
     if viz_cfg.annotation_ppc:
         enabled_plots.append("annotation PPC")
 

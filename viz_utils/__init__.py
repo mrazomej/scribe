@@ -13,7 +13,7 @@ from .ecdf import plot_ecdf
 from .ppc import plot_ppc
 from .umap import plot_umap
 from .heatmap import plot_correlation_heatmap
-from .mixture_ppc import plot_mixture_ppc
+from .mixture_ppc import plot_mixture_ppc, plot_mixture_composition
 from .annotation_ppc import plot_annotation_ppc
 
 __all__ = [
@@ -23,6 +23,7 @@ __all__ = [
     "plot_umap",
     "plot_correlation_heatmap",
     "plot_mixture_ppc",
+    "plot_mixture_composition",
     "plot_annotation_ppc",
     "_get_config_values",
     "_get_predictive_samples_for_plot",
