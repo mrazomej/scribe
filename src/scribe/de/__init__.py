@@ -66,6 +66,8 @@ from ._transforms import (
     alr_to_clr,
     transform_gaussian_alr_to_clr,
     build_ilr_basis,
+    build_ilr_balance,
+    build_pathway_sbp_basis,
     clr_to_ilr,
     ilr_to_clr,
 )
@@ -81,6 +83,9 @@ from ._set_level import (
     test_contrast,
     test_gene_set,
     build_balance_contrast,
+    empirical_test_gene_set,
+    empirical_test_pathway_perturbation,
+    empirical_test_multiple_gene_sets,
 )
 
 # Bayesian error control and utilities
@@ -120,6 +125,8 @@ __all__ = [
     "alr_to_clr",
     "transform_gaussian_alr_to_clr",
     "build_ilr_basis",
+    "build_ilr_balance",
+    "build_pathway_sbp_basis",
     "clr_to_ilr",
     "ilr_to_clr",
     # Gene-level
@@ -129,6 +136,9 @@ __all__ = [
     "test_contrast",
     "test_gene_set",
     "build_balance_contrast",
+    "empirical_test_gene_set",
+    "empirical_test_pathway_perturbation",
+    "empirical_test_multiple_gene_sets",
     # Bayesian error control
     "compute_lfdr",
     "compute_pefp",

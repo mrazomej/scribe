@@ -25,7 +25,13 @@ import jax.numpy as jnp
 
 from ._extract import extract_alr_params
 from ._gene_level import differential_expression, call_de_genes
-from ._set_level import test_contrast, test_gene_set
+from ._set_level import (
+    test_contrast,
+    test_gene_set,
+    empirical_test_gene_set,
+    empirical_test_pathway_perturbation,
+    empirical_test_multiple_gene_sets,
+)
 from ._error_control import (
     compute_pefp,
     find_lfsr_threshold,
@@ -714,6 +720,120 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             "lfsr": lfsr,
             "lfsr_tau": lfsr_tau,
         }
+
+    # ------------------------------------------------------------------
+    # Set-level analysis (empirical, sample-based)
+    # ------------------------------------------------------------------
+
+    def test_gene_set(
+        self,
+        gene_set_indices: jnp.ndarray,
+        tau: float = 0.0,
+    ) -> dict:
+        """Test pathway enrichment via ILR balance and posterior samples.
+
+        Delegates to ``empirical_test_gene_set``, projecting the stored
+        CLR difference samples onto the ILR-normalized balance vector for
+        the pathway-vs-complement partition.
+
+        Parameters
+        ----------
+        gene_set_indices : jnp.ndarray
+            Integer indices of genes in the pathway.
+        tau : float, default=0.0
+            Practical significance threshold (log-scale).
+
+        Returns
+        -------
+        dict
+            Posterior inference for the pathway balance with keys:
+            ``balance_mean``, ``balance_sd``, ``prob_positive``,
+            ``prob_effect``, ``lfsr``, ``lfsr_tau``.
+
+        Examples
+        --------
+        >>> pathway = jnp.array([0, 5, 12])
+        >>> result = de_empirical.test_gene_set(pathway, tau=0.1)
+        """
+        return empirical_test_gene_set(
+            self.delta_samples, gene_set_indices, tau=tau
+        )
+
+    def test_pathway_perturbation(
+        self,
+        gene_set_indices: jnp.ndarray,
+        n_permutations: int = 999,
+        key=None,
+    ) -> dict:
+        """Test within-pathway compositional perturbation.
+
+        Constructs a pathway-aware SBP basis, extracts the within-pathway
+        ILR subspace, and computes a quadratic perturbation statistic that
+        detects coordinated rearrangement among pathway genes.
+
+        Parameters
+        ----------
+        gene_set_indices : jnp.ndarray
+            Integer indices of genes in the pathway (>= 2 genes).
+        n_permutations : int, default=999
+            Number of permutations for null calibration.
+        key : jax.random.PRNGKey, optional
+            PRNG key for reproducibility.
+
+        Returns
+        -------
+        dict
+            Perturbation test results with keys: ``t_obs``, ``t_sd``,
+            ``p_value``, ``n_permutations``.
+
+        Examples
+        --------
+        >>> pathway = jnp.array([0, 5, 12, 18])
+        >>> result = de_empirical.test_pathway_perturbation(pathway)
+        """
+        return empirical_test_pathway_perturbation(
+            self.delta_samples,
+            gene_set_indices,
+            n_permutations=n_permutations,
+            key=key,
+        )
+
+    def test_multiple_gene_sets(
+        self,
+        gene_sets,
+        tau: float = 0.0,
+        target_pefp: float = 0.05,
+    ) -> dict:
+        """Batch pathway enrichment test with PEFP control.
+
+        Applies ``empirical_test_gene_set`` to each pathway and controls
+        the posterior expected false discovery proportion across all
+        pathways.
+
+        Parameters
+        ----------
+        gene_sets : list of jnp.ndarray
+            Each element is an integer array of gene indices for one pathway.
+        tau : float, default=0.0
+            Practical significance threshold (log-scale).
+        target_pefp : float, default=0.05
+            Target PEFP level for multiple testing correction.
+
+        Returns
+        -------
+        dict
+            Batch results with per-pathway statistics and PEFP-controlled
+            significance calls.  See ``empirical_test_multiple_gene_sets``
+            for full key listing.
+
+        Examples
+        --------
+        >>> gene_sets = [jnp.array([0, 1]), jnp.array([3, 4, 5])]
+        >>> result = de_empirical.test_multiple_gene_sets(gene_sets)
+        """
+        return empirical_test_multiple_gene_sets(
+            self.delta_samples, gene_sets, tau=tau, target_pefp=target_pefp
+        )
 
     # ------------------------------------------------------------------
 

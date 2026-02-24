@@ -1,7 +1,8 @@
 """
 Tests for gene-set and pathway-level differential expression analysis.
 
-Tests the Bayesian inference functions for testing linear contrasts and gene sets.
+Tests the Bayesian inference functions for testing linear contrasts and gene sets,
+including both parametric and empirical (ILR balance-based) pathway enrichment.
 """
 
 import pytest
@@ -12,7 +13,11 @@ from jax import random
 from scribe.de._set_level import (
     test_contrast as _test_contrast,
     test_gene_set as _test_gene_set,
+    empirical_test_gene_set,
+    empirical_test_pathway_perturbation,
+    empirical_test_multiple_gene_sets,
 )
+from scribe.de._transforms import build_ilr_balance, build_pathway_sbp_basis
 from scribe.de import build_balance_contrast
 
 # ------------------------------------------------------------------------------
@@ -626,3 +631,375 @@ def test_balance_contrast_properties():
         # Check coefficient values
         assert jnp.allclose(contrast[num_indices], 1.0 / n_num)
         assert jnp.allclose(contrast[den_indices], -1.0 / n_den)
+
+
+# ==============================================================================
+# Tests for ILR balance vector (build_ilr_balance)
+# ==============================================================================
+
+
+class TestBuildIlrBalance:
+    """Tests for the ILR-normalized pathway balance vector."""
+
+    def test_shape(self):
+        """Balance vector should have shape (D,)."""
+        D = 20
+        idx = jnp.array([0, 3, 7])
+        v = build_ilr_balance(idx, D)
+        assert v.shape == (D,)
+
+    def test_unit_norm(self):
+        """Balance vector should have unit L2 norm."""
+        for D in [5, 20, 100]:
+            idx = jnp.arange(3)
+            v = build_ilr_balance(idx, D)
+            assert jnp.allclose(jnp.sum(v**2), 1.0, atol=1e-6)
+
+    def test_sum_to_zero(self):
+        """Balance vector entries should sum to zero (CLR constraint)."""
+        for D in [5, 20, 100]:
+            idx = jnp.array([1, 4])
+            v = build_ilr_balance(idx, D)
+            assert jnp.allclose(jnp.sum(v), 0.0, atol=1e-6)
+
+    def test_correct_coefficients(self):
+        """Verify coefficient values for known n_+ and n_-."""
+        D = 10
+        idx = jnp.array([0, 1, 2])  # n_+ = 3, n_- = 7
+        v = build_ilr_balance(idx, D)
+
+        n_plus, n_minus = 3, 7
+        expected_pos = np.sqrt(n_minus / (n_plus * (n_plus + n_minus)))
+        expected_neg = -np.sqrt(n_plus / (n_minus * (n_plus + n_minus)))
+
+        assert jnp.allclose(v[idx], expected_pos, atol=1e-6)
+        # Check complement entries
+        mask = jnp.ones(D, dtype=bool).at[idx].set(False)
+        assert jnp.allclose(v[mask], expected_neg, atol=1e-6)
+
+    def test_scaled_clr_contrast(self):
+        """ILR balance should be a positive scaling of the CLR contrast."""
+        D = 15
+        idx = jnp.array([2, 5, 8, 11])
+        n_plus = len(idx)
+        n_minus = D - n_plus
+
+        v = build_ilr_balance(idx, D)
+
+        # Build the unnormalized CLR contrast
+        c = jnp.zeros(D)
+        c = c.at[idx].set(1.0 / n_plus)
+        mask = jnp.ones(D, dtype=bool).at[idx].set(False)
+        c = jnp.where(mask, -1.0 / n_minus, c)
+
+        # v should be alpha * c with alpha = sqrt(n_+ * n_- / (n_+ + n_-))
+        alpha = np.sqrt(n_plus * n_minus / (n_plus + n_minus))
+        assert jnp.allclose(v, alpha * c, atol=1e-6)
+
+    def test_single_gene_pathway(self):
+        """Single-gene pathway should still produce valid balance."""
+        D = 10
+        idx = jnp.array([5])
+        v = build_ilr_balance(idx, D)
+        assert jnp.allclose(jnp.sum(v**2), 1.0, atol=1e-6)
+        assert jnp.allclose(jnp.sum(v), 0.0, atol=1e-6)
+
+    def test_almost_all_genes(self):
+        """Pathway with n_+ = D - 1 should still be valid."""
+        D = 10
+        idx = jnp.arange(D - 1)
+        v = build_ilr_balance(idx, D)
+        assert jnp.allclose(jnp.sum(v**2), 1.0, atol=1e-6)
+        assert jnp.allclose(jnp.sum(v), 0.0, atol=1e-6)
+
+    def test_empty_raises(self):
+        """Empty pathway should raise ValueError."""
+        with pytest.raises(ValueError):
+            build_ilr_balance(jnp.array([], dtype=jnp.int32), 10)
+
+    def test_all_genes_raises(self):
+        """Pathway containing all genes should raise ValueError."""
+        D = 10
+        with pytest.raises(ValueError):
+            build_ilr_balance(jnp.arange(D), D)
+
+
+# ==============================================================================
+# Tests for pathway-aware SBP basis (build_pathway_sbp_basis)
+# ==============================================================================
+
+
+class TestBuildPathwaySbpBasis:
+    """Tests for the pathway-aware sequential binary partition basis."""
+
+    def test_shape(self):
+        """SBP basis should have shape (D-1, D)."""
+        D = 10
+        idx = jnp.array([0, 2, 5])
+        V = build_pathway_sbp_basis(idx, D)
+        assert V.shape == (D - 1, D)
+
+    def test_orthonormality(self):
+        """V V^T should be the identity matrix."""
+        D = 8
+        idx = jnp.array([1, 3, 5])
+        V = build_pathway_sbp_basis(idx, D)
+        assert jnp.allclose(V @ V.T, jnp.eye(D - 1), atol=1e-5)
+
+    def test_rows_sum_to_zero(self):
+        """Each row of the SBP basis should sum to zero."""
+        D = 12
+        idx = jnp.array([0, 4, 7, 10])
+        V = build_pathway_sbp_basis(idx, D)
+        assert jnp.allclose(V.sum(axis=1), 0.0, atol=1e-6)
+
+    def test_row_zero_matches_balance(self):
+        """Row 0 of SBP basis should match build_ilr_balance output."""
+        D = 10
+        idx = jnp.array([2, 5, 8])
+        V = build_pathway_sbp_basis(idx, D)
+        v_balance = build_ilr_balance(idx, D)
+        assert jnp.allclose(V[0], v_balance, atol=1e-6)
+
+    def test_within_pathway_support(self):
+        """Within-pathway rows (1 to n_+) should be zero outside pathway."""
+        D = 10
+        idx = jnp.array([0, 3, 7])
+        n_plus = len(idx)
+        V = build_pathway_sbp_basis(idx, D)
+
+        # Within-pathway rows: indices 1 to n_+-1 (inclusive)
+        complement_mask = jnp.ones(D, dtype=bool).at[idx].set(False)
+        for row_i in range(1, n_plus):
+            assert jnp.allclose(V[row_i][complement_mask], 0.0, atol=1e-6)
+
+    def test_within_complement_support(self):
+        """Within-complement rows should be zero inside the pathway."""
+        D = 10
+        idx = jnp.array([0, 3, 7])
+        n_plus = len(idx)
+        V = build_pathway_sbp_basis(idx, D)
+
+        # Within-complement rows start at index n_plus
+        for row_i in range(n_plus, D - 1):
+            assert jnp.allclose(V[row_i][idx], 0.0, atol=1e-6)
+
+    def test_raises_single_gene(self):
+        """Pathway with < 2 genes should raise ValueError."""
+        with pytest.raises(ValueError, match="at least 2"):
+            build_pathway_sbp_basis(jnp.array([3]), D=10)
+
+    def test_raises_all_genes(self):
+        """Pathway containing all genes should raise ValueError."""
+        D = 5
+        with pytest.raises(ValueError):
+            build_pathway_sbp_basis(jnp.arange(D), D)
+
+    def test_various_sizes(self):
+        """Orthonormality should hold for various pathway sizes."""
+        D = 15
+        for n_plus in [2, 5, 7, 13]:
+            idx = jnp.arange(n_plus)
+            V = build_pathway_sbp_basis(idx, D)
+            assert jnp.allclose(V @ V.T, jnp.eye(D - 1), atol=1e-5)
+
+
+# ==============================================================================
+# Tests for empirical pathway enrichment (empirical_test_gene_set)
+# ==============================================================================
+
+
+class TestEmpiricalTestGeneSet:
+    """Tests for the empirical single-balance pathway test."""
+
+    @pytest.fixture
+    def null_delta(self):
+        """CLR difference samples under the null (no pathway effect)."""
+        key = random.PRNGKey(42)
+        N, D = 5000, 20
+        return random.normal(key, (N, D)) * 0.1
+
+    @pytest.fixture
+    def shifted_delta(self):
+        """CLR difference samples with a strong pathway shift."""
+        key = random.PRNGKey(99)
+        N, D = 5000, 20
+        delta = random.normal(key, (N, D)) * 0.1
+        # Shift the first 5 genes up strongly
+        delta = delta.at[:, :5].add(2.0)
+        return delta
+
+    def test_output_keys(self, null_delta):
+        """Result should contain all expected keys."""
+        idx = jnp.array([0, 1, 2])
+        result = empirical_test_gene_set(null_delta, idx)
+        expected = {
+            "balance_mean", "balance_sd", "prob_positive",
+            "prob_effect", "lfsr", "lfsr_tau",
+        }
+        assert set(result.keys()) == expected
+
+    def test_lfsr_bounded(self, null_delta):
+        """lfsr should be in [0, 0.5]."""
+        idx = jnp.array([0, 3, 7])
+        result = empirical_test_gene_set(null_delta, idx)
+        assert 0.0 <= result["lfsr"] <= 0.5
+
+    def test_strong_effect_detected(self, shifted_delta):
+        """Strong pathway shift should produce lfsr near 0."""
+        idx = jnp.array([0, 1, 2, 3, 4])
+        result = empirical_test_gene_set(shifted_delta, idx)
+        assert result["lfsr"] < 0.01
+
+    def test_null_lfsr_near_half(self, null_delta):
+        """Under null, lfsr should be close to 0.5."""
+        idx = jnp.array([0, 1, 2])
+        result = empirical_test_gene_set(null_delta, idx)
+        assert result["lfsr"] > 0.2
+
+    def test_tau_reduces_prob_effect(self, shifted_delta):
+        """Larger tau should reduce prob_effect."""
+        idx = jnp.array([0, 1, 2, 3, 4])
+        r0 = empirical_test_gene_set(shifted_delta, idx, tau=0.0)
+        r1 = empirical_test_gene_set(shifted_delta, idx, tau=1.0)
+        assert r1["prob_effect"] <= r0["prob_effect"]
+
+    def test_consistency_with_test_contrast(self):
+        """Result should match manual projection onto ILR balance vector."""
+        key = random.PRNGKey(77)
+        N, D = 3000, 15
+        delta = random.normal(key, (N, D)) * 0.5
+        idx = jnp.array([1, 4, 9])
+
+        result = empirical_test_gene_set(delta, idx)
+
+        # Manual computation
+        v = build_ilr_balance(idx, D)
+        samples = delta @ v
+        manual_mean = float(jnp.mean(samples))
+        manual_prob_pos = float(jnp.mean(samples > 0))
+        manual_lfsr = min(manual_prob_pos, 1.0 - manual_prob_pos)
+
+        assert abs(result["balance_mean"] - manual_mean) < 1e-5
+        assert abs(result["lfsr"] - manual_lfsr) < 1e-5
+
+
+# ==============================================================================
+# Tests for within-pathway perturbation (empirical_test_pathway_perturbation)
+# ==============================================================================
+
+
+class TestEmpiricalTestPathwayPerturbation:
+    """Tests for the multivariate within-pathway perturbation test."""
+
+    def test_output_keys(self):
+        """Result should contain expected keys."""
+        key = random.PRNGKey(10)
+        delta = random.normal(key, (500, 15)) * 0.1
+        idx = jnp.array([0, 1, 2, 3])
+
+        result = empirical_test_pathway_perturbation(
+            delta, idx, n_permutations=50, key=random.PRNGKey(0)
+        )
+        expected = {"t_obs", "t_sd", "p_value", "n_permutations"}
+        assert set(result.keys()) == expected
+
+    def test_detects_perturbation(self):
+        """Coordinated within-pathway changes should be detected.
+
+        Half the pathway goes up, half goes down: the average balance is ~0,
+        but the perturbation statistic should be large.
+        """
+        key = random.PRNGKey(20)
+        N, D = 2000, 20
+        delta = random.normal(key, (N, D)) * 0.05
+        # Pathway genes 0-3: genes 0,1 go up, genes 2,3 go down
+        delta = delta.at[:, 0].add(1.5)
+        delta = delta.at[:, 1].add(1.5)
+        delta = delta.at[:, 2].add(-1.5)
+        delta = delta.at[:, 3].add(-1.5)
+
+        idx = jnp.array([0, 1, 2, 3])
+        result = empirical_test_pathway_perturbation(
+            delta, idx, n_permutations=199, key=random.PRNGKey(1)
+        )
+        # Should detect the perturbation (low p-value)
+        assert result["p_value"] < 0.05
+
+    def test_null_not_significant(self):
+        """Under the null (no perturbation), p-value should be large."""
+        key = random.PRNGKey(30)
+        N, D = 1000, 20
+        delta = random.normal(key, (N, D)) * 0.1
+
+        idx = jnp.array([0, 1, 2, 3])
+        result = empirical_test_pathway_perturbation(
+            delta, idx, n_permutations=99, key=random.PRNGKey(2)
+        )
+        assert result["p_value"] > 0.01
+
+    def test_raises_single_gene(self):
+        """Pathway with < 2 genes should raise ValueError."""
+        delta = jnp.ones((100, 10)) * 0.1
+        with pytest.raises(ValueError):
+            empirical_test_pathway_perturbation(
+                delta, jnp.array([3]), n_permutations=10
+            )
+
+
+# ==============================================================================
+# Tests for batch pathway testing (empirical_test_multiple_gene_sets)
+# ==============================================================================
+
+
+class TestEmpiricalTestMultipleGeneSets:
+    """Tests for batch empirical pathway enrichment with PEFP control."""
+
+    @pytest.fixture
+    def batch_delta(self):
+        """CLR differences with one strongly shifted pathway."""
+        key = random.PRNGKey(55)
+        N, D = 3000, 30
+        delta = random.normal(key, (N, D)) * 0.1
+        # Shift pathway 0 genes strongly
+        delta = delta.at[:, :5].add(3.0)
+        return delta
+
+    def test_output_structure(self, batch_delta):
+        """Result should have correct keys and list lengths."""
+        gene_sets = [jnp.array([0, 1, 2, 3, 4]), jnp.array([10, 11, 12])]
+        result = empirical_test_multiple_gene_sets(batch_delta, gene_sets)
+
+        expected_keys = {
+            "balance_mean", "balance_sd", "prob_positive",
+            "prob_effect", "lfsr", "lfsr_tau", "significant",
+            "lfsr_threshold",
+        }
+        assert set(result.keys()) == expected_keys
+        assert len(result["lfsr"]) == 2
+        assert len(result["significant"]) == 2
+
+    def test_pefp_control(self, batch_delta):
+        """Shifted pathway should be called significant; null pathway not."""
+        gene_sets = [
+            jnp.array([0, 1, 2, 3, 4]),   # shifted
+            jnp.array([15, 16, 17]),        # null
+        ]
+        result = empirical_test_multiple_gene_sets(
+            batch_delta, gene_sets, target_pefp=0.1
+        )
+        # The shifted pathway should be significant
+        assert result["significant"][0] is True
+
+    def test_consistency_with_individual(self, batch_delta):
+        """Batch results should match individual test_gene_set calls."""
+        gene_sets = [jnp.array([0, 1, 2]), jnp.array([10, 11, 12, 13])]
+
+        batch = empirical_test_multiple_gene_sets(batch_delta, gene_sets)
+
+        for i, gs in enumerate(gene_sets):
+            individual = empirical_test_gene_set(batch_delta, gs)
+            assert abs(batch["lfsr"][i] - individual["lfsr"]) < 1e-6
+            assert abs(
+                batch["balance_mean"][i] - individual["balance_mean"]
+            ) < 1e-6

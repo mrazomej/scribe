@@ -97,15 +97,17 @@ When results objects are passed, `compare()`:
 | `de.gene_level(tau)` | Per-gene posterior summaries (returns `lfsr` and `lfsr_tau`) |
 | `de.call_genes(tau, lfsr_threshold, prob_effect_threshold)` | Bayesian gene calling (tau-aware caching) |
 | `de.test_contrast(contrast, tau)` | Custom linear contrast |
+| `de.test_gene_set(indices, tau)` | Pathway enrichment via ILR balance (parametric: Gaussian; empirical: Monte Carlo) |
 | `de.compute_pefp(threshold, tau, use_lfsr_tau)` | Posterior expected FDP |
 | `de.find_threshold(target_pefp, tau, use_lfsr_tau)` | Find lfsr threshold for PEFP control |
 | `de.summary(tau, sort_by, top_n)` | Formatted results table |
 
-**Parametric-only methods:**
+**Empirical/Shrinkage-only methods:**
 
 | Method | Description |
 |--------|-------------|
-| `de.test_gene_set(indices, tau)` | Pathway enrichment via balances |
+| `de.test_pathway_perturbation(indices, n_permutations)` | Within-pathway compositional perturbation test |
+| `de.test_multiple_gene_sets(gene_sets, tau, target_pefp)` | Batch pathway testing with PEFP control |
 
 > **Note on `tau`-aware caching**: All methods that depend on gene-level results
 > accept a `tau` parameter. Results are cached and automatically recomputed when
@@ -149,11 +151,21 @@ For users who prefer functional style over the results class:
 
 ```python
 from scribe.de import (
+    # Gene-level
     differential_expression,
     call_de_genes,
+    # Set-level (parametric)
     test_gene_set,
     test_contrast,
     build_balance_contrast,
+    # Set-level (empirical)
+    empirical_test_gene_set,
+    empirical_test_pathway_perturbation,
+    empirical_test_multiple_gene_sets,
+    # Transformations
+    build_ilr_balance,
+    build_pathway_sbp_basis,
+    # Error control & utilities
     compute_pefp,
     find_lfsr_threshold,
     format_de_table,
@@ -458,6 +470,62 @@ error-control machinery.  All methods (`call_genes`, `compute_pefp`,
 
 See Section 10 of the paper (`paper/_diffexp10.qmd`) for the full
 derivation.
+
+## Empirical Pathway Enrichment
+
+The empirical DE path supports pathway-level analysis via ILR (Isometric
+Log-Ratio) balances. Three complementary tests are available:
+
+1. **Single-balance test** (`test_gene_set`): Tests whether a pathway shifts
+   up or down as a whole, yielding a pathway-level lfsr.
+2. **Perturbation test** (`test_pathway_perturbation`): Detects coordinated
+   within-pathway rearrangement even when the average balance is near zero.
+3. **Batch test** (`test_multiple_gene_sets`): Runs the single-balance test
+   for multiple pathways with PEFP control.
+
+### Quick start
+
+```python
+from scribe.de import compare
+import jax.numpy as jnp
+
+# Create empirical comparison
+de = compare(
+    results_bleo, results_ctrl,
+    method="empirical",
+    component_A=0, component_B=0,
+)
+
+# Single pathway balance test
+pathway = jnp.array([10, 25, 42, 101, 200])
+result = de.test_gene_set(pathway, tau=jnp.log(1.1))
+print(f"Balance: {result['balance_mean']:.3f} ± {result['balance_sd']:.3f}")
+print(f"lfsr: {result['lfsr']:.4f}")
+
+# Multivariate within-pathway perturbation test
+perturb = de.test_pathway_perturbation(pathway, n_permutations=999)
+print(f"Perturbation T: {perturb['t_obs']:.4f}, p={perturb['p_value']:.4f}")
+
+# Batch testing with PEFP control
+gene_sets = [
+    jnp.array([10, 25, 42, 101, 200]),
+    jnp.array([5, 8, 15, 33]),
+    jnp.array([60, 70, 80, 90, 100]),
+]
+batch = de.test_multiple_gene_sets(gene_sets, target_pefp=0.05)
+for i, sig in enumerate(batch["significant"]):
+    print(f"Pathway {i}: lfsr={batch['lfsr'][i]:.4f}, significant={sig}")
+```
+
+### Mathematical details
+
+See Section 9 of the paper (`paper/_diffexp09.qmd`, "Empirical Pathway
+Enrichment via ILR Balances") for the full derivation, including:
+
+- ILR balance vector construction and normalization proofs
+- Pathway-aware sequential binary partition (SBP) basis
+- Multivariate within-pathway perturbation statistic
+- Compatibility with PEFP error control
 
 ## Module Layout
 
