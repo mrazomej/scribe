@@ -62,6 +62,7 @@ dev = [
     "scikit-image>=0.25.2",
     "marimo>=0.19.11",
     "gseapy>=1.1.11",
+    "matplotlib-venn>=1.1.2",
 ]
 
 [build-system]
