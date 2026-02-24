@@ -1626,6 +1626,17 @@ wheels = [
 ]
 
 [[package]]
+name = "matplotlib-venn"
+version = "1.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/f7/47bddf95492f4d1370ed7164d2b16407805e8eeb38231361de65d387a562/matplotlib-venn-1.1.2.tar.gz", hash = "sha256:6f2b07a03e9bb5a62de2f32f965216739e175176f9d654dd19e7af2c22ec36e3", size = 40821, upload-time = "2025-02-25T10:44:24.294Z" }
+
+[[package]]
 name = "mdit-py-plugins"
 version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3068,6 +3079,7 @@ dev = [
     { name = "hydra-joblib-launcher" },
     { name = "ipykernel" },
     { name = "marimo" },
+    { name = "matplotlib-venn" },
     { name = "nbclient" },
     { name = "nbformat" },
     { name = "notebook" },
@@ -3117,6 +3129,7 @@ dev = [
     { name = "hydra-joblib-launcher", specifier = ">=1.2" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "marimo", specifier = ">=0.19.11" },
+    { name = "matplotlib-venn", specifier = ">=1.1.2" },
     { name = "nbclient", specifier = ">=0.10.2" },
     { name = "nbformat", specifier = ">=5.10.4" },
     { name = "notebook", specifier = ">=7.4.3" },
