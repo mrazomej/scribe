@@ -73,7 +73,9 @@ Prior parameter configurations with automatic validation:
 - `gate`: Zero-inflation gate prior
 - `p_capture`: Capture probability prior
 - `phi_capture`: Capture phi prior
-- `mixing`: Mixture weights prior
+- `mixing`: Mixture weights prior (Dirichlet concentrations). Accepts a tuple of
+  length `n_components` or a single scalar that is broadcast to all components
+  (symmetric Dirichlet).
 
 ### GuideConfig / UnconstrainedGuideConfig
 

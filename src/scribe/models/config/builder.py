@@ -344,7 +344,14 @@ class ModelConfigBuilder:
     # --------------------------------------------------------------------------
 
     def _prior_value_to_tuple(self, value: Any) -> tuple:
-        """Convert prior value to tuple (handles JAX/NumPy arrays)."""
+        """Convert prior value to tuple (handles scalars, JAX/NumPy arrays).
+
+        A bare ``int`` or ``float`` is wrapped into a single-element tuple so
+        that downstream validation can broadcast it (e.g. scalar Dirichlet
+        concentration expanded to ``n_components``).
+        """
+        if isinstance(value, (int, float)):
+            return (float(value),)
         if isinstance(value, (tuple, list)):
             return tuple(value)
         if hasattr(value, "tolist"):
@@ -357,6 +364,9 @@ class ModelConfigBuilder:
 
     def _validate_priors(self) -> None:
         """Validate prior parameters before building ModelConfig.
+
+        For the ``mixing`` parameter, a single scalar concentration is
+        automatically broadcast to all ``n_components`` (symmetric Dirichlet).
 
         Raises
         ------
@@ -383,10 +393,15 @@ class ModelConfigBuilder:
                 ) from e
             if param == "mixing":
                 expected = self._n_components or 2
+                # Scalar expansion: a single concentration value is
+                # broadcast to all components (symmetric Dirichlet).
+                if len(vals) == 1 and expected > 1:
+                    vals = vals * expected
+                    self._priors[param] = vals
                 if len(vals) != expected:
                     raise ValueError(
                         f"Prior for 'mixing' must have {expected} values "
-                        f"(n_components), got {len(vals)}"
+                        f"(n_components) or a single scalar, got {len(vals)}"
                     )
                 if self._unconstrained:
                     if any(v < 0 for v in vals):
