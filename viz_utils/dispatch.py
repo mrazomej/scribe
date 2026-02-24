@@ -158,37 +158,42 @@ def _get_map_like_predictive_samples_for_plot(
 
 
 @dispatch(scribe.ScribeSVIResults)
-def _get_map_estimates_for_plot(results, *, counts=None):
+def _get_map_estimates_for_plot(results, *, counts=None, use_mean=True):
     """Get plot-ready MAP estimates from SVI results."""
     return results.get_map(
-        use_mean=True, canonical=True, verbose=False, counts=counts
+        use_mean=use_mean, canonical=True, verbose=False, counts=counts
     )
 
 
 @dispatch(scribe.ScribeMCMCResults)
-def _get_map_estimates_for_plot(results, *, counts=None):
+def _get_map_estimates_for_plot(results, *, counts=None, use_mean=True):
     """Get plot-ready MAP estimates from MCMC results."""
     _ = counts
+    _ = use_mean
     return results.get_map()
 
 
 @dispatch(scribe.ScribeSVIResults)
 def _get_cell_assignment_probabilities_for_plot(
-    results, *, counts, batch_size=None
+    results, *, counts, batch_size=None, use_mean=False
 ):
     """Get MAP component-assignment probabilities from SVI results."""
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities_map(
-        counts=counts, batch_size=batch_size, verbose=False
+        counts=counts,
+        batch_size=batch_size,
+        use_mean=use_mean,
+        verbose=False,
     )
     return np.array(assignment_info["probabilities"])
 
 
 @dispatch(scribe.ScribeMCMCResults)
 def _get_cell_assignment_probabilities_for_plot(
-    results, *, counts, batch_size=None
+    results, *, counts, batch_size=None, use_mean=False
 ):
     """Get component-assignment probabilities from MCMC results."""
+    _ = use_mean
     # Use optional batching to avoid OOM on large cell counts.
     assignment_info = results.cell_type_probabilities(
         counts=counts, batch_size=batch_size, verbose=False
