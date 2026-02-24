@@ -1,4 +1,9 @@
-"""Tests for visualization dispatch helpers across inference methods."""
+"""Consolidated tests for the viz_utils package refactor.
+
+This module centralizes the coverage that previously lived in separate
+viz-utils-focused test files. It validates cache helpers, dispatch helpers,
+and package-root compatibility exports.
+"""
 
 from unittest.mock import MagicMock
 
@@ -9,14 +14,22 @@ from omegaconf import OmegaConf
 from scribe.mcmc.results import ScribeMCMCResults
 from scribe.models.config import ModelConfig
 from viz_utils import (
+    _build_umap_cache_path,
     _get_config_values,
     _get_predictive_samples_for_plot,
     _get_training_diagnostic_payload,
+    plot_annotation_ppc,
+    plot_correlation_heatmap,
+    plot_ecdf,
+    plot_loss,
+    plot_mixture_ppc,
+    plot_ppc,
+    plot_umap,
 )
 
 
 def _make_mcmc_results_for_viz():
-    """Create a tiny MCMC results object suitable for viz unit tests."""
+    """Create a compact MCMC results object for unit tests."""
     samples = {
         "p": jnp.array([0.3, 0.4, 0.5], dtype=jnp.float32),
         "r": jnp.array(
@@ -37,6 +50,21 @@ def _make_mcmc_results_for_viz():
         model_config=config,
         prior_params={},
     )
+
+
+def test_package_root_exports_expected_symbols():
+    """Ensure refactor preserves key package-root imports and callables."""
+    assert callable(plot_loss)
+    assert callable(plot_ecdf)
+    assert callable(plot_ppc)
+    assert callable(plot_umap)
+    assert callable(plot_correlation_heatmap)
+    assert callable(plot_mixture_ppc)
+    assert callable(plot_annotation_ppc)
+    assert callable(_get_config_values)
+    assert callable(_get_predictive_samples_for_plot)
+    assert callable(_get_training_diagnostic_payload)
+    assert callable(_build_umap_cache_path)
 
 
 def test_get_config_values_uses_mcmc_run_size_token():
@@ -62,11 +90,11 @@ def test_get_config_values_uses_mcmc_run_size_token():
 def test_predictive_helper_truncates_mcmc_draws():
     """MCMC predictive helper should cap draw count for plotting."""
     results = _make_mcmc_results_for_viz()
-
-    # Stub PPC generation to avoid running model code in this unit test.
     full_predictive = np.arange(30, dtype=np.int32).reshape(5, 3, 2)
 
-    def _fake_get_ppc_samples(rng_key=None, batch_size=None, store_samples=True):
+    def _fake_get_ppc_samples(
+        rng_key=None, batch_size=None, store_samples=True
+    ):
         _ = rng_key
         _ = batch_size
         if store_samples:
@@ -90,8 +118,6 @@ def test_predictive_helper_truncates_mcmc_draws():
 def test_training_payload_includes_mcmc_diagnostics():
     """MCMC diagnostics payload should include trace and divergence info."""
     results = _make_mcmc_results_for_viz()
-
-    # Attach a mock MCMC backend so grouped-chain traces are available.
     mock_mcmc = MagicMock()
     mock_mcmc.get_extra_fields.return_value = {
         "potential_energy": jnp.array([5.0, 4.0, 3.0]),
@@ -107,3 +133,55 @@ def test_training_payload_includes_mcmc_diagnostics():
     assert payload["potential_energy"].shape == (3,)
     assert payload["diverging"].shape == (3,)
     assert payload["trace_by_chain"].shape == (2, 3)
+
+
+def test_umap_cache_path_without_subset_uses_full_suffix():
+    """Unsplit runs should use a deterministic ``_full`` cache suffix."""
+    cfg = OmegaConf.create({"data": {"path": "/tmp/example_dataset.h5ad"}})
+    cache_path = _build_umap_cache_path(cfg=cfg, cache_umap=True)
+    assert cache_path == "/tmp/example_dataset_umap_full.pkl"
+
+
+def test_umap_cache_path_changes_across_subset_values():
+    """Different split values should generate different cache paths."""
+    cfg_a = OmegaConf.create(
+        {
+            "data": {
+                "path": "/tmp/example_dataset.h5ad",
+                "subset_column": "exp_condition",
+                "subset_value": "bleo_d2",
+            }
+        }
+    )
+    cfg_b = OmegaConf.create(
+        {
+            "data": {
+                "path": "/tmp/example_dataset.h5ad",
+                "subset_column": "exp_condition",
+                "subset_value": "bleo_d7",
+            }
+        }
+    )
+    cache_path_a = _build_umap_cache_path(cfg=cfg_a, cache_umap=True)
+    cache_path_b = _build_umap_cache_path(cfg=cfg_b, cache_umap=True)
+    assert cache_path_a != cache_path_b
+    assert "exp_condition" in cache_path_a
+    assert "bleo_d2" in cache_path_a
+    assert "exp_condition" in cache_path_b
+    assert "bleo_d7" in cache_path_b
+
+
+def test_umap_cache_path_is_stable_for_same_subset():
+    """Repeated calls with identical split config should be stable."""
+    cfg = OmegaConf.create(
+        {
+            "data": {
+                "path": "/tmp/example_dataset.h5ad",
+                "subset_column": "exp_condition",
+                "subset_value": "bleo_d2",
+            }
+        }
+    )
+    cache_path_1 = _build_umap_cache_path(cfg=cfg, cache_umap=True)
+    cache_path_2 = _build_umap_cache_path(cfg=cfg, cache_umap=True)
+    assert cache_path_1 == cache_path_2
