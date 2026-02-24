@@ -1,7 +1,7 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
+# bibliography: references.bib
 csl: ieee.csl
 ---
 
