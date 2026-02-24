@@ -71,6 +71,88 @@ class SamplingMixin:
 
         return predictive_samples
 
+    def get_map_ppc_samples(
+        self,
+        rng_key: Optional[random.PRNGKey] = None,
+        n_samples: int = 1,
+        cell_batch_size: Optional[int] = None,
+        use_mean: bool = True,
+        store_samples: bool = True,
+        verbose: bool = True,
+        counts: Optional[jnp.ndarray] = None,
+    ) -> jnp.ndarray:
+        """Generate MAP-based posterior predictive samples.
+
+        This method builds a synthetic one-point posterior from the MAP estimate
+        and feeds it through the same predictive sampler used by
+        :meth:`get_ppc_samples`. The MAP point is repeated ``n_samples`` times so
+        callers receive an array with shape ``(n_samples, n_cells, n_genes)``
+        that mirrors the SVI API.
+
+        Parameters
+        ----------
+        rng_key : random.PRNGKey, optional
+            JAX PRNG key. Defaults to ``PRNGKey(42)``.
+        n_samples : int, default=1
+            Number of predictive draws to return from the MAP point.
+        cell_batch_size : int or None, optional
+            Batch size for predictive generation over cells.
+        use_mean : bool, default=True
+            Included for API parity with SVI. MCMC MAP extraction already
+            includes a posterior-mean fallback when potential energy is
+            unavailable, so this flag is currently informational.
+        store_samples : bool, default=True
+            Store generated samples in ``self.predictive_samples``.
+        verbose : bool, default=True
+            Print lightweight progress messages.
+        counts : jnp.ndarray or None, optional
+            Included for API parity with SVI. Not required for MCMC MAP PPC.
+
+        Returns
+        -------
+        jnp.ndarray
+            Predictive count samples with shape
+            ``(n_samples, n_cells, n_genes)``.
+
+        Notes
+        -----
+        Unlike full posterior PPC, this method does not integrate over all
+        posterior draws; it conditions on a single MAP point estimate.
+        """
+        _ = use_mean
+        _ = counts
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+        if n_samples < 1:
+            raise ValueError("n_samples must be >= 1 for MAP PPC sampling.")
+
+        if verbose:
+            print("Generating MCMC MAP PPC samples...")
+
+        # Convert MAP parameter values to a pseudo-posterior with sample axis.
+        map_estimates = self.get_map()
+        map_parameter_samples = {}
+        for key, value in map_estimates.items():
+            value_array = jnp.asarray(value)
+            value_with_sample_axis = jnp.expand_dims(value_array, axis=0)
+            map_parameter_samples[key] = jnp.repeat(
+                value_with_sample_axis, repeats=n_samples, axis=0
+            )
+
+        predictive_samples = _generate_ppc_samples(
+            map_parameter_samples,
+            self.model_type,
+            self.n_cells,
+            self.n_genes,
+            self.model_config,
+            rng_key=rng_key,
+            batch_size=cell_batch_size,
+        )
+
+        if store_samples:
+            self.predictive_samples = predictive_samples
+        return predictive_samples
+
     # --------------------------------------------------------------------------
     # Biological (denoised) PPC
     # --------------------------------------------------------------------------

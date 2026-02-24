@@ -357,3 +357,62 @@ class TestQuantilesAndMAP:
         map_est = results.get_map()
         # Should pick sample index 5
         np.testing.assert_array_equal(map_est["p"], samples["p"][5])
+
+
+# --------------------------------------------------------------------------
+# MAP PPC sampling
+# --------------------------------------------------------------------------
+
+
+class TestMapPPCSampling:
+    """Test MAP-based posterior predictive sampling helpers."""
+
+    def test_get_map_ppc_samples_repeats_map_estimate(
+        self, standard_results, monkeypatch
+    ):
+        """MAP PPC should build a repeated sample-axis pseudo-posterior."""
+        captured = {}
+
+        # Patch the low-level PPC generator so this test only validates
+        # argument-shaping and storage behavior, not model sampling internals.
+        def _fake_generate_ppc_samples(
+            samples,
+            model_type,
+            n_cells,
+            n_genes,
+            model_config,
+            rng_key=None,
+            batch_size=None,
+        ):
+            captured["samples"] = samples
+            captured["batch_size"] = batch_size
+            return jnp.zeros((3, n_cells, n_genes), dtype=jnp.int32)
+
+        monkeypatch.setattr(
+            "scribe.mcmc._sampling._generate_ppc_samples",
+            _fake_generate_ppc_samples,
+        )
+
+        generated = standard_results.get_map_ppc_samples(
+            n_samples=3,
+            cell_batch_size=4,
+            store_samples=True,
+            verbose=False,
+        )
+
+        assert generated.shape == (
+            3,
+            standard_results.n_cells,
+            standard_results.n_genes,
+        )
+        assert standard_results.predictive_samples.shape == generated.shape
+        assert captured["samples"]["p"].shape[0] == 3
+        assert captured["samples"]["r"].shape[0] == 3
+        assert captured["batch_size"] == 4
+
+    def test_get_map_ppc_samples_validates_positive_sample_count(
+        self, standard_results
+    ):
+        """MAP PPC should reject non-positive sample counts."""
+        with pytest.raises(ValueError, match="n_samples must be >= 1"):
+            standard_results.get_map_ppc_samples(n_samples=0)

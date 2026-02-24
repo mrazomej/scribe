@@ -142,6 +142,16 @@ MCMC-specific configuration for Markov Chain Monte Carlo:
 - `n_chains`: Number of parallel chains (must be > 0)
 - `mcmc_kwargs`: Additional keyword arguments for MCMC kernel
 
+Visualization notes for MCMC runs:
+
+- Posterior samples are already available after inference, so downstream
+  visualization should reuse these draws directly instead of re-sampling a
+  variational posterior.
+- Plot filename run-size tokens are based on
+  `"{n_samples}samples_{n_warmup}warmup"` (rather than SVI `"n_steps"` tokens).
+- The visualization `loss` panel is replaced by an MCMC diagnostics panel
+  (potential energy, divergences, and a representative trace view).
+
 ### DataConfig
 
 Data processing configuration:

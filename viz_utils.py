@@ -27,6 +27,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from jax import random
+from multipledispatch import dispatch
 import scribe
 from rich.console import Console
 from rich.progress import (
@@ -42,6 +43,329 @@ console = Console()
 # ==============================================================================
 # Helper functions
 # ==============================================================================
+
+
+@dispatch(scribe.ScribeSVIResults, object)
+def _get_inference_metadata_for_filenames(results, cfg):
+    """Get filename metadata for SVI runs.
+
+    Parameters
+    ----------
+    results : scribe.ScribeSVIResults
+        SVI results object.
+    cfg : OmegaConf.DictConfig or dict-like
+        Hydra/OmegaConf configuration object.
+
+    Returns
+    -------
+    dict
+        Metadata dictionary with run-size fields suitable for plot filenames.
+    """
+    # Pull step count from either legacy or modern config structure.
+    if hasattr(cfg, "inference") and hasattr(cfg.inference, "n_steps"):
+        n_steps = cfg.inference.n_steps
+    else:
+        n_steps = cfg.get("n_steps", 50000)
+    return {
+        "run_size_value": int(n_steps),
+        "run_size_label": "steps",
+        "run_size_token": f"{int(n_steps)}steps",
+        # Keep n_steps for backward compatibility with existing code paths.
+        "n_steps": int(n_steps),
+    }
+
+
+@dispatch(scribe.ScribeMCMCResults, object)
+def _get_inference_metadata_for_filenames(results, cfg):
+    """Get filename metadata for MCMC runs.
+
+    Parameters
+    ----------
+    results : scribe.ScribeMCMCResults
+        MCMC results object.
+    cfg : OmegaConf.DictConfig or dict-like
+        Hydra/OmegaConf configuration object.
+
+    Returns
+    -------
+    dict
+        Metadata dictionary with run-size fields suitable for plot filenames.
+    """
+    # MCMC run size is represented by posterior draws and warmup iterations.
+    if hasattr(cfg, "inference") and hasattr(cfg.inference, "n_samples"):
+        n_samples = int(cfg.inference.n_samples)
+        n_warmup = int(getattr(cfg.inference, "n_warmup", 0))
+    else:
+        n_samples = int(cfg.get("n_samples", 1000))
+        n_warmup = int(cfg.get("n_warmup", 0))
+    return {
+        "run_size_value": n_samples,
+        "run_size_label": "samples",
+        "run_size_token": f"{n_samples}samples_{n_warmup}warmup",
+        # Keep n_steps for backward compatibility with existing code paths.
+        "n_steps": n_samples,
+    }
+
+
+@dispatch(type(None), object)
+def _get_inference_metadata_for_filenames(results, cfg):
+    """Get filename metadata when no typed results object is available.
+
+    Parameters
+    ----------
+    results : None
+        Placeholder for dispatch consistency.
+    cfg : OmegaConf.DictConfig or dict-like
+        Hydra/OmegaConf configuration object.
+
+    Returns
+    -------
+    dict
+        Metadata dictionary with run-size fields suitable for plot filenames.
+    """
+    # Infer method from config to pick a sensible default run-size token.
+    if hasattr(cfg, "inference") and hasattr(cfg.inference, "method"):
+        method = str(cfg.inference.method).lower()
+    else:
+        method = str(cfg.get("method", "svi")).lower()
+
+    if method == "mcmc":
+        if hasattr(cfg, "inference"):
+            n_samples = int(getattr(cfg.inference, "n_samples", 1000))
+            n_warmup = int(getattr(cfg.inference, "n_warmup", 0))
+        else:
+            n_samples = int(cfg.get("n_samples", 1000))
+            n_warmup = int(cfg.get("n_warmup", 0))
+        return {
+            "run_size_value": n_samples,
+            "run_size_label": "samples",
+            "run_size_token": f"{n_samples}samples_{n_warmup}warmup",
+            "n_steps": n_samples,
+        }
+
+    if hasattr(cfg, "inference"):
+        n_steps = int(getattr(cfg.inference, "n_steps", 50000))
+    else:
+        n_steps = int(cfg.get("n_steps", 50000))
+    return {
+        "run_size_value": n_steps,
+        "run_size_label": "steps",
+        "run_size_token": f"{n_steps}steps",
+        "n_steps": n_steps,
+    }
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_predictive_samples_for_plot(
+    results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
+):
+    """Get PPC samples for plotting from SVI results.
+
+    Parameters
+    ----------
+    results : scribe.ScribeSVIResults
+        SVI results object.
+    rng_key : jax.random.PRNGKey
+        PRNG key for posterior predictive sampling.
+    n_samples : int
+        Number of posterior draws to sample.
+    counts : array-like
+        Observed count matrix (required for amortized capture models).
+    batch_size : int or None, optional
+        Optional sampling batch size.
+    store_samples : bool, default=True
+        Whether to store generated samples in ``results.predictive_samples``.
+
+    Returns
+    -------
+    np.ndarray
+        Predictive samples with shape ``(n_samples, n_cells, n_genes)``.
+    """
+    results.get_ppc_samples(
+        rng_key=rng_key,
+        n_samples=n_samples,
+        batch_size=batch_size,
+        store_samples=store_samples,
+        counts=counts,
+    )
+    return np.array(results.predictive_samples)
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_predictive_samples_for_plot(
+    results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
+):
+    """Get PPC samples for plotting from MCMC results.
+
+    Parameters
+    ----------
+    results : scribe.ScribeMCMCResults
+        MCMC results object.
+    rng_key : jax.random.PRNGKey
+        PRNG key for posterior predictive sampling.
+    n_samples : int
+        Maximum number of draws to keep for plotting.
+    counts : array-like
+        Unused for MCMC PPC generation, kept for API symmetry.
+    batch_size : int or None, optional
+        Optional sampling batch size.
+    store_samples : bool, default=True
+        Whether to store generated samples in ``results.predictive_samples``.
+
+    Returns
+    -------
+    np.ndarray
+        Predictive samples with shape
+        ``(n_selected_draws, n_cells, n_genes)``.
+    """
+    _ = counts  # Keep signature aligned with SVI helper for callers.
+    predictive_samples = results.get_ppc_samples(
+        rng_key=rng_key,
+        batch_size=batch_size,
+        store_samples=store_samples,
+    )
+    predictive_np = np.array(predictive_samples)
+
+    # For plot readability and memory bounds, optionally truncate draws.
+    if n_samples is not None and predictive_np.shape[0] > int(n_samples):
+        predictive_np = predictive_np[: int(n_samples)]
+        if store_samples:
+            results.predictive_samples = predictive_np
+    return predictive_np
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_map_like_predictive_samples_for_plot(
+    results,
+    *,
+    rng_key,
+    n_samples,
+    cell_batch_size,
+    use_mean=True,
+    store_samples=False,
+    verbose=True,
+    counts=None,
+):
+    """Generate MAP-based predictive samples for SVI plotting."""
+    return np.array(
+        results.get_map_ppc_samples(
+            rng_key=rng_key,
+            n_samples=n_samples,
+            cell_batch_size=cell_batch_size,
+            use_mean=use_mean,
+            store_samples=store_samples,
+            verbose=verbose,
+            counts=counts,
+        )
+    )
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_map_like_predictive_samples_for_plot(
+    results,
+    *,
+    rng_key,
+    n_samples,
+    cell_batch_size,
+    use_mean=True,
+    store_samples=False,
+    verbose=True,
+    counts=None,
+):
+    """Generate MAP-like predictive samples for MCMC plotting."""
+    return np.array(
+        results.get_map_ppc_samples(
+            rng_key=rng_key,
+            n_samples=n_samples,
+            cell_batch_size=cell_batch_size,
+            use_mean=use_mean,
+            store_samples=store_samples,
+            verbose=verbose,
+            counts=counts,
+        )
+    )
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_map_estimates_for_plot(results, *, counts=None):
+    """Get plot-ready MAP estimates from SVI results."""
+    return results.get_map(
+        use_mean=True, canonical=True, verbose=False, counts=counts
+    )
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_map_estimates_for_plot(results, *, counts=None):
+    """Get plot-ready MAP estimates from MCMC results."""
+    _ = counts
+    return results.get_map()
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_cell_assignment_probabilities_for_plot(results, *, counts):
+    """Get MAP component-assignment probabilities from SVI results."""
+    assignment_info = results.cell_type_probabilities_map(
+        counts=counts, verbose=False
+    )
+    return np.array(assignment_info["probabilities"])
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_cell_assignment_probabilities_for_plot(results, *, counts):
+    """Get component-assignment probabilities from MCMC results."""
+    assignment_info = results.cell_type_probabilities(
+        counts=counts, verbose=False
+    )
+    if "mean_probabilities" in assignment_info:
+        return np.array(assignment_info["mean_probabilities"])
+    sample_probs = np.array(assignment_info["sample_probabilities"])
+    return sample_probs.mean(axis=0)
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_training_diagnostic_payload(results):
+    """Build training diagnostics payload for SVI loss plots."""
+    return {
+        "plot_kind": "loss",
+        "loss_history": np.array(results.loss_history),
+    }
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_training_diagnostic_payload(results):
+    """Build training diagnostics payload for MCMC diagnostics plots."""
+    extra_fields = results.get_extra_fields()
+    potential_energy = extra_fields.get("potential_energy")
+    diverging = extra_fields.get("diverging")
+    payload = {
+        "plot_kind": "mcmc_diagnostics",
+        "potential_energy": (
+            np.array(potential_energy) if potential_energy is not None else None
+        ),
+        "diverging": np.array(diverging).astype(int)
+        if diverging is not None
+        else None,
+        "trace_by_chain": None,
+        "trace_param_name": None,
+    }
+
+    # Use one representative parameter trace to visualize chain mixing.
+    try:
+        grouped_samples = results.get_samples(group_by_chain=True)
+        if grouped_samples:
+            param_name = sorted(grouped_samples.keys())[0]
+            param_samples = np.array(grouped_samples[param_name])
+            if param_samples.ndim >= 2:
+                if param_samples.ndim > 2:
+                    reduce_axes = tuple(range(2, param_samples.ndim))
+                    param_samples = param_samples.mean(axis=reduce_axes)
+                payload["trace_by_chain"] = param_samples
+                payload["trace_param_name"] = param_name
+    except Exception:
+        payload["trace_by_chain"] = None
+        payload["trace_param_name"] = None
+
+    return payload
 
 
 def _get_config_values(cfg, results=None):
@@ -88,8 +412,10 @@ def _get_config_values(cfg, results=None):
         parameterization = cfg.inference.parameterization
         # Number of mixture components, default to 1 if None/0
         n_components = cfg.inference.n_components or 1
-        # Number of inference steps
-        n_steps = cfg.inference.n_steps
+        # Number of inference steps (SVI) or samples (MCMC fallback).
+        n_steps = getattr(
+            cfg.inference, "n_steps", getattr(cfg.inference, "n_samples", 50000)
+        )
         # Inference method (e.g., 'svi', 'mcmc')
         method = cfg.inference.method
     else:
@@ -140,11 +466,22 @@ def _get_config_values(cfg, results=None):
         if res_nc is not None:
             n_components = res_nc
 
-    # Return all extracted values in a dictionary for easy access
+    # Attach method-specific run-size metadata using typed dispatch where possible.
+    typed_results = (
+        results
+        if isinstance(results, (scribe.ScribeSVIResults, scribe.ScribeMCMCResults))
+        else None
+    )
+    inference_meta = _get_inference_metadata_for_filenames(typed_results, cfg)
+
+    # Return all extracted values in a dictionary for easy access.
     return {
         "parameterization": parameterization,
         "n_components": n_components,
-        "n_steps": n_steps,
+        "n_steps": inference_meta["n_steps"],
+        "run_size_label": inference_meta["run_size_label"],
+        "run_size_value": inference_meta["run_size_value"],
+        "run_size_token": inference_meta["run_size_token"],
         "method": method,
         "model_type": model_type,
     }
@@ -400,25 +737,92 @@ def _select_genes(counts, n_rows, n_cols):
 
 
 def plot_loss(results, figs_dir, cfg, viz_cfg):
-    """Plot and save the ELBO loss history."""
-    console.print("[dim]Plotting loss history...[/dim]")
+    """Plot and save optimization loss or MCMC diagnostics."""
+    payload = _get_training_diagnostic_payload(results)
+    if payload["plot_kind"] == "loss":
+        console.print("[dim]Plotting loss history...[/dim]")
 
-    # Initialize figure with two subplots side by side
-    fig, (ax_log, ax_linear) = plt.subplots(1, 2, figsize=(7.0, 3))
+        # For SVI, keep the original paired log/linear ELBO visual.
+        fig, (ax_log, ax_linear) = plt.subplots(1, 2, figsize=(7.0, 3))
+        ax_log.plot(payload["loss_history"])
+        ax_linear.plot(payload["loss_history"])
 
-    # Plot loss history on both subplots
-    ax_log.plot(results.loss_history)
-    ax_linear.plot(results.loss_history)
+        ax_log.set_xlabel("step")
+        ax_log.set_ylabel("ELBO loss")
+        ax_linear.set_xlabel("step")
+        ax_linear.set_ylabel("ELBO loss")
+        ax_log.set_yscale("log")
+        plot_suffix = "loss"
+        save_label = "loss plot"
+    else:
+        console.print("[dim]Plotting MCMC diagnostics...[/dim]")
 
-    # Set labels for both subplots
-    ax_log.set_xlabel("step")
-    ax_log.set_ylabel("ELBO loss")
-    ax_linear.set_xlabel("step")
-    ax_linear.set_ylabel("ELBO loss")
+        # For MCMC, show potential energy, divergences, and one trace diagnostic.
+        fig, axes = plt.subplots(1, 3, figsize=(11.0, 3.2))
+        ax_energy, ax_div, ax_trace = axes
 
-    # Set y-axis scales: log scale for left, linear for right
-    ax_log.set_yscale("log")
-    # ax_linear uses linear scale by default
+        potential_energy = payload.get("potential_energy")
+        if potential_energy is not None and potential_energy.size > 0:
+            ax_energy.plot(potential_energy, lw=0.8)
+            ax_energy.set_title("Potential Energy")
+            ax_energy.set_xlabel("draw")
+            ax_energy.set_ylabel("energy")
+        else:
+            ax_energy.text(
+                0.5,
+                0.5,
+                "No potential_energy",
+                ha="center",
+                va="center",
+            )
+            ax_energy.set_axis_off()
+
+        diverging = payload.get("diverging")
+        if diverging is not None and diverging.size > 0:
+            cumulative_div = np.cumsum(diverging)
+            ax_div.plot(cumulative_div, color="tab:red", lw=1.0)
+            ax_div.set_title("Cumulative Divergences")
+            ax_div.set_xlabel("draw")
+            ax_div.set_ylabel("count")
+        else:
+            ax_div.text(
+                0.5,
+                0.5,
+                "No divergence field",
+                ha="center",
+                va="center",
+            )
+            ax_div.set_axis_off()
+
+        trace_by_chain = payload.get("trace_by_chain")
+        trace_param_name = payload.get("trace_param_name")
+        if trace_by_chain is not None and trace_by_chain.size > 0:
+            for chain_idx in range(trace_by_chain.shape[0]):
+                ax_trace.plot(
+                    trace_by_chain[chain_idx],
+                    lw=0.8,
+                    alpha=0.9,
+                    label=f"chain {chain_idx}",
+                )
+            ax_trace.set_title(
+                f"Trace: {trace_param_name}" if trace_param_name else "Trace"
+            )
+            ax_trace.set_xlabel("draw")
+            ax_trace.set_ylabel("value")
+            if trace_by_chain.shape[0] <= 4:
+                ax_trace.legend(fontsize=7, frameon=False)
+        else:
+            ax_trace.text(
+                0.5,
+                0.5,
+                "No chain trace",
+                ha="center",
+                va="center",
+            )
+            ax_trace.set_axis_off()
+
+        plot_suffix = "diagnostics"
+        save_label = "diagnostics plot"
 
     # Get output format
     output_format = viz_cfg.get("format", "png")
@@ -430,13 +834,14 @@ def plot_loss(results, figs_dir, cfg, viz_cfg):
         f"{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps_loss.{output_format}"
+        f"{config_vals['run_size_token']}_{plot_suffix}.{output_format}"
     )
 
+    plt.tight_layout()
     output_path = os.path.join(figs_dir, fname)
     fig.savefig(output_path, bbox_inches="tight")
     console.print(
-        f"[green]✓[/green] [dim]Saved loss plot to[/dim] [cyan]{output_path}[/cyan]"
+        f"[green]✓[/green] [dim]Saved {save_label} to[/dim] [cyan]{output_path}[/cyan]"
     )
     plt.close(fig)
 
@@ -481,7 +886,7 @@ def plot_ecdf(counts, figs_dir, cfg, viz_cfg):
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps_example_ecdf.{output_format}"
+        f"{config_vals['run_size_token']}_example_ecdf.{output_format}"
     )
 
     output_path = os.path.join(figs_dir, fname)
@@ -520,14 +925,20 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # Index results for selected genes (using original unsorted order for subsetting)
     results_subset = results[selected_idx]
 
-    # Generate posterior predictive samples
+    # Generate posterior predictive samples with result-type dispatch.
     n_samples = viz_cfg.ppc_opts.n_samples
     console.print(
         f"[dim]Generating {n_samples} posterior predictive samples...[/dim]"
     )
-    # Pass full counts matrix (not subsetted) for amortized capture probability
-    # The amortizer needs total UMI count per cell, which is computed across all genes
-    results_subset.get_ppc_samples(n_samples=n_samples, counts=counts)
+    # Pass full counts matrix for amortized capture models.
+    _ = _get_predictive_samples_for_plot(
+        results_subset,
+        rng_key=random.PRNGKey(42),
+        n_samples=n_samples,
+        counts=counts,
+        batch_size=None,
+        store_samples=True,
+    )
 
     # Create mapping from gene index to position in subset
     # The subset preserves the original gene order (sorted by index), not the
@@ -626,7 +1037,7 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps_ppc.{output_format}"
+        f"{config_vals['run_size_token']}_ppc.{output_format}"
     )
 
     output_path = os.path.join(figs_dir, fname)
@@ -994,7 +1405,8 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
     # kept, bounding memory to a single (n_cells, n_gene_mask_genes) array.
     all_umap_synthetic = []
     for i in range(n_ppc_samples):
-        sample_arr = results_sub.get_map_ppc_samples(
+        sample_arr = _get_map_like_predictive_samples_for_plot(
+            results_sub,
             rng_key=random.PRNGKey(42 + i),
             n_samples=1,
             cell_batch_size=batch_size or 1000,
@@ -1068,7 +1480,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps_umap.{output_format}"
+        f"{config_vals['run_size_token']}_umap.{output_format}"
     )
 
     output_path = os.path.join(figs_dir, fname)
@@ -1231,7 +1643,7 @@ def plot_correlation_heatmap(results, counts, figs_dir, cfg, viz_cfg):
         f"{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps"
+        f"{config_vals['run_size_token']}"
     )
 
     # ------------------------------------------------------------------
@@ -1457,12 +1869,8 @@ def _select_divergent_genes(results, counts, n_rows, n_cols):
     """
     import jax.numpy as jnp
 
-    # Get MAP estimates
-    # Pass full counts matrix for amortized capture probability
-    # The amortizer needs total UMI count per cell, which is computed across all genes
-    map_estimates = results.get_map(
-        use_mean=True, canonical=True, verbose=False, counts=counts
-    )
+    # Get MAP-style estimates through result-type dispatch.
+    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
 
     # Determine which parameter to use based on parameterization
     parameterization = results.model_config.parameterization
@@ -1647,12 +2055,8 @@ def _get_component_ppc_samples(
     import jax.numpy as jnp
     import numpyro.distributions as dist
 
-    # Get MAP estimates
-    # Pass full counts matrix for amortized capture probability
-    # The amortizer needs total UMI count per cell, which is computed across all genes
-    map_estimates = results.get_map(
-        use_mean=True, canonical=True, verbose=False, counts=counts
-    )
+    # Get MAP-style estimates through result-type dispatch.
+    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
 
     # Extract component-specific parameters
     r_all = map_estimates["r"]  # (n_components, n_genes)
@@ -2163,7 +2567,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps"
+        f"{config_vals['run_size_token']}"
     )
 
     rng_key = random.PRNGKey(42)
@@ -2175,7 +2579,8 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     rng_key, subkey = random.split(rng_key)
     # Pass full counts matrix (not subsetted) for amortized capture probability
     # The amortizer needs total UMI count per cell, which is computed across all genes
-    mixture_samples = results_subset.get_map_ppc_samples(
+    mixture_samples = _get_map_like_predictive_samples_for_plot(
+        results_subset,
         rng_key=subkey,
         n_samples=n_samples,
         cell_batch_size=500,
@@ -2211,10 +2616,10 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
     # Compute hard cell assignments once using MAP probabilities.
     console.print("[dim]Computing MAP cell-to-component assignments...[/dim]")
-    assignment_probs = results.cell_type_probabilities_map(
-        counts=counts, verbose=False
-    )["probabilities"]
-    assignments = np.argmax(np.array(assignment_probs), axis=1)
+    assignment_probs = _get_cell_assignment_probabilities_for_plot(
+        results, counts=counts
+    )
+    assignments = np.argmax(assignment_probs, axis=1)
 
     for k in range(n_components):
         console.print(
@@ -2458,7 +2863,7 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
         f"{config_vals['parameterization'].replace('-', '_')}_"
         f"{config_vals['model_type'].replace('_', '-')}_"
         f"{config_vals['n_components']:02d}components_"
-        f"{config_vals['n_steps']}steps"
+        f"{config_vals['run_size_token']}"
     )
 
     # ------------------------------------------------------------------
@@ -2497,7 +2902,8 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
         console.print(
             f"[dim]  Generating {n_samples} PPC samples...[/dim]"
         )
-        component_samples = component_subset.get_map_ppc_samples(
+        component_samples = _get_map_like_predictive_samples_for_plot(
+            component_subset,
             rng_key=subkey,
             n_samples=n_samples,
             cell_batch_size=500,

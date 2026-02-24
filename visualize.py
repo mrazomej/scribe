@@ -655,7 +655,11 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 "[yellow]  Skipping loss (already exists)[/yellow]"
             )
         else:
-            console.print("[dim]Generating loss history plot...[/dim]")
+            # For MCMC runs this branch now renders diagnostics instead of ELBO.
+            if hasattr(results, "loss_history"):
+                console.print("[dim]Generating loss history plot...[/dim]")
+            else:
+                console.print("[dim]Generating MCMC diagnostics plot...[/dim]")
             try:
                 plot_loss(results, figs_dir, orig_cfg, viz_cfg)
                 plots_generated.append("loss")
