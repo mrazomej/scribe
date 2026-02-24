@@ -833,7 +833,12 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 )
                 try:
                     plot_mixture_composition(
-                        results, counts, figs_dir, orig_cfg, viz_cfg
+                        results,
+                        counts,
+                        figs_dir,
+                        orig_cfg,
+                        viz_cfg,
+                        cell_labels=cell_labels,
                     )
                     plots_generated.append("mixture composition")
                     console.print(
