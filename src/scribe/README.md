@@ -464,6 +464,17 @@ Each module has comprehensive documentation with detailed examples:
 - **[VAE](vae/README.md)**: Neural variational autoencoders and architectures
 - **[Core](core/README.md)**: Shared preprocessing and analysis utilities
 
+### Catalog Filtering Note
+
+The experiment catalog in `catalog.py` supports comma-delimited filters for
+list-like metadata fields. For example, both
+`mixture_params=["phi,mu,gate"]` and `mixture_params="phi,mu,gate"` are
+normalized to match metadata stored as `["phi", "mu", "gate"]`.
+
+For advanced selection logic, use the callable catalog filter API:
+`catalog.filter(lambda run: "annotation_key=cell-class" in run.path)`.
+This enables custom path/name filtering or arbitrary metadata predicates.
+
 ## Dependencies
 
 ### Core Dependencies
