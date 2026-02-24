@@ -173,6 +173,13 @@ log_lik = results.log_likelihood(counts=count_data)
 # Posterior predictive checks (includes technical noise)
 ppc_samples = results.get_ppc_samples(rng_key=rng_key)
 
+# MAP-based PPC (API-compatible with SVI visualization utilities)
+map_ppc_samples = results.get_map_ppc_samples(
+    rng_key=rng_key,
+    n_samples=4,
+    cell_batch_size=2048,
+)
+
 # Biological (denoised) PPC — strips capture probability and
 # zero-inflation gate, sampling from the base NB(r, p) only.
 bio_ppc = results.get_ppc_samples_biological(
@@ -183,6 +190,15 @@ bio_ppc = results.get_ppc_samples_biological(
 # Prior predictive samples
 prior_samples = results.get_prior_predictive_samples(rng_key=rng_key)
 ```
+
+Visualization integration notes:
+
+- `get_ppc_samples()` uses already-computed posterior draws from MCMC; it does
+  not need a separate posterior resampling step.
+- `get_map_ppc_samples()` provides an SVI-compatible MAP-style predictive API
+  for plotting workflows that expect this method.
+- Visualization "loss" outputs are represented as MCMC diagnostics (potential
+  energy, divergences, and chain trace summaries).
 
 **Bayesian Denoising of Observed Counts:**
 
