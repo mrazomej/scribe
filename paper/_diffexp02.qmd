@@ -496,10 +496,9 @@ vs genes {1,2,3}.
 
 The ILR coordinates have a natural interpretation in terms of *compositional
 balances* [@egozcue2003]. The $i$-th coordinate $z_{\text{ILR},i}$ measures the
-log-ratio between two groups of genes: the first $i$ genes (weighted by their
-geometric mean) versus gene $i+1$. Positive values indicate that gene $i+1$ has
-higher relative expression than the geometric mean of the first $i$ genes;
-negative values indicate the opposite.
+log-ratio between two groups of genes: the geometric mean of the first $i$ genes
+versus gene $i+1$. Positive values indicate that the geometric mean of the first
+$i$ genes exceeds gene $i+1$; negative values indicate the opposite.
 
 This balance interpretation is particularly useful for gene-set and pathway
 analysis, where we often wish to test whether a specific group of genes shows
