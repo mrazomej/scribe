@@ -154,3 +154,5 @@ hydra:
           - inference.enable_x64
           - inference.early_stopping.enabled
           - inference.log_progress_lines
+          - inference.batch_size
+          - annotation_min_cells
