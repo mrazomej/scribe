@@ -28,6 +28,14 @@ stable_update: true
 # When true, prints an update every max(1, n_steps // 20) steps
 log_progress_lines: false
 
+# Empirical mixing weights for mixture models
+# SVI-learned Dirichlet mixing weights are practically non-identifiable in
+# high-dimensional mixture models.  When true (default), the pipeline replaces
+# them with data-driven weights from the conditional posterior Dir(alpha_0 +
+# N_soft) after inference completes.  Set to false to keep the raw SVI weights.
+# Only has effect for mixture models (n_components >= 2).
+empirical_mixing: true
+
 # Early stopping configuration
 # Monitors loss and stops when improvement plateaus
 # Supports Orbax checkpointing for resumable training
