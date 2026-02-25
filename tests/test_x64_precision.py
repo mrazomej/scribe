@@ -12,6 +12,7 @@ Covers:
 import os
 import pickle
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import jax
@@ -393,6 +394,52 @@ class TestLoadSVIInit:
                     _load_svi_init(tmp_path)
         finally:
             os.unlink(tmp_path)
+
+
+# ==========================================================================
+# Tests for empirical mixing component resolution in infer.py
+# ==========================================================================
+
+
+class TestEmpiricalMixingComponentResolution:
+    """Tests for ``_resolve_empirical_mixing_components`` helper behavior."""
+
+    def test_prefers_results_n_components_over_config(self):
+        """Use fitted results n_components when both sources are present."""
+        from infer import _resolve_empirical_mixing_components
+
+        resolved = _resolve_empirical_mixing_components(
+            config_n_components=2,
+            results=SimpleNamespace(n_components=4),
+        )
+
+        assert resolved == 4
+
+    # ------------------------------------------------------------------
+
+    def test_falls_back_to_config_when_results_missing(self):
+        """Use config n_components when results lacks the attribute."""
+        from infer import _resolve_empirical_mixing_components
+
+        resolved = _resolve_empirical_mixing_components(
+            config_n_components=3,
+            results=SimpleNamespace(),
+        )
+
+        assert resolved == 3
+
+    # ------------------------------------------------------------------
+
+    def test_returns_none_for_non_numeric_component_value(self):
+        """Return None when neither source provides a valid integer value."""
+        from infer import _resolve_empirical_mixing_components
+
+        resolved = _resolve_empirical_mixing_components(
+            config_n_components=None,
+            results=SimpleNamespace(n_components="not-an-int"),
+        )
+
+        assert resolved is None
 
     # ------------------------------------------------------------------
 
