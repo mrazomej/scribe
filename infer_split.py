@@ -113,8 +113,8 @@ def _detect_gpu_ids() -> list[str]:
         return []
 
 
-def _parse_args(argv: list[str]) -> tuple[str, dict, list[str]]:
-    """Extract ``data=<name>`` and ``data.*`` overrides from *argv*.
+def _parse_args(argv: list[str]) -> tuple[str, dict, dict, list[str]]:
+    """Extract ``data=<name>``, ``data.*`` and ``split.*`` overrides.
 
     Parameters
     ----------
@@ -128,11 +128,15 @@ def _parse_args(argv: list[str]) -> tuple[str, dict, list[str]]:
     data_overrides : dict
         Any ``data.<key>=<value>`` overrides provided on the command line
         (e.g. ``data.n_jobs=4``).
+    split_overrides : dict
+        Any ``split.<key>=<value>`` overrides used to control how this
+        orchestrator launches child multirun jobs.
     forwarded_args : list[str]
         All remaining arguments that should be forwarded to ``infer.py``.
     """
     data_name: str | None = None
     data_overrides: dict = {}
+    split_overrides: dict = {}
     forwarded_args: list[str] = []
 
     for arg in argv:
@@ -148,6 +152,12 @@ def _parse_args(argv: list[str]) -> tuple[str, dict, list[str]]:
             data_overrides[m_dot.group(1)] = m_dot.group(2)
             continue
 
+        # Match split.<key>=<value> for orchestrator launch settings
+        m_split = re.match(r"^split\.(\w+)=(.+)$", arg)
+        if m_split:
+            split_overrides[m_split.group(1)] = m_split.group(2)
+            continue
+
         forwarded_args.append(arg)
 
     if data_name is None:
@@ -156,7 +166,7 @@ def _parse_args(argv: list[str]) -> tuple[str, dict, list[str]]:
             "Usage: python infer_split.py data=<name> [overrides ...]"
         )
 
-    return data_name, data_overrides, forwarded_args
+    return data_name, data_overrides, split_overrides, forwarded_args
 
 
 def _load_data_config(data_name: str) -> dict:
@@ -331,6 +341,95 @@ def _cleanup_tmp_dir() -> None:
         shutil.rmtree(TMP_SPLIT_DIR)
 
 
+def _build_joblib_multirun_command(
+    data_list: str, n_jobs: int, forwarded_args: list[str]
+) -> list[str]:
+    """Build Hydra multirun command using the joblib launcher.
+
+    Parameters
+    ----------
+    data_list : str
+        Comma-separated ``data=...`` values targeting temporary split configs.
+    n_jobs : int
+        Number of joblib workers.
+    forwarded_args : list[str]
+        User arguments forwarded unchanged to ``infer.py``.
+
+    Returns
+    -------
+    list[str]
+        Command list suitable for ``subprocess.run``.
+    """
+    return [
+        sys.executable,
+        str(SCRIPT_DIR / "infer.py"),
+        "-m",
+        f"data={data_list}",
+        "hydra/launcher=joblib",
+        f"hydra.launcher.n_jobs={n_jobs}",
+        # GPU assignment is handled inside infer.py via cfg.data.gpu_id
+        # (set before JAX initialises CUDA devices).
+        *forwarded_args,
+    ]
+
+
+def _build_submitit_multirun_command(
+    data_list: str,
+    n_jobs: int,
+    split_overrides: dict,
+    forwarded_args: list[str],
+) -> list[str]:
+    """Build Hydra multirun command using the submitit Slurm launcher.
+
+    Parameters
+    ----------
+    data_list : str
+        Comma-separated ``data=...`` values targeting temporary split configs.
+    n_jobs : int
+        Number of split jobs to allow in parallel (default fallback).
+    split_overrides : dict
+        Orchestrator ``split.*`` launch settings parsed from CLI.
+    forwarded_args : list[str]
+        User arguments forwarded unchanged to ``infer.py``.
+
+    Returns
+    -------
+    list[str]
+        Command list suitable for ``subprocess.run``.
+    """
+    array_parallelism = int(split_overrides.get("array_parallelism", n_jobs))
+    cpus_per_task = int(split_overrides.get("cpus_per_task", 2))
+    mem_gb = int(split_overrides.get("mem_gb", 16))
+    timeout_min = int(split_overrides.get("timeout_min", 240))
+    partition = split_overrides.get("partition", "base")
+    account = split_overrides.get("account", "hybrid-modeling")
+    job_name = split_overrides.get("job_name", "scribe_infer_split")
+    submitit_folder = split_overrides.get(
+        "submitit_folder", "slurm_logs/submitit/%j"
+    )
+
+    return [
+        sys.executable,
+        str(SCRIPT_DIR / "infer.py"),
+        "-m",
+        f"data={data_list}",
+        "hydra/launcher=submitit_slurm",
+        "hydra.sweep.subdir=${hydra.job.num}",
+        "hydra.launcher.nodes=1",
+        "hydra.launcher.tasks_per_node=1",
+        "hydra.launcher.gpus_per_node=1",
+        f"hydra.launcher.cpus_per_task={cpus_per_task}",
+        f"hydra.launcher.mem_gb={mem_gb}",
+        f"hydra.launcher.partition={partition}",
+        f"hydra.launcher.account={account}",
+        f"hydra.launcher.timeout_min={timeout_min}",
+        f"hydra.launcher.array_parallelism={array_parallelism}",
+        f"hydra.launcher.name={job_name}",
+        f"hydra.launcher.submitit_folder={submitit_folder}",
+        *forwarded_args,
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -350,7 +449,9 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 1. Parse CLI arguments
     # ------------------------------------------------------------------
-    data_name, data_overrides, forwarded_args = _parse_args(sys.argv[1:])
+    data_name, data_overrides, split_overrides, forwarded_args = _parse_args(
+        sys.argv[1:]
+    )
     console.print(
         f"[dim]Data config:[/dim] [cyan]{data_name}[/cyan]"
     )
@@ -435,17 +536,30 @@ def main() -> None:
 
     data_list = ",".join(f"_tmp_split/{n}" for n in tmp_names)
 
-    cmd = [
-        sys.executable,
-        str(SCRIPT_DIR / "infer.py"),
-        "-m",
-        f"data={data_list}",
-        "hydra/launcher=joblib",
-        f"hydra.launcher.n_jobs={n_jobs}",
-        # GPU assignment is handled inside infer.py via cfg.data.gpu_id
-        # (set before JAX initialises CUDA devices).
-        *forwarded_args,
-    ]
+    # Default launcher preserves prior behavior for direct infer_split usage.
+    launcher_mode = split_overrides.get("launcher", "joblib")
+    if launcher_mode == "submitit_slurm":
+        # Fail fast with a clear error when submitit is requested but missing.
+        try:
+            import hydra_plugins.hydra_submitit_launcher  # noqa: F401
+        except ImportError:
+            raise SystemExit(
+                "ERROR: split.launcher=submitit_slurm requested but Hydra "
+                "submitit launcher is not installed.\n"
+                "Install it with: uv add --dev hydra-submitit-launcher"
+            )
+        cmd = _build_submitit_multirun_command(
+            data_list=data_list,
+            n_jobs=n_jobs,
+            split_overrides=split_overrides,
+            forwarded_args=forwarded_args,
+        )
+    else:
+        cmd = _build_joblib_multirun_command(
+            data_list=data_list,
+            n_jobs=n_jobs,
+            forwarded_args=forwarded_args,
+        )
 
     console.print(f"[dim]Command:[/dim]")
     console.print(f"  [cyan]{' '.join(cmd)}[/cyan]")
