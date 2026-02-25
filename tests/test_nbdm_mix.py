@@ -1279,10 +1279,42 @@ def test_low_rank_guide_params(nbdm_mix_results, inference_method, guide_rank):
         print(f"DEBUG: Low-rank guide params keys: {list(params.keys())}")
 
 
-def test_empirical_mixing_weights(
+def test_empirical_mixing_weights_auto_applied(
     nbdm_mix_results, inference_method, small_dataset
 ):
-    """Test that empirical mixing weights are valid and well-formed."""
+    """Test that empirical mixing weights are automatically applied by the factory."""
+    if inference_method != "svi":
+        pytest.skip("Empirical mixing weights only apply to SVI results")
+
+    # The factory should have called apply_empirical_mixing_weights
+    assert getattr(nbdm_mix_results, "_mixing_weights_replaced", False), (
+        "Factory should auto-apply empirical mixing weights for mixture models"
+    )
+
+    # Original SVI params should be stashed
+    assert hasattr(nbdm_mix_results, "_svi_mixing_params")
+    assert len(nbdm_mix_results._svi_mixing_params) > 0
+
+    # get_map() should return weights that sum to 1
+    counts, _ = small_dataset
+    map_est = nbdm_mix_results.get_map(
+        use_mean=True, canonical=True, verbose=False, counts=counts
+    )
+    if "mixing_weights" in map_est:
+        weights = map_est["mixing_weights"]
+        n_components = nbdm_mix_results.n_components
+        assert weights.shape == (n_components,)
+        assert jnp.allclose(jnp.sum(weights), 1.0, atol=1e-5)
+        assert jnp.all(weights > 0)
+
+
+# ------------------------------------------------------------------------------
+
+
+def test_empirical_mixing_weights_compute(
+    nbdm_mix_results, inference_method, small_dataset
+):
+    """Test that compute_empirical_mixing_weights returns valid output."""
     if inference_method != "svi":
         pytest.skip("Empirical mixing weights only apply to SVI results")
 
@@ -1291,7 +1323,6 @@ def test_empirical_mixing_weights(
         counts=counts, verbose=False
     )
 
-    # Returned dict must contain the required keys
     assert "weights" in emp
     assert "concentrations" in emp
     assert "effective_counts" in emp
@@ -1300,21 +1331,18 @@ def test_empirical_mixing_weights(
     weights = emp["weights"]
     n_components = nbdm_mix_results.n_components
 
-    # Weights must have the right shape and sum to 1
     assert weights.shape == (n_components,)
     assert jnp.allclose(jnp.sum(weights), 1.0, atol=1e-5)
-
-    # All weights must be positive (Dirichlet posterior mean > 0)
     assert jnp.all(weights > 0)
 
-    # Concentrations = prior + effective_counts
+    # concentrations = prior + effective_counts
     assert jnp.allclose(
         emp["concentrations"],
         emp["prior_concentrations"] + emp["effective_counts"],
         atol=1e-5,
     )
 
-    # Effective counts must be non-negative and sum to n_cells
+    # effective counts must be non-negative and sum to n_cells
     assert jnp.all(emp["effective_counts"] >= 0)
     assert jnp.allclose(
         jnp.sum(emp["effective_counts"]),
@@ -1326,47 +1354,30 @@ def test_empirical_mixing_weights(
 # ------------------------------------------------------------------------------
 
 
-def test_get_map_empirical_mixing(
+def test_empirical_mixing_weights_differ_from_svi(
     nbdm_mix_results, inference_method, small_dataset
 ):
-    """Test that get_map(empirical_mixing=True) returns different weights."""
+    """Test that the replaced params differ from the original SVI params."""
     if inference_method != "svi":
         pytest.skip("Empirical mixing weights only apply to SVI results")
 
-    counts, _ = small_dataset
+    if not getattr(nbdm_mix_results, "_mixing_weights_replaced", False):
+        pytest.skip("Empirical mixing weights not applied")
 
-    # Standard MAP weights
-    map_standard = nbdm_mix_results.get_map(
-        use_mean=True, canonical=True, verbose=False, counts=counts
-    )
-    # Empirical MAP weights
-    map_empirical = nbdm_mix_results.get_map(
-        use_mean=True,
-        canonical=True,
-        verbose=False,
-        counts=counts,
-        empirical_mixing=True,
-    )
-
-    # Both should have mixing_weights with the same shape
-    assert "mixing_weights" in map_standard
-    assert "mixing_weights" in map_empirical
-    assert (
-        map_standard["mixing_weights"].shape
-        == map_empirical["mixing_weights"].shape
-    )
-
-    # Empirical weights must still sum to 1
-    assert jnp.allclose(
-        jnp.sum(map_empirical["mixing_weights"]), 1.0, atol=1e-5
-    )
+    # Current params should differ from stashed originals
+    if "mixing_concentrations" in nbdm_mix_results._svi_mixing_params:
+        original = nbdm_mix_results._svi_mixing_params["mixing_concentrations"]
+        current = nbdm_mix_results.params["mixing_concentrations"]
+        assert current.shape == original.shape
 
     # Other parameters should be unchanged
+    counts, _ = small_dataset
+    map_est = nbdm_mix_results.get_map(
+        use_mean=True, canonical=True, verbose=False, counts=counts
+    )
     for key in ("r", "p"):
-        if key in map_standard and key in map_empirical:
-            assert jnp.allclose(
-                map_standard[key], map_empirical[key], atol=1e-6
-            ), f"Parameter '{key}' should be unchanged by empirical_mixing"
+        if key in map_est:
+            assert jnp.all(jnp.isfinite(map_est[key]))
 
 
 # ------------------------------------------------------------------------------

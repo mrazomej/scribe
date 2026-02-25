@@ -352,21 +352,32 @@ cell_type_probs = results.cell_type_probabilities()
 component_0 = results.get_component(0)
 components_12 = results.get_components([1, 2])  # renormalize=True by default
 components_12_raw = results.get_components([1, 2], renormalize=False)
+```
 
-# Empirical (data-driven) mixing weights — corrects for SVI
-# non-identifiability of Dirichlet mixing weights by computing
-# the conditional posterior Dir(alpha_0 + N_soft).
+**Empirical Mixing Weights (auto-applied for mixture models):**
+
+SVI-learned Dirichlet mixing weights are practically non-identifiable in high-
+dimensional mixture models because per-gene log-likelihoods overwhelm the
+mixing-weight contribution.  The factory automatically replaces them with data-
+driven weights from the conditional posterior `Dir(alpha_0 + N_soft)`.
+
+```python
+# Mixing weights are already corrected — no flags needed
+map_params = results.get_map()
+print(map_params["mixing_weights"])  # empirical weights
+
+# Original SVI-learned params are stashed for diagnostics
+print(results._svi_mixing_params)         # original concentrations
+print(results._mixing_weights_replaced)   # True
+
+# You can also compute empirical weights explicitly
 emp = results.compute_empirical_mixing_weights(counts=count_data)
-print("Empirical weights:", emp["weights"])
-print("Posterior concentrations:", emp["concentrations"])
+print(emp["weights"])          # posterior mean
+print(emp["concentrations"])   # full Dirichlet posterior alpha_0 + N_soft
+print(emp["effective_counts"]) # soft cell counts per component
 
-# Substitute empirical weights directly into MAP estimates
-map_with_emp = results.get_map(empirical_mixing=True, counts=count_data)
-
-# Use empirical weights for predictive sampling
-ppc = results.get_map_ppc_samples(
-    empirical_mixing=True, counts=count_data, n_samples=5
-)
+# Re-apply if needed (e.g. after modifying params)
+results.apply_empirical_mixing_weights(counts=count_data)
 ```
 
 **Data Subsetting:**
@@ -491,15 +502,17 @@ ScribeSVIResults
    - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
 
 8. **MixtureAnalysisMixin** (`_mixture_analysis.py`)
-   - Purpose: Mixture model analysis methods
+   - Purpose: Mixture model analysis and empirical mixing weight correction
    - Methods:
      - `mixture_component_entropy()`: Entropy of component assignments
      - `assignment_entropy_map()`: MAP-based assignment entropy
-     - `compute_empirical_mixing_weights()`: Data-driven mixing weights
-       via the conditional posterior Dir(alpha_0 + N_soft), correcting
-       for the SVI non-identifiability of Dirichlet mixing weights
      - `cell_type_probabilities()`: Component probabilities from samples
      - `cell_type_probabilities_map()`: Component probabilities from MAP
+     - `compute_empirical_mixing_weights()`: Data-driven mixing weights
+       via the conditional posterior `Dir(alpha_0 + N_soft)`
+     - `apply_empirical_mixing_weights()`: Replace SVI-learned mixing
+       params in `self.params` with empirical values (called automatically
+       by the factory for mixture models)
    - Dependencies: Uses `LikelihoodMixin`, `ParameterExtractionMixin`
 
 9. **NormalizationMixin** (`_normalization.py`)
@@ -632,22 +645,6 @@ subset = results[1:4, [1, 2]]
 
 # Get cell type assignments
 cell_probs = results.cell_type_probabilities()
-
-# --- Empirical mixing weights ---
-# SVI-learned Dirichlet mixing weights can be poorly identified because
-# gene-level log-likelihoods overwhelm the mixing weight contribution.
-# compute_empirical_mixing_weights() fixes this by computing the
-# conditional posterior Dir(alpha_0 + N_soft), where N_soft are the
-# purely data-driven soft cell counts.
-emp = results.compute_empirical_mixing_weights(counts=count_data)
-print("Empirical weights:", emp["weights"])
-
-# The empirical weights can also be substituted automatically into
-# get_map() and get_map_ppc_samples() via the empirical_mixing flag:
-map_est = results.get_map(empirical_mixing=True, counts=count_data)
-ppc = results.get_map_ppc_samples(
-    empirical_mixing=True, counts=count_data, n_samples=5
-)
 ```
 
 ### Model Comparison
