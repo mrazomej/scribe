@@ -23,7 +23,7 @@ viz:
   ppc_opts:
     n_rows: 5  # Number of expression bins (logarithmically spaced)
     n_cols: 5  # Number of genes per bin
-    n_samples: 1500
+    n_samples: 1024
   
   # UMAP plot options
   umap_opts:
@@ -34,12 +34,12 @@ viz:
     target_sum: 1e4  # Library-size normalization target (counts per cell)
     gene_filter_min_cells: 3  # Keep genes detected in at least this many cells
     use_hvg: true  # Select highly variable genes before UMAP
-    hvg_n_top_genes: 2000  # Number of HVGs (Scanpy-style default)
+    hvg_n_top_genes: 4000  # Number of HVGs (Scanpy-style default)
     hvg_flavor: "seurat"  # Scanpy HVG flavor
     use_pca: true  # Run PCA before UMAP (standard Scanpy workflow)
     pca_n_comps: 50  # Number of PCs used as UMAP input
     batch_size: 1000  # Batch size for PPC sampling (None = no batching, use for memory efficiency)
-    n_ppc_samples: 50  # Number of posterior predictive samples for UMAP overlay
+    n_ppc_samples: 10  # Number of posterior predictive samples for UMAP overlay
     data_color: "dark_blue"  # Color for experimental data
     synthetic_color: "dark_red"  # Color for synthetic data
     cache_umap: true  # Cache fitted UMAP in data directory (avoids re-fitting for same data)
@@ -47,7 +47,7 @@ viz:
   # Correlation heatmap options
   heatmap_opts:
     n_genes: 200  # Number of genes to display (selected by correlation variance)
-    n_samples: 512 # Number of posterior samples to generate for correlation computation
+    n_samples: 1024 # Number of posterior samples to generate for correlation computation
     figsize: 12  # Figure size (square)
     cmap: "RdBu_r"  # Colormap (red=positive, blue=negative correlation)
 
@@ -55,7 +55,7 @@ viz:
   mixture_ppc_opts:
     n_rows: 5  # Number of rows in the grid
     n_cols: 5  # Number of columns in the grid
-    n_samples: 1500  # Number of PPC samples per component
+    n_samples: 1024  # Number of PPC samples per component
 
   # Mixture composition plot options
   mixture_composition_opts:
@@ -63,6 +63,6 @@ viz:
 
   # Annotation PPC options (per-annotation component PPC)
   annotation_ppc_opts:
-    n_rows: 5  # Number of expression bins
+    _rows: 5  # Number of expression bins
     n_cols: 5  # Number of genes per bin
-    n_samples: 1500  # Number of PPC samples per annotation
+    n_samples: 1024  # Number of PPC samples per annotation
