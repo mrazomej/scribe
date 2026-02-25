@@ -257,6 +257,48 @@ def _load_svi_init(svi_init_path, console: Console = None):
     return svi_results
 
 
+# ------------------------------------------------------------------------------
+
+
+def _resolve_empirical_mixing_components(
+    config_n_components: int | None, results
+) -> int | None:
+    """Resolve the component count used for empirical mixing replacement.
+
+    The pipeline decides whether to apply empirical mixing weights *after*
+    ``scribe.fit()`` returns.  At that point, the fitted results object is the
+    most reliable source for mixture dimensionality, because ``n_components``
+    can be inferred inside ``fit()`` (for example, from ``annotation_key``
+    labels) even when the original config value is ``None``.
+
+    Parameters
+    ----------
+    config_n_components : int or None
+        ``n_components`` value available in ``infer.py`` before calling
+        ``scribe.fit()``.  This can be ``None`` for annotation-driven runs.
+    results : Any
+        Returned object from ``scribe.fit()``.  If it exposes
+        ``results.n_components``, that value is preferred.
+
+    Returns
+    -------
+    int or None
+        Effective component count to use for empirical mixing gating.
+        Returns ``None`` when no valid integer component count can be resolved.
+    """
+    # Prefer the fitted results metadata because fit() may infer n_components
+    # internally (e.g., from annotation labels) after infer.py has built kwargs.
+    candidate = getattr(results, "n_components", None)
+    if candidate is None:
+        candidate = config_n_components
+
+    # Guard against unexpected types so gating remains robust and explicit.
+    try:
+        return int(candidate) if candidate is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 # ==============================================================================
 # Main Function
 # ==============================================================================
@@ -500,10 +542,19 @@ def main(cfg: DictConfig) -> None:
     # SVI-learned Dirichlet mixing weights are practically non-identifiable in
     # high-dimensional mixture models.  Replace them with data-driven weights
     # from the conditional posterior Dir(alpha_0 + N_soft).
+    # Resolve the post-fit component count from results first. This keeps
+    # empirical mixing enabled for annotation-driven mixtures where n_components
+    # is inferred inside fit() rather than provided in the initial config.
+    effective_n_components = _resolve_empirical_mixing_components(
+        n_components, results
+    )
     _do_empirical = (
         empirical_mixing
         and inference_method == "svi"
-        and (n_components is not None and n_components > 1)
+        and (
+            effective_n_components is not None
+            and effective_n_components > 1
+        )
     )
     if _do_empirical:
         import jax.numpy as jnp
