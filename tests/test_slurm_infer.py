@@ -4,8 +4,10 @@ from pathlib import Path
 
 from slurm_infer import (
     SlurmConfig,
+    _slurm_time_to_minutes,
     apply_slurm_default_overrides,
     build_batch_script,
+    build_submitit_multirun_command,
     resolve_inference_script,
 )
 
@@ -41,38 +43,63 @@ def test_apply_slurm_default_overrides_normalizes_hydra_prefixes():
     assert effective == overrides
 
 
-def test_build_batch_script_multirun_sets_loky_cpu_count_to_slurm_allocation():
-    """Use full SLURM CPU allocation for loky in multirun mode.
-
-    The launcher controls process-level parallelism via ``hydra.launcher.n_jobs``.
-    ``LOKY_MAX_CPU_COUNT`` should therefore reflect the full task allocation,
-    not the number of parallel jobs.
-    """
+def test_build_batch_script_single_run_sets_full_thread_count():
+    """Single-run batch script should use full CPU allocation for threads."""
     slurm = SlurmConfig(gpus=4, cpus_per_task=32)
     batch = build_batch_script(
         slurm=slurm,
         hydra_overrides=["data=bleo_study01_bleomycin"],
         project_dir=Path("/tmp/project"),
-        is_multirun=True,
+        is_multirun=False,
         inference_script="infer.py",
     )
-    assert "export LOKY_MAX_CPU_COUNT=32" in batch
-    assert "export LOKY_MAX_CPU_COUNT=4" not in batch
+    assert "export OMP_NUM_THREADS=32" in batch
+    assert "export MKL_NUM_THREADS=32" in batch
+    assert "export OPENBLAS_NUM_THREADS=32" in batch
 
 
-def test_build_batch_script_multirun_partitions_threads_per_worker():
-    """Split BLAS/OMP threads across parallel jobs in multirun mode."""
+def test_build_batch_script_does_not_enable_joblib_launcher():
+    """Single-run batch script should not inject any joblib launcher overrides."""
     slurm = SlurmConfig(gpus=4, cpus_per_task=32)
     batch = build_batch_script(
         slurm=slurm,
         hydra_overrides=["data=bleo_study01_bleomycin"],
         project_dir=Path("/tmp/project"),
-        is_multirun=True,
+        is_multirun=False,
         inference_script="infer.py",
     )
-    assert "export OMP_NUM_THREADS=8" in batch
-    assert "export MKL_NUM_THREADS=8" in batch
-    assert "export OPENBLAS_NUM_THREADS=8" in batch
+    assert "hydra/launcher=joblib" not in batch
+    assert "hydra.launcher.n_jobs=" not in batch
+
+
+def test_slurm_time_to_minutes_supports_days_and_hours():
+    """Convert SLURM D-HH:MM and HH:MM strings to integer minutes."""
+    assert _slurm_time_to_minutes("0-04:00") == 240
+    assert _slurm_time_to_minutes("2-01:30") == 2970
+    assert _slurm_time_to_minutes("06:15") == 375
+
+
+def test_build_submitit_multirun_command_enforces_one_gpu_per_job():
+    """Submitit multirun command should enforce strict per-job GPU isolation."""
+    slurm = SlurmConfig(
+        partition="base",
+        account="hybrid-modeling",
+        gpus=8,
+        cpus_per_task=16,
+        mem=128,
+        time="0-04:00",
+        job_name="scribe_infer",
+    )
+    cmd = build_submitit_multirun_command(
+        slurm=slurm,
+        hydra_overrides=["data=bleo_splits/bleo_study01_control"],
+        project_dir=Path("/tmp/project"),
+        inference_script="infer.py",
+    )
+    assert "hydra/launcher=submitit_slurm" in cmd
+    assert "hydra.launcher.gpus_per_node=1" in cmd
+    assert "hydra.launcher.tasks_per_node=1" in cmd
+    assert "hydra.launcher.array_parallelism=8" in cmd
 
 
 def test_resolve_inference_script_uses_split_entrypoint_when_split_by_present(

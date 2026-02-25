@@ -63,6 +63,7 @@ dev = [
     "marimo>=0.19.11",
     "gseapy>=1.1.11",
     "matplotlib-venn>=1.1.2",
+    "hydra-submitit-launcher>=1.2.0",
 ]
 
 [build-system]
