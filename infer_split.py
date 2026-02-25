@@ -414,7 +414,6 @@ def _build_submitit_multirun_command(
         "-m",
         f"data={data_list}",
         "hydra/launcher=submitit_slurm",
-        "hydra.sweep.subdir=${hydra.job.num}",
         "hydra.launcher.nodes=1",
         "hydra.launcher.tasks_per_node=1",
         "hydra.launcher.gpus_per_node=1",
