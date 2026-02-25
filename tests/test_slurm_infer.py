@@ -7,6 +7,7 @@ from slurm_infer import (
     _slurm_time_to_minutes,
     apply_slurm_default_overrides,
     build_batch_script,
+    build_split_submitit_orchestrator_command,
     build_submitit_multirun_command,
     resolve_inference_script,
 )
@@ -100,6 +101,31 @@ def test_build_submitit_multirun_command_enforces_one_gpu_per_job():
     assert "hydra.launcher.gpus_per_node=1" in cmd
     assert "hydra.launcher.tasks_per_node=1" in cmd
     assert "hydra.launcher.array_parallelism=8" in cmd
+
+
+def test_build_split_submitit_orchestrator_command_passes_split_overrides():
+    """infer_split orchestration should receive submitit split launcher settings."""
+    slurm = SlurmConfig(
+        partition="base",
+        account="hybrid-modeling",
+        gpus=6,
+        cpus_per_task=12,
+        mem=256,
+        time="0-06:00",
+        job_name="scribe_infer",
+    )
+    cmd = build_split_submitit_orchestrator_command(
+        slurm=slurm,
+        hydra_overrides=["data=lung_bleo/lung_bleo_splits"],
+        project_dir=Path("/tmp/project"),
+    )
+    assert cmd[0:2] == ["python", "infer_split.py"]
+    assert "split.launcher=submitit_slurm" in cmd
+    assert "data.n_jobs=6" in cmd
+    assert "split.array_parallelism=6" in cmd
+    assert "split.cpus_per_task=12" in cmd
+    assert "split.mem_gb=256" in cmd
+    assert "split.timeout_min=360" in cmd
 
 
 def test_resolve_inference_script_uses_split_entrypoint_when_split_by_present(
