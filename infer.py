@@ -493,6 +493,49 @@ def main(cfg: DictConfig) -> None:
     )
 
     # ==========================================================================
+    # Empirical Mixing Weights (SVI mixture models only)
+    # ==========================================================================
+    # SVI-learned Dirichlet mixing weights are practically non-identifiable in
+    # high-dimensional mixture models.  Replace them with data-driven weights
+    # from the conditional posterior Dir(alpha_0 + N_soft).
+    _do_empirical = (
+        cfg.get("empirical_mixing", True)
+        and inference_method == "svi"
+        and (n_components is not None and n_components > 1)
+    )
+    if _do_empirical:
+        import jax.numpy as jnp
+
+        console.print()
+        console.print(
+            Panel.fit(
+                "[bold bright_magenta]EMPIRICAL MIXING WEIGHTS"
+                "[/bold bright_magenta]",
+                border_style="bright_magenta",
+            )
+        )
+        console.print(
+            "[dim]Replacing SVI-learned mixing weights with data-driven "
+            "empirical weights...[/dim]"
+        )
+        try:
+            _counts_jax = jnp.asarray(counts_array)
+            results.apply_empirical_mixing_weights(
+                counts=_counts_jax,
+                batch_size=cfg.inference.get("batch_size") or 4096,
+                verbose=True,
+            )
+            console.print(
+                "[green]✓[/green] [bold green]Empirical mixing weights "
+                "applied![/bold green]"
+            )
+        except Exception as exc:
+            console.print(
+                f"[yellow]⚠[/yellow] [yellow]Could not apply empirical "
+                f"mixing weights: {exc}[/yellow]"
+            )
+
+    # ==========================================================================
     # Results Saving Section
     # ==========================================================================
     console.print()

@@ -87,15 +87,4 @@ class SVIResultsFactory:
                 _gene_axis_by_key=gene_axis_by_key,
             )
 
-        # For SVI mixture models, automatically replace the poorly-identified
-        # Dirichlet mixing weights with data-driven empirical weights from
-        # the conditional posterior Dir(alpha_0 + N_soft).
-        if n_components is not None and n_components > 1:
-            try:
-                results.apply_empirical_mixing_weights(
-                    counts=count_data, verbose=False
-                )
-            except Exception:
-                pass
-
         return results
