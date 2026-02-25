@@ -339,6 +339,8 @@ def main(cfg: DictConfig) -> None:
     # Extract inference config
     inference_cfg = OmegaConf.to_container(cfg.inference, resolve=True)
     inference_method = inference_cfg.pop("method")
+    # Pop SVI-only pipeline flags before forwarding to scribe.fit()
+    empirical_mixing = inference_cfg.pop("empirical_mixing", True)
 
     # Set checkpoint directory for early stopping (automatically within Hydra
     # output)
@@ -499,7 +501,7 @@ def main(cfg: DictConfig) -> None:
     # high-dimensional mixture models.  Replace them with data-driven weights
     # from the conditional posterior Dir(alpha_0 + N_soft).
     _do_empirical = (
-        cfg.get("empirical_mixing", True)
+        empirical_mixing
         and inference_method == "svi"
         and (n_components is not None and n_components > 1)
     )
