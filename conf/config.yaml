@@ -92,6 +92,14 @@ annotation_component_order: null
 # prior. Labels with fewer cells are treated as unlabeled (zero bias).
 annotation_min_cells: null
 
+# --- Empirical Mixing Weights (for SVI mixture models) ---
+# SVI-learned Dirichlet mixing weights are practically non-identifiable in
+# high-dimensional mixture models.  When true (default), the pipeline replaces
+# them with data-driven weights from the conditional posterior Dir(alpha_0 +
+# N_soft) after inference completes.  Set to false to keep the raw SVI weights.
+# Only has effect for SVI mixture models (n_components >= 2).
+empirical_mixing: true
+
 # --- SVI-to-MCMC Initialization ---
 # Path to a pickled ScribeSVIResults file to initialize MCMC chains.
 # The SVI MAP estimates are extracted and used as starting values for NUTS.
@@ -150,6 +158,7 @@ hydra:
           - viz.annotation_ppc_opts
           - output_dir
           - svi_init
+          - empirical_mixing
           - inference.enable_x64
           - inference.early_stopping.enabled
           - inference.log_progress_lines

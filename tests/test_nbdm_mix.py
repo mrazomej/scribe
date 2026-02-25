@@ -1279,24 +1279,33 @@ def test_low_rank_guide_params(nbdm_mix_results, inference_method, guide_rank):
         print(f"DEBUG: Low-rank guide params keys: {list(params.keys())}")
 
 
-def test_empirical_mixing_weights_auto_applied(
+def test_apply_empirical_mixing_weights(
     nbdm_mix_results, inference_method, small_dataset
 ):
-    """Test that empirical mixing weights are automatically applied by the factory."""
+    """Test apply_empirical_mixing_weights replaces params and stashes originals."""
     if inference_method != "svi":
         pytest.skip("Empirical mixing weights only apply to SVI results")
 
-    # The factory should have called apply_empirical_mixing_weights
-    assert getattr(nbdm_mix_results, "_mixing_weights_replaced", False), (
-        "Factory should auto-apply empirical mixing weights for mixture models"
+    counts, _ = small_dataset
+
+    # Save original mixing params for comparison
+    orig_conc = None
+    if "mixing_concentrations" in nbdm_mix_results.params:
+        orig_conc = nbdm_mix_results.params["mixing_concentrations"].copy()
+
+    # Apply empirical mixing weights
+    nbdm_mix_results.apply_empirical_mixing_weights(
+        counts=counts, verbose=False
     )
+
+    # Flag should be set
+    assert getattr(nbdm_mix_results, "_mixing_weights_replaced", False)
 
     # Original SVI params should be stashed
     assert hasattr(nbdm_mix_results, "_svi_mixing_params")
     assert len(nbdm_mix_results._svi_mixing_params) > 0
 
     # get_map() should return weights that sum to 1
-    counts, _ = small_dataset
     map_est = nbdm_mix_results.get_map(
         use_mean=True, canonical=True, verbose=False, counts=counts
     )
@@ -1354,15 +1363,20 @@ def test_empirical_mixing_weights_compute(
 # ------------------------------------------------------------------------------
 
 
-def test_empirical_mixing_weights_differ_from_svi(
+def test_empirical_mixing_weights_stashes_originals(
     nbdm_mix_results, inference_method, small_dataset
 ):
-    """Test that the replaced params differ from the original SVI params."""
+    """Test that apply stashes originals and non-mixing params stay intact."""
     if inference_method != "svi":
         pytest.skip("Empirical mixing weights only apply to SVI results")
 
+    counts, _ = small_dataset
+
+    # Apply if not already applied
     if not getattr(nbdm_mix_results, "_mixing_weights_replaced", False):
-        pytest.skip("Empirical mixing weights not applied")
+        nbdm_mix_results.apply_empirical_mixing_weights(
+            counts=counts, verbose=False
+        )
 
     # Current params should differ from stashed originals
     if "mixing_concentrations" in nbdm_mix_results._svi_mixing_params:
@@ -1370,8 +1384,7 @@ def test_empirical_mixing_weights_differ_from_svi(
         current = nbdm_mix_results.params["mixing_concentrations"]
         assert current.shape == original.shape
 
-    # Other parameters should be unchanged
-    counts, _ = small_dataset
+    # Other parameters should be unchanged and finite
     map_est = nbdm_mix_results.get_map(
         use_mean=True, canonical=True, verbose=False, counts=counts
     )
