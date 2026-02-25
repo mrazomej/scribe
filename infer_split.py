@@ -508,6 +508,19 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 5. Generate temporary data YAML configs
     # ------------------------------------------------------------------
+    # Determine launcher mode before writing split configs because GPU
+    # assignment strategy differs by launcher:
+    # - joblib: one process may see many GPUs, so round-robin physical IDs.
+    # - submitit_slurm: each task gets exactly one allocated GPU and must use
+    #   local device index "0" inside that isolated environment.
+    launcher_mode = split_overrides.get("launcher", "joblib")
+    assigned_gpu_ids = ["0"] if launcher_mode == "submitit_slurm" else gpu_ids
+    if launcher_mode == "submitit_slurm":
+        console.print(
+            "[dim]Submitit launcher detected; forcing split configs to "
+            "use local gpu_id=0 per SLURM task.[/dim]"
+        )
+
     console.print()
     console.print(
         Panel.fit(
@@ -517,7 +530,7 @@ def main() -> None:
     )
 
     tmp_names = _generate_tmp_yamls(
-        data_cfg, split_by, covariate_values, gpu_ids
+        data_cfg, split_by, covariate_values, assigned_gpu_ids
     )
     for name in tmp_names:
         console.print(f"  [dim]Created:[/dim] conf/data/_tmp_split/{name}.yaml")
@@ -536,7 +549,6 @@ def main() -> None:
     data_list = ",".join(f"_tmp_split/{n}" for n in tmp_names)
 
     # Default launcher preserves prior behavior for direct infer_split usage.
-    launcher_mode = split_overrides.get("launcher", "joblib")
     if launcher_mode == "submitit_slurm":
         # Fail fast with a clear error when submitit is requested but missing.
         try:
