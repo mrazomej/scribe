@@ -384,6 +384,92 @@ class MixtureAnalysisMixin:
         }
 
     # --------------------------------------------------------------------------
+
+    def apply_empirical_mixing_weights(
+        self,
+        counts: jnp.ndarray,
+        batch_size: Optional[int] = None,
+        use_mean: bool = False,
+        verbose: bool = True,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> "MixtureAnalysisMixin":
+        """
+        Replace the SVI-learned mixing weight parameters with data-driven
+        empirical values computed from the conditional posterior.
+
+        This modifies ``self.params`` in-place, swapping the Dirichlet
+        concentration parameters (``mixing_concentrations``) or the logit
+        parameters (``mixing_logits_unconstrained``) so that all downstream
+        methods (``get_map``, ``get_posterior_samples``, ``get_distributions``,
+        PPC sampling, denoising, etc.) automatically use the corrected
+        weights.
+
+        The original SVI-learned parameters are preserved in
+        ``self._svi_mixing_params`` for diagnostic inspection, and a boolean
+        flag ``self._mixing_weights_replaced`` is set to ``True``.
+
+        Parameters
+        ----------
+        counts : jnp.ndarray
+            Observed count matrix of shape ``(n_cells, n_genes)``.
+        batch_size : Optional[int], default=None
+            Mini-batch size for the log-likelihood computation.
+        use_mean : bool, default=False
+            Passed through to ``compute_empirical_mixing_weights``.
+        verbose : bool, default=True
+            Print progress messages.
+        dtype : jnp.dtype, default=jnp.float32
+            Numerical precision for computations.
+
+        Returns
+        -------
+        self
+            Returns the results object for method chaining.
+
+        Raises
+        ------
+        ValueError
+            If the model is not a mixture model.
+        """
+        emp = self.compute_empirical_mixing_weights(
+            counts=counts,
+            batch_size=batch_size,
+            use_mean=use_mean,
+            verbose=verbose,
+            dtype=dtype,
+        )
+
+        # Stash original SVI-learned mixing params for diagnostics
+        self._svi_mixing_params = {}
+        if "mixing_concentrations" in self.params:
+            self._svi_mixing_params["mixing_concentrations"] = (
+                self.params["mixing_concentrations"].copy()
+            )
+        if "mixing_logits_unconstrained" in self.params:
+            self._svi_mixing_params["mixing_logits_unconstrained"] = (
+                self.params["mixing_logits_unconstrained"].copy()
+            )
+
+        # Replace the variational parameters with the empirical posterior.
+        # For constrained models: mixing_concentrations → alpha_0 + N_soft
+        # For unconstrained models: mixing_logits_unconstrained → log(weights)
+        if "mixing_concentrations" in self.params:
+            self.params["mixing_concentrations"] = emp["concentrations"]
+        if "mixing_logits_unconstrained" in self.params:
+            self.params["mixing_logits_unconstrained"] = jnp.log(
+                jnp.clip(emp["weights"], 1e-30)
+            )
+
+        # Invalidate cached posterior samples — they were drawn from the
+        # old guide and must be regenerated.
+        if self.posterior_samples is not None:
+            self.posterior_samples = None
+
+        self._mixing_weights_replaced = True
+
+        return self
+
+    # --------------------------------------------------------------------------
     # Cell type assignment method for mixture models
     # --------------------------------------------------------------------------
 
