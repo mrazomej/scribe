@@ -67,12 +67,12 @@ the high-density region lies, numerical methods must evaluate the integrand at
 numerous points throughout the space, most of which contribute negligibly to the
 final integral value.
 
-![**Challenges of high-dimensional numerical integration.**
+<!-- ![**Challenges of high-dimensional numerical integration.**
 Conceptual illustration of the computational burden in naive numerical
 quadrature. The density concentrates in a small region (dark peak), yet
 exhaustive grid-based evaluation requires sampling throughout the entire space,
 with most evaluations contributing little to the integral
-value.](./fig/supplementary/figSI_gaussian_peak){#fig-SI_gaussian_peak}
+value.](./fig/supplementary/figSI_gaussian_peak){#fig-SI_gaussian_peak} -->
 
 While sophisticated sampling methods like Hamiltonian Monte Carlo---method used
 in @sec-singer_mcmc_nbdm---can exploit gradient information to navigate
