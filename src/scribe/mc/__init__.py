@@ -16,6 +16,9 @@ In addition, the module provides:
   with standard errors and z-scores.
 - **Model stacking**: optimal predictive ensemble weights via convex
   optimization of the LOO log-score.
+- **Goodness-of-fit diagnostics**: per-gene randomized quantile residuals
+  (RQR) that assess how well a single fitted model describes each gene's
+  count distribution, with expression-scale-invariant summary statistics.
 
 Quick start
 -----------
@@ -50,8 +53,12 @@ Low-level functions
 - ``compute_psis_loo()`` — NumPy/SciPy PSIS-LOO with Pareto fitting.
 - ``gene_level_comparison()`` — per-gene elpd differences.
 - ``compute_stacking_weights()`` — stacking weight optimization.
+- ``compute_quantile_residuals()`` — randomized quantile residuals.
+- ``goodness_of_fit_scores()`` — per-gene fit diagnostics from residuals.
+- ``compute_gof_mask()`` — boolean gene mask from fit quality.
 
-See ``paper/_model_comparison.qmd`` for full mathematical derivations.
+See ``paper/_model_comparison.qmd`` and ``paper/_goodness_of_fit.qmd``
+for full mathematical derivations.
 """
 
 # Results class and factory
@@ -82,6 +89,13 @@ from ._stacking import (
     stacking_summary,
 )
 
+# Goodness-of-fit diagnostics
+from ._goodness_of_fit import (
+    compute_quantile_residuals,
+    goodness_of_fit_scores,
+    compute_gof_mask,
+)
+
 __all__ = [
     # Results class and factory
     "ScribeModelComparisonResults",
@@ -99,4 +113,8 @@ __all__ = [
     # Stacking
     "compute_stacking_weights",
     "stacking_summary",
+    # Goodness-of-fit
+    "compute_quantile_residuals",
+    "goodness_of_fit_scores",
+    "compute_gof_mask",
 ]
