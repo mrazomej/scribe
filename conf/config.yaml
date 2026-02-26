@@ -98,6 +98,17 @@ annotation_min_cells: null
 # Only valid when inference=mcmc.  null = no initialization (default).
 svi_init: null
 
+# --- Resume Training / Initialization Source ---
+# Optional path used to resume or warm-start an inference run.
+# Supported values:
+# - run directory (expects checkpoints/ and/or scribe_results.pkl)
+# - checkpoints directory
+# - scribe_results.pkl file
+# Behavior:
+# - inference=svi|vae: resumes from checkpoint state (requires checkpoints/)
+# - inference=mcmc: if svi_init is null, uses scribe_results.pkl from this source
+resume_from: null
+
 # --- General Settings ---
 seed: 42
 
@@ -149,11 +160,13 @@ hydra:
           - viz.mixture_ppc_opts
           - viz.annotation_ppc_opts
           - output_dir
+          - resume_from
           - svi_init
           - inference.empirical_mixing
           - inference.enable_x64
           - inference.early_stopping.enabled
           - inference.log_progress_lines
           - inference.batch_size
+          - inference.n_steps
           - annotation_min_cells
           - data
