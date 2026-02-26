@@ -397,6 +397,99 @@ class TestLoadSVIInit:
 
 
 # ==========================================================================
+# Tests for resume source resolution in infer.py
+# ==========================================================================
+
+
+class TestResolveResumeSource:
+    """Tests for the ``_resolve_resume_source`` helper path logic."""
+
+    def test_none_path_returns_none(self):
+        """When resume path is None, resolution returns None."""
+        from infer import _resolve_resume_source
+
+        assert _resolve_resume_source(None) is None
+
+    # ------------------------------------------------------------------
+
+    def test_run_directory_input_resolves_all_paths(self, tmp_path):
+        """Run directory input resolves run, checkpoint, and results paths."""
+        from infer import _resolve_resume_source
+
+        run_dir = tmp_path / "run"
+        checkpoints_dir = run_dir / "checkpoints"
+        results_file = run_dir / "scribe_results.pkl"
+        checkpoints_dir.mkdir(parents=True)
+        results_file.write_bytes(b"placeholder")
+
+        resolved = _resolve_resume_source(run_dir.as_posix())
+
+        assert resolved is not None
+        assert resolved.run_dir == run_dir.as_posix()
+        assert resolved.checkpoint_dir == checkpoints_dir.as_posix()
+        assert resolved.results_path == results_file.as_posix()
+
+    # ------------------------------------------------------------------
+
+    def test_checkpoint_directory_input_resolves_parent_run_dir(self, tmp_path):
+        """Checkpoint directory input maps back to the containing run dir."""
+        from infer import _resolve_resume_source
+
+        run_dir = tmp_path / "run"
+        checkpoints_dir = run_dir / "checkpoints"
+        checkpoints_dir.mkdir(parents=True)
+
+        resolved = _resolve_resume_source(checkpoints_dir.as_posix())
+
+        assert resolved is not None
+        assert resolved.run_dir == run_dir.as_posix()
+        assert resolved.checkpoint_dir == checkpoints_dir.as_posix()
+        assert resolved.results_path is None
+
+    # ------------------------------------------------------------------
+
+    def test_results_file_without_checkpoint_keeps_results_only(self, tmp_path):
+        """Results-file input can resolve without requiring checkpoints."""
+        from infer import _resolve_resume_source
+
+        run_dir = tmp_path / "run"
+        run_dir.mkdir(parents=True)
+        results_file = run_dir / "scribe_results.pkl"
+        results_file.write_bytes(b"placeholder")
+
+        resolved = _resolve_resume_source(results_file.as_posix())
+
+        assert resolved is not None
+        assert resolved.run_dir == run_dir.as_posix()
+        assert resolved.checkpoint_dir is None
+        assert resolved.results_path == results_file.as_posix()
+
+    # ------------------------------------------------------------------
+
+    def test_invalid_file_name_raises_value_error(self, tmp_path):
+        """Unsupported file inputs raise a clear ValueError."""
+        from infer import _resolve_resume_source
+
+        bad_file = tmp_path / "not_results.pkl"
+        bad_file.write_bytes(b"placeholder")
+
+        with pytest.raises(ValueError, match="resume_from file must be"):
+            _resolve_resume_source(bad_file.as_posix())
+
+    # ------------------------------------------------------------------
+
+    def test_missing_path_raises_file_not_found(self):
+        """Missing resume path raises FileNotFoundError."""
+        from infer import _resolve_resume_source
+
+        with patch(
+            "hydra.utils.to_absolute_path", return_value="/no/such/resume/path"
+        ):
+            with pytest.raises(FileNotFoundError, match="resume_from path"):
+                _resolve_resume_source("/no/such/resume/path")
+
+
+# ==========================================================================
 # Tests for empirical mixing component resolution in infer.py
 # ==========================================================================
 
