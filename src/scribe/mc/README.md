@@ -40,13 +40,14 @@ k̂ < 0.5 = excellent, 0.5–0.7 = OK, ≥ 0.7 = problematic
 
 ```
 mc/
-├── __init__.py         Public API
-├── README.md           This file
-├── results.py          ScribeModelComparisonResults + compare_models()
-├── _waic.py            JAX-accelerated WAIC
-├── _psis_loo.py        PSIS-LOO with Pareto fitting (NumPy/SciPy)
-├── _gene_level.py      Per-gene elpd differences
-└── _stacking.py        Model stacking weight optimization
+├── __init__.py            Public API
+├── README.md              This file
+├── results.py             ScribeModelComparisonResults + compare_models()
+├── _waic.py               JAX-accelerated WAIC
+├── _psis_loo.py           PSIS-LOO with Pareto fitting (NumPy/SciPy)
+├── _gene_level.py         Per-gene elpd differences
+├── _stacking.py           Model stacking weight optimization
+└── _goodness_of_fit.py    Randomized quantile residuals & per-gene GoF
 ```
 
 ---
@@ -110,6 +111,32 @@ unreliable for them and the LOO estimate may be noisy.
 In single-cell data, high k̂ values typically correspond to:
 - Cells with unusually high or low total UMI counts.
 - Cells that are highly influential for the posterior (e.g., rare cell types).
+
+---
+
+## Per-gene goodness-of-fit (RQR)
+
+The `_goodness_of_fit.py` module implements **randomized quantile residuals**
+(Dunn & Smyth, 1996) for assessing absolute model fit at the gene level.
+Unlike WAIC/PSIS-LOO (which compare models *relative* to each other), RQR
+checks whether a *single* model adequately describes each gene's distribution.
+
+Under a correctly specified model, the residuals are standard normal for every
+gene regardless of expression level — providing an expression-scale-invariant
+diagnostic.
+
+```python
+from scribe.mc import compute_gof_mask
+
+# Build a boolean mask: True for well-fit genes
+mask = compute_gof_mask(counts, results, max_variance=1.5)
+
+# Use in DE pipeline
+from scribe.de import compare
+de = compare(results_A, results_B, gene_mask=mask, method="empirical", ...)
+```
+
+See `paper/_goodness_of_fit.qmd` for the full mathematical derivation.
 
 ---
 
