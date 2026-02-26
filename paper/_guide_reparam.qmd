@@ -39,14 +39,14 @@ region to this curved geometry. This results in an approximation that either
 covers large areas of low probability or misses significant portions of the true
 posterior mass.
 
-![**Posterior Geometry and Variational Approximation.** Conceptual illustration
+<!-- ![**Posterior Geometry and Variational Approximation.** Conceptual illustration
 of the challenges in fitting a factorized variational distribution to a
 correlated posterior. The true posterior (blue) for the Negative Binomial
 parameters $(r, p)$ exhibits a characteristic curved shape. A mean-field guide
 (red rectangle) fails to capture this correlation, leading to a poor
 approximation. Reparameterizing in terms of mean and dispersion $(\mu, r)$ can
 result in a more separable geometry (green), allowing for a better
-fit.](./fig/supplementary/figSI_reparam_motivation){#fig-SI_reparam}
+fit.](./fig/supplementary/figSI_reparam_motivation){#fig-SI_reparam} -->
 
 ### Linked Parameterization: Mean and Probability
 

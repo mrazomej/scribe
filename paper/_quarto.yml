@@ -101,6 +101,7 @@ format:
       - maintext-filter.lua
       - sitext-filter.lua
   pdf: 
+    pdf-engine: xelatex
     documentclass: scrartcl
     numbersections: true
     template: template.tex
@@ -112,6 +113,7 @@ format:
     keep-tex: false
     filters:
       - tikz.lua
+      - strip-yaml-frontmatter.lua
       - abstract-filter.lua
       - color-text-span.lua
       - maintext-filter.lua

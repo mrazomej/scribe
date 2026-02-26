@@ -35,21 +35,79 @@ repository](https://github.com/mrazomej/scribe)
 ::: {.sitext}
 # Supplementary Materials {.unnumbered}
 
-<!-- notes on the Dirichlet Multinomial derivation-->
+<!-- ============================================================ -->
+<!-- Block 1: Core Model -->
+<!-- ============================================================ -->
+
+<!-- Foundational Dirichlet-Multinomial model derivation -->
 {{< include _dirichlet_multinomial.qmd >}}
 
-<!-- notes on the Singer dataset -->
-{{< include _singer_dataset.qmd >}}
+<!-- Extension: hierarchical gene-specific p -->
+{{< include _hierarchical_p.qmd >}}
 
-<!-- notes on MCMC inference -->
-{{< include _singer_mcmc_nbdm.qmd >}}
+<!-- ============================================================ -->
+<!-- Block 2: Model Comparison -->
+<!-- ============================================================ -->
 
-<!-- notes on variational inference -->
+<!-- Bayesian model comparison (WAIC, PSIS-LOO) -->
+{{< include _model_comparison.qmd >}}
+
+<!-- ============================================================ -->
+<!-- Block 3: Inference Methodology -->
+<!-- ============================================================ -->
+
+<!-- Primer on variational inference / SVI -->
 {{< include _variational_inference_primer.qmd >}}
 
-<!-- Applying SVI to the Singer dataset -->
-{{< include _singer_svi_nbdm.qmd >}}
-{{< include _singer_svi_nbdm_linked.qmd >}}
-{{< include _singer_svi_nbdm_odds-ratio.qmd >}}
+<!-- Reparameterization for VI guides -->
+{{< include _guide_reparam.qmd >}}
+
+<!-- Mixture weight identifiability in SVI -->
+{{< include _mixture_weights_svi.qmd >}}
+
+<!-- ============================================================ -->
+<!-- Block 4: Denoising -->
+<!-- ============================================================ -->
+
+<!-- Bayesian denoising of transcriptional profiles -->
+{{< include _denoising.qmd >}}
+
+<!-- ============================================================ -->
+<!-- Block 5: Normalization & Differential Expression -->
+<!-- ============================================================ -->
+
+<!-- Low-rank logistic-normal approximation for normalized expression -->
+{{< include _normalization.qmd >}}
+
+<!-- Bayesian differential expression framework -->
+{{< include _diffexp01.qmd >}}
+
+<!-- Log-ratio coordinate systems (CLR, ILR) -->
+{{< include _diffexp02.qmd >}}
+
+<!-- Transforming Gaussian parameters between coordinate systems -->
+{{< include _diffexp03.qmd >}}
+
+<!-- Gene-level differential expression -->
+{{< include _diffexp04.qmd >}}
+
+<!-- Gene-set and pathway analysis -->
+{{< include _diffexp05.qmd >}}
+
+<!-- Bayesian error control -->
+{{< include _diffexp06.qmd >}}
+
+<!-- Computational considerations -->
+{{< include _diffexp07.qmd >}}
+
+<!-- Summary and conclusions of the DE framework -->
+{{< include _diffexp08.qmd >}}
+
+<!-- Gaussianity diagnostics & non-parametric DE -->
+{{< include _diffexp09.qmd >}}
+
+<!-- Empirical Bayes shrinkage for differential expression -->
+{{< include _diffexp10.qmd >}}
+
 :::
 :::
