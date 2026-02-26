@@ -196,20 +196,20 @@ likelihood used throughout this work.
 #### Single-component model
 
 Consider cell $c$ and gene $g$ with observed UMI count $u_{gc}$ and NB
-parameters $(r_g, p_g)$, where $r_g > 0$ is the dispersion and $p_g \in (0, 1)$
-is the success probability. The NB probability mass function is
+parameters $(r_g, \hat{p})$, where $r_g > 0$ is the dispersion and
+$\hat{p} \in (0, 1)$ is the probability parameter defined in
+@sec-dirichlet-multinomial. The NB probability mass function is
 
 $$
-\Pr(U = u \mid r_g, p_g) = \binom{u + r_g - 1}{u}\,
-(1 - p_g)^{r_g}\, p_g^u,
+\Pr(U = u \mid r_g, \hat{p}) = \binom{u + r_g - 1}{u}\,
+\hat{p}^{r_g}\, (1 - \hat{p})^u,
 \qquad u = 0, 1, 2, \ldots
 $${#eq-gof-nb-pmf}
 
 The cumulative distribution function is
 
-$$
-F_{\text{NB}}(u \mid r_g, p_g) = \Pr(U \leq u \mid r_g, p_g) =
-I_{1 - p_g}(r_g,\, u + 1),
+F_{\text{NB}}(u \mid r_g, \hat{p}) = \Pr(U \leq u \mid r_g, \hat{p}) =
+I_{\hat{p}}(r_g,\, u + 1),
 $${#eq-gof-nb-cdf}
 
 where $I_x(a, b)$ denotes the **regularized incomplete beta function**,
@@ -225,11 +225,11 @@ libraries including NumPyro.
 
 The RQR for cell $c$ and gene $g$ proceeds as follows:
 
-1. **Lower bound.** Compute $a_{gc} = F_{\text{NB}}(u_{gc} - 1 \mid r_g, p_g)$,
+1. **Lower bound.** Compute $a_{gc} = F_{\text{NB}}(u_{gc} - 1 \mid r_g, \hat{p})$,
    with the convention that $F_{\text{NB}}(-1 \mid \cdot) = 0$ (i.e., when
    $u_{gc} = 0$, set $a_{gc} = 0$).
 
-2. **Upper bound.** Compute $b_{gc} = F_{\text{NB}}(u_{gc} \mid r_g, p_g)$.
+2. **Upper bound.** Compute $b_{gc} = F_{\text{NB}}(u_{gc} \mid r_g, \hat{p})$.
 
 3. **Randomize.** Draw $w_{gc} \sim \text{Uniform}(0, 1)$ independently and set
 
@@ -245,7 +245,7 @@ $${#eq-gof-nb-transform}
 
 Under the correctly specified model, $q_{gc} \sim \mathcal{N}(0, 1)$ for all
 $c = 1, \ldots, C$ and $g = 1, \ldots, G$, regardless of the values of $r_g$,
-$p_g$, or the expression level $\mu_g = r_g p_g / (1 - p_g)$.
+$\hat{p}$, or the expression level $\mu_g = r_g (1 - \hat{p}) / \hat{p}$.
 
 **Numerical safeguard.** To prevent $\Phi^{-1}(v)$ from returning $\pm\infty$
 when $v$ is exactly 0 or 1 (which can occur in finite-precision arithmetic),
@@ -262,11 +262,11 @@ is
 
 $$
 \Pr(U_{gc} = u) = \sum_{k=1}^K \pi_k \,
-\Pr(U = u \mid r_{gk}, p_k),
+\Pr(U = u \mid r_{gk}, \hat{p}_k),
 $${#eq-gof-mixture-pmf}
 
 where $\pi_k$ is the mixing weight for component $k$ (with $\sum_k \pi_k = 1$),
-and $(r_{gk}, p_k)$ are the NB parameters for gene $g$ under component $k$.
+and $(r_{gk}, \hat{p}_k)$ are the NB parameters for gene $g$ under component $k$.
 In models with cell-specific assignment probabilities, $\pi_k$ may be replaced
 by $\pi_{ck}$; the development below applies identically.
 
@@ -274,14 +274,14 @@ The **marginal CDF** of the mixture is the correspondingly weighted sum of
 component CDFs:
 
 $$
-F_{gc}(u) = \sum_{k=1}^K \pi_k \, F_{\text{NB}}(u \mid r_{gk}, p_k).
+F_{gc}(u) = \sum_{k=1}^K \pi_k \, F_{\text{NB}}(u \mid r_{gk}, \hat{p}_k).
 $${#eq-gof-mixture-cdf}
 
 This follows from the linearity of the CDF operator applied to @eq-gof-mixture-pmf.
 
 **Critical point.** When computing RQR for mixture models, one must use the
 **marginal** CDF in @eq-gof-mixture-cdf, not the component-conditional CDF
-$F_{\text{NB}}(u \mid r_{gk}, p_k)$ for any single component $k$. Using a
+$F_{\text{NB}}(u \mid r_{gk}, \hat{p}_k)$ for any single component $k$. Using a
 component-conditional CDF would condition on the latent assignment $z_c = k$,
 which is not observed. The marginal CDF integrates out the latent variable
 and correctly represents the model's predictive distribution for each cell.
@@ -302,8 +302,8 @@ Under the correctly specified mixture, $q_{gc} \sim \mathcal{N}(0, 1)$.
 
 ### Integrating over posterior uncertainty {#sec-gof-posterior}
 
-In a Bayesian workflow, the model parameters $\theta = \{r_g, p_g\}$ (or
-$\theta = \{r_{gk}, p_k, \pi_k\}$ for mixtures) are not known exactly; we
+In a Bayesian workflow, the model parameters $\theta = \{r_g, \hat{p}\}$ (or
+$\theta = \{r_{gk}, \hat{p}_k, \pi_k\}$ for mixtures) are not known exactly; we
 have a posterior distribution $p(\theta \mid y)$ represented by $S$ posterior
 samples $\{\theta^{(s)}\}_{s=1}^S$.
 
@@ -502,7 +502,7 @@ filter would never flag.
 
 #### Cost analysis
 
-The dominant cost is evaluating the NB CDF $F_{\text{NB}}(u \mid r, p)$ for
+The dominant cost is evaluating the NB CDF $F_{\text{NB}}(u \mid r, \hat{p})$ for
 each cell-gene pair. Each CDF evaluation requires one regularized incomplete
 beta function call. Let $C$ denote the number of cells, $G$ the number of
 genes, $K$ the number of mixture components, and $S$ the number of posterior
@@ -532,9 +532,12 @@ incrementally.
 
 #### Implementation via NumPyro
 
-The NB CDF in @eq-gof-nb-cdf is computed by NumPyro's
-`NegativeBinomialProbs.cdf()` method, which internally evaluates the regularized
-incomplete beta function through JAX's `jax.lax.betainc`. The inverse normal CDF
-$\Phi^{-1}$ is available as `jax.scipy.stats.norm.ppf`. Both operations are
-JIT-compilable and support automatic vectorization via `jax.vmap`, enabling
-efficient batch computation over the full $(C, G)$ count matrix.
+The NB CDF in @eq-gof-nb-cdf is computed via JAX's `jax.lax.betainc`, which
+evaluates the regularized incomplete beta function $I_{\hat{p}}(r_g, u+1)$
+directly. Note that NumPyro's `NegativeBinomialProbs(total_count, probs)`
+parameterizes `probs` as the complement of our $\hat{p}$ (i.e.,
+`probs` $= 1 - \hat{p}$), so care must be taken when passing parameters.
+The inverse normal CDF $\Phi^{-1}$ is available as
+`jax.scipy.stats.norm.ppf`. Both operations are JIT-compilable and support
+automatic vectorization via `jax.vmap`, enabling efficient batch computation
+over the full $(C, G)$ count matrix.
