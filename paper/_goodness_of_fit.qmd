@@ -208,6 +208,7 @@ $${#eq-gof-nb-pmf}
 
 The cumulative distribution function is
 
+$$
 F_{\text{NB}}(u \mid r_g, \hat{p}) = \Pr(U \leq u \mid r_g, \hat{p}) =
 I_{\hat{p}}(r_g,\, u + 1),
 $${#eq-gof-nb-cdf}
@@ -450,36 +451,46 @@ which genes are analyzed individually versus pooled into an "other" category.
 #### Constructing the mask
 
 The simplest and most interpretable filter is based on the residual variance
-$s_g^2$. We define the **goodness-of-fit mask** as
+$s_g^2$. Since both over- and underdispersion relative to the model indicate
+misfit (see @sec-gof-scores), the mask should be **two-sided**:
 
 $$
-m_g = \mathbf{1}\!\left[s_g^2 < \tau_{\text{var}}\right],
+m_g = \mathbf{1}\!\left[\tau_{\text{lo}} < s_g^2 < \tau_{\text{hi}}\right],
 $${#eq-gof-mask-variance}
 
-where $\tau_{\text{var}} > 1$ is a user-specified threshold. Genes with
-$m_g = 1$ (residual variance within tolerance) are retained for individual DE
-analysis; genes with $m_g = 0$ (excess variability not captured by the model)
-are pooled into the aggregate "other" category.
+where $\tau_{\text{lo}} < 1$ and $\tau_{\text{hi}} > 1$ are user-specified
+bounds. Genes with $m_g = 1$ (residual variance within tolerance) are retained
+for individual DE analysis; genes with $m_g = 0$ are pooled into the aggregate
+"other" category.
+
+The upper bound $\tau_{\text{hi}}$ catches genes whose variability the model
+**underestimates** (e.g., missing zero-inflation or bimodality). The lower
+bound $\tau_{\text{lo}}$ catches genes where the model **overestimates**
+variability (e.g., the prior on dispersion is too diffuse, or the model is
+substantially more complex than the data warrants).
 
 More conservative filtering can incorporate additional criteria:
 
 $$
-m_g = \mathbf{1}\!\left[s_g^2 < \tau_{\text{var}}\right]
+m_g = \mathbf{1}\!\left[\tau_{\text{lo}} < s_g^2 < \tau_{\text{hi}}\right]
 \cdot \mathbf{1}\!\left[D_g < \tau_{\text{KS}}\right],
 $${#eq-gof-mask-combined}
 
-requiring both the variance and the KS distance to be below their respective
-thresholds.
+requiring both the variance and the KS distance to be within their respective
+bounds.
 
 #### Threshold selection
 
 As with the Gaussianity diagnostics in @sec-diffexp-nonparametric, we advocate
-a descriptive-threshold approach rather than formal hypothesis testing. A
-reasonable default is:
+a descriptive-threshold approach rather than formal hypothesis testing.
+Reasonable defaults are:
 
-- $\tau_{\text{var}} = 1.5$: retains genes whose residual variance is at most
-  50% above the null expectation. This threshold is deliberately generous; it
-  flags only genes with substantial fit problems.
+- $\tau_{\text{lo}} = 0.5$: retains genes whose residual variance is at most
+  50% below the null expectation, flagging severe overestimation of
+  variability.
+- $\tau_{\text{hi}} = 1.5$: retains genes whose residual variance is at most
+  50% above the null expectation.  Both thresholds are deliberately generous;
+  they flag only genes with substantial fit problems.
 - $\tau_{\text{KS}}$: if used, a quantile-based cutoff (e.g., the 95th
   percentile of $D_g$ across genes) ensures a consistent fraction of genes pass
   regardless of dataset size.
