@@ -156,3 +156,4 @@ hydra:
           - inference.log_progress_lines
           - inference.batch_size
           - annotation_min_cells
+          - data
