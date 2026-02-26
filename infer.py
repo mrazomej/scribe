@@ -81,6 +81,8 @@ from scribe.models.config import AmortizationConfig
 import pickle
 import os
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -110,6 +112,115 @@ def _get_console() -> Console:
     if _console is None:
         _console = Console()
     return _console
+
+
+# ------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ResumeSource:
+    """Normalized paths for resuming an inference run.
+
+    Parameters
+    ----------
+    run_dir : str
+        Absolute path to the run directory that stores run artifacts.
+    checkpoint_dir : str or None
+        Absolute path to the checkpoint directory when available.
+    results_path : str or None
+        Absolute path to ``scribe_results.pkl`` when available.
+    """
+
+    run_dir: str
+    checkpoint_dir: str | None
+    results_path: str | None
+
+
+# ------------------------------------------------------------------------------
+
+
+def _resolve_resume_source(
+    resume_from: str | None, console: Console | None = None
+) -> _ResumeSource | None:
+    """Resolve user resume input into canonical run/checkpoint paths.
+
+    Parameters
+    ----------
+    resume_from : str or None
+        User-provided path for resuming. Supported inputs are:
+        - a run directory containing ``checkpoints/`` and/or
+          ``scribe_results.pkl``
+        - a direct ``checkpoints`` directory path
+        - a direct ``scribe_results.pkl`` path
+    console : Console, optional
+        Rich console used for status logging.
+
+    Returns
+    -------
+    _ResumeSource or None
+        Resolved resume source metadata, or ``None`` when ``resume_from`` is
+        not provided.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``resume_from`` does not exist.
+    ValueError
+        If ``resume_from`` points to an unsupported file type.
+    """
+    if resume_from is None:
+        return None
+
+    abs_path = Path(hydra.utils.to_absolute_path(str(resume_from)))
+    if not abs_path.exists():
+        raise FileNotFoundError(
+            f"resume_from path not found: {abs_path.as_posix()}"
+        )
+
+    # Normalize directory-style inputs first, including explicit checkpoints/.
+    if abs_path.is_dir():
+        if abs_path.name == "checkpoints":
+            run_dir = abs_path.parent
+            checkpoint_dir = abs_path
+        else:
+            run_dir = abs_path
+            checkpoint_dir = run_dir / "checkpoints"
+            if not checkpoint_dir.exists():
+                checkpoint_dir = None
+
+        results_path = run_dir / "scribe_results.pkl"
+        if not results_path.exists():
+            results_path = None
+    else:
+        if abs_path.name != "scribe_results.pkl":
+            raise ValueError(
+                "resume_from file must be 'scribe_results.pkl' "
+                f"(got: {abs_path.name})"
+            )
+        run_dir = abs_path.parent
+        checkpoint_dir = run_dir / "checkpoints"
+        if not checkpoint_dir.exists():
+            checkpoint_dir = None
+        results_path = abs_path
+
+    resolved = _ResumeSource(
+        run_dir=run_dir.as_posix(),
+        checkpoint_dir=(
+            checkpoint_dir.as_posix() if checkpoint_dir is not None else None
+        ),
+        results_path=(
+            results_path.as_posix() if results_path is not None else None
+        ),
+    )
+
+    if console:
+        console.print(
+            f"[dim]Resume source:[/dim] [cyan]{abs_path.as_posix()}[/cyan]"
+        )
+        console.print(
+            f"[dim]Resume run directory:[/dim] [cyan]{resolved.run_dir}[/cyan]"
+        )
+    return resolved
 
 
 # Suppress scanpy/anndata deprecation warnings
@@ -390,14 +501,48 @@ def main(cfg: DictConfig) -> None:
 
     hydra_cfg = HydraConfig.get()
     output_dir = hydra_cfg.runtime.output_dir
+
+    # Resolve optional resume source before setting checkpoint destination.
+    # When provided, we intentionally write outputs back into the prior run
+    # directory so checkpoint and final result artifacts remain co-located.
+    resume_source = _resolve_resume_source(cfg.get("resume_from"), console)
+    if resume_source is not None:
+        output_dir = resume_source.run_dir
+        console.print(
+            f"[dim]Resuming into existing output directory:[/dim] "
+            f"[cyan]{output_dir}[/cyan]"
+        )
     # Note: output_dir is already sanitized by the sanitize_dirname resolver
     # in config.yaml, so brackets are removed before Hydra creates the directory
 
     if "early_stopping" in inference_cfg and inference_cfg["early_stopping"]:
-        checkpoint_dir = os.path.join(output_dir, "checkpoints")
+        checkpoint_dir = (
+            resume_source.checkpoint_dir
+            if resume_source is not None and resume_source.checkpoint_dir
+            else os.path.join(output_dir, "checkpoints")
+        )
         inference_cfg["early_stopping"]["checkpoint_dir"] = checkpoint_dir
+        if resume_source is not None:
+            inference_cfg["early_stopping"]["resume"] = True
         console.print(
             f"[dim]Checkpoint directory:[/dim] [cyan]{checkpoint_dir}[/cyan]"
+        )
+
+    # For SVI/VAE continuation, a checkpoint must exist because optimizer state
+    # is required to continue from the exact previous training trajectory.
+    if (
+        resume_source is not None
+        and inference_method in {"svi", "vae"}
+        and (
+            "early_stopping" not in inference_cfg
+            or not inference_cfg["early_stopping"]
+            or inference_cfg["early_stopping"].get("checkpoint_dir") is None
+        )
+    ):
+        raise ValueError(
+            "resume_from for SVI/VAE requires an existing checkpoint "
+            "directory. Provide a run directory (or checkpoints path) that "
+            "contains checkpoints created by a previous run."
         )
 
     # Build priors dict (filtering None values)
@@ -452,6 +597,17 @@ def main(cfg: DictConfig) -> None:
 
     # Load SVI results for MCMC chain initialization (if path is provided)
     svi_init_results = _load_svi_init(cfg.get("svi_init"), console)
+    if (
+        svi_init_results is None
+        and resume_source is not None
+        and inference_method == "mcmc"
+        and resume_source.results_path is not None
+    ):
+        console.print(
+            "[dim]No explicit svi_init provided; using resume source "
+            "Scribe results for MCMC initialization.[/dim]"
+        )
+        svi_init_results = _load_svi_init(resume_source.results_path, console)
 
     # Build kwargs for scribe.fit()
     kwargs = {
