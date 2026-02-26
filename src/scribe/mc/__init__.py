@@ -19,6 +19,9 @@ In addition, the module provides:
 - **Goodness-of-fit diagnostics**: per-gene randomized quantile residuals
   (RQR) that assess how well a single fitted model describes each gene's
   count distribution, with expression-scale-invariant summary statistics.
+- **PPC-based goodness-of-fit**: full posterior predictive checks that compare
+  observed histograms to PPC credible bands, producing calibration failure
+  rates and L1 density distances for higher-resolution gene filtering.
 
 Quick start
 -----------
@@ -56,6 +59,9 @@ Low-level functions
 - ``compute_quantile_residuals()`` — randomized quantile residuals.
 - ``goodness_of_fit_scores()`` — per-gene fit diagnostics from residuals.
 - ``compute_gof_mask()`` — boolean gene mask from fit quality.
+- ``ppc_goodness_of_fit_scores()`` — PPC-based per-gene calibration and L1
+  scoring.
+- ``compute_ppc_gof_mask()`` — PPC-based boolean gene mask with gene batching.
 
 See ``paper/_model_comparison.qmd`` and ``paper/_goodness_of_fit.qmd``
 for full mathematical derivations.
@@ -89,11 +95,13 @@ from ._stacking import (
     stacking_summary,
 )
 
-# Goodness-of-fit diagnostics
+# Goodness-of-fit diagnostics (RQR + PPC)
 from ._goodness_of_fit import (
     compute_quantile_residuals,
     goodness_of_fit_scores,
     compute_gof_mask,
+    ppc_goodness_of_fit_scores,
+    compute_ppc_gof_mask,
 )
 
 __all__ = [
@@ -113,8 +121,11 @@ __all__ = [
     # Stacking
     "compute_stacking_weights",
     "stacking_summary",
-    # Goodness-of-fit
+    # Goodness-of-fit (RQR)
     "compute_quantile_residuals",
     "goodness_of_fit_scores",
     "compute_gof_mask",
+    # Goodness-of-fit (PPC)
+    "ppc_goodness_of_fit_scores",
+    "compute_ppc_gof_mask",
 ]
