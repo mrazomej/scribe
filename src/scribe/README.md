@@ -471,6 +471,10 @@ list-like metadata fields. For example, both
 `mixture_params=["phi,mu,gate"]` and `mixture_params="phi,mu,gate"` are
 normalized to match metadata stored as `["phi", "mu", "gate"]`.
 
+Dot-key filters are also supported for both metadata layouts:
+flattened keys (for example, `inference.enable_x64`) and nested dictionaries
+(for example, `inference.batch_size`).
+
 For advanced selection logic, use the callable catalog filter API:
 `catalog.filter(lambda run: "annotation_key=cell-class" in run.path)`.
 This enables custom path/name filtering or arbitrary metadata predicates.

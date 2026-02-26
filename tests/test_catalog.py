@@ -175,6 +175,29 @@ def test_find_supports_nested_dot_key_filters():
     assert matches == [experiments[0]]
 
 
+def test_find_supports_flattened_dot_key_filters():
+    """Resolve dot-key filters against flattened metadata dictionaries.
+
+    Returns
+    -------
+    None
+        Asserts flattened keys like ``inference.enable_x64`` are matched
+        directly without requiring nested dictionary traversal.
+    """
+    experiment = ExperimentRun(
+        path="/tmp/bleo/model=nbvcp,inference.enable_x64=True",
+        metadata={
+            "model": "nbvcp",
+            "inference.enable_x64": True,
+        },
+    )
+    catalog = _build_catalog_with_experiments([experiment])
+
+    matches = catalog.find(model="nbvcp", **{"inference.enable_x64": True})
+
+    assert matches == [experiment]
+
+
 def test_filter_with_lambda_over_run_name():
     """Filter experiments with a lambda operating on run path names.
 

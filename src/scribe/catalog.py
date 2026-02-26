@@ -575,30 +575,29 @@ class ExperimentCatalog:
                     value
                 )
 
-                # Handle nested keys
-                if "." in key:
+                # Prefer exact-key lookup first so flattened metadata keys like
+                # "inference.enable_x64" match directly. If not present, fall
+                # back to nested dict traversal for true hierarchical metadata.
+                if key in exp.metadata:
+                    current = exp.metadata[key]
+                elif "." in key:
                     parts = key.split(".")
                     current = exp.metadata
                     try:
                         for part in parts:
                             current = current[part]
-                        normalized_current = self._normalize_comma_delimited_value(
-                            current
-                        )
-                        if normalized_current != normalized_filter_value:
-                            matches = False
-                            break
                     except (KeyError, TypeError):
                         matches = False
                         break
                 else:
                     current = exp.metadata.get(key)
-                    normalized_current = self._normalize_comma_delimited_value(
-                        current
-                    )
-                    if normalized_current != normalized_filter_value:
-                        matches = False
-                        break
+
+                normalized_current = self._normalize_comma_delimited_value(
+                    current
+                )
+                if normalized_current != normalized_filter_value:
+                    matches = False
+                    break
 
             if matches:
                 matching_experiments.append(exp)
