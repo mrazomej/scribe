@@ -552,3 +552,212 @@ The inverse normal CDF $\Phi^{-1}$ is available as
 `jax.scipy.stats.norm.ppf`. Both operations are JIT-compilable and support
 automatic vectorization via `jax.vmap`, enabling efficient batch computation
 over the full $(C, G)$ count matrix.
+
+
+## Limitations of MAP-based residuals {#sec-gof-map-limitations}
+
+The RQR framework derived above evaluates the model CDF at a single point
+estimate $\hat{\boldsymbol{\theta}}_{\text{MAP}}$.  While convenient, this
+introduces two failure modes that limit the diagnostic's discriminative power
+in practice.
+
+### Systematic bias from shared parameters
+
+Many scribe models share one or more parameters across all genes.  In VCP
+models, for instance, the gene-level success probability $p$ or the per-cell
+capture probability $\nu_c$ are global.  A small systematic error in
+$\hat{p}_{\text{MAP}}$ biases the CDF evaluation $F_{\text{NB}}(u \mid r_g,
+\hat{p})$ for **every gene simultaneously**, inflating the KS distance $D_g$
+by roughly the same amount everywhere.  When the systematic component
+dominates the per-gene variation, the KS statistic can no longer separate
+well-fit genes from poorly fit ones: both receive similarly high KS values.
+
+### Variance insensitivity to shape misfit
+
+The per-gene residual variance $s_g^2$ captures *scale* miscalibration—whether
+the model's predicted spread matches the data—but is blind to *shape*
+deviations that preserve scale.  Two genes with identical $s_g^2$ can have
+dramatically different predictive fit: one where the predicted histogram
+tracks the data closely, and another where the shape is wrong but the second
+moment happens to match.  This occurs because the variance statistic
+integrates out the specific bin-level structure of the distribution.
+
+Together, these limitations motivate a complementary diagnostic based on
+posterior predictive checks, which (a) integrates over parameter uncertainty
+rather than conditioning on a point estimate, and (b) directly compares the
+predicted and observed distributions at the histogram level.
+
+
+## PPC-based goodness-of-fit diagnostics {#sec-gof-ppc}
+
+### Posterior predictive sampling
+
+Rather than evaluating the model at a single MAP point, the PPC approach draws
+$S$ parameter vectors from the variational posterior and generates replicate
+data from each:
+
+$$
+\boldsymbol{\theta}^{(s)} \sim q(\boldsymbol{\theta}), \qquad
+\mathbf{y}^{\text{rep}(s)} \sim p(\mathbf{y} \mid \boldsymbol{\theta}^{(s)}),
+\qquad s = 1, \dots, S.
+$$ {#eq-gof-ppc-sampling}
+
+Each replicate $\mathbf{y}^{\text{rep}(s)}$ is a full $(C, G)$ count matrix
+drawn from the complete generative model---including zero-inflation ($g$),
+capture probability ($\nu_c$), and mixture component assignment ($z_c$) when
+applicable.  By drawing $\boldsymbol{\theta}^{(s)}$ from the posterior rather
+than fixing it at the MAP, the PPC credible bands reflect genuine
+**parameter uncertainty**, not just sampling noise.
+
+### Per-gene PPC histograms
+
+For each gene $g$ and replicate $s$, compute the normalized count histogram:
+
+$$
+\hat{f}_g^{(s)}(b) = \frac{1}{C} \sum_{c=1}^{C}
+\mathbf{1}\!\bigl[y_{cg}^{\text{rep}(s)} = b\bigr],
+\qquad b = 0, 1, 2, \dots, b_{\max}.
+$$ {#eq-gof-ppc-histogram}
+
+Across the $S$ replicates, each bin $b$ has an empirical distribution of
+predicted densities.  The $\alpha\%$ **pointwise credible band** for gene $g$
+at bin $b$ is
+
+$$
+\bigl[L_g^\alpha(b),\; U_g^\alpha(b)\bigr]
+= \bigl[\hat{f}_g^{((1-\alpha/2) \cdot S)}(b),\;
+         \hat{f}_g^{((\alpha/2) \cdot S)}(b)\bigr],
+$$ {#eq-gof-ppc-band}
+
+where superscripts denote order statistics across the $S$ replicates.  The
+PPC median density is $\tilde{f}_g(b) = \text{median}_s\,\hat{f}_g^{(s)}(b)$.
+
+### Calibration failure rate
+
+Let $\hat{f}_g^{\text{obs}}(b)$ denote the normalized histogram of the
+observed counts for gene $g$.  The **calibration failure rate** measures the
+fraction of histogram bins where the observed density falls outside the
+credible band:
+
+$$
+\hat{c}_g = \frac{
+  \sum_{b} \mathbf{1}\!\bigl[
+    \hat{f}_g^{\text{obs}}(b) < L_g^\alpha(b)
+    \;\text{or}\;
+    \hat{f}_g^{\text{obs}}(b) > U_g^\alpha(b)
+  \bigr] \cdot \mathbf{1}\!\bigl[\hat{f}_g^{\text{obs}}(b) > 0\bigr]
+}{
+  \sum_{b} \mathbf{1}\!\bigl[\hat{f}_g^{\text{obs}}(b) > 0\bigr]
+}.
+$$ {#eq-gof-ppc-calibration}
+
+Under a correctly specified model, each non-empty bin should fall outside the
+$\alpha\%$ band with probability approximately $1 - \alpha/100$, so
+$\hat{c}_g$ should be close to that nominal rate.  Values substantially above
+indicate the model's predictive distribution disagrees with the observed data.
+
+The restriction to non-empty bins ($\hat{f}_g^{\text{obs}}(b) > 0$) avoids
+counting bins where the data has no support, which would artificially deflate
+the failure rate for sparse genes.
+
+### Integrated density distance
+
+The **integrated density distance** captures the magnitude, not just the
+occurrence, of misfit:
+
+$$
+d_g = \sum_{b=0}^{b_{\max}}
+  \bigl|\hat{f}_g^{\text{obs}}(b) - \tilde{f}_g(b)\bigr|.
+$$ {#eq-gof-ppc-l1}
+
+This is the $L^1$ distance between the observed and PPC median histograms.
+Unlike the calibration failure rate, $d_g$ grows with the **severity** of each
+bin-level discrepancy, not just its presence.  For example, a gene where the
+model shifts the entire distribution by one count will have a higher $d_g$
+than a gene that merely has slightly wider tails, even if both have the same
+calibration failure rate.
+
+### Relationship to RQR diagnostics
+
+The PPC-based metrics are complementary to, not replacements for, the RQR
+residuals derived earlier:
+
+| **Aspect** | **RQR** | **PPC** |
+|---|---|---|
+| Parameter handling | Single MAP point | Full posterior draws |
+| What it tests | CDF transform → N(0,1) | Histogram shape match |
+| Scale-invariance | Inherent (by construction) | Approximate (via normalization) |
+| Sensitivity to shape | Limited (summarized by moments) | Direct (bin-level comparison) |
+| Computational cost | $O(CG)$ — single forward pass | $O(SCG)$ — posterior sampling + generation |
+
+In practice, RQR provides a fast initial screen, while PPC diagnostics offer
+higher-resolution per-gene evaluation when the RQR results are ambiguous or
+when systematic parameter bias is suspected.
+
+
+### Gene filtering with PPC scores {#sec-gof-ppc-filtering}
+
+The PPC-based mask is constructed analogously to the variance-based mask in
+@sec-gof-filtering.  A gene passes the PPC goodness-of-fit filter if its
+calibration failure rate and (optionally) L1 distance are within specified
+bounds:
+
+$$
+m_g^{\text{PPC}} = \mathbf{1}\!\bigl[\hat{c}_g \le c_{\max}\bigr]
+  \;\cdot\; \mathbf{1}\!\bigl[d_g \le d_{\max}\bigr],
+$$ {#eq-gof-ppc-mask}
+
+where $c_{\max}$ and $d_{\max}$ are user-specified thresholds.  The L1
+criterion is optional: when $d_{\max}$ is not set, only the calibration
+failure rate is used.
+
+
+### Computational considerations for PPC diagnostics {#sec-gof-ppc-computation}
+
+#### Cost analysis
+
+The PPC computation has three phases with distinct costs:
+
+| **Phase** | **Operation** | **Complexity** | **Memory** |
+|---|---|---|---|
+| 1. Posterior sampling | Draw $S$ parameter vectors from $q(\boldsymbol{\theta})$ | $O(S \cdot \dim(\boldsymbol{\theta}))$ | $O(S \cdot G)$ |
+| 2. Predictive generation | Sample counts per gene batch | $O(S \cdot C \cdot G_{\text{batch}})$ | $O(S \cdot C \cdot G_{\text{batch}})$ |
+| 3. Histogram scoring | Compute CRs and compare | $O(S \cdot G_{\text{batch}})$ | $O(G_{\text{batch}})$ |
+
+Phase 1 is performed **once** regardless of the number of gene batches.
+Phase 2 dominates and is repeated $\lceil G / G_{\text{batch}} \rceil$ times.
+
+For $S = 500$, $C = 5{,}000$, $G = 20{,}000$, $G_{\text{batch}} = 50$:
+
+- **Peak memory per batch**: $500 \times 5{,}000 \times 50 \times 4$ bytes
+  $\approx 500$ MB.
+- **Total batches**: $20{,}000 / 50 = 400$.
+- **Posterior parameter storage**: $500 \times 20{,}000 \times 4$ bytes
+  $\times \sim 3$ parameters $\approx 120$ MB (held throughout).
+- **Estimated wall time**: 15--30 minutes depending on hardware.
+
+Contrast this with the MAP-based RQR diagnostic, which is a single $O(CG)$
+forward pass completing in seconds.  The PPC approach is orders of magnitude
+more expensive but provides substantially higher-resolution per-gene
+discrimination.
+
+#### Implementation strategy
+
+The implementation follows a **"sample once, predict in batches"** strategy:
+
+1. Draw $S$ posterior parameter vectors from the variational guide and cache
+   them.  This uses `jax.vmap` over the sample dimension for efficient
+   parallel evaluation.
+2. For each gene batch $[g_{\text{start}}, g_{\text{end}})$, slice the
+   gene-indexed parameters ($r$, and optionally $g$ for ZINB models) from
+   the cached posterior, construct the appropriate observation distribution
+   (NB, ZINB, mixture, VCP), and sample $(S, C, G_{\text{batch}})$ counts.
+3. Score the batch against the observed histogram, append per-gene results,
+   and discard the batch PPC array.
+4. After all batches, clear the cached posterior to free memory.
+
+This avoids both materializing the full $(S, C, G)$ array ($\sim 200$ GB for
+the dimensions above) and the overhead of running NumPyro's `Predictive`
+engine per batch.  Cell-level batching within each gene batch further
+controls memory for VCP models where the per-cell capture probability
+creates an additional $C$-sized dimension.

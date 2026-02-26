@@ -550,6 +550,333 @@ def _sample_biological_nb_single(
 
 
 # ------------------------------------------------------------------------------
+# Full-model posterior PPC sampling (NB / ZINB / VCP / mixtures)
+# ------------------------------------------------------------------------------
+
+
+def sample_posterior_ppc(
+    r: jnp.ndarray,
+    p: jnp.ndarray,
+    n_cells: int,
+    rng_key: random.PRNGKey,
+    n_samples: int = 1,
+    gate: Optional[jnp.ndarray] = None,
+    p_capture: Optional[jnp.ndarray] = None,
+    mixing_weights: Optional[jnp.ndarray] = None,
+    cell_batch_size: Optional[int] = None,
+) -> jnp.ndarray:
+    """Sample from the full generative model using posterior parameters.
+
+    Generates posterior predictive count samples that include **all** model
+    components (NB base, zero-inflation gate, capture probability, mixture
+    assignments).  Unlike :func:`sample_biological_nb`, this produces
+    replicate data comparable to the *observed* counts and is appropriate
+    for PPC-based goodness-of-fit evaluation.
+
+    The function supports both MAP point estimates and full posterior
+    parameter arrays.  When ``r`` has a leading sample dimension the
+    function uses ``jax.vmap`` to vectorise over posterior draws.
+
+    Parameters
+    ----------
+    r : jnp.ndarray
+        Dispersion parameter.
+
+        * Standard model, MAP: shape ``(n_genes,)``.
+        * Standard model, posterior: shape ``(n_samples, n_genes)``.
+        * Mixture model, MAP: shape ``(n_components, n_genes)``.
+        * Mixture model, posterior: shape ``(n_samples, n_components,
+          n_genes)``.
+    p : jnp.ndarray
+        Success probability of the Negative Binomial.
+
+        * MAP: scalar or ``(n_components,)`` for component-specific p.
+        * Posterior: ``(n_samples,)`` or ``(n_samples, n_components)``.
+    n_cells : int
+        Number of cells to generate counts for.
+    rng_key : random.PRNGKey
+        JAX PRNG key for reproducible sampling.
+    n_samples : int, optional
+        Number of draws when ``r`` has no leading sample dimension (MAP
+        path).  Ignored when the sample dimension is inferred from ``r``.
+        Default: 1.
+    gate : jnp.ndarray or None, optional
+        Zero-inflation gate probability.
+
+        * MAP standard: ``(n_genes,)``.
+        * Posterior standard: ``(n_samples, n_genes)``.
+        * MAP mixture: ``(n_components, n_genes)``.
+        * Posterior mixture: ``(n_samples, n_components, n_genes)``.
+
+        ``None`` for non-ZINB models.
+    p_capture : jnp.ndarray or None, optional
+        Per-cell capture probability.
+
+        * MAP: ``(n_cells,)``.
+        * Posterior: ``(n_samples, n_cells)``.
+
+        ``None`` for non-VCP models.
+    mixing_weights : jnp.ndarray or None, optional
+        Component mixing weights for mixture models.
+
+        * MAP: ``(n_components,)``.
+        * Posterior: ``(n_samples, n_components)``.
+
+        ``None`` for non-mixture models.
+    cell_batch_size : int or None, optional
+        If set, cells are processed in batches of this size to limit peak
+        memory.  Particularly useful for VCP models.  ``None`` processes
+        all cells at once.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled counts with shape ``(n_samples, n_cells, n_genes)``.
+
+    See Also
+    --------
+    sample_biological_nb : Biological-only (denoised) PPC sampling.
+
+    Examples
+    --------
+    >>> # Full posterior PPC for a ZINB-VCP model
+    >>> samples = sample_posterior_ppc(
+    ...     r=posterior["r"],          # (S, n_genes)
+    ...     p=posterior["p"],          # (S,)
+    ...     n_cells=5000,
+    ...     rng_key=jax.random.PRNGKey(0),
+    ...     gate=posterior["gate"],    # (S, n_genes)
+    ...     p_capture=posterior["p_capture"],  # (S, n_cells)
+    ... )
+    >>> samples.shape
+    (S, 5000, n_genes)
+    """
+    is_mixture = mixing_weights is not None
+
+    # ------------------------------------------------------------------
+    # Detect leading sample dimension using the same heuristic as
+    # sample_biological_nb: posterior arrays have one extra leading axis.
+    # Standard MAP: r.ndim == 1 ; posterior: r.ndim == 2
+    # Mixture  MAP: r.ndim == 2 ; posterior: r.ndim == 3
+    # ------------------------------------------------------------------
+    has_sample_dim = (is_mixture and r.ndim == 3) or (
+        not is_mixture and r.ndim == 2
+    )
+
+    if has_sample_dim:
+        actual_n_samples = r.shape[0]
+        keys = random.split(rng_key, actual_n_samples)
+
+        # Build per-sample slices, using dummy arrays for None optionals
+        # so vmap sees concrete array inputs.
+        gate_arr = gate if gate is not None else jnp.zeros(actual_n_samples)
+        p_cap_arr = (
+            p_capture
+            if p_capture is not None
+            else jnp.zeros(actual_n_samples)
+        )
+        mw_arr = (
+            mixing_weights
+            if mixing_weights is not None
+            else jnp.zeros(actual_n_samples)
+        )
+
+        # Flags must be static for the vmap-ed function
+        _has_gate = gate is not None
+        _has_p_capture = p_capture is not None
+        _is_mixture = is_mixture
+
+        def _sample_one(key_i, r_i, p_i, gate_i, p_cap_i, mw_i):
+            return _sample_posterior_ppc_single(
+                r=r_i,
+                p=p_i,
+                n_cells=n_cells,
+                rng_key=key_i,
+                gate=gate_i if _has_gate else None,
+                p_capture=p_cap_i if _has_p_capture else None,
+                mixing_weights=mw_i if _is_mixture else None,
+                cell_batch_size=cell_batch_size,
+            )
+
+        return vmap(_sample_one)(
+            keys, r, p, gate_arr, p_cap_arr, mw_arr
+        )
+    else:
+        # MAP path: loop n_samples times
+        keys = random.split(rng_key, n_samples)
+        all_samples = []
+        for i in range(n_samples):
+            sample_i = _sample_posterior_ppc_single(
+                r=r,
+                p=p,
+                n_cells=n_cells,
+                rng_key=keys[i],
+                gate=gate,
+                p_capture=p_capture,
+                mixing_weights=mixing_weights,
+                cell_batch_size=cell_batch_size,
+            )
+            all_samples.append(sample_i)
+        return jnp.stack(all_samples, axis=0)
+
+
+def _sample_posterior_ppc_single(
+    r: jnp.ndarray,
+    p: jnp.ndarray,
+    n_cells: int,
+    rng_key: random.PRNGKey,
+    gate: Optional[jnp.ndarray] = None,
+    p_capture: Optional[jnp.ndarray] = None,
+    mixing_weights: Optional[jnp.ndarray] = None,
+    cell_batch_size: Optional[int] = None,
+) -> jnp.ndarray:
+    """Sample one PPC realisation from the full generative model.
+
+    Inner workhorse called once per posterior draw (or once per MAP draw).
+    Handles standard, ZINB, VCP, and mixture models with optional cell
+    batching.
+
+    Parameters
+    ----------
+    r : jnp.ndarray
+        Dispersion.  ``(n_genes,)`` for standard, ``(n_components,
+        n_genes)`` for mixture.
+    p : jnp.ndarray
+        Success probability.  Scalar or ``(n_components,)`` for mixture.
+    n_cells : int
+        Number of cells.
+    rng_key : random.PRNGKey
+        PRNG key.
+    gate : jnp.ndarray or None
+        Zero-inflation gate.  ``(n_genes,)`` or ``(n_components,
+        n_genes)`` for per-component gates.
+    p_capture : jnp.ndarray or None
+        Per-cell capture probability ``(n_cells,)``.
+    mixing_weights : jnp.ndarray or None
+        Component weights ``(n_components,)`` for mixture models.
+    cell_batch_size : int or None
+        Optional cell-level batching.
+
+    Returns
+    -------
+    jnp.ndarray
+        Counts array of shape ``(n_cells, n_genes)``.
+    """
+    is_mixture = mixing_weights is not None
+    has_vcp = p_capture is not None
+    has_gate = gate is not None
+
+    if cell_batch_size is None:
+        cell_batch_size = n_cells
+
+    n_batches = (n_cells + cell_batch_size - 1) // cell_batch_size
+    batch_results = []
+
+    for batch_idx in range(n_batches):
+        start = batch_idx * cell_batch_size
+        end = min(start + cell_batch_size, n_cells)
+        batch_n = end - start
+
+        rng_key, batch_key = random.split(rng_key)
+
+        if is_mixture:
+            # -------------------------------------------------------
+            # Mixture model: sample component per cell, gather params
+            # -------------------------------------------------------
+            n_components = r.shape[0]
+            n_genes = r.shape[1]
+            comp_key, sample_key = random.split(batch_key)
+
+            # Component assignments: (batch_n,)
+            components = dist.Categorical(probs=mixing_weights).sample(
+                comp_key, (batch_n,)
+            )
+
+            # Gather per-cell r: (batch_n, n_genes)
+            r_batch = r[components]
+
+            # Gather per-cell p
+            p_is_component_specific = (
+                p.ndim >= 1 and p.shape[0] == n_components
+            )
+            if p_is_component_specific:
+                p_batch = p[components]
+                if p_batch.ndim == 1:
+                    p_batch = p_batch[:, None]
+            else:
+                p_batch = p
+
+            # Gather per-cell gate
+            if has_gate:
+                if gate.ndim == 2 and gate.shape[0] == n_components:
+                    gate_batch = gate[components]
+                else:
+                    gate_batch = gate
+            else:
+                gate_batch = None
+
+            # VCP: compute p_effective
+            if has_vcp:
+                p_cap = p_capture[start:end]  # (batch_n,)
+                p_cap_exp = p_cap[:, None]    # (batch_n, 1)
+                p_effective = (
+                    p_batch * p_cap_exp / (1 - p_batch * (1 - p_cap_exp))
+                )
+            else:
+                p_effective = p_batch
+
+            # NB distribution
+            nb = dist.NegativeBinomialProbs(r_batch, p_effective)
+
+            # Apply zero-inflation if present
+            if gate_batch is not None:
+                sample_dist = dist.ZeroInflatedDistribution(
+                    nb, gate=gate_batch
+                )
+            else:
+                sample_dist = nb
+
+            batch_counts = sample_dist.sample(sample_key)
+
+        else:
+            # -------------------------------------------------------
+            # Standard (non-mixture) model
+            # -------------------------------------------------------
+            # VCP: compute effective p per cell in this batch
+            if has_vcp:
+                p_cap = p_capture[start:end]       # (batch_n,)
+                p_cap_reshaped = p_cap[:, None]    # (batch_n, 1)
+                p_effective = (
+                    p * p_cap_reshaped
+                    / (1 - p * (1 - p_cap_reshaped))
+                )
+            else:
+                p_effective = p
+
+            nb = dist.NegativeBinomialProbs(r, p_effective)
+
+            if has_gate:
+                sample_dist = dist.ZeroInflatedDistribution(
+                    nb, gate=gate
+                )
+            else:
+                sample_dist = nb
+
+            # Shape depends on whether VCP gives the distribution a
+            # batch dimension.
+            if has_vcp:
+                batch_counts = sample_dist.sample(batch_key)
+            else:
+                batch_counts = sample_dist.sample(
+                    batch_key, (batch_n,)
+                )
+
+        batch_results.append(batch_counts)
+
+    return jnp.concatenate(batch_results, axis=0)
+
+
+# ------------------------------------------------------------------------------
 # Bayesian denoising of observed counts
 # ------------------------------------------------------------------------------
 

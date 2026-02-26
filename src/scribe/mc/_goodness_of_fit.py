@@ -1,25 +1,30 @@
-"""Per-gene goodness-of-fit diagnostics via randomized quantile residuals.
+"""Per-gene goodness-of-fit diagnostics.
 
-This module implements the Randomized Quantile Residual (RQR) framework
-of Dunn and Smyth (1996) for assessing how well a fitted model describes
-each gene's count distribution.  The key property is *expression-scale
-invariance*: under a correctly specified model, the residuals are
-standard normal for every gene regardless of expression level, dispersion,
-or number of cells.
+This module provides two complementary approaches for assessing how well
+a fitted model describes each gene's count distribution:
 
-The workflow is:
+**1. Randomized Quantile Residuals (RQR)** — the Dunn & Smyth (1996)
+framework.  Fast (single MAP forward pass) and expression-scale invariant,
+but limited by systematic bias when shared parameters are miscalibrated.
 
-1. **Compute residuals** (``compute_quantile_residuals``): for each
-   cell-gene pair, transform the observed UMI count through the model's
-   predictive CDF and the randomized PIT, yielding a standard-normal
-   residual.
-2. **Summarize per gene** (``goodness_of_fit_scores``): aggregate
-   residuals across cells into interpretable per-gene diagnostics
-   (mean, variance, tail excess, KS distance).
-3. **Build a boolean mask** (``compute_gof_mask``): a high-level function
-   that extracts MAP parameters from a results object, computes
-   residuals, and returns a ``(G,)`` boolean mask suitable for the
-   ``gene_mask`` argument of the DE pipeline.
+The RQR workflow is:
+
+1. ``compute_quantile_residuals``: transform observed UMI counts through
+   the model CDF and randomized PIT.
+2. ``goodness_of_fit_scores``: aggregate residuals into per-gene
+   diagnostics (mean, variance, tail excess, KS distance).
+3. ``compute_gof_mask``: high-level mask builder.
+
+**2. PPC-based scoring** — full posterior predictive checks that compare
+observed count histograms to posterior-predictive credible bands.  More
+expensive (``O(SCG)``), but directly measures histogram-level misfit and
+integrates over parameter uncertainty.
+
+The PPC workflow is:
+
+1. ``ppc_goodness_of_fit_scores``: compute calibration failure rate and
+   L1 density distance from pre-generated PPC samples.
+2. ``compute_ppc_gof_mask``: high-level mask builder with gene batching.
 
 See ``paper/_goodness_of_fit.qmd`` for full mathematical derivations.
 
@@ -424,6 +429,292 @@ def compute_gof_mask(
     if max_ks is not None:
         mask = mask & np.asarray(scores["ks_distance"] < max_ks)
 
+    return mask
+
+
+# ---------------------------------------------------------------------------
+# PPC-based per-gene goodness-of-fit scoring
+# ---------------------------------------------------------------------------
+
+
+def ppc_goodness_of_fit_scores(
+    ppc_samples: jnp.ndarray,
+    obs_counts: jnp.ndarray,
+    credible_level: int = 95,
+    max_bin: Optional[int] = None,
+) -> Dict[str, np.ndarray]:
+    """Compute PPC-based per-gene goodness-of-fit scores.
+
+    For each gene the function compares the observed count histogram to
+    posterior-predictive credible bands and produces two complementary
+    metrics.
+
+    Parameters
+    ----------
+    ppc_samples : jnp.ndarray, shape ``(S, C, G)``
+        Posterior predictive count samples.  ``S`` is the number of
+        posterior draws, ``C`` the number of cells, ``G`` the number of
+        genes.
+    obs_counts : jnp.ndarray, shape ``(C, G)``
+        Observed UMI count matrix for the same cells and genes.
+    credible_level : int, optional
+        Width of the pointwise credible band (percentage).  Default: 95.
+    max_bin : int or None, optional
+        If set, histogram bins above this value are collapsed.  Helps
+        bound computation for heavy-tailed genes.
+
+    Returns
+    -------
+    dict
+        Dictionary with per-gene arrays of shape ``(G,)``:
+
+        ``calibration_failure``
+            Fraction of non-empty observed-histogram bins whose density
+            falls outside the ``credible_level`` credible band.  Under a
+            well-specified model this should be close to
+            ``1 - credible_level / 100``.
+        ``l1_distance``
+            Sum of absolute differences between observed density and PPC
+            median density across bins.  Captures the magnitude of
+            histogram-level misfit.
+
+    See Also
+    --------
+    compute_ppc_gof_mask : High-level mask builder that wraps this scorer.
+    goodness_of_fit_scores : RQR-based alternative.
+    scribe.stats.histogram.compute_histogram_credible_regions :
+        Underlying credible-region computation.
+    """
+    from scribe.stats.histogram import compute_histogram_credible_regions
+
+    obs_counts = np.asarray(obs_counts)
+    G = obs_counts.shape[1]
+
+    cal_failures = np.empty(G, dtype=np.float64)
+    l1_distances = np.empty(G, dtype=np.float64)
+
+    for g in range(G):
+        # PPC samples for this gene: (S, C)
+        gene_ppc = ppc_samples[:, :, g]
+
+        # Compute credible regions from PPC samples
+        cr = compute_histogram_credible_regions(
+            gene_ppc,
+            credible_regions=[credible_level],
+            normalize=True,
+            max_bin=max_bin,
+        )
+
+        bin_edges = cr["bin_edges"]
+        region = cr["regions"][credible_level]
+        lower = region["lower"]
+        upper = region["upper"]
+        median = region["median"]
+
+        # Observed histogram with the same bin edges, normalized
+        obs_hist, _ = np.histogram(obs_counts[:, g], bins=bin_edges)
+        obs_total = obs_hist.sum()
+        if obs_total > 0:
+            obs_density = obs_hist / obs_total
+        else:
+            obs_density = obs_hist.astype(np.float64)
+
+        # Calibration failure rate: fraction of non-empty observed bins
+        # that fall outside the credible band
+        nonempty = obs_density > 0
+        n_nonempty = nonempty.sum()
+        if n_nonempty > 0:
+            outside = (obs_density[nonempty] < lower[nonempty]) | (
+                obs_density[nonempty] > upper[nonempty]
+            )
+            cal_failures[g] = outside.sum() / n_nonempty
+        else:
+            cal_failures[g] = 0.0
+
+        # L1 distance between observed and PPC median density
+        l1_distances[g] = np.sum(np.abs(obs_density - median))
+
+    return {
+        "calibration_failure": cal_failures,
+        "l1_distance": l1_distances,
+    }
+
+
+# ---------------------------------------------------------------------------
+# PPC-based high-level mask builder
+# ---------------------------------------------------------------------------
+
+
+def compute_ppc_gof_mask(
+    counts: jnp.ndarray,
+    results,
+    component: Optional[int] = None,
+    n_ppc_samples: int = 500,
+    gene_batch_size: int = 50,
+    rng_key: Optional[jnp.ndarray] = None,
+    counts_for_ppc: Optional[jnp.ndarray] = None,
+    cell_mask: Optional[np.ndarray] = None,
+    max_calibration_failure: float = 0.5,
+    max_l1_distance: Optional[float] = None,
+    credible_level: int = 95,
+    cell_batch_size: int = 500,
+    max_bin: Optional[int] = None,
+    verbose: bool = True,
+    return_scores: bool = False,
+) -> "np.ndarray | tuple[np.ndarray, Dict[str, np.ndarray]]":
+    """Build a per-gene PPC goodness-of-fit boolean mask.
+
+    This is the high-level entry point for PPC-based gene filtering.
+    It generates posterior predictive samples in gene batches, scores
+    each batch against the observed counts, and applies user-specified
+    thresholds to produce a boolean mask.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray, shape ``(C_model, G)``
+        Observed UMI counts for the cells classified into this model
+        (or component).  Used both for histogram comparison and for
+        amortized capture models.
+    results : ScribeSVIResults
+        Fitted model results object.  Must expose
+        ``get_posterior_ppc_samples`` and ``get_component``.
+    component : int or None, optional
+        For mixture models, which component to evaluate.  If ``None``
+        the results object is used directly.
+    n_ppc_samples : int, optional
+        Number of posterior draws.  Default: 500.
+    gene_batch_size : int, optional
+        Number of genes per batch.  Controls peak memory.  Default: 50.
+    rng_key : jnp.ndarray or None, optional
+        JAX PRNG key.  Defaults to ``random.PRNGKey(0)``.
+    counts_for_ppc : jnp.ndarray or None, optional
+        Full count matrix ``(C_all, G)`` for amortized capture models.
+        If ``None``, ``counts`` is used.
+    cell_mask : np.ndarray or None, optional
+        Boolean mask ``(C_all,)`` to subset PPC samples to the cells
+        in ``counts``.  Applied after generation.
+    max_calibration_failure : float, optional
+        Upper bound on calibration failure rate.  Genes exceeding this
+        are masked out.  Default: 0.5.
+    max_l1_distance : float or None, optional
+        Upper bound on L1 density distance.  If ``None`` only the
+        calibration criterion is applied.
+    credible_level : int, optional
+        Credible band width (percentage) for calibration scoring.
+        Default: 95.
+    cell_batch_size : int, optional
+        Cell batch size passed to ``get_posterior_ppc_samples``.
+        Default: 500.
+    max_bin : int or None, optional
+        Cap on histogram bin count (see ``ppc_goodness_of_fit_scores``).
+    verbose : bool, optional
+        Print progress messages.  Default: ``True``.
+    return_scores : bool, optional
+        If ``True`` also return the full per-gene score dictionary.
+        Default: ``False``.
+
+    Returns
+    -------
+    np.ndarray or tuple[np.ndarray, dict]
+        Boolean mask of shape ``(G,)`` (``True`` = gene passes).
+        When ``return_scores`` is ``True``, returns
+        ``(mask, scores_dict)`` where ``scores_dict`` has keys
+        ``'calibration_failure'`` and ``'l1_distance'``, each of
+        shape ``(G,)``.
+
+    See Also
+    --------
+    ppc_goodness_of_fit_scores : Low-level scorer.
+    compute_gof_mask : RQR-based alternative.
+    """
+    if rng_key is None:
+        rng_key = random.PRNGKey(0)
+
+    # Get the appropriate component result object
+    comp = (
+        results.get_component(component)
+        if component is not None
+        else results
+    )
+
+    ppc_counts = counts_for_ppc if counts_for_ppc is not None else counts
+    n_genes = counts.shape[1]
+
+    # Accumulate per-gene scores across batches
+    all_cal = []
+    all_l1 = []
+
+    n_batches = (n_genes + gene_batch_size - 1) // gene_batch_size
+
+    for batch_idx in range(n_batches):
+        g_start = batch_idx * gene_batch_size
+        g_end = min(g_start + gene_batch_size, n_genes)
+        gene_indices = jnp.arange(g_start, g_end)
+
+        if verbose:
+            print(
+                f"PPC GoF batch {batch_idx + 1}/{n_batches}: "
+                f"genes [{g_start}, {g_end})"
+            )
+
+        # Split key per batch so results are reproducible
+        rng_key, batch_key = random.split(rng_key)
+
+        # Generate PPC samples for this gene batch: (S, C, G_batch)
+        ppc = comp.get_posterior_ppc_samples(
+            gene_indices=gene_indices,
+            n_samples=n_ppc_samples,
+            cell_batch_size=cell_batch_size,
+            rng_key=batch_key,
+            counts=ppc_counts,
+            store_samples=False,
+            verbose=False,
+        )
+
+        # Optionally subset cells
+        if cell_mask is not None:
+            ppc = ppc[:, cell_mask, :]
+
+        # Score this batch
+        batch_scores = ppc_goodness_of_fit_scores(
+            ppc_samples=ppc,
+            obs_counts=counts[:, g_start:g_end],
+            credible_level=credible_level,
+            max_bin=max_bin,
+        )
+
+        all_cal.append(batch_scores["calibration_failure"])
+        all_l1.append(batch_scores["l1_distance"])
+
+        # Free batch PPC memory
+        del ppc
+
+    # Clear cached posterior to free memory
+    comp.posterior_samples = None
+
+    # Concatenate across batches
+    cal = np.concatenate(all_cal)
+    l1 = np.concatenate(all_l1)
+
+    # Build mask
+    mask = cal <= max_calibration_failure
+    if max_l1_distance is not None:
+        mask = mask & (l1 <= max_l1_distance)
+
+    if verbose:
+        n_pass = mask.sum()
+        print(
+            f"PPC GoF mask: {n_pass}/{n_genes} genes pass "
+            f"(calibration <= {max_calibration_failure}"
+            + (f", L1 <= {max_l1_distance}" if max_l1_distance else "")
+            + ")"
+        )
+
+    if return_scores:
+        return mask, {
+            "calibration_failure": cal,
+            "l1_distance": l1,
+        }
     return mask
 
 

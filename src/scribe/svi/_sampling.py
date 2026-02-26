@@ -22,6 +22,7 @@ from ..sampling import (
     sample_variational_posterior,
     generate_predictive_samples,
     sample_biological_nb,
+    sample_posterior_ppc,
     denoise_counts,
 )
 
@@ -731,6 +732,170 @@ class SamplingMixin:
             "parameter_samples": self.posterior_samples,
             "predictive_samples": bio_samples,
         }
+
+    # ==========================================================================
+    # Full-model posterior PPC (for goodness-of-fit evaluation)
+    # ==========================================================================
+
+    def get_posterior_ppc_samples(
+        self,
+        gene_indices: Optional[jnp.ndarray] = None,
+        n_samples: int = 500,
+        cell_batch_size: int = 500,
+        rng_key: Optional[random.PRNGKey] = None,
+        counts: Optional[jnp.ndarray] = None,
+        store_samples: bool = False,
+        verbose: bool = True,
+    ) -> jnp.ndarray:
+        """Generate full-model posterior predictive samples for GoF evaluation.
+
+        Draws PPC samples that include **all** model components (NB base,
+        zero-inflation gate, capture probability, mixture assignments), using
+        full posterior parameter draws rather than MAP point estimates.  This
+        makes the resulting samples directly comparable to observed counts and
+        suitable for PPC-based goodness-of-fit scoring.
+
+        The method implements a *sample-once, predict-per-batch* strategy:
+        posterior parameters are drawn (or reused) once, then for each gene
+        batch the relevant parameter slices are passed to
+        :func:`scribe.sampling.sample_posterior_ppc` for efficient direct
+        distribution sampling via ``jax.vmap``.
+
+        Parameters
+        ----------
+        gene_indices : jnp.ndarray or None, optional
+            Integer indices of genes to generate PPC for.  When ``None`` all
+            genes are included.  Providing a subset drastically reduces peak
+            memory.
+        n_samples : int, optional
+            Number of posterior draws.  Ignored when posterior samples are
+            already cached on ``self``.  Default: 500.
+        cell_batch_size : int, optional
+            Cells processed per batch inside the sampling helper.  Relevant
+            mainly for VCP models where per-cell capture probability creates
+            large intermediates.  Default: 500.
+        rng_key : random.PRNGKey or None, optional
+            JAX PRNG key.  Defaults to ``random.PRNGKey(42)``.
+        counts : jnp.ndarray or None, optional
+            Observed count matrix ``(n_cells, n_genes)`` needed for amortized
+            capture-probability models.
+        store_samples : bool, optional
+            If ``True``, stores the result in ``self.predictive_samples``.
+            Default: ``False``.
+        verbose : bool, optional
+            Print progress messages.  Default: ``True``.
+
+        Returns
+        -------
+        jnp.ndarray
+            PPC count samples with shape ``(S, n_cells, n_genes_batch)``
+            where ``S`` is the number of posterior draws and
+            ``n_genes_batch`` is ``len(gene_indices)`` (or total genes when
+            ``gene_indices`` is ``None``).
+
+        See Also
+        --------
+        get_ppc_samples_biological : Posterior PPC stripping technical noise.
+        get_map_ppc_samples : MAP-based PPC including technical noise.
+        scribe.sampling.sample_posterior_ppc : Core sampling helper.
+        """
+        if rng_key is None:
+            rng_key = random.PRNGKey(42)
+
+        # ---- 1. Draw or reuse posterior parameters ----
+        if self.posterior_samples is None:
+            key_post, rng_key = random.split(rng_key)
+            if verbose:
+                print(
+                    f"Drawing {n_samples} posterior samples from the "
+                    f"variational guide..."
+                )
+            self.get_posterior_samples(
+                rng_key=key_post,
+                n_samples=n_samples,
+                store_samples=True,
+                counts=counts,
+            )
+
+        # ---- 2. Extract parameters from posterior_samples ----
+        r = self.posterior_samples["r"]   # (S, G) or (S, K, G)
+        p = self.posterior_samples["p"]   # (S,) or (S, K)
+
+        is_mixture = self.n_components is not None and self.n_components > 1
+        has_gate = "gate" in self.posterior_samples
+        has_vcp = "p_capture" in self.posterior_samples
+
+        gate = self.posterior_samples.get("gate") if has_gate else None
+        p_capture = (
+            self.posterior_samples.get("p_capture") if has_vcp else None
+        )
+        mixing_weights = (
+            self.posterior_samples.get("mixing_weights")
+            if is_mixture
+            else None
+        )
+
+        if verbose:
+            model_desc = (
+                f"mixture ({self.n_components} components)"
+                if is_mixture
+                else "standard"
+            )
+            extras = []
+            if has_gate:
+                extras.append("ZINB")
+            if has_vcp:
+                extras.append("VCP")
+            extra_str = f" [{', '.join(extras)}]" if extras else ""
+            print(
+                f"Generating posterior PPC for {model_desc} model"
+                f"{extra_str}..."
+            )
+
+        # ---- 3. Slice gene dimension if requested ----
+        # Parameters that may carry a gene axis: r, p (hierarchical),
+        # gate.  p_capture is cell-indexed, not gene-indexed.
+        if gene_indices is not None:
+            n_genes = r.shape[-1]
+            if is_mixture:
+                # r: (S, K, G) → (S, K, G_batch)
+                r = r[:, :, gene_indices]
+                if gate is not None and gate.ndim == 3:
+                    gate = gate[:, :, gene_indices]
+                # p may be (S, K, G) for hierarchical mixtures
+                if p.ndim == 3 and p.shape[-1] == n_genes:
+                    p = p[:, :, gene_indices]
+            else:
+                # r: (S, G) → (S, G_batch)
+                r = r[:, gene_indices]
+                if gate is not None and gate.ndim == 2:
+                    gate = gate[:, gene_indices]
+                # p may be (S, G) for hierarchical (per-gene p) models
+                if p.ndim == 2 and p.shape[-1] == n_genes:
+                    p = p[:, gene_indices]
+
+        # ---- 4. Sample via the full-model helper ----
+        _, key_ppc = random.split(rng_key)
+        samples = sample_posterior_ppc(
+            r=r,
+            p=p,
+            n_cells=self.n_cells,
+            rng_key=key_ppc,
+            gate=gate,
+            p_capture=p_capture,
+            mixing_weights=mixing_weights,
+            cell_batch_size=cell_batch_size,
+        )
+
+        if verbose:
+            print(
+                f"Generated posterior PPC samples with shape {samples.shape}"
+            )
+
+        if store_samples:
+            self.predictive_samples = samples
+
+        return samples
 
     # --------------------------------------------------------------------------
 

@@ -140,6 +140,52 @@ See `paper/_goodness_of_fit.qmd` for the full mathematical derivation.
 
 ---
 
+## Per-gene goodness-of-fit (PPC-based)
+
+When RQR diagnostics are ambiguous — e.g., systematic bias in shared parameters
+inflates KS distances uniformly — the **PPC-based scoring** provides a
+higher-resolution alternative.  It generates full posterior predictive count
+samples, builds pointwise credible bands around the predicted histogram, and
+measures how often (and how severely) the observed histogram falls outside.
+
+Two metrics are produced per gene:
+
+- **Calibration failure rate**: fraction of non-empty histogram bins outside
+  the credible band.
+- **L1 density distance**: sum of absolute differences between observed and
+  PPC median densities.
+
+```python
+from scribe.mc import compute_ppc_gof_mask
+
+# Build a PPC-based mask (slower, but more discriminative)
+mask, scores = compute_ppc_gof_mask(
+    counts, results,
+    n_ppc_samples=500,
+    gene_batch_size=50,
+    max_calibration_failure=0.5,
+    return_scores=True,
+)
+
+# Inspect per-gene scores
+print(scores["calibration_failure"][:10])
+print(scores["l1_distance"][:10])
+```
+
+**When to use PPC vs RQR:**
+
+| Scenario | Recommended |
+|----------|-------------|
+| Quick initial screen | RQR (`compute_gof_mask`) |
+| Ambiguous RQR results / systematic MAP bias | PPC (`compute_ppc_gof_mask`) |
+| Very large datasets where PPC is too slow | RQR |
+| Comparing histogram-level shape fit | PPC |
+
+See `paper/_goodness_of_fit.qmd` §PPC-based goodness-of-fit diagnostics for
+the full mathematical derivation.
+
+---
+
 ## Relationship to the `de/` module
 
 The `mc/` module is designed to answer a different question from `de/`:

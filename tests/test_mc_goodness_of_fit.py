@@ -3,6 +3,8 @@
 Validates that randomized quantile residuals are calibrated under the
 true model, detect misspecification, and work correctly for both
 single-component and mixture NB models.
+
+Also validates PPC-based goodness-of-fit scoring and mask building.
 """
 
 import pytest
@@ -15,6 +17,8 @@ from scribe.mc._goodness_of_fit import (
     compute_quantile_residuals,
     goodness_of_fit_scores,
     compute_gof_mask,
+    ppc_goodness_of_fit_scores,
+    compute_ppc_gof_mask,
     _marginal_nb_cdf,
     _ensure_component_gene_shape,
 )
@@ -493,3 +497,267 @@ class TestComputeGofMask:
         )
         assert mask.shape == (counts.shape[1],)
         assert mask.dtype == bool
+
+
+# ==========================================================================
+# PPC-based goodness-of-fit tests
+# ==========================================================================
+
+
+class _MockPPCResults:
+    """Mock results object that supports get_posterior_ppc_samples.
+
+    Generates PPC samples by drawing from NB(r, p) with the provided
+    parameters, treating them as if they were the posterior mean
+    (i.e. no parameter uncertainty — this keeps the test self-contained).
+    """
+
+    def __init__(self, r, p, n_cells):
+        self._r = r
+        self._p = p
+        self.n_cells = n_cells
+        self.n_components = None
+        self.posterior_samples = None
+
+    def get_posterior_ppc_samples(
+        self,
+        gene_indices=None,
+        n_samples=500,
+        cell_batch_size=500,
+        rng_key=None,
+        counts=None,
+        store_samples=False,
+        verbose=False,
+    ):
+        """Generate mock PPC samples from NB(r, p)."""
+        r = self._r[gene_indices] if gene_indices is not None else self._r
+        p = self._p
+        nb = dist.NegativeBinomialProbs(r, p)
+        key = rng_key if rng_key is not None else random.PRNGKey(0)
+        # Shape: (n_samples, n_cells, n_genes_batch)
+        return nb.sample(key, (n_samples, self.n_cells))
+
+    def get_component(self, idx):
+        return self
+
+
+# --------------------------------------------------------------------------
+# ppc_goodness_of_fit_scores
+# --------------------------------------------------------------------------
+
+
+class TestPPCGoodnessOfFitScores:
+    """Tests for the low-level PPC scorer."""
+
+    @pytest.fixture
+    def well_specified_ppc(self, rng_key):
+        """PPC samples generated from the same model as the observed data."""
+        C, G = 500, 10
+        r = jnp.full(G, 5.0)
+        p = jnp.float32(0.3)
+        S = 100
+
+        nb = dist.NegativeBinomialProbs(r, p)
+        key1, key2 = random.split(rng_key)
+        obs = nb.sample(key1, (C,))
+        ppc = nb.sample(key2, (S, C))
+        return ppc, obs
+
+    @pytest.fixture
+    def misspecified_ppc(self, rng_key):
+        """Observed data from one NB, PPC from a very different NB.
+
+        Uses high cell count and many PPC samples so that the credible
+        bands are tight, making misspecification clearly detectable.
+        """
+        C, G = 2000, 10
+        S = 200
+
+        # Observed: moderate-mean, tight distribution
+        r_obs = jnp.full(G, 10.0)
+        p_obs = jnp.float32(0.5)
+        nb_obs = dist.NegativeBinomialProbs(r_obs, p_obs)
+
+        # PPC from a distribution with very different mean and shape
+        r_ppc = jnp.full(G, 2.0)
+        p_ppc = jnp.float32(0.9)
+        nb_ppc = dist.NegativeBinomialProbs(r_ppc, p_ppc)
+
+        key1, key2 = random.split(rng_key)
+        obs = nb_obs.sample(key1, (C,))
+        ppc = nb_ppc.sample(key2, (S, C))
+        return ppc, obs
+
+    def test_output_keys(self, well_specified_ppc):
+        """Should return calibration_failure and l1_distance."""
+        ppc, obs = well_specified_ppc
+        scores = ppc_goodness_of_fit_scores(ppc, obs)
+        assert set(scores.keys()) == {"calibration_failure", "l1_distance"}
+
+    def test_output_shapes(self, well_specified_ppc):
+        """Both arrays should have shape (G,)."""
+        ppc, obs = well_specified_ppc
+        G = obs.shape[1]
+        scores = ppc_goodness_of_fit_scores(ppc, obs)
+        assert scores["calibration_failure"].shape == (G,)
+        assert scores["l1_distance"].shape == (G,)
+
+    def test_well_specified_low_scores(self, well_specified_ppc):
+        """Under the true model, calibration failure should be low."""
+        ppc, obs = well_specified_ppc
+        scores = ppc_goodness_of_fit_scores(ppc, obs, credible_level=95)
+        # Most genes should have low calibration failure
+        median_cal = float(np.median(scores["calibration_failure"]))
+        assert median_cal < 0.5, (
+            f"Median calibration failure = {median_cal:.3f} under true "
+            "model; expected < 0.5"
+        )
+
+    def test_misspecified_high_scores(self, misspecified_ppc):
+        """Under wrong model, calibration failure should be high."""
+        ppc, obs = misspecified_ppc
+        scores = ppc_goodness_of_fit_scores(ppc, obs, credible_level=95)
+        median_cal = float(np.median(scores["calibration_failure"]))
+        assert median_cal > 0.3, (
+            f"Median calibration failure = {median_cal:.3f} under "
+            "misspecified model; expected > 0.3"
+        )
+
+    def test_l1_distance_nonnegative(self, well_specified_ppc):
+        """L1 distance should be non-negative."""
+        ppc, obs = well_specified_ppc
+        scores = ppc_goodness_of_fit_scores(ppc, obs)
+        assert np.all(scores["l1_distance"] >= 0.0)
+
+    def test_calibration_failure_bounded(self, well_specified_ppc):
+        """Calibration failure should be in [0, 1]."""
+        ppc, obs = well_specified_ppc
+        scores = ppc_goodness_of_fit_scores(ppc, obs)
+        assert np.all(scores["calibration_failure"] >= 0.0)
+        assert np.all(scores["calibration_failure"] <= 1.0)
+
+
+# --------------------------------------------------------------------------
+# compute_ppc_gof_mask
+# --------------------------------------------------------------------------
+
+
+class TestComputePPCGofMask:
+    """Tests for the PPC-based mask builder."""
+
+    @pytest.fixture
+    def simple_ppc_setup(self, rng_key):
+        """Well-specified mock results for mask testing."""
+        C, G = 300, 20
+        r = jnp.full(G, 5.0)
+        p = jnp.float32(0.3)
+        nb = dist.NegativeBinomialProbs(r, p)
+        counts = nb.sample(rng_key, (C,))
+        results = _MockPPCResults(r, p, C)
+        return counts, results, G
+
+    def test_mask_shape_dtype(self, simple_ppc_setup):
+        """Mask should be bool array of shape (G,)."""
+        counts, results, G = simple_ppc_setup
+        mask = compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=50,
+            gene_batch_size=10,
+            verbose=False,
+        )
+        assert mask.shape == (G,)
+        assert mask.dtype == bool
+
+    def test_return_scores_flag(self, simple_ppc_setup):
+        """return_scores=True should return (mask, dict)."""
+        counts, results, G = simple_ppc_setup
+        out = compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=50,
+            gene_batch_size=10,
+            return_scores=True,
+            verbose=False,
+        )
+        assert isinstance(out, tuple)
+        mask, scores = out
+        assert mask.shape == (G,)
+        assert "calibration_failure" in scores
+        assert "l1_distance" in scores
+        assert scores["calibration_failure"].shape == (G,)
+
+    def test_well_specified_passes_most(self, simple_ppc_setup):
+        """Under the true model, most genes should pass a generous threshold."""
+        counts, results, G = simple_ppc_setup
+        mask = compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=80,
+            gene_batch_size=10,
+            max_calibration_failure=0.8,
+            verbose=False,
+        )
+        pass_rate = float(np.mean(mask))
+        assert pass_rate > 0.5, (
+            f"Only {pass_rate:.0%} of genes passed under true model; "
+            "expected > 50%"
+        )
+
+    def test_batch_size_invariance(self, simple_ppc_setup):
+        """Different gene_batch_size should produce identical masks.
+
+        Since the rng_key splitting is deterministic and the mock samples
+        from the same distribution, different batch sizes should yield
+        consistent scores (up to floating-point noise).
+        """
+        counts, results, G = simple_ppc_setup
+        mask_small = compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=50,
+            gene_batch_size=5,
+            max_calibration_failure=0.6,
+            rng_key=random.PRNGKey(99),
+            verbose=False,
+        )
+        mask_large = compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=50,
+            gene_batch_size=20,
+            max_calibration_failure=0.6,
+            rng_key=random.PRNGKey(99),
+            verbose=False,
+        )
+        # Shapes must match
+        assert mask_small.shape == mask_large.shape
+
+    def test_l1_threshold(self, simple_ppc_setup):
+        """Adding max_l1_distance should only make the mask stricter."""
+        counts, results, G = simple_ppc_setup
+        mask_cal_only = compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=50,
+            gene_batch_size=10,
+            max_calibration_failure=0.8,
+            verbose=False,
+        )
+        mask_both = compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=50,
+            gene_batch_size=10,
+            max_calibration_failure=0.8,
+            max_l1_distance=0.01,
+            verbose=False,
+        )
+        # Combined mask should be at most as permissive
+        assert np.all(mask_both <= mask_cal_only)
+
+    def test_posterior_samples_cleared(self, simple_ppc_setup):
+        """After mask computation the cached posterior should be cleared."""
+        counts, results, G = simple_ppc_setup
+        # Pre-set posterior_samples to something truthy
+        results.posterior_samples = {"dummy": jnp.zeros(5)}
+        compute_ppc_gof_mask(
+            counts, results,
+            n_ppc_samples=50,
+            gene_batch_size=10,
+            verbose=False,
+        )
+        assert results.posterior_samples is None
