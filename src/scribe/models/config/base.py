@@ -85,6 +85,19 @@ class ModelConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # ------------------------------------------------------------------
+    # Pickle backward compatibility: old results pickled before the
+    # hierarchical-flag refactor are missing the new boolean fields.
+    # Pydantic v2 __setstate__ does a raw dict update, so we backfill
+    # defaults for any fields absent in the pickle payload.
+    # ------------------------------------------------------------------
+
+    def __setstate__(self, state: dict) -> None:
+        d = state.get("__dict__", {})
+        d.setdefault("hierarchical_p", False)
+        d.setdefault("hierarchical_gate", False)
+        super().__setstate__(state)
+
     # Core configuration
     base_model: str = Field(
         ..., description="Model type (e.g., 'nbdm', 'zinb_mix')"

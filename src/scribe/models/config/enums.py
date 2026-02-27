@@ -67,6 +67,26 @@ class Parameterization(str, Enum):
     LINKED = "linked"
     ODDS_RATIO = "odds_ratio"
 
+    # ------------------------------------------------------------------
+    # Backward-compatible deserialization of removed hierarchical values.
+    # Old pickles stored Parameterization("hierarchical_mean_odds") etc.
+    # _missing_ lets pickle.load() resolve them to the base enum value
+    # instead of raising ValueError.
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _missing_(cls, value: object) -> "Parameterization | None":
+        _legacy = {
+            "hierarchical_canonical": "canonical",
+            "hierarchical_mean_prob": "mean_prob",
+            "hierarchical_mean_odds": "mean_odds",
+        }
+        if isinstance(value, str):
+            base = _legacy.get(value)
+            if base is not None:
+                return cls(base)
+        return None
+
 
 # ------------------------------------------------------------------------------
 
