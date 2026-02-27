@@ -35,10 +35,19 @@ def _build_umap_cache_path(cfg, cache_umap):
     subset_value = data_cfg.get("subset_value", None)
 
     if subset_column is not None and subset_value is not None:
+        # Normalise list/ListConfig to plain lists so str() is deterministic
+        if not isinstance(subset_column, str):
+            subset_column = list(subset_column)
+        if not isinstance(subset_value, str):
+            subset_value = list(subset_value)
+
         subset_col_token = _sanitize_cache_token(subset_column)
         subset_val_token = _sanitize_cache_token(subset_value)
+        # Use repr for lists so the identity string is unambiguous
+        col_repr = repr(subset_column)
+        val_repr = repr(subset_value)
         cache_identity = (
-            f"{os.path.abspath(data_path)}|{subset_column}|{subset_value}"
+            f"{os.path.abspath(data_path)}|{col_repr}|{val_repr}"
         )
         cache_hash = hashlib.sha1(cache_identity.encode("utf-8")).hexdigest()[
             :12

@@ -187,3 +187,64 @@ def test_umap_cache_path_is_stable_for_same_subset():
     cache_path_1 = _build_umap_cache_path(cfg=cfg, cache_umap=True)
     cache_path_2 = _build_umap_cache_path(cfg=cfg, cache_umap=True)
     assert cache_path_1 == cache_path_2
+
+
+def test_umap_cache_path_multi_column_differs_from_single_column():
+    """A multi-column subset key must not collide with a single-column key."""
+    cfg_single = OmegaConf.create(
+        {
+            "data": {
+                "path": "/tmp/example_dataset.h5ad",
+                "subset_column": "treatment",
+                "subset_value": "drug",
+            }
+        }
+    )
+    # List-valued subset_column / subset_value (multi-column case)
+    cfg_multi = OmegaConf.create(
+        {
+            "data": {
+                "path": "/tmp/example_dataset.h5ad",
+                "subset_column": ["treatment", "kit"],
+                "subset_value": ["drug", "10x"],
+            }
+        }
+    )
+    path_single = _build_umap_cache_path(cfg=cfg_single, cache_umap=True)
+    path_multi = _build_umap_cache_path(cfg=cfg_multi, cache_umap=True)
+    assert path_single != path_multi
+
+
+def test_umap_cache_path_multi_column_is_stable():
+    """Repeated calls with identical multi-column split config should be stable."""
+    cfg = OmegaConf.create(
+        {
+            "data": {
+                "path": "/tmp/example_dataset.h5ad",
+                "subset_column": ["treatment", "kit"],
+                "subset_value": ["drug", "10x"],
+            }
+        }
+    )
+    assert _build_umap_cache_path(cfg=cfg, cache_umap=True) == (
+        _build_umap_cache_path(cfg=cfg, cache_umap=True)
+    )
+
+
+def test_umap_cache_path_multi_column_changes_across_combinations():
+    """Different multi-column value combinations must produce different cache paths."""
+    def _cfg(treatment, kit):
+        return OmegaConf.create(
+            {
+                "data": {
+                    "path": "/tmp/example_dataset.h5ad",
+                    "subset_column": ["treatment", "kit"],
+                    "subset_value": [treatment, kit],
+                }
+            }
+        )
+
+    path_a = _build_umap_cache_path(cfg=_cfg("drug", "10x"), cache_umap=True)
+    path_b = _build_umap_cache_path(cfg=_cfg("ctrl", "10x"), cache_umap=True)
+    path_c = _build_umap_cache_path(cfg=_cfg("drug", "dropseq"), cache_umap=True)
+    assert len({path_a, path_b, path_c}) == 3

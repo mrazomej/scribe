@@ -5,7 +5,7 @@ from anndata import AnnData
 from omegaconf import DictConfig
 from typing import Optional, Union
 import os
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, ListConfig
 
 # ==============================================================================
 # Data Loader
@@ -16,8 +16,8 @@ def load_and_preprocess_anndata(
     path: str,
     prep_config: Optional[DictConfig] = None,
     return_jax: bool = True,
-    subset_column: Optional[str] = None,
-    subset_value: Optional[str] = None,
+    subset_column: Optional[Union[str, list[str]]] = None,
+    subset_value: Optional[Union[str, list[str]]] = None,
 ) -> Union[jnp.ndarray, AnnData]:
     """
     Load count data from a CSV or h5ad file and optionally apply scanpy
@@ -36,15 +36,18 @@ def load_and_preprocess_anndata(
     return_jax : bool, default True
         If True, return the data as a JAX numpy array. If False, return the
         original AnnData object with all preprocessing applied.
-    subset_column : Optional[str], default None
-        Column name in ``adata.obs`` used to subset the data before
-        preprocessing.  When both ``subset_column`` and ``subset_value`` are
-        provided, only observations where ``adata.obs[subset_column] ==
-        subset_value`` are retained.  This is used by ``infer_split.py`` to
-        fit separate models for each covariate value without writing
-        temporary h5ad files.
-    subset_value : Optional[str], default None
-        The value within ``subset_column`` to keep.  Ignored when
+    subset_column : Optional[str or list[str]], default None
+        Column name(s) in ``adata.obs`` used to subset the data before
+        preprocessing.  When a single string is given, only observations where
+        ``adata.obs[subset_column] == subset_value`` are retained.  When a list
+        is given, each column is paired with the corresponding entry in
+        ``subset_value`` and the masks are ANDed together (i.e. all conditions
+        must hold simultaneously).  This is used by ``infer_split.py`` to fit
+        separate models per covariate combination without writing temporary
+        h5ad files.
+    subset_value : Optional[str or list[str]], default None
+        The value(s) within ``subset_column`` to keep.  Must be the same length
+        as ``subset_column`` when both are lists.  Ignored when
         ``subset_column`` is ``None``.
 
     Returns
@@ -74,26 +77,63 @@ def load_and_preprocess_anndata(
     # Print the original shape of the data
     print(f"Original data shape: {adata.shape}")
 
-    # Subset by covariate column if requested (used by infer_split.py)
+    # Subset by covariate column(s) if requested (used by infer_split.py).
+    # Both single-column (str) and multi-column (list[str]) are supported;
+    # multi-column subsets AND all per-column masks together.
     if subset_column is not None and subset_value is not None:
-        if subset_column not in adata.obs.columns:
-            raise ValueError(
-                f"subset_column '{subset_column}' not found in adata.obs. "
-                f"Available columns: {list(adata.obs.columns)}"
+        # Normalise OmegaConf ListConfig → plain list so isinstance checks work
+        if isinstance(subset_column, ListConfig):
+            subset_column = list(subset_column)
+        if isinstance(subset_value, ListConfig):
+            subset_value = list(subset_value)
+
+        if isinstance(subset_column, list):
+            # Multi-column path: use the DataFrame to AND masks per column
+            columns = subset_column
+            values = list(subset_value)
+            missing = [c for c in columns if c not in adata.obs.columns]
+            if missing:
+                raise ValueError(
+                    f"subset_column(s) {missing} not found in adata.obs. "
+                    f"Available columns: {list(adata.obs.columns)}"
+                )
+            mask = pd.Series(True, index=adata.obs.index)
+            for col, val in zip(columns, values):
+                mask = mask & (adata.obs[col].astype(str) == str(val))
+            if mask.sum() == 0:
+                combos = (
+                    adata.obs[columns]
+                    .drop_duplicates()
+                    .to_dict(orient="records")
+                )
+                raise ValueError(
+                    f"No observations found for combination "
+                    f"{dict(zip(columns, values))}. "
+                    f"Available combinations: {combos}"
+                )
+            adata = adata[mask].copy()
+            label = ", ".join(f"{c}='{v}'" for c, v in zip(columns, values))
+            print(f"Subset to {label}: {adata.shape[0]} cells retained")
+        else:
+            # Single-column path: existing behaviour
+            if subset_column not in adata.obs.columns:
+                raise ValueError(
+                    f"subset_column '{subset_column}' not found in adata.obs. "
+                    f"Available columns: {list(adata.obs.columns)}"
+                )
+            mask = adata.obs[subset_column] == subset_value
+            if mask.sum() == 0:
+                raise ValueError(
+                    f"No observations found where "
+                    f"adata.obs['{subset_column}'] == '{subset_value}'. "
+                    f"Available values: "
+                    f"{sorted(adata.obs[subset_column].unique())}"
+                )
+            adata = adata[mask].copy()
+            print(
+                f"Subset to {subset_column}='{subset_value}': "
+                f"{adata.shape[0]} cells retained"
             )
-        mask = adata.obs[subset_column] == subset_value
-        if mask.sum() == 0:
-            raise ValueError(
-                f"No observations found where "
-                f"adata.obs['{subset_column}'] == '{subset_value}'. "
-                f"Available values: "
-                f"{sorted(adata.obs[subset_column].unique())}"
-            )
-        adata = adata[mask].copy()
-        print(
-            f"Subset to {subset_column}='{subset_value}': "
-            f"{adata.shape[0]} cells retained"
-        )
 
     # If a preprocessing configuration is provided, apply the specified steps
     if prep_config:
