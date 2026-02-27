@@ -37,8 +37,11 @@ from ..builders.parameter_specs import (
     BetaPrimeSpec,
     BetaSpec,
     ExpNormalSpec,
+    HierarchicalSigmoidNormalSpec,
+    NormalWithTransformSpec,
     ParamSpec,
     SigmoidNormalSpec,
+    SoftplusNormalSpec,
 )
 from ..components.guide_families import (
     AmortizedGuide,
@@ -134,17 +137,25 @@ def build_gate_spec(
     guide_families: GuideFamilyConfig,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
-) -> ParamSpec:
-    """Build gate parameter spec for zero-inflated models (ZINB, ZINBVCP).
+    hierarchical: bool = False,
+) -> List[ParamSpec]:
+    """Build gate parameter spec(s) for zero-inflated models (ZINB, ZINBVCP).
 
     The gate parameter controls the probability of structural zeros per gene.
     It is always gene-specific.
+
+    When ``hierarchical=True``, returns a list of three specs: two global
+    hyperparameters (logit_gate_loc, logit_gate_scale) and one hierarchical
+    gene-specific gate (``HierarchicalSigmoidNormalSpec``). The hyperprior
+    defaults encode "most genes don't need zero-inflation" via a strongly
+    negative location in logit space.
 
     Parameters
     ----------
     unconstrained : bool
         If True, use SigmoidNormalSpec (Normal + sigmoid transform).
         If False, use BetaSpec (constrained Beta distribution).
+        Ignored when hierarchical=True (always unconstrained).
     guide_families : GuideFamilyConfig
         Guide family configuration for retrieving gate's guide family.
     n_components : int, optional
@@ -153,11 +164,14 @@ def build_gate_spec(
     mixture_params : List[str], optional
         List of parameters that should be mixture-specific. If None and
         n_components is set, gate defaults to being mixture-specific.
+    hierarchical : bool, default=False
+        If True, return hierarchical triplet (hyperprior loc, hyperprior
+        scale, hierarchical gate) instead of a flat gate spec.
 
     Returns
     -------
-    ParamSpec
-        Parameter specification for the gate parameter.
+    List[ParamSpec]
+        One or three parameter specifications for the gate parameter.
     """
     gate_family = guide_families.get("gate")
 
@@ -165,32 +179,61 @@ def build_gate_spec(
     is_mixture = False
     if n_components is not None:
         if mixture_params is None:
-            # Default: make all gene-specific params mixture-specific
             is_mixture = True
         else:
             is_mixture = "gate" in mixture_params
 
+    if hierarchical:
+        # Hierarchical gate: hyperprior loc + hyperprior scale + hierarchical
+        # spec
+        return [
+            NormalWithTransformSpec(
+                name="logit_gate_loc",
+                shape_dims=(),
+                default_params=(-5.0, 1.0),
+            ),
+            SoftplusNormalSpec(
+                name="logit_gate_scale",
+                shape_dims=(),
+                default_params=(-2.0, 0.5),
+            ),
+            HierarchicalSigmoidNormalSpec(
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name="logit_gate_loc",
+                hyper_scale_name="logit_gate_scale",
+                is_gene_specific=True,
+                guide_family=gate_family,
+                is_mixture=is_mixture,
+            ),
+        ]
+
     if unconstrained:
-        return SigmoidNormalSpec(
-            name="gate",
-            shape_dims=("n_genes",),
-            default_params=(-2.0, 1.0),  # Default to low zero-inflation
-            is_gene_specific=True,
-            guide_family=gate_family,
-            is_mixture=is_mixture,
-        )
+        return [
+            SigmoidNormalSpec(
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(-2.0, 1.0),
+                is_gene_specific=True,
+                guide_family=gate_family,
+                is_mixture=is_mixture,
+            )
+        ]
     else:
-        return BetaSpec(
-            name="gate",
-            shape_dims=("n_genes",),
-            default_params=(
-                1.0,
-                9.0,
-            ),  # Default to low zero-inflation (mean ~0.1)
-            is_gene_specific=True,
-            guide_family=gate_family,
-            is_mixture=is_mixture,
-        )
+        return [
+            BetaSpec(
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(
+                    1.0,
+                    9.0,
+                ),
+                is_gene_specific=True,
+                guide_family=gate_family,
+                is_mixture=is_mixture,
+            )
+        ]
 
 
 # ------------------------------------------------------------------------------
@@ -315,8 +358,9 @@ def build_extra_param_spec(
     param_strategy: Parameterization,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
-) -> ParamSpec:
-    """Build a model-specific extra parameter spec.
+    hierarchical_gate: bool = False,
+) -> List[ParamSpec]:
+    """Build model-specific extra parameter spec(s).
 
     This function dispatches to the appropriate builder based on the parameter
     name. It centralizes the logic for building gate and capture parameters.
@@ -335,11 +379,13 @@ def build_extra_param_spec(
         Number of mixture components.
     mixture_params : List[str], optional
         List of mixture-specific parameters.
+    hierarchical_gate : bool, default=False
+        If True and param_name is "gate", build hierarchical gate specs.
 
     Returns
     -------
-    ParamSpec
-        Parameter specification for the requested parameter.
+    List[ParamSpec]
+        Parameter specification(s) for the requested parameter.
 
     Raises
     ------
@@ -352,13 +398,16 @@ def build_extra_param_spec(
             guide_families=guide_families,
             n_components=n_components,
             mixture_params=mixture_params,
+            hierarchical=hierarchical_gate,
         )
     elif param_name == "p_capture":
-        return build_capture_spec(
-            unconstrained=unconstrained,
-            guide_families=guide_families,
-            param_strategy=param_strategy,
-        )
+        return [
+            build_capture_spec(
+                unconstrained=unconstrained,
+                guide_families=guide_families,
+                param_strategy=param_strategy,
+            )
+        ]
     else:
         raise ValueError(
             f"Unknown extra parameter: {param_name}. "

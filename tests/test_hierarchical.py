@@ -2,8 +2,7 @@
 
 Covers:
 - Hierarchical parameter spec creation and validation
-- Hierarchical parameterization classes (registry, specs, derived params)
-- Model building and tracing with hierarchical specs
+- Model building and tracing with hierarchical specs (flag-based)
 - Gamma-based composition sampling (reduces to Dirichlet when p shared)
 - Broadcasting of gene-specific p in mixture likelihoods
 - DE pipeline with gene-specific p samples
@@ -27,15 +26,17 @@ from scribe.models.builders.parameter_specs import (
 )
 from scribe.models.parameterizations import (
     PARAMETERIZATIONS,
-    HierarchicalCanonicalParameterization,
-    HierarchicalMeanOddsParameterization,
-    HierarchicalMeanProbParameterization,
 )
 from scribe.models.components.likelihoods.base import broadcast_p_for_mixture
 from scribe.models.presets.registry import (
     MODEL_EXTRA_PARAMS,
     build_extra_param_spec,
 )
+from scribe.models.presets.factory import (
+    _get_parameterization_key,
+    _hierarchicalize_p,
+)
+from scribe.models.config import ModelConfig, ModelConfigBuilder
 from scribe.models.config.groups import GuideFamilyConfig
 
 
@@ -45,7 +46,8 @@ def _build_full_param_specs(model_config):
     Mirrors the logic in ``create_model`` so that manually-constructed
     test fixtures carry the same metadata as real inference results.
     """
-    strategy = PARAMETERIZATIONS[model_config.parameterization]
+    param_key = _get_parameterization_key(model_config.parameterization)
+    strategy = PARAMETERIZATIONS[param_key]
     guide_families = model_config.guide_families or GuideFamilyConfig()
 
     specs = strategy.build_param_specs(
@@ -55,17 +57,26 @@ def _build_full_param_specs(model_config):
         mixture_params=model_config.mixture_params,
     )
 
-    for name in MODEL_EXTRA_PARAMS.get(model_config.base_model, []):
-        specs.append(
-            build_extra_param_spec(
-                param_name=name,
-                unconstrained=model_config.unconstrained,
-                guide_families=guide_families,
-                param_strategy=strategy,
-                n_components=model_config.n_components,
-                mixture_params=model_config.mixture_params,
-            )
+    if model_config.hierarchical_p:
+        specs = _hierarchicalize_p(
+            param_specs=specs,
+            param_key=param_key,
+            guide_families=guide_families,
+            n_components=model_config.n_components,
+            mixture_params=model_config.mixture_params,
         )
+
+    for name in MODEL_EXTRA_PARAMS.get(model_config.base_model, []):
+        extra_specs = build_extra_param_spec(
+            param_name=name,
+            unconstrained=model_config.unconstrained,
+            guide_families=guide_families,
+            param_strategy=strategy,
+            n_components=model_config.n_components,
+            mixture_params=model_config.mixture_params,
+            hierarchical_gate=model_config.hierarchical_gate,
+        )
+        specs.extend(extra_specs)
     return specs
 
 
@@ -173,113 +184,6 @@ class TestHierarchicalSpecs:
 
 
 # ==========================================================================
-# Tests: Hierarchical Parameterization Registry
-# ==========================================================================
-
-
-class TestHierarchicalParameterizationRegistry:
-    """Test hierarchical parameterization classes and registry."""
-
-    def test_registry_contains_hierarchical(self):
-        """Test that all hierarchical parameterizations are registered."""
-        expected = {
-            "hierarchical_canonical",
-            "hierarchical_mean_prob",
-            "hierarchical_mean_odds",
-        }
-        assert expected.issubset(set(PARAMETERIZATIONS.keys()))
-
-    def test_hierarchical_canonical_core_params(self):
-        """Test hierarchical canonical core parameters."""
-        p = PARAMETERIZATIONS["hierarchical_canonical"]
-        assert "logit_p_loc" in p.core_parameters
-        assert "logit_p_scale" in p.core_parameters
-        assert "p" in p.core_parameters
-        assert "r" in p.core_parameters
-
-    def test_hierarchical_mean_prob_core_params(self):
-        """Test hierarchical mean_prob core parameters."""
-        p = PARAMETERIZATIONS["hierarchical_mean_prob"]
-        assert "logit_p_loc" in p.core_parameters
-        assert "logit_p_scale" in p.core_parameters
-        assert "p" in p.core_parameters
-        assert "mu" in p.core_parameters
-
-    def test_hierarchical_mean_odds_core_params(self):
-        """Test hierarchical mean_odds core parameters."""
-        p = PARAMETERIZATIONS["hierarchical_mean_odds"]
-        assert "log_phi_loc" in p.core_parameters
-        assert "log_phi_scale" in p.core_parameters
-        assert "phi" in p.core_parameters
-        assert "mu" in p.core_parameters
-
-    def test_hierarchical_canonical_builds_specs(self):
-        """Test that hierarchical canonical builds correct spec types."""
-        from scribe.models.config import GuideFamilyConfig
-
-        p = PARAMETERIZATIONS["hierarchical_canonical"]
-        specs = p.build_param_specs(
-            unconstrained=True,
-            guide_families=GuideFamilyConfig(),
-        )
-
-        spec_names = [s.name for s in specs]
-        assert "logit_p_loc" in spec_names
-        assert "logit_p_scale" in spec_names
-        assert "p" in spec_names
-        assert "r" in spec_names
-
-        # Check that p is a hierarchical spec
-        p_spec = next(s for s in specs if s.name == "p")
-        assert isinstance(p_spec, HierarchicalSigmoidNormalSpec)
-        assert p_spec.is_gene_specific is True
-
-        # Check hyperparameter specs are not gene-specific
-        loc_spec = next(s for s in specs if s.name == "logit_p_loc")
-        assert loc_spec.is_gene_specific is False
-
-    def test_hierarchical_mean_prob_derived_params(self):
-        """Test that hierarchical mean_prob produces correct derived params."""
-        p = PARAMETERIZATIONS["hierarchical_mean_prob"]
-        derived = p.build_derived_params()
-        assert len(derived) == 1
-        assert derived[0].name == "r"
-        assert "p" in derived[0].deps
-        assert "mu" in derived[0].deps
-
-    def test_hierarchical_mean_odds_derived_params(self):
-        """Test that hierarchical mean_odds produces both r and p derived."""
-        p = PARAMETERIZATIONS["hierarchical_mean_odds"]
-        derived = p.build_derived_params()
-        names = {d.name for d in derived}
-        assert "r" in names
-        assert "p" in names
-
-    def test_hierarchical_canonical_mixture_specs(self):
-        """Test that mixture_params is respected for hierarchical specs."""
-        from scribe.models.config import GuideFamilyConfig
-
-        p = PARAMETERIZATIONS["hierarchical_canonical"]
-        specs = p.build_param_specs(
-            unconstrained=True,
-            guide_families=GuideFamilyConfig(),
-            n_components=3,
-            mixture_params=["p"],
-        )
-
-        p_spec = next(s for s in specs if s.name == "p")
-        r_spec = next(s for s in specs if s.name == "r")
-        assert p_spec.is_mixture is True
-        assert r_spec.is_mixture is False
-
-    def test_hierarchical_mean_odds_transform_param(self):
-        """Test that mean_odds transforms p_capture to phi_capture."""
-        p = PARAMETERIZATIONS["hierarchical_mean_odds"]
-        assert p.transform_model_param("p_capture") == "phi_capture"
-        assert p.transform_model_param("other") == "other"
-
-
-# ==========================================================================
 # Tests: Model Building with Hierarchical Specs
 # ==========================================================================
 
@@ -288,37 +192,18 @@ class TestHierarchicalModelBuilding:
     """Test that hierarchical models build and trace correctly."""
 
     def test_hierarchical_canonical_model_traces(self, rng, small_dims):
-        """Test that a hierarchical canonical model can be traced."""
-        from scribe.models.builders import ModelBuilder
-        from scribe.models.components.likelihoods.negative_binomial import (
-            NegativeBinomialLikelihood,
-        )
-        from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
-
-        param = PARAMETERIZATIONS["hierarchical_canonical"]
-        specs = param.build_param_specs(
-            unconstrained=True,
-            guide_families=GuideFamilyConfig(),
-        )
-        derived = param.build_derived_params()
-
-        builder = ModelBuilder()
-        for s in specs:
-            builder.add_param(s)
-        for d in derived:
-            builder.add_derived(d.name, d.compute, d.deps)
-        builder.with_likelihood(NegativeBinomialLikelihood())
-
-        model_fn = builder.build()
+        """Test that hierarchical_p with canonical parameterization traces."""
+        from scribe.models.presets.factory import create_model
 
         config = (
             ModelConfigBuilder()
             .for_model("nbdm")
-            .with_parameterization("hierarchical_canonical")
+            .with_parameterization("canonical")
+            .with_hierarchical_p()
             .build()
         )
+        model_fn, _, _ = create_model(config, validate=True)
 
-        # Trace the model to check it runs without errors
         with numpyro.handlers.seed(rng_seed=0):
             trace = numpyro.handlers.trace(model_fn).get_trace(
                 n_cells=small_dims["n_cells"],
@@ -327,51 +212,29 @@ class TestHierarchicalModelBuilding:
                 counts=None,
             )
 
-        # Verify expected sample sites exist
         assert "logit_p_loc" in trace
         assert "logit_p_scale" in trace
         assert "p" in trace
         assert "r" in trace
         assert "counts" in trace
 
-        # Verify p is gene-specific
         p_value = trace["p"]["value"]
         assert p_value.shape == (small_dims["n_genes"],)
-
-        # Verify p is in (0, 1) — sigmoid transform
         assert jnp.all(p_value > 0)
         assert jnp.all(p_value < 1)
 
     def test_hierarchical_mean_prob_model_traces(self, rng, small_dims):
-        """Test that a hierarchical mean_prob model traces correctly."""
-        from scribe.models.builders import ModelBuilder
-        from scribe.models.components.likelihoods.negative_binomial import (
-            NegativeBinomialLikelihood,
-        )
-        from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
-
-        param = PARAMETERIZATIONS["hierarchical_mean_prob"]
-        specs = param.build_param_specs(
-            unconstrained=True,
-            guide_families=GuideFamilyConfig(),
-        )
-        derived = param.build_derived_params()
-
-        builder = ModelBuilder()
-        for s in specs:
-            builder.add_param(s)
-        for d in derived:
-            builder.add_derived(d.name, d.compute, d.deps)
-        builder.with_likelihood(NegativeBinomialLikelihood())
-
-        model_fn = builder.build()
+        """Test that hierarchical_p with mean_prob parameterization traces."""
+        from scribe.models.presets.factory import create_model
 
         config = (
             ModelConfigBuilder()
             .for_model("nbdm")
-            .with_parameterization("hierarchical_mean_prob")
+            .with_parameterization("mean_prob")
+            .with_hierarchical_p()
             .build()
         )
+        model_fn, _, _ = create_model(config, validate=True)
 
         with numpyro.handlers.seed(rng_seed=1):
             trace = numpyro.handlers.trace(model_fn).get_trace(
@@ -385,44 +248,23 @@ class TestHierarchicalModelBuilding:
         assert "logit_p_scale" in trace
         assert "p" in trace
         assert "mu" in trace
-        # r should be a deterministic derived param
         assert "r" in trace
 
-        # p is gene-specific
         assert trace["p"]["value"].shape == (small_dims["n_genes"],)
-        # mu is gene-specific
         assert trace["mu"]["value"].shape == (small_dims["n_genes"],)
 
     def test_hierarchical_mean_odds_model_traces(self, rng, small_dims):
-        """Test that a hierarchical mean_odds model traces correctly."""
-        from scribe.models.builders import ModelBuilder
-        from scribe.models.components.likelihoods.negative_binomial import (
-            NegativeBinomialLikelihood,
-        )
-        from scribe.models.config import GuideFamilyConfig, ModelConfigBuilder
-
-        param = PARAMETERIZATIONS["hierarchical_mean_odds"]
-        specs = param.build_param_specs(
-            unconstrained=True,
-            guide_families=GuideFamilyConfig(),
-        )
-        derived = param.build_derived_params()
-
-        builder = ModelBuilder()
-        for s in specs:
-            builder.add_param(s)
-        for d in derived:
-            builder.add_derived(d.name, d.compute, d.deps)
-        builder.with_likelihood(NegativeBinomialLikelihood())
-
-        model_fn = builder.build()
+        """Test that hierarchical_p with mean_odds parameterization traces."""
+        from scribe.models.presets.factory import create_model
 
         config = (
             ModelConfigBuilder()
             .for_model("nbdm")
-            .with_parameterization("hierarchical_mean_odds")
+            .with_parameterization("mean_odds")
+            .with_hierarchical_p()
             .build()
         )
+        model_fn, _, _ = create_model(config, validate=True)
 
         with numpyro.handlers.seed(rng_seed=2):
             trace = numpyro.handlers.trace(model_fn).get_trace(
@@ -439,7 +281,6 @@ class TestHierarchicalModelBuilding:
         assert "r" in trace
         assert "p" in trace
 
-        # phi is gene-specific and positive (exp transform)
         phi_value = trace["phi"]["value"]
         assert phi_value.shape == (small_dims["n_genes"],)
         assert jnp.all(phi_value > 0)
@@ -719,23 +560,6 @@ class TestDEWithGeneSpecificP:
 
 
 # ==========================================================================
-# Tests: Config Enum
-# ==========================================================================
-
-
-class TestConfigEnum:
-    """Test that hierarchical parameterizations are in config enums."""
-
-    def test_hierarchical_enum_values(self):
-        """Test that hierarchical enum values exist."""
-        from scribe.models.config import Parameterization
-
-        assert Parameterization.HIERARCHICAL_CANONICAL.value == "hierarchical_canonical"
-        assert Parameterization.HIERARCHICAL_MEAN_PROB.value == "hierarchical_mean_prob"
-        assert Parameterization.HIERARCHICAL_MEAN_ODDS.value == "hierarchical_mean_odds"
-
-
-# ==========================================================================
 # Tests: Sampling and Parameter Extraction with Gene-Specific p
 # ==========================================================================
 
@@ -863,7 +687,7 @@ class TestHierarchicalMAPSampling:
 
     @pytest.fixture
     def hierarchical_mean_odds_results(self):
-        """Build a minimal ScribeSVIResults for hierarchical_mean_odds VCP.
+        """Build a minimal ScribeSVIResults for mean_odds VCP with hierarchical_p.
 
         Returns
         -------
@@ -897,8 +721,9 @@ class TestHierarchicalMAPSampling:
 
         model_config = ModelConfig(
             base_model="nbvcp",
-            parameterization="hierarchical_mean_odds",
+            parameterization="mean_odds",
             unconstrained=True,
+            hierarchical_p=True,
             n_components=n_components,
             mixture_params=["phi", "mu"],
         )
@@ -919,7 +744,7 @@ class TestHierarchicalMAPSampling:
 
     @pytest.fixture
     def hierarchical_mean_prob_results(self):
-        """Build a minimal ScribeSVIResults for hierarchical_mean_prob VCP.
+        """Build a minimal ScribeSVIResults for mean_prob VCP with hierarchical_p.
 
         Returns
         -------
@@ -953,8 +778,9 @@ class TestHierarchicalMAPSampling:
 
         model_config = ModelConfig(
             base_model="nbvcp",
-            parameterization="hierarchical_mean_prob",
+            parameterization="mean_prob",
             unconstrained=True,
+            hierarchical_p=True,
             n_components=n_components,
             mixture_params=["p", "mu"],
         )
@@ -1168,7 +994,7 @@ class TestHierarchicalComponentSubsetting:
 
     @pytest.fixture
     def hierarchical_mixture_results(self):
-        """Build a ScribeSVIResults for hierarchical_mean_odds with 3 components.
+        """Build a ScribeSVIResults for mean_odds with hierarchical_p, 3 components.
 
         Returns
         -------
@@ -1197,8 +1023,9 @@ class TestHierarchicalComponentSubsetting:
 
         model_config = ModelConfig(
             base_model="nbvcp",
-            parameterization="hierarchical_mean_odds",
+            parameterization="mean_odds",
             unconstrained=True,
+            hierarchical_p=True,
             n_components=n_components,
             mixture_params=["phi", "mu"],
         )
@@ -1398,18 +1225,19 @@ class TestMetadataDrivenComponentSubsetting:
     """
 
     @staticmethod
-    def _make_results(parameterization, mixture_params, extra_params=None):
+    def _make_results(parameterization, mixture_params, extra_params=None, hierarchical_p=False):
         """Build a minimal ``ScribeSVIResults`` for *parameterization*.
 
         Parameters
         ----------
         parameterization : str
-            E.g. ``"canonical"``, ``"mean_odds"``,
-            ``"hierarchical_mean_odds"``.
+            E.g. ``"canonical"``, ``"mean_odds"``, ``"mean_prob"``.
         mixture_params : list[str]
             Which core params are mixture-specific.
         extra_params : dict, optional
             Additional entries to merge into the variational params dict.
+        hierarchical_p : bool, default=False
+            If True, use gene-specific p/phi with hierarchical prior.
 
         Returns
         -------
@@ -1424,6 +1252,7 @@ class TestMetadataDrivenComponentSubsetting:
             base_model="nbvcp",
             parameterization=parameterization,
             unconstrained=True,
+            hierarchical_p=hierarchical_p,
             n_components=n_components,
             mixture_params=mixture_params,
         )
@@ -1482,7 +1311,7 @@ class TestMetadataDrivenComponentSubsetting:
         from scribe.svi._component import _build_mixture_keys
 
         results = self._make_results(
-            "hierarchical_mean_odds", ["phi", "mu"]
+            "mean_odds", ["phi", "mu"], hierarchical_p=True
         )
         mixture_keys = _build_mixture_keys(
             results.model_config.param_specs, results.params
@@ -1497,7 +1326,7 @@ class TestMetadataDrivenComponentSubsetting:
         from scribe.svi._component import _build_mixture_keys
 
         results = self._make_results(
-            "hierarchical_mean_odds", ["phi", "mu"]
+            "mean_odds", ["phi", "mu"], hierarchical_p=True
         )
         mixture_keys = _build_mixture_keys(
             results.model_config.param_specs, results.params
@@ -1513,7 +1342,7 @@ class TestMetadataDrivenComponentSubsetting:
         from scribe.svi._component import _build_mixture_keys
 
         results = self._make_results(
-            "hierarchical_mean_odds", ["phi", "mu"]
+            "mean_odds", ["phi", "mu"], hierarchical_p=True
         )
         mixture_keys = _build_mixture_keys(
             results.model_config.param_specs, results.params
@@ -1581,7 +1410,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hierarchical_canonical_component_subsetting(self):
         """Hierarchical canonical: p is hierarchical-gene, r is gene."""
         results = self._make_results(
-            "hierarchical_canonical", ["p", "r"]
+            "canonical", ["p", "r"], hierarchical_p=True
         )
         comp = results.get_component(0)
 
@@ -1595,7 +1424,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hierarchical_mean_prob_component_subsetting(self):
         """Hierarchical mean-prob: p is hierarchical-gene, mu is gene."""
         results = self._make_results(
-            "hierarchical_mean_prob", ["p", "mu"]
+            "mean_prob", ["p", "mu"], hierarchical_p=True
         )
         comp = results.get_component(1)
 
@@ -1609,7 +1438,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hierarchical_mean_odds_component_subsetting(self):
         """Hierarchical mean-odds: phi is hierarchical-gene, mu is gene."""
         results = self._make_results(
-            "hierarchical_mean_odds", ["phi", "mu"]
+            "mean_odds", ["phi", "mu"], hierarchical_p=True
         )
         comp = results.get_component(0)
 
@@ -1622,8 +1451,8 @@ class TestMetadataDrivenComponentSubsetting:
 
     def test_capture_preserved_across_parameterizations(self):
         """phi_capture must keep its (n_cells,) shape after get_component."""
-        for param in ("hierarchical_mean_odds", "mean_odds"):
-            results = self._make_results(param, ["phi", "mu"])
+        for param, hier in [("mean_odds", True), ("mean_odds", False)]:
+            results = self._make_results(param, ["phi", "mu"], hierarchical_p=hier)
             comp = results.get_component(0)
 
             capture_key = [
@@ -1634,7 +1463,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_hyperparams_preserved(self):
         """Scalar hyper-parameters must pass through get_component unchanged."""
         results = self._make_results(
-            "hierarchical_mean_odds", ["phi", "mu"]
+            "mean_odds", ["phi", "mu"], hierarchical_p=True
         )
         comp = results.get_component(0)
 
@@ -1646,7 +1475,7 @@ class TestMetadataDrivenComponentSubsetting:
     def test_mixing_concentrations_preserved(self):
         """mixing_concentrations is shared and must be copied as-is."""
         results = self._make_results(
-            "hierarchical_mean_odds", ["phi", "mu"]
+            "mean_odds", ["phi", "mu"], hierarchical_p=True
         )
         comp = results.get_component(0)
 
@@ -1654,3 +1483,155 @@ class TestMetadataDrivenComponentSubsetting:
             comp.params["mixing_concentrations"],
             results.params["mixing_concentrations"],
         )
+
+
+# ==========================================================================
+# Tests: Boolean-flag-based hierarchical system
+# ==========================================================================
+
+
+class TestHierarchicalFlags:
+    """Tests for the boolean-flag-based hierarchical system."""
+
+    def test_hierarchical_gate_requires_zi_model(self):
+        """hierarchical_gate=True on a non-ZI model should raise."""
+        with pytest.raises(ValueError, match="hierarchical_gate.*zero-inflated"):
+            ModelConfig(
+                base_model="nbdm",
+                unconstrained=True,
+                hierarchical_gate=True,
+            )
+
+    def test_hierarchical_p_requires_unconstrained(self):
+        """hierarchical_p=True without unconstrained should raise."""
+        with pytest.raises(ValueError, match="hierarchical_p.*unconstrained"):
+            ModelConfig(
+                base_model="nbdm",
+                hierarchical_p=True,
+                unconstrained=False,
+            )
+
+    def test_hierarchical_gate_requires_unconstrained(self):
+        """hierarchical_gate=True without unconstrained should raise."""
+        with pytest.raises(ValueError, match="hierarchical_gate.*unconstrained"):
+            ModelConfig(
+                base_model="zinb",
+                hierarchical_gate=True,
+                unconstrained=False,
+            )
+
+    def test_builder_with_hierarchical_p(self):
+        """Builder .with_hierarchical_p() sets flag and unconstrained."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("canonical")
+            .with_hierarchical_p()
+            .build()
+        )
+        assert config.hierarchical_p is True
+        assert config.unconstrained is True
+        assert config.is_hierarchical is True
+
+    def test_builder_with_hierarchical_gate(self):
+        """Builder .with_hierarchical_gate() sets flag and unconstrained."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinb")
+            .with_parameterization("mean_odds")
+            .with_hierarchical_gate()
+            .build()
+        )
+        assert config.hierarchical_gate is True
+        assert config.unconstrained is True
+        assert config.is_hierarchical is True
+
+    def test_hierarchical_p_canonical_creates_model(self):
+        """hierarchical_p with canonical parameterization creates a valid model."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("canonical")
+            .with_hierarchical_p()
+            .build()
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "logit_p_loc" in spec_names
+        assert "logit_p_scale" in spec_names
+        assert "p" in spec_names
+
+    def test_hierarchical_p_mean_odds_creates_model(self):
+        """hierarchical_p with mean_odds parameterization creates a valid model."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .with_hierarchical_p()
+            .build()
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "log_phi_loc" in spec_names
+        assert "log_phi_scale" in spec_names
+        assert "phi" in spec_names
+
+    def test_hierarchical_gate_zinb_creates_model(self):
+        """hierarchical_gate with ZINB creates a valid model."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinb")
+            .with_parameterization("canonical")
+            .unconstrained()
+            .with_hierarchical_gate()
+            .build()
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "logit_gate_loc" in spec_names
+        assert "logit_gate_scale" in spec_names
+        assert "gate" in spec_names
+
+    def test_both_flags_creates_model(self):
+        """Both hierarchical_p and hierarchical_gate creates a valid model."""
+        from scribe.models.presets.factory import create_model
+
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinbvcp")
+            .with_parameterization("mean_odds")
+            .with_hierarchical_p()
+            .with_hierarchical_gate()
+            .build()
+        )
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert "log_phi_loc" in spec_names
+        assert "log_phi_scale" in spec_names
+        assert "logit_gate_loc" in spec_names
+        assert "logit_gate_scale" in spec_names
+
+    def test_is_hierarchical_property(self):
+        """is_hierarchical is True when either flag is set."""
+        config_p = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            hierarchical_p=True,
+        )
+        assert config_p.is_hierarchical is True
+
+        config_gate = ModelConfig(
+            base_model="zinb",
+            unconstrained=True,
+            hierarchical_gate=True,
+        )
+        assert config_gate.is_hierarchical is True
+
+        config_neither = ModelConfig(base_model="nbdm")
+        assert config_neither.is_hierarchical is False

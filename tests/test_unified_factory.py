@@ -76,36 +76,41 @@ class TestHelperBuilders:
     """Test helper builder functions."""
 
     def test_build_gate_spec_constrained(self):
-        """Test build_gate_spec with constrained parameterization."""
-        spec = build_gate_spec(
+        """Test build_gate_spec with constrained parameterization (returns list)."""
+        specs = build_gate_spec(
             unconstrained=False,
             guide_families=GuideFamilyConfig(),
         )
-        assert spec.name == "gate"
-        assert spec.is_gene_specific is True
-        assert spec.is_mixture is False
+        assert isinstance(specs, list)
+        assert len(specs) == 1
+        assert specs[0].name == "gate"
+        assert specs[0].is_gene_specific is True
+        assert specs[0].is_mixture is False
 
     def test_build_gate_spec_unconstrained(self):
-        """Test build_gate_spec with unconstrained parameterization."""
+        """Test build_gate_spec with unconstrained parameterization (returns list)."""
         from scribe.models.builders.parameter_specs import SigmoidNormalSpec
 
-        spec = build_gate_spec(
+        specs = build_gate_spec(
             unconstrained=True,
             guide_families=GuideFamilyConfig(),
         )
-        assert spec.name == "gate"
-        # When unconstrained=True, we get SigmoidNormalSpec instead of BetaSpec
-        assert isinstance(spec, SigmoidNormalSpec)
+        assert isinstance(specs, list)
+        assert len(specs) == 1
+        assert specs[0].name == "gate"
+        assert isinstance(specs[0], SigmoidNormalSpec)
 
     def test_build_gate_spec_mixture(self):
-        """Test build_gate_spec with mixture model."""
-        spec = build_gate_spec(
+        """Test build_gate_spec with mixture model (returns list)."""
+        specs = build_gate_spec(
             unconstrained=False,
             guide_families=GuideFamilyConfig(),
             n_components=3,
-            mixture_params=None,  # Default: gate should be mixture
+            mixture_params=None,
         )
-        assert spec.is_mixture is True
+        assert isinstance(specs, list)
+        assert len(specs) == 1
+        assert specs[0].is_mixture is True
 
     def test_build_capture_spec_constrained_canonical(self):
         """Test build_capture_spec with canonical parameterization."""

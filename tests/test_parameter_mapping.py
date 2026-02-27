@@ -316,11 +316,10 @@ class TestParameterMappingRegistry:
         assert Parameterization.CANONICAL in mappings
         assert Parameterization.MEAN_PROB in mappings
         assert Parameterization.MEAN_ODDS in mappings
-        assert Parameterization.HIERARCHICAL_CANONICAL in mappings
-        assert Parameterization.HIERARCHICAL_MEAN_PROB in mappings
-        assert Parameterization.HIERARCHICAL_MEAN_ODDS in mappings
 
-        assert len(mappings) == 9
+        # Hierarchical parameterizations are now handled via boolean flags
+        # (hierarchical_p, hierarchical_gate) instead of enum values
+        assert len(mappings) == 6
 
     def test_parameterization_summary(self):
         """Test parameterization summary generation."""

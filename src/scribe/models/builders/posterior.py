@@ -99,8 +99,11 @@ def get_posterior_distributions(
         for key in params.keys()
     )
 
+    hierarchical_p = model_config.hierarchical_p
+    hierarchical_gate = model_config.hierarchical_gate
+
     # -------------------------------------------------------------------------
-    # Build distributions based on parameterization
+    # Build distributions based on base parameterization
     # -------------------------------------------------------------------------
 
     if parameterization in (
@@ -130,31 +133,47 @@ def get_posterior_distributions(
                 params, unconstrained, is_mixture, low_rank, split
             )
         )
-    elif parameterization == Parameterization.HIERARCHICAL_CANONICAL:
-        distributions.update(
-            _build_hierarchical_canonical_posteriors(
-                params, is_mixture, low_rank, split
-            )
-        )
-    elif parameterization == Parameterization.HIERARCHICAL_MEAN_PROB:
-        distributions.update(
-            _build_hierarchical_mean_prob_posteriors(
-                params, is_mixture, low_rank, split
-            )
-        )
-    elif parameterization == Parameterization.HIERARCHICAL_MEAN_ODDS:
-        distributions.update(
-            _build_hierarchical_mean_odds_posteriors(
-                params, is_mixture, low_rank, split
-            )
-        )
     else:
         raise ValueError(f"Unknown parameterization: {parameterization}")
+
+    # -------------------------------------------------------------------------
+    # Override p/phi with hierarchical version when hierarchical_p is enabled
+    # -------------------------------------------------------------------------
+    if hierarchical_p:
+        if parameterization in (
+            Parameterization.MEAN_ODDS,
+            Parameterization.ODDS_RATIO,
+        ):
+            # Hierarchical phi: hyperparameters + per-gene phi
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params, "log_phi_loc", "log_phi_scale"
+                )
+            )
+            distributions["phi"] = _build_exp_normal_posterior(
+                params, "phi", is_mixture, split, is_scalar=False
+            )
+        else:
+            # Hierarchical p: hyperparameters + per-gene p
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params, "logit_p_loc", "logit_p_scale"
+                )
+            )
+            distributions["p"] = _build_sigmoid_normal_posterior(
+                params, "p", is_scalar=False, split=split
+            )
 
     # -------------------------------------------------------------------------
     # Add zero-inflation gate if applicable
     # -------------------------------------------------------------------------
     if is_zero_inflated:
+        if hierarchical_gate:
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params, "logit_gate_loc", "logit_gate_scale"
+                )
+            )
         distributions.update(
             _build_gate_posterior(params, unconstrained, is_mixture, split)
         )
@@ -163,12 +182,9 @@ def get_posterior_distributions(
     # Add capture probability if applicable
     # -------------------------------------------------------------------------
     if uses_vcp:
-        # For mean_odds parameterization (including hierarchical variant),
-        # use phi_capture instead of p_capture
         if parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
-            Parameterization.HIERARCHICAL_MEAN_ODDS,
         ):
             distributions.update(
                 _build_phi_capture_posterior(params, unconstrained, split)
@@ -350,144 +366,6 @@ def _build_hyperparameter_posteriors(
         dist.Normal(scale_loc, scale_scale),
         dist.transforms.SoftplusTransform(),
     )
-
-    return distributions
-
-
-def _build_hierarchical_canonical_posteriors(
-    params: Dict[str, jnp.ndarray],
-    is_mixture: bool,
-    low_rank: bool,
-    split: bool,
-) -> Dict[str, Any]:
-    """Build posteriors for hierarchical canonical parameterization.
-
-    Parameters
-    ----------
-    params : Dict[str, jnp.ndarray]
-        Guide parameters.
-    is_mixture : bool
-        Whether the model is a mixture.
-    low_rank : bool
-        Whether the guide uses low-rank covariance.
-    split : bool
-        Whether to split batched distributions.
-
-    Returns
-    -------
-    Dict[str, Any]
-        Posterior distributions for hyperparameters, gene-specific p, and r.
-    """
-    distributions = _build_hyperparameter_posteriors(
-        params, "logit_p_loc", "logit_p_scale"
-    )
-
-    # Gene-specific p: sigmoid-transformed Normal, per-gene (and per-component)
-    distributions["p"] = _build_sigmoid_normal_posterior(
-        params, "p", is_scalar=False, split=split
-    )
-
-    # r: ExpNormal, per-gene (and per-component)
-    if low_rank:
-        distributions["r"] = _build_low_rank_exp_normal_posterior(
-            params, "r", is_mixture, split
-        )
-    else:
-        distributions["r"] = _build_exp_normal_posterior(
-            params, "r", is_mixture, split
-        )
-
-    return distributions
-
-
-def _build_hierarchical_mean_prob_posteriors(
-    params: Dict[str, jnp.ndarray],
-    is_mixture: bool,
-    low_rank: bool,
-    split: bool,
-) -> Dict[str, Any]:
-    """Build posteriors for hierarchical mean-prob parameterization.
-
-    Parameters
-    ----------
-    params : Dict[str, jnp.ndarray]
-        Guide parameters.
-    is_mixture : bool
-        Whether the model is a mixture.
-    low_rank : bool
-        Whether the guide uses low-rank covariance.
-    split : bool
-        Whether to split batched distributions.
-
-    Returns
-    -------
-    Dict[str, Any]
-        Posterior distributions for hyperparameters, gene-specific p, and mu.
-    """
-    distributions = _build_hyperparameter_posteriors(
-        params, "logit_p_loc", "logit_p_scale"
-    )
-
-    # Gene-specific p: sigmoid-transformed Normal, per-gene (and per-component)
-    distributions["p"] = _build_sigmoid_normal_posterior(
-        params, "p", is_scalar=False, split=split
-    )
-
-    # mu: ExpNormal, per-gene (and per-component)
-    if low_rank:
-        distributions["mu"] = _build_low_rank_exp_normal_posterior(
-            params, "mu", is_mixture, split
-        )
-    else:
-        distributions["mu"] = _build_exp_normal_posterior(
-            params, "mu", is_mixture, split
-        )
-
-    return distributions
-
-
-def _build_hierarchical_mean_odds_posteriors(
-    params: Dict[str, jnp.ndarray],
-    is_mixture: bool,
-    low_rank: bool,
-    split: bool,
-) -> Dict[str, Any]:
-    """Build posteriors for hierarchical mean-odds parameterization.
-
-    Parameters
-    ----------
-    params : Dict[str, jnp.ndarray]
-        Guide parameters.
-    is_mixture : bool
-        Whether the model is a mixture.
-    low_rank : bool
-        Whether the guide uses low-rank covariance.
-    split : bool
-        Whether to split batched distributions.
-
-    Returns
-    -------
-    Dict[str, Any]
-        Posterior distributions for hyperparameters, gene-specific phi, and mu.
-    """
-    distributions = _build_hyperparameter_posteriors(
-        params, "log_phi_loc", "log_phi_scale"
-    )
-
-    # Gene-specific phi: exp-transformed Normal, per-gene (and per-component)
-    distributions["phi"] = _build_exp_normal_posterior(
-        params, "phi", is_mixture, split, is_scalar=False
-    )
-
-    # mu: ExpNormal, per-gene (and per-component)
-    if low_rank:
-        distributions["mu"] = _build_low_rank_exp_normal_posterior(
-            params, "mu", is_mixture, split
-        )
-    else:
-        distributions["mu"] = _build_exp_normal_posterior(
-            params, "mu", is_mixture, split
-        )
 
     return distributions
 

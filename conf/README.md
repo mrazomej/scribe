@@ -76,14 +76,14 @@ model: nbdm
 # - "canonical" (or "standard"): Sample p, r directly
 # - "linked" (or "mean_prob"): Sample p, mu, derive r
 # - "odds_ratio" (or "mean_odds"): Sample phi, mu, derive p and r
-# Hierarchical variants (gene-specific p_g or phi_g with hyperprior):
-# - "hierarchical_canonical": Gene-specific p_g with hyperprior, direct r
-# - "hierarchical_mean_prob": Gene-specific p_g with hyperprior, mu, derive r
-# - "hierarchical_mean_odds": Gene-specific phi_g with hyperprior, mu, derive p,r
 parameterization: canonical
 
 # Use unconstrained parameterization (Normal + transform)
 unconstrained: false
+
+# Hierarchical priors (independent, composable; both require unconstrained=true)
+hierarchical_p: false    # Gene-specific p/phi hierarchical prior
+hierarchical_gate: false # Gene-specific gate hierarchical prior (ZI models only)
 
 # Mixture model configuration
 n_components: null    # null = single component, int >= 2 for mixture
@@ -293,24 +293,25 @@ Each preset file (e.g., `model/zinb.yaml`) sets sensible defaults that can be ov
 
 ### Hierarchical Model Presets
 
-Hierarchical presets relax the shared-`p` assumption, allowing each gene to draw
-its own `p_g` from a learned population distribution. This is useful when the
-shared-p assumption is too restrictive for the data.
+Hierarchical presets relax the shared-`p` (and optionally shared-gate)
+assumption via boolean flags. Presets use `parameterization: canonical` +
+`hierarchical_p: true` (and `hierarchical_gate: true` for ZI models) instead of
+separate hierarchical parameterization names.
 
 ```bash
 # NBDM with hierarchical gene-specific p_g
 python infer.py model=nbdm_hierarchical
 
-# ZINB with hierarchical gene-specific p_g
+# ZINB with hierarchical gene-specific p_g and gate
 python infer.py model=zinb_hierarchical
 
-# You can override the parameterization to use mean_odds instead
-python infer.py model=nbdm_hierarchical parameterization=hierarchical_mean_odds
+# Override parameterization (e.g. mean_odds) while keeping hierarchical flags
+python infer.py model=nbdm_hierarchical parameterization=mean_odds
 ```
 
-After fitting, inspect `posterior_samples["logit_p_scale"]` as a diagnostic:
-small values validate the shared-p assumption, large values indicate gene-specific
-heterogeneity matters.
+Both flags require `unconstrained: true`. After fitting, inspect
+`posterior_samples["logit_p_scale"]` as a diagnostic: small values validate the
+shared-p assumption, large values indicate gene-specific heterogeneity matters.
 
 ## Advanced Usage
 
@@ -485,6 +486,10 @@ results = scribe.fit(
     n_components=3,
     n_steps=100000,
 )
+
+# Hierarchical priors (equivalent to model=nbdm_hierarchical or model=zinb_hierarchical)
+results = scribe.fit(adata, model="nbdm", hierarchical_p=True)
+results = scribe.fit(adata, model="zinb", hierarchical_p=True, hierarchical_gate=True)
 
 # Equivalent to: python infer.py model=nbvcp amortization.capture.enabled=true
 # infer.py builds AmortizationConfig from YAML and passes capture_amortization=...

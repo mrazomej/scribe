@@ -36,6 +36,13 @@ parameterization: mean_odds
 # Use unconstrained parameterization (Normal + transform)
 unconstrained: false
 
+# --- Hierarchical Flags ---
+# These flags enable gene-specific hierarchical priors on selected parameters.
+# When enabled, parameters are drawn from a learned population distribution
+# rather than a fixed prior, providing adaptive shrinkage across genes.
+hierarchical_p: false     # Gene-specific p/phi with hyperprior (requires unconstrained=true)
+hierarchical_gate: false  # Gene-specific gate with hyperprior (ZI models only, requires unconstrained=true)
+
 # Mixture model configuration
 # Set to integer >= 2 for mixture models, null for single component.
 # When annotation_key is provided and n_components is null, the number
@@ -64,6 +71,9 @@ priors:
   p_capture: null   # Beta(alpha, beta) for capture probability
   phi_capture: null # BetaPrime(alpha, beta) for capture odds
   mixing: null      # Dirichlet concentrations for mixture weights
+  # Hierarchical hyperprior overrides (only used when hierarchical flags are set)
+  logit_gate_loc: null    # Normal(loc, scale) for gate hyperprior mean
+  logit_gate_scale: null  # SoftplusNormal(loc, scale) for gate hyperprior spread
                     # Accepts a list [a1, a2, ...] of length n_components,
                     # or a single scalar (e.g. 5.0) broadcast to all components.
 
@@ -172,3 +182,5 @@ hydra:
           - inference.n_steps
           - annotation_min_cells
           - data
+          - data.subset_column
+          - model

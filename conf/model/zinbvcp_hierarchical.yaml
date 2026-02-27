@@ -3,6 +3,7 @@
 # Full model: zero-inflation + variable capture + relaxed shared-p.
 
 model: zinbvcp
-parameterization: hierarchical_canonical
+parameterization: canonical
 unconstrained: true
+hierarchical_p: true
 n_components: null

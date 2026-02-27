@@ -48,6 +48,8 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.with_parameterization(param)`: Set parameterization type
 - `.with_inference(method)`: Set inference method
 - `.unconstrained()`: Use unconstrained parameterization
+- `.with_hierarchical_p()`: Enable gene-specific p/phi hierarchical prior (requires unconstrained)
+- `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI models only, requires unconstrained)
 - `.as_mixture(n_components, mixture_params)`: Configure as mixture
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
 - `.with_priors(**priors)`: Set prior parameters
@@ -202,9 +204,8 @@ errors = validate_parameter_consistency(
 ### Enums
 
 - `ModelType`: NBDM, ZINB, NBVCP, ZINBVCP
-- `Parameterization`: CANONICAL, MEAN_PROB, MEAN_ODDS,
-  HIERARCHICAL_CANONICAL, HIERARCHICAL_MEAN_PROB, HIERARCHICAL_MEAN_ODDS
-  (plus backward-compat aliases STANDARD, LINKED, ODDS_RATIO)
+- `Parameterization`: CANONICAL, MEAN_PROB, MEAN_ODDS (plus backward-compat
+  aliases STANDARD, LINKED, ODDS_RATIO)
 - `InferenceMethod`: SVI, MCMC, VAE
 - `VAEPriorType`: STANDARD, DECOUPLED
 - `VAEMaskType`: ALTERNATING, SEQUENTIAL
@@ -253,16 +254,21 @@ config = (ModelConfigBuilder()
 ### Hierarchical Configuration
 
 ```python
-# Hierarchical model with gene-specific p_g
+# Hierarchical model with gene-specific p_g (requires unconstrained)
 config = (ModelConfigBuilder()
     .for_model("nbdm")
-    .with_parameterization("hierarchical_canonical")
+    .with_parameterization("canonical")
+    .unconstrained()
+    .with_hierarchical_p()
     .build())
 
-# Hierarchical mean-odds (gene-specific phi_g)
+# Hierarchical mean-odds with gene-specific gate (ZI models)
 config = (ModelConfigBuilder()
     .for_model("zinb")
-    .with_parameterization("hierarchical_mean_odds")
+    .with_parameterization("mean_odds")
+    .unconstrained()
+    .with_hierarchical_p()
+    .with_hierarchical_gate()
     .build())
 ```
 

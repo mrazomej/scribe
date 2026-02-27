@@ -205,6 +205,8 @@ def fit(
     # Model options
     parameterization: str = "canonical",
     unconstrained: bool = False,
+    hierarchical_p: bool = False,
+    hierarchical_gate: bool = False,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     guide_rank: Optional[int] = None,
@@ -669,6 +671,8 @@ def fit(
             parameterization=parameterization.lower(),
             inference_method=inference_method.lower(),
             unconstrained=unconstrained,
+            hierarchical_p=hierarchical_p,
+            hierarchical_gate=hierarchical_gate,
             guide_rank=guide_rank,
             n_components=n_components,
             mixture_params=mixture_params,

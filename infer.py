@@ -615,6 +615,8 @@ def main(cfg: DictConfig) -> None:
         "model": model_type,
         "parameterization": cfg.parameterization,
         "unconstrained": cfg.unconstrained,
+        "hierarchical_p": cfg.get("hierarchical_p", False),
+        "hierarchical_gate": cfg.get("hierarchical_gate", False),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,
