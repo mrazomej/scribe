@@ -1,8 +1,10 @@
 """
-Tests for low-rank Gaussian divergences in differential expression.
+Tests for low-rank Gaussian divergences in differential expression,
+and closed-form Gamma KL / Jeffreys divergence.
 
 Tests the KL divergence, Jensen-Shannon divergence, and Mahalanobis distance
-for LowRankLogisticNormal and SoftmaxNormal distributions.
+for LowRankLogisticNormal and SoftmaxNormal distributions, plus the Gamma
+divergences used by the biological DE pipeline.
 """
 
 import pytest
@@ -10,11 +12,15 @@ import numpy as np
 import jax.numpy as jnp
 from jax import random
 
+from numpyro.distributions import Gamma
+
 from scribe.stats.distributions import LowRankLogisticNormal, SoftmaxNormal
 from scribe.stats.divergences import (
     kl_divergence,
     jensen_shannon,
     mahalanobis,
+    gamma_kl,
+    gamma_jeffreys,
     _extract_lowrank_params,
     _kl_lowrank_mvn,
 )
@@ -530,3 +536,122 @@ def test_all_divergences_consistent_ordering():
     assert kl_far > kl_near
     assert js_far > js_near
     assert m2_far > m2_near
+
+
+# ==============================================================================
+# Gamma KL divergence tests
+# ==============================================================================
+
+
+class TestGammaKL:
+    """Tests for the closed-form Gamma KL divergence."""
+
+    def test_identical_distributions_zero(self):
+        """KL(p || p) = 0 for any Gamma."""
+        alpha = jnp.array([1.0, 2.5, 10.0])
+        beta = jnp.array([0.5, 1.0, 3.0])
+        kl = gamma_kl(alpha, beta, alpha, beta)
+        np.testing.assert_allclose(kl, 0.0, atol=1e-6)
+
+    def test_non_negative(self, rng_key):
+        """KL divergence is always non-negative."""
+        keys = random.split(rng_key, 4)
+        alpha_p = random.uniform(keys[0], (50,), minval=0.5, maxval=20.0)
+        beta_p = random.uniform(keys[1], (50,), minval=0.1, maxval=10.0)
+        alpha_q = random.uniform(keys[2], (50,), minval=0.5, maxval=20.0)
+        beta_q = random.uniform(keys[3], (50,), minval=0.1, maxval=10.0)
+        kl = gamma_kl(alpha_p, beta_p, alpha_q, beta_q)
+        assert jnp.all(kl >= -1e-6)
+
+    def test_asymmetric(self):
+        """KL(p || q) != KL(q || p) in general."""
+        alpha_p, beta_p = jnp.array(2.0), jnp.array(1.0)
+        alpha_q, beta_q = jnp.array(5.0), jnp.array(3.0)
+        kl_pq = gamma_kl(alpha_p, beta_p, alpha_q, beta_q)
+        kl_qp = gamma_kl(alpha_q, beta_q, alpha_p, beta_p)
+        assert not jnp.isclose(kl_pq, kl_qp, atol=1e-4)
+
+    def test_matches_numpyro_builtin(self):
+        """gamma_kl matches numpyro's built-in Gamma KL registration."""
+        p = Gamma(concentration=3.0, rate=2.0)
+        q = Gamma(concentration=5.0, rate=1.5)
+        kl_numpyro = kl_divergence(p, q)
+        kl_raw = gamma_kl(
+            jnp.array(3.0), jnp.array(2.0),
+            jnp.array(5.0), jnp.array(1.5),
+        )
+        np.testing.assert_allclose(kl_numpyro, kl_raw, atol=1e-6)
+
+    def test_numerical_against_sampling(self, rng_key):
+        """Gamma KL matches a Monte Carlo estimate from log-density ratios."""
+        alpha_p, beta_p = 4.0, 2.0
+        alpha_q, beta_q = 6.0, 3.0
+
+        # Monte Carlo estimate: E_p[log p(x) - log q(x)]
+        p = Gamma(concentration=alpha_p, rate=beta_p)
+        q = Gamma(concentration=alpha_q, rate=beta_q)
+        samples = p.sample(rng_key, (500_000,))
+        log_ratio = p.log_prob(samples) - q.log_prob(samples)
+        kl_mc = jnp.mean(log_ratio)
+
+        kl_closed = gamma_kl(
+            jnp.array(alpha_p), jnp.array(beta_p),
+            jnp.array(alpha_q), jnp.array(beta_q),
+        )
+        np.testing.assert_allclose(kl_closed, kl_mc, atol=0.01)
+
+    def test_vectorized(self):
+        """gamma_kl handles batched inputs."""
+        alpha_p = jnp.array([1.0, 2.0, 3.0])
+        beta_p = jnp.array([1.0, 1.0, 1.0])
+        alpha_q = jnp.array([1.5, 2.5, 3.5])
+        beta_q = jnp.array([1.0, 1.0, 1.0])
+        kl = gamma_kl(alpha_p, beta_p, alpha_q, beta_q)
+        assert kl.shape == (3,)
+        assert jnp.all(kl >= 0)
+
+    def test_larger_divergence_for_larger_shift(self):
+        """KL increases with parameter distance."""
+        alpha_p, beta_p = jnp.array(5.0), jnp.array(2.0)
+        kl_near = gamma_kl(alpha_p, beta_p, jnp.array(5.5), jnp.array(2.0))
+        kl_far = gamma_kl(alpha_p, beta_p, jnp.array(10.0), jnp.array(2.0))
+        assert kl_far > kl_near
+
+
+class TestGammaJeffreys:
+    """Tests for the symmetrised Gamma KL (Jeffreys divergence)."""
+
+    def test_symmetric(self):
+        """Jeffreys divergence is symmetric by construction."""
+        alpha_p, beta_p = jnp.array(3.0), jnp.array(1.5)
+        alpha_q, beta_q = jnp.array(7.0), jnp.array(4.0)
+        j_pq = gamma_jeffreys(alpha_p, beta_p, alpha_q, beta_q)
+        j_qp = gamma_jeffreys(alpha_q, beta_q, alpha_p, beta_p)
+        np.testing.assert_allclose(j_pq, j_qp, atol=1e-6)
+
+    def test_identical_zero(self):
+        """Jeffreys divergence is zero for identical distributions."""
+        alpha = jnp.array(4.0)
+        beta = jnp.array(2.0)
+        j = gamma_jeffreys(alpha, beta, alpha, beta)
+        np.testing.assert_allclose(j, 0.0, atol=1e-6)
+
+    def test_non_negative(self, rng_key):
+        """Jeffreys divergence is always non-negative."""
+        keys = random.split(rng_key, 4)
+        alpha_p = random.uniform(keys[0], (50,), minval=0.5, maxval=20.0)
+        beta_p = random.uniform(keys[1], (50,), minval=0.1, maxval=10.0)
+        alpha_q = random.uniform(keys[2], (50,), minval=0.5, maxval=20.0)
+        beta_q = random.uniform(keys[3], (50,), minval=0.1, maxval=10.0)
+        j = gamma_jeffreys(alpha_p, beta_p, alpha_q, beta_q)
+        assert jnp.all(j >= -1e-6)
+
+    def test_equals_sum_of_kl(self):
+        """Jeffreys = KL(p||q) + KL(q||p)."""
+        alpha_p, beta_p = jnp.array(3.0), jnp.array(2.0)
+        alpha_q, beta_q = jnp.array(6.0), jnp.array(1.0)
+        j = gamma_jeffreys(alpha_p, beta_p, alpha_q, beta_q)
+        kl_sum = gamma_kl(alpha_p, beta_p, alpha_q, beta_q) + gamma_kl(
+            alpha_q, beta_q, alpha_p, beta_p
+        )
+        np.testing.assert_allclose(j, kl_sum, atol=1e-6)

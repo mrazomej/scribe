@@ -91,6 +91,106 @@ def _kl_lognormal(p, q):
 
 
 # ==============================================================================
+# Gamma KL Divergence (closed-form)
+# ==============================================================================
+
+
+def gamma_kl(
+    alpha_p: jnp.ndarray,
+    beta_p: jnp.ndarray,
+    alpha_q: jnp.ndarray,
+    beta_q: jnp.ndarray,
+) -> jnp.ndarray:
+    """Closed-form KL divergence between two Gamma distributions.
+
+    Computes KL(Gamma(alpha_p, beta_p) || Gamma(alpha_q, beta_q)) using
+    the shape-rate parameterisation where the density is
+
+    .. math::
+
+        f(x; \\alpha, \\beta) =
+            \\frac{\\beta^\\alpha}{\\Gamma(\\alpha)}
+            x^{\\alpha - 1} e^{-\\beta x}.
+
+    The closed-form expression is
+
+    .. math::
+
+        \\text{KL}(p \\| q) =
+            (\\alpha_p - \\alpha_q)\\,\\psi(\\alpha_p)
+            - \\ln\\Gamma(\\alpha_p) + \\ln\\Gamma(\\alpha_q)
+            + \\alpha_q\\bigl(\\ln\\beta_p - \\ln\\beta_q\\bigr)
+            + \\alpha_p\\bigl(\\beta_q / \\beta_p - 1\\bigr)
+
+    where :math:`\\psi` is the digamma function.
+
+    Parameters
+    ----------
+    alpha_p : jnp.ndarray
+        Shape parameter of the first (reference) Gamma distribution.
+    beta_p : jnp.ndarray
+        Rate parameter of the first Gamma distribution.
+    alpha_q : jnp.ndarray
+        Shape parameter of the second (comparison) Gamma distribution.
+    beta_q : jnp.ndarray
+        Rate parameter of the second Gamma distribution.
+
+    Returns
+    -------
+    jnp.ndarray
+        KL divergence, same shape as the broadcast of the inputs.
+        Non-negative; zero iff the two distributions are identical.
+    """
+    return (
+        (alpha_p - alpha_q) * jsp.special.digamma(alpha_p)
+        - jsp.special.gammaln(alpha_p)
+        + jsp.special.gammaln(alpha_q)
+        + alpha_q * (jnp.log(beta_p) - jnp.log(beta_q))
+        + alpha_p * (beta_q / beta_p - 1.0)
+    )
+
+
+def gamma_jeffreys(
+    alpha_p: jnp.ndarray,
+    beta_p: jnp.ndarray,
+    alpha_q: jnp.ndarray,
+    beta_q: jnp.ndarray,
+) -> jnp.ndarray:
+    """Symmetrised KL (Jeffreys divergence) between two Gamma distributions.
+
+    Defined as ``KL(p || q) + KL(q || p)``.  Non-negative, symmetric, and
+    zero iff the two distributions are identical.
+
+    Parameters
+    ----------
+    alpha_p : jnp.ndarray
+        Shape parameter of the first Gamma distribution.
+    beta_p : jnp.ndarray
+        Rate parameter of the first Gamma distribution.
+    alpha_q : jnp.ndarray
+        Shape parameter of the second Gamma distribution.
+    beta_q : jnp.ndarray
+        Rate parameter of the second Gamma distribution.
+
+    Returns
+    -------
+    jnp.ndarray
+        Jeffreys divergence, same shape as the broadcast of the inputs.
+    """
+    return gamma_kl(alpha_p, beta_p, alpha_q, beta_q) + gamma_kl(
+        alpha_q, beta_q, alpha_p, beta_p
+    )
+
+
+# NOTE: numpyro already registers KL(Gamma, Gamma) internally using
+# the same closed-form expression.  We therefore do NOT re-register
+# here.  The raw ``gamma_kl`` / ``gamma_jeffreys`` functions above
+# accept plain arrays and are used by the biological DE pipeline for
+# vectorised per-sample computation without constructing distribution
+# objects.
+
+
+# ==============================================================================
 # Jensen-Shannon Divergence
 # ==============================================================================
 

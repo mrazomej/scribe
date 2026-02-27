@@ -94,11 +94,11 @@ def _extract_de_inputs(results, component=None):
 
     r_samples = results.posterior_samples["r"]
 
-    # Hierarchical models have gene-specific p stored as a
-    # numpyro.deterministic site (derived from phi for mean_odds).
-    p_samples = None
-    if results.model_config.is_hierarchical:
-        p_samples = results.posterior_samples.get("p")
+    # Always try to extract p for biological-level DE.
+    # Hierarchical models store gene-specific p as a numpyro.deterministic
+    # site (shape N×D or N×K×D).  Non-hierarchical models store a shared
+    # scalar p per sample (shape N,) which broadcasts during computation.
+    p_samples = results.posterior_samples.get("p")
 
     gene_names = None
     if results.var is not None:
@@ -608,6 +608,12 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
     # --- Posterior CLR differences ---
     delta_samples: jnp.ndarray = field(default=None, repr=False)
 
+    # --- Raw NB parameter samples for biological-level DE ---
+    r_samples_A: Optional[jnp.ndarray] = field(default=None, repr=False)
+    r_samples_B: Optional[jnp.ndarray] = field(default=None, repr=False)
+    p_samples_A: Optional[jnp.ndarray] = field(default=None, repr=False)
+    p_samples_B: Optional[jnp.ndarray] = field(default=None, repr=False)
+
     # --- Informational ---
     n_samples: int = field(default=0, repr=True)
 
@@ -616,6 +622,9 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
         self.method = "empirical"
         if self.delta_samples is not None:
             self.n_samples = self.delta_samples.shape[0]
+        # Biological-level DE cache
+        self._biological_results = None
+        self._cached_bio_taus = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -625,6 +634,81 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
     def D(self) -> int:
         """Number of genes (CLR dimensionality)."""
         return self.delta_samples.shape[1]
+
+    @property
+    def has_biological(self) -> bool:
+        """Whether biological-level DE can be computed."""
+        return (
+            self.r_samples_A is not None
+            and self.r_samples_B is not None
+            and self.p_samples_A is not None
+            and self.p_samples_B is not None
+        )
+
+    # ------------------------------------------------------------------
+    # Biological-level DE (mean, variance, KL)
+    # ------------------------------------------------------------------
+
+    def biological_level(
+        self,
+        tau_lfc: float = 0.0,
+        tau_var: float = 0.0,
+        tau_kl: float = 0.0,
+    ) -> dict:
+        """Compute biological-level DE statistics from NB parameters.
+
+        Computes LFC (mean shift), log-variance ratio (dispersion shift),
+        and Gamma Jeffreys divergence (full distributional shift) from
+        the stored posterior samples of ``(r, p)`` for each condition.
+
+        Results are cached; calling again with different thresholds
+        triggers recomputation.
+
+        Parameters
+        ----------
+        tau_lfc : float, default=0.0
+            Practical significance threshold for the biological LFC.
+        tau_var : float, default=0.0
+            Practical significance threshold for the log-variance ratio.
+        tau_kl : float, default=0.0
+            Practical significance threshold for the Jeffreys divergence.
+
+        Returns
+        -------
+        dict
+            Biological DE statistics.  See
+            :func:`~scribe.de._biological.biological_differential_expression`
+            for the full list of keys.
+
+        Raises
+        ------
+        RuntimeError
+            If the NB parameter samples are not available (e.g. the
+            comparison was created with ``compute_biological=False``).
+        """
+        if not self.has_biological:
+            raise RuntimeError(
+                "Biological-level DE requires stored NB parameter samples "
+                "(r_samples_A/B, p_samples_A/B).  Re-run compare() with "
+                "compute_biological=True (the default)."
+            )
+
+        taus = (tau_lfc, tau_var, tau_kl)
+        if self._biological_results is None or self._cached_bio_taus != taus:
+            from ._biological import biological_differential_expression
+
+            self._cached_bio_taus = taus
+            self._biological_results = biological_differential_expression(
+                r_samples_A=self.r_samples_A,
+                r_samples_B=self.r_samples_B,
+                p_samples_A=self.p_samples_A,
+                p_samples_B=self.p_samples_B,
+                tau_lfc=tau_lfc,
+                tau_var=tau_var,
+                tau_kl=tau_kl,
+                gene_names=self.gene_names,
+            )
+        return self._biological_results
 
     # ------------------------------------------------------------------
     # Gene-level analysis (empirical counting)
@@ -876,6 +960,10 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             gene_names=self.gene_names,
             label_A=self.label_A,
             label_B=self.label_B,
+            r_samples_A=self.r_samples_A,
+            r_samples_B=self.r_samples_B,
+            p_samples_A=self.p_samples_A,
+            p_samples_B=self.p_samples_B,
             sigma_grid=sigma_grid,
             shrinkage_max_iter=shrinkage_max_iter,
             shrinkage_tol=shrinkage_tol,
@@ -885,10 +973,11 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
 
     def __repr__(self) -> str:
         """Concise representation of the empirical DE comparison."""
+        bio_str = ", biological=True" if self.has_biological else ""
         return (
             f"ScribeEmpiricalDEResults("
             f"D={self.D}, "
-            f"n_samples={self.n_samples}, "
+            f"n_samples={self.n_samples}{bio_str}, "
             f"labels='{self.label_A}' vs '{self.label_B}')"
         )
 
@@ -1072,6 +1161,8 @@ def compare(
     sigma_grid: Optional[jnp.ndarray] = None,
     shrinkage_max_iter: int = 200,
     shrinkage_tol: float = 1e-8,
+    # --- Biological-level DE ---
+    compute_biological: bool = True,
 ) -> ScribeDEResults:
     """Create a DE results object from two fitted models or posterior samples.
 
@@ -1297,6 +1388,7 @@ def compare(
             gene_mask=gene_mask,
             p_samples_A=p_samples_A,
             p_samples_B=p_samples_B,
+            compute_biological=compute_biological,
         )
     elif method == "shrinkage":
         return _compare_shrinkage(
@@ -1317,6 +1409,7 @@ def compare(
             sigma_grid=sigma_grid,
             shrinkage_max_iter=shrinkage_max_iter,
             shrinkage_tol=shrinkage_tol,
+            compute_biological=compute_biological,
         )
     else:
         raise ValueError(
@@ -1433,6 +1526,7 @@ def _compare_empirical(
     gene_mask: Optional[jnp.ndarray] = None,
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
+    compute_biological: bool = True,
 ) -> ScribeEmpiricalDEResults:
     """Build an empirical DE comparison from posterior r samples.
 
@@ -1473,7 +1567,30 @@ def _compare_empirical(
     -------
     ScribeEmpiricalDEResults
     """
-    from ._empirical import compute_clr_differences
+    from ._empirical import compute_clr_differences, _slice_component
+
+    # Capture sliced r/p samples for biological-level DE before
+    # compute_clr_differences consumes them through Dirichlet/Gamma
+    # sampling.  This mirrors the slicing logic inside that function.
+    r_bio_A = _slice_component(r_samples_A, component_A, "A")
+    r_bio_B = _slice_component(r_samples_B, component_B, "B")
+    p_bio_A = (
+        _slice_component(p_samples_A, component_A, "A")
+        if p_samples_A is not None
+        else None
+    )
+    p_bio_B = (
+        _slice_component(p_samples_B, component_B, "B")
+        if p_samples_B is not None
+        else None
+    )
+    # Truncate to the shorter sample count (same logic as CLR path)
+    N_bio = min(r_bio_A.shape[0], r_bio_B.shape[0])
+    r_bio_A, r_bio_B = r_bio_A[:N_bio], r_bio_B[:N_bio]
+    if p_bio_A is not None:
+        p_bio_A = p_bio_A[:N_bio]
+    if p_bio_B is not None:
+        p_bio_B = p_bio_B[:N_bio]
 
     delta_samples = compute_clr_differences(
         r_samples_A=r_samples_A,
@@ -1511,6 +1628,10 @@ def _compare_empirical(
         gene_names=gene_names,
         label_A=label_A,
         label_B=label_B,
+        r_samples_A=r_bio_A if compute_biological else None,
+        r_samples_B=r_bio_B if compute_biological else None,
+        p_samples_A=p_bio_A if compute_biological else None,
+        p_samples_B=p_bio_B if compute_biological else None,
     )
 
 
@@ -1537,6 +1658,7 @@ def _compare_shrinkage(
     sigma_grid: Optional[jnp.ndarray] = None,
     shrinkage_max_iter: int = 200,
     shrinkage_tol: float = 1e-8,
+    compute_biological: bool = True,
 ) -> ScribeShrinkageDEResults:
     """Build a shrinkage DE comparison from posterior r samples.
 
@@ -1585,7 +1707,27 @@ def _compare_shrinkage(
     -------
     ScribeShrinkageDEResults
     """
-    from ._empirical import compute_clr_differences
+    from ._empirical import compute_clr_differences, _slice_component
+
+    # Capture sliced r/p samples for biological-level DE
+    r_bio_A = _slice_component(r_samples_A, component_A, "A")
+    r_bio_B = _slice_component(r_samples_B, component_B, "B")
+    p_bio_A = (
+        _slice_component(p_samples_A, component_A, "A")
+        if p_samples_A is not None
+        else None
+    )
+    p_bio_B = (
+        _slice_component(p_samples_B, component_B, "B")
+        if p_samples_B is not None
+        else None
+    )
+    N_bio = min(r_bio_A.shape[0], r_bio_B.shape[0])
+    r_bio_A, r_bio_B = r_bio_A[:N_bio], r_bio_B[:N_bio]
+    if p_bio_A is not None:
+        p_bio_A = p_bio_A[:N_bio]
+    if p_bio_B is not None:
+        p_bio_B = p_bio_B[:N_bio]
 
     delta_samples = compute_clr_differences(
         r_samples_A=r_samples_A,
@@ -1622,6 +1764,10 @@ def _compare_shrinkage(
         gene_names=gene_names,
         label_A=label_A,
         label_B=label_B,
+        r_samples_A=r_bio_A if compute_biological else None,
+        r_samples_B=r_bio_B if compute_biological else None,
+        p_samples_A=p_bio_A if compute_biological else None,
+        p_samples_B=p_bio_B if compute_biological else None,
         sigma_grid=sigma_grid,
         shrinkage_max_iter=shrinkage_max_iter,
         shrinkage_tol=shrinkage_tol,

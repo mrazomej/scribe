@@ -112,6 +112,9 @@ from ._shrinkage import (
     shrinkage_differential_expression,
 )
 
+# Biological-level DE (mean LFC, variance ratio, Gamma KL)
+from ._biological import biological_differential_expression
+
 __all__ = [
     # Results hierarchy
     "ScribeDEResults",
@@ -153,4 +156,6 @@ __all__ = [
     # Empirical Bayes shrinkage
     "fit_scale_mixture_prior",
     "shrinkage_differential_expression",
+    # Biological-level DE
+    "biological_differential_expression",
 ]
