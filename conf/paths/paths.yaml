@@ -1,0 +1,5 @@
+# Default paths configuration.
+# These values can be overridden by conf/paths/paths.local.yaml (git-ignored).
+
+# Base directory where inference outputs are written.
+outputs_dir: outputs

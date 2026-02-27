@@ -39,6 +39,9 @@ conf/
 │   ├── jurkat_cells.yaml
 │   ├── singer.yaml
 │   └── 5050mix.yaml
+├── paths/                # Output path configuration
+│   ├── paths.yaml        # Default paths (git-tracked)
+│   └── paths.local.yaml.example  # Example local override
 ├── inference/            # Inference method configurations
 │   ├── svi.yaml         # Stochastic Variational Inference
 │   ├── mcmc.yaml        # Markov Chain Monte Carlo
@@ -417,7 +420,8 @@ python infer.py model=nbvcp \
 
 ## Output Organization
 
-Hydra automatically organizes outputs:
+Hydra automatically organizes outputs under `${paths.outputs_dir}` (default
+`outputs/`):
 
 ```
 outputs/
@@ -429,6 +433,23 @@ outputs/
 │   │   │   │   ├── figs/
 │   │   │   │   └── .hydra/
 ```
+
+### Local Machine Output Path Override
+
+To set a machine-specific output root without committing it to git:
+
+```bash
+cp conf/paths/paths.local.yaml.example conf/paths/paths.local.yaml
+```
+
+Then edit `conf/paths/paths.local.yaml`:
+
+```yaml
+outputs_dir: /projects/hybrid-modeling/s3/altos-lab-hybrid-modeling/scribe/outputs
+```
+
+`conf/paths/paths.local.yaml` is git-ignored, so each machine/user can set a
+different output location safely.
 
 ## Visualization Configuration
 
