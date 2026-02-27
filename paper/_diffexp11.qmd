@@ -1,0 +1,432 @@
+---
+editor:
+    render-on-save: true
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+## Biological-Level Differential Expression {#sec-diffexp-biological}
+
+The differential expression framework developed in
+@sec-diffexp-nonparametric and @sec-diffexp-eb operates entirely in the
+**compositional** (CLR) space. While this is the correct statistical object for
+testing compositional hypotheses, it inherits the well-known pathologies of
+log-ratio transformations near the simplex boundary. Genes with very low
+expression occupy a region of the simplex where even tiny absolute perturbations
+in proportion produce dramatic CLR swings, because the logarithm amplifies small
+values. As a result, genes that are barely expressed can appear as strongly
+differentially expressed in CLR space when, in fact, their biological
+distributions have hardly changed.
+
+In this section, we derive three complementary metrics that quantify
+differential expression directly in the space of the **biological**
+(denoised) negative binomial distribution, completely bypassing the
+compositional simplex. Because the posterior samples of the NB parameters
+$(r_g, p_g)$ are already computed during the CLR pipeline, these metrics come
+at near-zero additional computational cost.
+
+### Recap: the biological distribution {#sec-diffexp-bio-recap}
+
+From @sec-denoising, the model learns gene-specific NB parameters $(r_g, p_g)$
+for each condition. The true (pre-capture) transcript count for gene $g$ follows
+
+$$
+m_g \sim \text{NB}(r_g, p_g),
+$${#eq-diffexp-bio-nb}
+
+with mean and variance
+
+$$
+\mu_g = \frac{r_g(1 - p_g)}{p_g}, \qquad
+\text{Var}(m_g) = \frac{r_g(1 - p_g)}{p_g^2} = \frac{\mu_g}{p_g}.
+$${#eq-diffexp-bio-mean-var}
+
+These are the *biological* moments: they describe the true expression of gene $g$
+in a cell before any technical noise is introduced. Unlike the compositional
+proportions $\rho_g$, the means $\mu_g$ live in $\mathbb{R}_{\geq 0}$ and are
+not subject to closure.
+
+### Metric 1: Biological log-fold change {#sec-diffexp-bio-lfc}
+
+The most natural measure of mean expression change is the **biological
+log-fold change**,
+
+$$
+\text{LFC}_g = \log\!\left(\frac{\mu_g^A}{\mu_g^B}\right)
+= \log\!\left(\frac{r_g^A (1 - p_g^A) / p_g^A}
+                     {r_g^B (1 - p_g^B) / p_g^B}\right).
+$${#eq-diffexp-bio-lfc}
+
+This is the log-ratio of the NB means between conditions A and B. Its key
+advantage over the CLR difference $\Delta_g = \text{CLR}(\boldsymbol\rho^A)_g -
+\text{CLR}(\boldsymbol\rho^B)_g$ is that it is **free of compositional
+closure**: a gene whose mean expression does not change will have $\text{LFC}_g
+= 0$ regardless of what other genes do.
+
+#### Posterior inference
+
+We have $N$ paired posterior draws $(r_g^{A,(s)}, p_g^{A,(s)})$ and
+$(r_g^{B,(s)}, p_g^{B,(s)})$ for $s = 1, \ldots, N$. For each draw, compute
+
+$$
+\text{LFC}_g^{(s)} = \log\!\left(\frac{r_g^{A,(s)} (1 - p_g^{A,(s)}) / p_g^{A,(s)}}
+                                        {r_g^{B,(s)} (1 - p_g^{B,(s)}) / p_g^{B,(s)}}\right).
+$${#eq-diffexp-bio-lfc-samples}
+
+The posterior summaries then follow the same recipe as in
+@sec-diffexp-nonparametric. The posterior mean is
+
+$$
+\widehat{\text{LFC}}_g = \frac{1}{N} \sum_{s=1}^N \text{LFC}_g^{(s)},
+$${#eq-diffexp-bio-lfc-mean}
+
+and the posterior standard deviation is
+
+$$
+s_g^{\text{LFC}} = \sqrt{\frac{1}{N-1} \sum_{s=1}^N
+\left(\text{LFC}_g^{(s)} - \widehat{\text{LFC}}_g\right)^2}.
+$${#eq-diffexp-bio-lfc-sd}
+
+The **local false sign rate** (lfsr) is the posterior probability that the sign
+of $\text{LFC}_g$ has been incorrectly assigned,
+
+$$
+\text{lfsr}_g^{\text{LFC}} = \min\!\left(
+  \hat{\pi}_g^+, \; 1 - \hat{\pi}_g^+
+\right),
+\qquad
+\hat{\pi}_g^+ = \frac{1}{N}\sum_{s=1}^N \mathbf{1}\!\left[\text{LFC}_g^{(s)} > 0\right].
+$${#eq-diffexp-bio-lfc-lfsr}
+
+For practical significance with threshold $\tau_{\text{LFC}} > 0$, we define the
+directional probabilities
+
+$$
+P_g^{\uparrow} = \frac{1}{N}\sum_{s=1}^N \mathbf{1}\!\left[\text{LFC}_g^{(s)} > \tau_{\text{LFC}}\right],
+\qquad
+P_g^{\downarrow} = \frac{1}{N}\sum_{s=1}^N \mathbf{1}\!\left[\text{LFC}_g^{(s)} < -\tau_{\text{LFC}}\right],
+$${#eq-diffexp-bio-lfc-directional}
+
+and the probability of a practical effect
+
+$$
+P_g^{\text{effect}} = P_g^{\uparrow} + P_g^{\downarrow}.
+$${#eq-diffexp-bio-lfc-peffect}
+
+The practical-significance lfsr is
+
+$$
+\text{lfsr}_g^{\tau} = 1 - \max(P_g^{\uparrow}, P_g^{\downarrow}).
+$${#eq-diffexp-bio-lfc-lfsr-tau}
+
+
+### Metric 2: Log-variance ratio {#sec-diffexp-bio-lvr}
+
+Two conditions can have identical means yet differ in their variability.
+A gene that switches from tight regulation to bursty expression may have
+$\mu_g^A \approx \mu_g^B$ but vastly different variances. From
+@eq-diffexp-bio-mean-var, the NB variance depends on *both* $r_g$ and $p_g$.
+
+We define the **log-variance ratio**,
+
+$$
+\text{LVR}_g = \log\!\left(\frac{\text{Var}^A(m_g)}{\text{Var}^B(m_g)}\right)
+= \log\!\left(\frac{r_g^A (1 - p_g^A) / (p_g^A)^2}
+                     {r_g^B (1 - p_g^B) / (p_g^B)^2}\right).
+$${#eq-diffexp-bio-lvr}
+
+This can be decomposed as
+
+$$
+\text{LVR}_g = \text{LFC}_g + \log\!\left(\frac{p_g^B}{p_g^A}\right),
+$${#eq-diffexp-bio-lvr-decomp}
+
+which shows that the log-variance ratio captures *both* the mean shift and an
+additional component from the change in $p_g$.
+A gene with $\text{LFC}_g \approx 0$ but $\text{LVR}_g \neq 0$ has undergone a
+pure change in overdispersion — the "shape" of the expression distribution
+changed without its centre moving.
+
+#### Posterior inference
+
+Per-sample computation mirrors the LFC:
+
+$$
+\text{LVR}_g^{(s)} = \log\!\left(\frac{r_g^{A,(s)} (1 - p_g^{A,(s)}) / (p_g^{A,(s)})^2}
+                                        {r_g^{B,(s)} (1 - p_g^{B,(s)}) / (p_g^{B,(s)})^2}\right),
+$${#eq-diffexp-bio-lvr-samples}
+
+and all summary statistics — posterior mean, SD, lfsr, $P^{\uparrow}$,
+$P^{\downarrow}$, $P^{\text{effect}}$, and $\text{lfsr}_g^{\tau}$ — follow
+identically to @sec-diffexp-bio-lfc with the obvious substitutions.
+
+
+### Metric 3: Gamma Jeffreys divergence {#sec-diffexp-bio-kl}
+
+The LFC and LVR each capture one moment of the distribution. A more holistic
+measure asks: **how different are the two NB distributions in total?**
+
+#### The Poisson–Gamma representation
+
+A standard result (used extensively in @sec-dirichlet-multinomial) is that the
+negative binomial admits a **Poisson–Gamma mixture** representation. If
+
+$$
+\lambda_g \sim \text{Gamma}\!\left(r_g, \; \frac{p_g}{1 - p_g}\right),
+\qquad
+m_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
+$${#eq-diffexp-bio-poisson-gamma}
+
+then marginally $m_g \sim \text{NB}(r_g, p_g)$. Here we parameterise the Gamma
+with shape $\alpha = r_g$ and rate $\beta = p_g / (1 - p_g)$, so that
+$\mathbb{E}[\lambda_g] = r_g (1 - p_g)/p_g = \mu_g$ and
+$\text{Var}(\lambda_g) = r_g (1 - p_g)^2 / p_g^2$.
+
+The latent rate $\lambda_g$ is a continuous relaxation of the NB: it captures
+both the mean *and* the shape of the count distribution through the Gamma
+parameters $(\alpha, \beta)$. Importantly, the **KL divergence between two
+Gamma distributions has a closed form**, whereas the KL between two Negative
+Binomials with different dispersion parameters does not.
+
+#### KL divergence between Gamma distributions
+
+Let $P = \text{Gamma}(\alpha_P, \beta_P)$ and $Q = \text{Gamma}(\alpha_Q,
+\beta_Q)$. The KL divergence from $P$ to $Q$ is
+
+$$
+\text{KL}(P \| Q) =
+  (\alpha_P - \alpha_Q)\,\psi(\alpha_P)
+  - \log\Gamma(\alpha_P)
+  + \log\Gamma(\alpha_Q)
+  + \alpha_Q\!\left(\log\beta_P - \log\beta_Q\right)
+  + \alpha_P\!\left(\frac{\beta_Q}{\beta_P} - 1\right),
+$${#eq-diffexp-bio-gamma-kl}
+
+where $\psi(\cdot) = \frac{d}{d\alpha}\log\Gamma(\alpha)$ is the digamma
+function. This follows from a direct computation using the Gamma density.
+
+::: {.callout-note collapse="true"}
+## Derivation of the Gamma KL divergence
+
+The Gamma density with shape $\alpha$ and rate $\beta$ is
+
+$$
+f(x; \alpha, \beta) = \frac{\beta^\alpha}{\Gamma(\alpha)} x^{\alpha - 1} e^{-\beta x}.
+$${#eq-diffexp-bio-gamma-density}
+
+The log-density is
+
+$$
+\log f(x; \alpha, \beta) = \alpha \log\beta - \log\Gamma(\alpha) + (\alpha - 1)\log x - \beta x.
+$${#eq-diffexp-bio-gamma-logdensity}
+
+The KL divergence is
+
+$$
+\text{KL}(P \| Q)
+= \mathbb{E}_P\!\left[\log f(x; \alpha_P, \beta_P) - \log f(x; \alpha_Q, \beta_Q)\right].
+$${#eq-diffexp-bio-kl-def}
+
+Substituting the log-densities,
+
+$$
+\text{KL}(P \| Q)
+= \mathbb{E}_P\bigl[
+  \alpha_P \log\beta_P - \log\Gamma(\alpha_P) + (\alpha_P - 1)\log x - \beta_P x
+  - \alpha_Q \log\beta_Q + \log\Gamma(\alpha_Q) - (\alpha_Q - 1)\log x + \beta_Q x
+\bigr].
+$$
+
+Grouping terms,
+
+$$
+\text{KL}(P \| Q) =
+  \alpha_P \log\beta_P - \alpha_Q \log\beta_Q
+  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q)
+  + (\alpha_P - \alpha_Q)\,\mathbb{E}_P[\log x]
+  - (\beta_P - \beta_Q)\,\mathbb{E}_P[x].
+$$
+
+Using the standard Gamma moment identities $\mathbb{E}_P[\log x] =
+\psi(\alpha_P) - \log\beta_P$ and $\mathbb{E}_P[x] = \alpha_P / \beta_P$,
+
+$$
+\text{KL}(P \| Q) =
+  \alpha_P \log\beta_P - \alpha_Q \log\beta_Q
+  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q)
+  + (\alpha_P - \alpha_Q)(\psi(\alpha_P) - \log\beta_P)
+  - (\beta_P - \beta_Q)\frac{\alpha_P}{\beta_P}.
+$$
+
+Expanding,
+
+\begin{align}
+\text{KL}(P \| Q) &=
+  \alpha_P \log\beta_P - \alpha_Q \log\beta_Q
+  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q) \\
+  &\quad + (\alpha_P - \alpha_Q)\psi(\alpha_P)
+  - (\alpha_P - \alpha_Q)\log\beta_P \\
+  &\quad - \alpha_P + \alpha_P\frac{\beta_Q}{\beta_P}.
+\end{align}
+
+The $\alpha_P \log\beta_P$ and $-\alpha_P\log\beta_P$ cancel, and $-\alpha_Q\log\beta_Q + \alpha_Q\log\beta_P = \alpha_Q(\log\beta_P - \log\beta_Q)$. Collecting,
+
+$$
+\text{KL}(P \| Q) =
+  (\alpha_P - \alpha_Q)\,\psi(\alpha_P)
+  - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q)
+  + \alpha_Q(\log\beta_P - \log\beta_Q)
+  + \alpha_P\!\left(\frac{\beta_Q}{\beta_P} - 1\right),
+$$
+
+which is @eq-diffexp-bio-gamma-kl. $\square$
+:::
+
+
+#### Jeffreys divergence (symmetrisation)
+
+The KL divergence is asymmetric: $\text{KL}(P \| Q) \neq \text{KL}(Q \| P)$ in
+general. For a symmetric measure, we use the **Jeffreys divergence**,
+
+$$
+J_g = \text{KL}(P_g^A \| P_g^B) + \text{KL}(P_g^B \| P_g^A),
+$${#eq-diffexp-bio-jeffreys}
+
+where $P_g^A = \text{Gamma}(r_g^A, \beta_g^A)$ and $P_g^B =
+\text{Gamma}(r_g^B, \beta_g^B)$ with $\beta_g = p_g / (1 - p_g)$.
+
+The Jeffreys divergence satisfies $J_g \geq 0$ with equality if and only if
+$P_g^A = P_g^B$, and is symmetric by construction. It captures *any*
+distributional shift — changes in mean, variance, skewness, or shape — in a
+single scalar.
+
+#### Posterior inference
+
+For each posterior draw $s$, we compute
+
+$$
+J_g^{(s)} = \text{KL}(\text{Gamma}(r_g^{A,(s)}, \beta_g^{A,(s)}) \|
+                       \text{Gamma}(r_g^{B,(s)}, \beta_g^{B,(s)}))
+           + \text{KL}(\text{Gamma}(r_g^{B,(s)}, \beta_g^{B,(s)}) \|
+                       \text{Gamma}(r_g^{A,(s)}, \beta_g^{A,(s)})),
+$${#eq-diffexp-bio-jeffreys-samples}
+
+where $\beta_g^{A,(s)} = p_g^{A,(s)} / (1 - p_g^{A,(s)})$, and each KL uses
+@eq-diffexp-bio-gamma-kl.
+
+Because $J_g$ is non-negative by construction, the posterior inference simplifies
+compared to the signed metrics. The posterior mean and standard deviation are
+
+$$
+\hat{J}_g = \frac{1}{N}\sum_{s=1}^N J_g^{(s)},
+\qquad
+s_g^J = \sqrt{\frac{1}{N-1}\sum_{s=1}^N (J_g^{(s)} - \hat{J}_g)^2}.
+$${#eq-diffexp-bio-jeffreys-summaries}
+
+For practical significance with threshold $\tau_J > 0$, the probability of a
+practical effect is simply
+
+$$
+P_g^{\text{effect}} = \frac{1}{N}\sum_{s=1}^N
+\mathbf{1}[J_g^{(s)} > \tau_J].
+$${#eq-diffexp-bio-jeffreys-peffect}
+
+There is no directional decomposition because $J_g$ is always non-negative.
+
+
+### Why the Gamma KL and not the NB KL? {#sec-diffexp-bio-why-gamma}
+
+A natural question is: why not compute the KL divergence between the NB
+distributions directly? The NB KL divergence between $\text{NB}(r_P, p_P)$ and
+$\text{NB}(r_Q, p_Q)$ is
+
+$$
+\text{KL}(\text{NB}_{P} \| \text{NB}_{Q})
+= \sum_{k=0}^{\infty} \binom{k + r_P - 1}{k} p_P^{r_P}(1-p_P)^k
+\log\frac{\binom{k + r_P - 1}{k} p_P^{r_P}(1-p_P)^k}
+         {\binom{k + r_Q - 1}{k} p_Q^{r_Q}(1-p_Q)^k}.
+$${#eq-diffexp-bio-nb-kl}
+
+When $r_P = r_Q$, the binomial coefficient ratios cancel and the sum simplifies
+to a closed form involving only $p_P$ and $p_Q$. However, when $r_P \neq r_Q$,
+the ratio of binomial coefficients $\binom{k + r_P - 1}{k} / \binom{k + r_Q -
+1}{k}$ does not telescope, and no tractable closed form is known. The sum must be
+truncated and evaluated numerically, which is expensive and introduces
+approximation error, especially for genes with large $r$.
+
+The Gamma KL, by contrast, exploits the Poisson–Gamma representation: the Gamma
+latent rate captures all of the NB's parametric structure (both its mean and its
+overdispersion), and the remaining Poisson layer is a shared observation model
+that does not vary between conditions. In this sense, the Gamma KL measures
+exactly the divergence in the *generative mechanism* that produces the counts,
+which is the quantity of biological interest.
+
+
+### Decision framework: four complementary views {#sec-diffexp-bio-decision}
+
+With the biological metrics computed, the analyst has four complementary views of
+each gene:
+
+| Metric | Space | Captures | Free of closure? |
+|--------|-------|----------|------------------|
+| CLR difference $\Delta_g$ | Compositional simplex | Relative abundance shift | No |
+| Biological LFC | Denoised count space | Mean expression shift | Yes |
+| Log-variance ratio | Denoised count space | Dispersion shift | Yes |
+| Jeffreys divergence $J_g$ | Latent Gamma rate | Full distributional shift | Yes |
+
+: Summary of the four DE metrics. {#tbl-diffexp-bio-metrics}
+
+The recommended workflow is:
+
+1. **Screen with CLR**: use the CLR-based lfsr (with or without empirical Bayes
+   shrinkage) as the primary filter, exactly as in @sec-diffexp-nonparametric and
+   @sec-diffexp-eb.
+2. **Validate with biological LFC**: for genes called as DE in CLR space,
+   check whether the biological LFC is consistent. Lowly expressed genes with
+   large CLR effects but negligible biological LFC are likely compositional
+   artefacts.
+3. **Detect variance changes**: inspect the log-variance ratio for genes with
+   small LFC but high Jeffreys divergence — these genes have undergone a change
+   in expression noise (e.g., a switch from tight regulation to bursty
+   transcription) that the mean-based metrics miss.
+4. **Flag distributional shifts**: the Jeffreys divergence serves as a catch-all
+   for any change in the NB distribution. Genes with high $J_g$ but low CLR
+   $|\Delta_g|$ are candidates for further investigation.
+
+No single metric is universally "best." The CLR metric is the only one that
+respects the compositional nature of the data, and remains the gold standard for
+testing compositional hypotheses. The biological metrics complement it by
+providing a non-compositional check that is especially valuable for lowly
+expressed genes where the CLR transform amplifies noise.
+
+
+### Implementation notes {#sec-diffexp-bio-implementation}
+
+All four metrics are computed by default when calling `compare()` with
+`method="empirical"` or `method="shrinkage"`. The biological metrics are
+available via the `.biological_level()` method on the results object:
+
+```python
+de = scribe.de.compare(
+    results_A, results_B,
+    method="shrinkage",
+    component_A=0, component_B=0,
+)
+
+# CLR-based DE (as before)
+clr_results = de.gene_level(tau=jnp.log(1.5))
+
+# Biological-level DE
+bio_results = de.biological_level(
+    tau_lfc=jnp.log(1.5),
+    tau_var=jnp.log(2.0),
+    tau_kl=0.5,
+)
+```
+
+The posterior samples of $(r_g, p_g)$ are stored in the results object and
+reused for both CLR and biological computations. Setting
+`compute_biological=False` in `compare()` disables the storage of these samples,
+saving memory when only CLR metrics are needed.
