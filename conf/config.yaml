@@ -163,7 +163,7 @@ hydra:
           - resume_from
           - svi_init
           - inference.empirical_mixing
-          - inference.enable_x64
+          # - inference.enable_x64
           - inference.early_stopping.enabled
           - inference.log_progress_lines
           - inference.batch_size
