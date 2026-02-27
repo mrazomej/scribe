@@ -30,6 +30,8 @@ from .distributions import (
 from .divergences import (
     _kl_betaprime,
     _kl_lognormal,
+    gamma_kl,
+    gamma_jeffreys,
     jensen_shannon,
     sq_hellinger,
     hellinger,
@@ -57,6 +59,8 @@ __all__ = [
     "_kl_betaprime",
     "_kl_lognormal",
     # Divergences (user-facing)
+    "gamma_kl",
+    "gamma_jeffreys",
     "jensen_shannon",
     "sq_hellinger",
     "hellinger",

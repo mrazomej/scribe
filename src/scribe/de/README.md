@@ -106,6 +106,7 @@ When results objects are passed, `compare()`:
 
 | Method | Description |
 |--------|-------------|
+| `de.biological_level(tau_lfc, tau_var, tau_kl)` | Biological-level DE (LFC, variance ratio, Gamma KL) |
 | `de.test_pathway_perturbation(indices, n_permutations)` | Within-pathway compositional perturbation test |
 | `de.test_multiple_gene_sets(gene_sets, tau, target_pefp)` | Batch pathway testing with PEFP control |
 
@@ -414,6 +415,77 @@ The `compare()` factory returns the appropriate subclass based on `method=`.
 All shared methods (`call_genes`, `compute_pefp`, `find_threshold`, `summary`)
 work identically on all three.
 
+## Biological-Level Differential Expression
+
+While the CLR-based metrics operate in the compositional simplex, the
+**biological-level** DE computes metrics directly on the denoised NB
+distribution, bypassing compositional closure. This is especially valuable for
+lowly expressed genes where CLR artifacts dominate.
+
+Three complementary metrics are computed from the posterior samples of
+`(r_g, p_g)`:
+
+| Metric | What it captures |
+|--------|-----------------|
+| **Biological LFC** | Mean expression shift: `log(mu_A / mu_B)` where `mu = r(1-p)/p` |
+| **Log-variance ratio** | Dispersion shift: `log(var_A / var_B)` where `var = r(1-p)/p²` |
+| **Gamma Jeffreys divergence** | Full distributional shift via symmetrised KL on the latent Gamma rate |
+
+### Quick start
+
+```python
+from scribe.de import compare
+
+de = compare(
+    results_bleo, results_ctrl,
+    method="shrinkage",
+    component_A=0, component_B=0,
+)
+
+# CLR-based DE (as before)
+clr_results = de.gene_level(tau=jnp.log(1.5))
+
+# Biological-level DE
+bio = de.biological_level(
+    tau_lfc=jnp.log(1.5),    # practical significance for LFC
+    tau_var=jnp.log(2.0),    # practical significance for variance ratio
+    tau_kl=0.5,              # practical significance for Jeffreys divergence
+)
+
+# Access individual metrics
+bio["lfc_mean"]        # posterior mean biological LFC per gene
+bio["lfc_lfsr"]        # local false sign rate for LFC
+bio["lvr_mean"]        # posterior mean log-variance ratio
+bio["kl_mean"]         # posterior mean Jeffreys divergence
+bio["mu_A_mean"]       # posterior mean biological expression in condition A
+```
+
+### Recommended workflow
+
+1. **Screen with CLR**: use CLR-based lfsr as the primary filter.
+2. **Validate with biological LFC**: filter out compositional artifacts where
+   lowly expressed genes show large CLR effects but negligible biological LFC.
+3. **Detect variance changes**: inspect `lvr_mean` for genes with small LFC but
+   high Jeffreys divergence (change in expression noise, not mean).
+4. **Flag distributional shifts**: use `kl_mean` as a catch-all for any
+   distributional change.
+
+### Disabling biological metrics
+
+To save memory (the posterior `r` and `p` samples are stored in the results
+object), pass `compute_biological=False` to `compare()`:
+
+```python
+de = compare(results_A, results_B, method="empirical", compute_biological=False)
+de.has_biological  # False
+```
+
+### Mathematical details
+
+See Section 11 of the paper (`paper/_diffexp11.qmd`) for full derivations,
+including the Gamma KL divergence, the Poisson-Gamma representation, and the
+decision framework.
+
 ## Empirical Bayes Shrinkage
 
 When using the empirical path, the per-gene lfsr values are computed
@@ -537,6 +609,7 @@ de/
 ├── _transforms.py       # ALR ↔ CLR ↔ ILR transformations
 ├── _gene_level.py       # Per-gene DE (analytic Gaussian)
 ├── _empirical.py        # Per-gene DE (empirical Monte Carlo)
+├── _biological.py       # Per-gene DE (biological-level: LFC, LVR, Gamma KL)
 ├── _shrinkage.py        # Empirical Bayes shrinkage (scale mixture of normals)
 ├── _set_level.py        # Gene-set/pathway analysis
 ├── _error_control.py    # Bayesian error control, formatting
