@@ -422,14 +422,29 @@ While the CLR-based metrics operate in the compositional simplex, the
 distribution, bypassing compositional closure. This is especially valuable for
 lowly expressed genes where CLR artifacts dominate.
 
-Three complementary metrics are computed from the posterior samples of
-`(r_g, p_g)`:
+Three complementary metrics are computed from the posterior NB parameters:
 
 | Metric | What it captures |
 |--------|-----------------|
-| **Biological LFC** | Mean expression shift: `log(mu_A / mu_B)` where `mu = r(1-p)/p` |
-| **Log-variance ratio** | Dispersion shift: `log(var_A / var_B)` where `var = r(1-p)/p²` |
+| **Biological LFC** | Mean expression shift: `log(mu_A / mu_B)` |
+| **Log-variance ratio** | Dispersion shift: `log(var_A / var_B)` |
 | **Gamma Jeffreys divergence** | Full distributional shift via symmetrised KL on the latent Gamma rate |
+
+### Parameterization-aware computation
+
+The biological DE pipeline automatically detects the model's parameterization
+and uses the most numerically stable computation path:
+
+| Parameterization | `mu` | `beta` (Gamma rate) | `var` |
+|---|---|---|---|
+| `mean_odds` | Sampled directly | `1 / phi` (no subtraction) | `mu * (1 + phi)` |
+| `mean_prob` | Sampled directly | `p / (1 - p)` | `mu / p` |
+| `canonical` | `r * (1 - p) / p` | `p / (1 - p)` | `mu / p` |
+
+The `mean_odds` path is the most stable: it avoids the catastrophic `1 - p`
+subtraction when `p -> 1` (near-zero expression), since `beta = 1/phi` never
+involves a difference.  When using results objects, the pipeline auto-extracts
+`mu` and `phi` from `posterior_samples` and selects the best path.
 
 ### Quick start
 
