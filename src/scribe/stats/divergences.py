@@ -477,27 +477,32 @@ def _kl_lowrank_mvn(p, q):
     )
 
     # 2. Compute trace term: tr(Σ_q^{-1} Σ_p)
-    # Use Woodbury:
-    # (W·Wᵀ + D)^{-1} = D^{-1} - D^{-1}·W·(I + Wᵀ·D^{-1}·W)^{-1}·Wᵀ·D^{-1}
+    # Using Woodbury: Σ_q^{-1} = Dq^{-1} - Dq^{-1} Wq M^{-1} Wq^T Dq^{-1}
+    # where M = I + Wq^T Dq^{-1} Wq.
+    #
+    # tr(Σ_q^{-1} Σ_p) = tr(Dq^{-1} Σ_p) - tr(M^{-1} Wq^T Dq^{-1} Σ_p Dq^{-1} Wq)
+    #
+    # First part:  tr(Dq^{-1} Σ_p) = sum(d_p/d_q) + tr(Wp^T Dq^{-1} Wp)
+    # Second part: Wq^T Dq^{-1} Σ_p Dq^{-1} Wq = B B^T + C
+    #   where B = Eq Wp, C = Eq diag(d_p) Eq^T, Eq = Wq^T diag(Dq^{-1})
     Dinv_q = 1.0 / d_q
-    A = (W_q.T * Dinv_q) @ W_q  # (k_q, k_q)
-    B = (W_q.T * Dinv_q) @ W_p  # (k_q, k_p)
+    E_q = W_q.T * Dinv_q  # (k_q, D)
+    M = jnp.eye(k_q) + E_q @ W_q  # I + Wq^T Dq^{-1} Wq,  (k_q, k_q)
+    B = E_q @ W_p  # (k_q, k_p)
 
-    # tr(Σ_q^{-1} Σ_p) =
-    # tr(Dinv_q * d_p) + tr(W_p^T Dinv_q W_p) - tr(B^T inv(I+A) B)
-    trace_diag = jnp.sum(Dinv_q * d_p)
-    trace_lowrank = jnp.trace(
-        (W_p.T * Dinv_q) @ W_p
-    )  # CORRECTED: added this term
-    correction = jnp.trace(B.T @ jnp.linalg.solve(jnp.eye(k_q) + A, B))
+    trace_first = jnp.sum(Dinv_q * d_p) + jnp.trace((W_p.T * Dinv_q) @ W_p)
 
-    trace_term = trace_diag + trace_lowrank - correction
+    # Woodbury correction includes both low-rank and diagonal contributions
+    correction_matrix = B @ B.T + (E_q * d_p) @ E_q.T  # (k_q, k_q)
+    correction = jnp.trace(jnp.linalg.solve(M, correction_matrix))
+
+    trace_term = trace_first - correction
 
     # 3. Compute Mahalanobis term: (μ_q - μ_p)ᵀ Σ_q^{-1} (μ_q - μ_p)
     delta = mu_q - mu_p
     mahal_term = jnp.sum(delta**2 * Dinv_q)
-    temp2 = (W_q.T * Dinv_q) @ delta
-    mahal_correction = temp2 @ jnp.linalg.solve(jnp.eye(k_q) + A, temp2)
+    temp2 = E_q @ delta  # (k_q,)
+    mahal_correction = temp2 @ jnp.linalg.solve(M, temp2)
     mahal_term = mahal_term - mahal_correction
 
     # Combine
