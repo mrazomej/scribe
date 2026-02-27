@@ -1,0 +1,520 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Hierarchical zero-inflation gate {#sec-hierarchical-gate}
+
+In the previous sections, we have developed a family of count models for
+single-cell RNA-seq data: the negative binomial (NB), the NB with variable
+capture probability (NBVCP), and their zero-inflated counterparts (ZINB,
+ZINBVCP). The zero-inflated models introduce a per-gene **gate** parameter
+$\pi_g \in (0,1)$ that mixes a point mass at zero (structural zero) with the
+count distribution:
+
+$$
+u_g \sim
+\begin{cases}
+0 & \text{with probability } \pi_g, \\
+\text{NB}(r_g, p_g) & \text{with probability } 1 - \pi_g.
+\end{cases}
+$${#eq-hgate-zi-model}
+
+The motivation for zero inflation is that some genes exhibit more zeros than
+the NB distribution alone can account for. These **structural zeros** arise
+when a gene is completely silenced in a subpopulation of cells, as opposed to
+the **sampling zeros** that arise from low expression and finite capture
+efficiency (already modelled by the NB).
+
+In practice, however, model comparison via PSIS-LOO reveals a striking
+pattern: the NB model is preferred for the vast majority of genes, but a
+small subset of genes strongly favours the zero-inflated model. These genes
+tend to be biologically coherent---for example, cilia-associated genes in lung
+tissue, which are expressed exclusively in ciliated epithelial cells and are
+true biological zeros in all other cell types.
+
+This creates a dilemma. A flat (non-hierarchical) gate prior assigns the same
+prior belief about zero inflation to every gene. If the prior is too
+permissive, the extra gate parameter "distracts" the model for the majority
+of genes that do not need zero inflation, degrading overall fit. If the prior
+is too tight, the few genes that genuinely need zero inflation cannot escape
+the prior's pull toward zero.
+
+In this section, we resolve this dilemma by placing a **hierarchical prior**
+on the gate parameter, following the same strategy used for the gene-specific
+success probability $p_g$ in @sec-hierarchical-p. The hierarchical gate
+provides adaptive shrinkage: genes with no evidence for structural zeros are
+pulled toward a near-zero gate, effectively recovering the NB model, while
+genes with strong evidence for structural zeros are allowed to have
+substantial gate values.
+
+## The hierarchical gate model {#sec-hgate-model}
+
+### Model specification
+
+Since $\pi_g \in (0, 1)$, we work in the unconstrained logit space, exactly
+as we did for the gene-specific $p_g$ in @sec-hier-hierarchical-model. The
+hierarchical gate model is specified as follows.
+
+First, we define the hyperprior over the population-level gate parameters:
+
+$$
+\mu_\pi \sim \mathcal{N}(\mu_{\pi,0}, \sigma_{\pi,0}),
+$${#eq-hgate-hyperprior-loc}
+
+$$
+\sigma_\pi \sim \text{Softplus}\!\left(\mathcal{N}(\mu_{\sigma,0},
+\sigma_{\sigma,0})\right),
+$${#eq-hgate-hyperprior-scale}
+
+where $\mu_\pi$ is the population mean of the logit-transformed gate and
+$\sigma_\pi > 0$ is the population standard deviation. The
+$\text{Softplus}(x) = \log(1 + e^x)$ transformation ensures strict
+positivity of $\sigma_\pi$.
+
+Next, each gene draws its own logit-gate from the population distribution:
+
+$$
+\text{logit}(\pi_g) \sim \mathcal{N}(\mu_\pi, \sigma_\pi),
+\quad g = 1, 2, \ldots, G,
+$${#eq-hgate-gene-specific}
+
+where $\text{logit}(\pi_g) = \log(\pi_g / (1 - \pi_g))$. The gene-specific
+gate is obtained by applying the sigmoid function:
+
+$$
+\pi_g = \sigma(\text{logit}(\pi_g)) = \frac{1}{1 + e^{-\text{logit}(\pi_g)}}.
+$${#eq-hgate-sigmoid-transform}
+
+### Choice of default hyperparameters
+
+The default hyperparameters encode our prior belief that **most genes do not
+need zero inflation**. We set:
+
+$$
+\mu_{\pi,0} = -5, \quad \sigma_{\pi,0} = 1, \quad
+\mu_{\sigma,0} = -2, \quad \sigma_{\sigma,0} = 0.5.
+$${#eq-hgate-defaults}
+
+The location hyperprior $\mu_\pi \sim \mathcal{N}(-5, 1)$ places the
+population mean of the logit-gate deep in the "no zero-inflation" region.
+To see why, we compute the implied gate at the prior mean:
+
+$$
+\sigma(-5) = \frac{1}{1 + e^5} \approx 0.0067.
+$${#eq-hgate-sigmoid-minus5}
+
+That is, under the prior, the typical gene has a gate of less than 1\%. Even
+at one standard deviation above the prior mean ($\mu_\pi = -4$), the gate is
+
+$$
+\sigma(-4) = \frac{1}{1 + e^4} \approx 0.018,
+$${#eq-hgate-sigmoid-minus4}
+
+still very small. This is the "default off" property: in the absence of
+evidence, genes are strongly regularized toward the NB model.
+
+The scale hyperprior $\sigma_\pi \sim \text{Softplus}(\mathcal{N}(-2, 0.5))$
+controls how much gene-to-gene variation in the gate is permitted. Note that
+$\text{Softplus}(-2) \approx 0.127$, so the prior on $\sigma_\pi$ is
+concentrated around small values, encoding the belief that the population of
+gates is relatively homogeneous. However, the prior has support on all
+positive reals, so if the data demand gene-to-gene heterogeneity, $\sigma_\pi$
+can grow to accommodate it.
+
+### Graphical model
+
+The complete generative model for zero-inflated counts with hierarchical gate
+and (optionally) hierarchical gene-specific $p_g$ is:
+
+```{.tikz caption="Graphical model for the hierarchical zero-inflation gate. White nodes are latent variables, gray nodes are observed variables, and plates indicate replication across genes and cells. The gate hyperparameters $\\mu_\\pi$ and $\\sigma_\\pi$ govern the population distribution of the per-gene gate $\\pi_g$." label="fig-hierarchical-gate-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+\begin{tikzpicture}[
+  >=stealth,
+  node distance=10mm and 12mm,
+  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
+  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  plate/.style={draw, rounded corners, inner sep=4mm}
+]
+  % Gate hyperparameters
+  \node[latent] (mu_gate) {$\mu_\pi$};
+  \node[latent, right=of mu_gate] (sigma_gate) {$\sigma_\pi$};
+
+  % p hyperparameters (optional)
+  \node[latent, right=18mm of sigma_gate] (mu_p) {$\mu_p$};
+  \node[latent, right=of mu_p] (sigma_p) {$\sigma_p$};
+
+  % Gene-level variables
+  \node[latent, below=of mu_gate, xshift=8mm] (gate_g) {$\pi_g$};
+  \node[latent, right=18mm of gate_g] (pg) {$p_g$};
+  \node[latent, right=of pg] (rg) {$r_g$};
+
+  % Observed count
+  \node[obs, below=of pg] (u) {$u_{gc}$};
+
+  % Edges — gate hierarchy
+  \draw[->] (mu_gate) -- (gate_g);
+  \draw[->] (sigma_gate) -- (gate_g);
+
+  % Edges — p hierarchy
+  \draw[->] (mu_p) -- (pg);
+  \draw[->] (sigma_p) -- (pg);
+
+  % Edges — to observed
+  \draw[->] (gate_g) -- (u);
+  \draw[->] (pg) -- (u);
+  \draw[->] (rg) -- (u);
+
+  % Gene plate
+  \begin{scope}[on background layer]
+    \node[plate, fit=(gate_g)(pg)(rg)(u),
+          label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+  \end{scope}
+
+  % Cell plate around observations
+  \begin{scope}[on background layer]
+    \node[plate, fit=(u),
+          label={[yshift=1mm]north east:$c=1,\ldots,C$}] (cellplate) {};
+  \end{scope}
+\end{tikzpicture}
+```
+
+The full posterior is:
+
+$$
+\pi(\underline{r}, \underline{p}, \underline{\pi},
+\mu_\pi, \sigma_\pi, \mu_p, \sigma_p \mid
+\underline{\underline{U}}) \propto
+\left[\prod_{c=1}^C \prod_{g=1}^G
+    \pi(u_{gc} \mid r_g, p_g, \pi_g)
+\right]
+\left[\prod_{g=1}^G \pi(\pi_g \mid \mu_\pi, \sigma_\pi) \,
+\pi(p_g \mid \mu_p, \sigma_p) \, \pi(r_g)\right]
+\pi(\mu_\pi) \, \pi(\sigma_\pi) \,
+\pi(\mu_p) \, \pi(\sigma_p),
+$${#eq-hgate-full-model}
+
+where the per-cell, per-gene likelihood under the zero-inflated model is
+
+$$
+\pi(u_{gc} \mid r_g, p_g, \pi_g) =
+\pi_g \, \mathbb{1}[u_{gc} = 0] +
+(1 - \pi_g) \, \text{NB}(u_{gc} \mid r_g, p_g).
+$${#eq-hgate-zi-likelihood}
+
+## Shrinkage properties {#sec-hgate-shrinkage}
+
+The hierarchical gate provides **adaptive shrinkage**: the degree to which
+individual gates $\pi_g$ are pulled toward the population mean is determined
+by the data through $\sigma_\pi$. We now analyze the two limiting regimes.
+
+### Regime 1: $\sigma_\pi \to 0$ — recovering the NB model
+
+When $\sigma_\pi$ is very small, all genes are shrunk toward the same gate
+value:
+
+$$
+\pi_g \approx \sigma(\mu_\pi) \quad \text{for all } g.
+$${#eq-hgate-shrinkage-small-sigma}
+
+Since the hyperprior on $\mu_\pi$ is centered at $-5$, the posterior of
+$\mu_\pi$ will remain strongly negative unless the data overwhelmingly
+support zero inflation across all genes. In the typical case where most genes
+do not need zero inflation, we have
+
+$$
+\pi_g \approx \sigma(\mu_\pi) \approx 0 \quad \text{for all } g,
+$${#eq-hgate-shrinkage-recovery}
+
+and the zero-inflated model reduces to the standard NB model. This is the
+key property: **the hierarchical gate can automatically recover the NB model
+when zero inflation is not needed**.
+
+### Regime 2: $\sigma_\pi \gg 0$ — gene-specific zero inflation
+
+When $\sigma_\pi$ is large, individual genes are free to deviate
+substantially from the population mean. A gene $g$ with many structural zeros
+will have its posterior $\text{logit}(\pi_g)$ pulled far above $\mu_\pi$,
+resulting in a large gate $\pi_g$. Meanwhile, genes without structural zeros
+will have their gates pulled toward $\sigma(\mu_\pi) \approx 0$.
+
+The effective prior on $\pi_g$ in this regime can be characterized by
+integrating out the logit-normal:
+
+$$
+\pi(\pi_g \mid \mu_\pi, \sigma_\pi) =
+\frac{1}{\sigma_\pi \sqrt{2\pi}}
+\frac{1}{\pi_g (1 - \pi_g)}
+\exp\left(
+    -\frac{(\text{logit}(\pi_g) - \mu_\pi)^2}{2\sigma_\pi^2}
+\right).
+$${#eq-hgate-marginal-prior}
+
+This is the **logit-normal distribution**. When $\mu_\pi$ is strongly
+negative and $\sigma_\pi$ is moderate (say, $\sigma_\pi \in [1, 3]$), this
+distribution has a pronounced mode near zero with a heavy right tail,
+concentrating most of its mass on small gate values while allowing some genes
+to have large gates. The density diverges as $\pi_g \to 0$ (due to the
+$1/\pi_g$ Jacobian term), which provides additional concentration near zero.
+
+To verify this, we can compute the mode of the logit-normal distribution. The
+mode of $\text{logit}(\pi_g) \sim \mathcal{N}(\mu_\pi, \sigma_\pi)$ in
+logit space is $\mu_\pi$, so the mode of $\pi_g$ is
+
+$$
+\pi_g^{\text{mode}} = \sigma(\mu_\pi).
+$${#eq-hgate-mode}
+
+With $\mu_\pi = -5$, the mode is $\sigma(-5) \approx 0.007$, confirming
+that the prior concentrates near zero even when $\sigma_\pi$ allows
+substantial spread.
+
+### Effective shrinkage factor
+
+To build further intuition, consider the posterior update for a single gene's
+gate. Suppose gene $g$ has $n_0$ observed zeros and $n_+$ observed nonzero
+counts across $C$ cells. The likelihood contribution of the gate for gene $g$
+is approximately
+
+$$
+\mathcal{L}(\pi_g) \propto
+\left[\pi_g + (1 - \pi_g) p_0\right]^{n_0}
+\left[(1 - \pi_g)(1 - p_0)\right]^{n_+},
+$${#eq-hgate-approx-likelihood}
+
+where $p_0 = \text{NB}(0 \mid r_g, p_g) = p_g^{r_g}$ is the probability of
+a sampling zero under the NB component. This expression shows that the gate
+is only identifiable when there are **more zeros than the NB component
+predicts**: if $n_0 / C \approx p_0$, the data are consistent with
+$\pi_g = 0$ and the hierarchical prior will shrink the gate to near zero. If
+$n_0 / C \gg p_0$, the excess zeros provide evidence for a nonzero gate, and
+the posterior will pull $\pi_g$ away from zero.
+
+The hierarchical structure introduces a **partial pooling** effect. The
+effective posterior for $\text{logit}(\pi_g)$ can be written as a weighted
+average between the gene-specific maximum likelihood estimate and the
+population mean:
+
+$$
+\mathbb{E}[\text{logit}(\pi_g) \mid \text{data}] \approx
+\kappa_g \, \hat{\ell}_g + (1 - \kappa_g) \, \mu_\pi,
+$${#eq-hgate-partial-pooling}
+
+where $\hat{\ell}_g$ is the gene-specific MLE of $\text{logit}(\pi_g)$ and
+$\kappa_g \in [0, 1]$ is the shrinkage factor. The shrinkage factor depends
+on the ratio of the within-gene information (from the likelihood) to the
+between-gene information (from the hierarchical prior):
+
+$$
+\kappa_g \approx \frac{\tau_g^{-2}}{\tau_g^{-2} + \sigma_\pi^{-2}},
+$${#eq-hgate-shrinkage-factor}
+
+where $\tau_g^2$ is the posterior variance of $\text{logit}(\pi_g)$ from the
+likelihood alone. Genes with strong evidence (small $\tau_g$, many cells) have
+$\kappa_g \approx 1$ and are barely shrunk. Genes with weak evidence (large
+$\tau_g$, few cells or ambiguous zero counts) have $\kappa_g \approx 0$ and
+are shrunk toward the population mean $\mu_\pi$.
+
+## Posterior diagnostic: $\sigma_\pi$ {#sec-hgate-diagnostic}
+
+The hyperparameter $\sigma_\pi$ serves as a **data-driven diagnostic** of
+whether gene-to-gene variation in zero-inflation probability is supported by
+the data. This is directly analogous to the role of $\sigma_p$ in
+@sec-hierarchical-p:
+
+- If $\sigma_\pi \approx 0$ (posterior mass concentrated near zero), then the
+  data are consistent with a uniform gate across all genes. Combined with the
+  negative population mean $\mu_\pi$, this implies that **no gene benefits
+  from zero inflation**, and the model effectively reduces to the NB.
+
+- If $\sigma_\pi$ is moderately large (posterior mass away from zero), then
+  there is evidence for **gene-specific zero-inflation heterogeneity**. Some
+  genes have gates substantially different from the population mean, and the
+  hierarchical model provides a better fit than either a shared gate or no
+  zero inflation at all.
+
+This diagnostic eliminates the need for the two-stage procedure of fitting
+both NB and ZINB models and comparing per-gene elpd scores. The hierarchical
+gate performs this model selection **internally and jointly**, simultaneously
+estimating which genes need zero inflation and how much.
+
+## Interaction with composition sampling {#sec-hgate-composition}
+
+In @sec-hier-gamma-sampling, we derived a Gamma-based composition sampling
+procedure for the hierarchical gene-specific $p_g$ model. A natural question
+is whether the zero-inflation gate $\pi_g$ affects this procedure.
+
+The answer is no: **the gate does not enter the composition formula**. To see
+why, recall that the composition $\rho_g$ represents the fractional abundance
+of gene $g$ in the transcriptome. The zero-inflation gate modifies the
+**observed count distribution** by mixing in structural zeros, but it does
+not change the **expected expression level** of the gene conditional on it
+being expressed. Formally, the expected count under the zero-inflated model
+is
+
+$$
+\mathbb{E}[u_g \mid r_g, p_g, \pi_g] =
+(1 - \pi_g) \cdot \frac{r_g (1 - p_g)}{p_g},
+$${#eq-hgate-expected-count}
+
+which depends on $\pi_g$. However, for the purpose of compositional
+differential expression, we are interested in the **relative expression
+levels** of genes, not their absolute expected counts. The composition
+sampling procedure in @sec-hier-gamma-sampling draws compositions from the
+NB component of the model (using the $r_g$ and $p_g$ parameters), which
+represents the expression profile conditional on a gene being expressed at
+all. The gate $\pi_g$ would only enter if we wanted to model the composition
+of the **observed** (zero-inflated) counts, but this is not the relevant
+quantity for differential expression.
+
+If one wishes to incorporate the gate into the composition, the modified
+procedure would scale each gene's Gamma variate by an additional factor of
+$(1 - \pi_g)$:
+
+$$
+\tilde{\lambda}_g = (1 - \pi_g) \cdot \gamma_g \cdot
+\frac{1 - p_g}{p_g},
+$${#eq-hgate-modified-composition}
+
+where $\gamma_g \sim \text{Gamma}(r_g, 1)$. The composition would then be
+
+$$
+\rho_g = \frac{\tilde{\lambda}_g}{\sum_{j=1}^G \tilde{\lambda}_j}.
+$${#eq-hgate-modified-composition-normalized}
+
+This represents the expected fraction of observed UMIs attributable to gene
+$g$, accounting for the fact that some genes are silenced in some cells.
+Whether to include the gate factor depends on the scientific question being
+asked: if the goal is to compare intrinsic expression programs (conditional
+on a gene being "on"), the gate should be excluded; if the goal is to compare
+the observable transcriptome, the gate should be included.
+
+## Connection to sparse priors {#sec-hgate-sparse-priors}
+
+The hierarchical Normal prior on $\text{logit}(\pi_g)$ is a simple but
+effective form of adaptive shrinkage. It is instructive to place it in the
+broader context of sparse priors, which are widely used in high-dimensional
+statistics.
+
+### Spike-and-slab priors
+
+The conceptually cleanest approach to per-gene model selection would be a
+**spike-and-slab** prior:
+
+$$
+\pi_g \sim \omega \, \delta_0 + (1 - \omega) \, \text{Beta}(a, b),
+$${#eq-hgate-spike-slab}
+
+where $\delta_0$ is a point mass at zero and $\omega$ is the prior
+probability that gene $g$ does not need zero inflation. This prior assigns
+exactly zero gate to a fraction $\omega$ of genes, and a Beta-distributed
+gate to the rest. However, spike-and-slab priors introduce discrete latent
+variables (the indicator for each gene), which are incompatible with the
+continuous variational inference framework used in this work.
+
+### The horseshoe prior
+
+The **horseshoe prior** provides a continuous relaxation of the spike-and-slab
+that achieves similar shrinkage properties:
+
+$$
+\tau \sim \text{Half-Cauchy}(\tau_0), \qquad
+\lambda_g \sim \text{Half-Cauchy}(1),
+$${#eq-hgate-horseshoe-global-local}
+
+$$
+\text{logit}(\pi_g) \sim \mathcal{N}(\mu_\pi, \tau \cdot \lambda_g),
+$${#eq-hgate-horseshoe-gate}
+
+where $\tau$ is a global shrinkage parameter and $\lambda_g$ is a local scale
+for each gene. The horseshoe concentrates most genes near $\sigma(\mu_\pi)
+\approx 0$ while allowing heavy-tailed deviations for genes with genuine
+structural zeros.
+
+The **regularized (Finnish) horseshoe** replaces the Half-Cauchy with a
+Half-Student-$t$ and adds a slab component, improving numerical stability
+under variational inference.
+
+### Where the hierarchical Normal sits
+
+The hierarchical Normal prior used in @eq-hgate-gene-specific is a **global
+shrinkage** model: all genes share the same scale $\sigma_\pi$, and
+shrinkage is controlled by the population parameters $(\mu_\pi, \sigma_\pi)$
+rather than by per-gene local scales. Compared to the horseshoe, the
+hierarchical Normal provides less aggressive shrinkage for genes near zero
+and less heavy tails for genes far from zero.
+
+In practice, the hierarchical Normal is sufficient when the genes requiring
+zero inflation form a **well-separated cluster** in elpd space—as is
+typically the case for cell-type-specific marker genes. The z-scores from
+gene-level model comparison are often in the hundreds or thousands (see the
+motivating example in this section), indicating that the signal is far
+stronger than any shrinkage penalty. For such cases, the hierarchical Normal
+and the horseshoe will produce nearly identical results.
+
+The horseshoe becomes advantageous when the boundary between genes that need
+and do not need zero inflation is blurry—for example, when many genes have
+moderate z-scores and the selection is uncertain. In this regime, the
+horseshoe's per-gene local scales provide finer-grained adaptation. If the
+hierarchical Normal proves insufficient for a particular dataset, upgrading
+to a horseshoe gate is a natural extension that requires only replacing the
+prior on $\text{logit}(\pi_g)$ while keeping the rest of the model unchanged.
+
+## Mathematical summary {#sec-hgate-summary}
+
+We collect the key mathematical results of this section for reference.
+
+**Generative model (hierarchical gate).** The hierarchical gate model is:
+
+$$
+\mu_\pi \sim \mathcal{N}(\mu_{\pi,0}, \sigma_{\pi,0}), \quad
+\sigma_\pi \sim \text{Softplus}(\mathcal{N}(\mu_{\sigma,0},
+\sigma_{\sigma,0})),
+$${#eq-hgate-summary-hyperprior}
+
+$$
+\text{logit}(\pi_g) \sim \mathcal{N}(\mu_\pi, \sigma_\pi), \quad
+\pi_g = \sigma(\text{logit}(\pi_g)),
+$${#eq-hgate-summary-gate}
+
+$$
+u_g \mid r_g, p_g, \pi_g \sim
+\pi_g \, \delta_0 + (1 - \pi_g) \, \text{NB}(r_g, p_g),
+$${#eq-hgate-summary-observation}
+
+for $g = 1, 2, \ldots, G$.
+
+**Default hyperparameters:**
+
+$$
+\mu_{\pi,0} = -5, \quad \sigma_{\pi,0} = 1, \quad
+\mu_{\sigma,0} = -2, \quad \sigma_{\sigma,0} = 0.5.
+$${#eq-hgate-summary-defaults}
+
+**NB recovery.** When $\sigma_\pi \to 0$:
+
+$$
+\pi_g \approx \sigma(\mu_\pi) \approx 0 \quad \forall g,
+$${#eq-hgate-summary-recovery}
+
+recovering the NB model.
+
+**Posterior diagnostic.** The posterior of $\sigma_\pi$ diagnoses the need for
+gene-specific zero inflation: $\sigma_\pi \approx 0$ indicates no gene needs
+zero inflation; $\sigma_\pi \gg 0$ indicates gene-specific heterogeneity.
+
+**Composition sampling.** The gate does not enter the standard composition
+formula. If desired, compositions accounting for zero inflation are:
+
+$$
+\rho_g = \frac{
+    (1 - \pi_g) \gamma_g (1 - p_g) / p_g
+}{
+    \sum_{j=1}^G (1 - \pi_j) \gamma_j (1 - p_j) / p_j
+}, \qquad
+\gamma_g \sim \text{Gamma}(r_g, 1).
+$${#eq-hgate-summary-composition}

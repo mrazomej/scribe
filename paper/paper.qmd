@@ -45,6 +45,9 @@ repository](https://github.com/mrazomej/scribe)
 <!-- Extension: hierarchical gene-specific p -->
 {{< include _hierarchical_p.qmd >}}
 
+<!-- Extension: hierarchical zero-inflation gate -->
+{{< include _hierarchical_gate.qmd >}}
+
 <!-- ============================================================ -->
 <!-- Block 2: Model Comparison -->
 <!-- ============================================================ -->
