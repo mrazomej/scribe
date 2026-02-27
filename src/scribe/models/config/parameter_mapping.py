@@ -192,34 +192,6 @@ PARAMETERIZATION_MAPPINGS = {
             "mu": "Mean parameter (LogNormal distribution)",
         },
     ),
-    # Hierarchical parameterizations (gene-specific p/phi with hyperprior)
-    Parameterization.HIERARCHICAL_CANONICAL: ParameterizationMapping(
-        parameterization=Parameterization.HIERARCHICAL_CANONICAL,
-        core_parameters={"p", "r"},
-        optional_parameters=set(),
-        parameter_descriptions={
-            "p": "Gene-specific success probability (hierarchical sigmoid)",
-            "r": "Dispersion parameter (ExpNormal distribution)",
-        },
-    ),
-    Parameterization.HIERARCHICAL_MEAN_PROB: ParameterizationMapping(
-        parameterization=Parameterization.HIERARCHICAL_MEAN_PROB,
-        core_parameters={"p", "mu"},
-        optional_parameters=set(),
-        parameter_descriptions={
-            "p": "Gene-specific success probability (hierarchical sigmoid)",
-            "mu": "Mean parameter (ExpNormal distribution)",
-        },
-    ),
-    Parameterization.HIERARCHICAL_MEAN_ODDS: ParameterizationMapping(
-        parameterization=Parameterization.HIERARCHICAL_MEAN_ODDS,
-        core_parameters={"phi", "mu"},
-        optional_parameters=set(),
-        parameter_descriptions={
-            "phi": "Gene-specific odds ratio (hierarchical exp)",
-            "mu": "Mean parameter (ExpNormal distribution)",
-        },
-    ),
 }
 
 # ==============================================================================
@@ -265,6 +237,8 @@ def get_active_parameters(
     is_mixture: bool = False,
     is_zero_inflated: bool = False,
     uses_variable_capture: bool = False,
+    hierarchical_p: bool = False,
+    hierarchical_gate: bool = False,
 ) -> Set[str]:
     """
     Get the set of active parameters for a given configuration.
@@ -281,6 +255,10 @@ def get_active_parameters(
         Whether this is a zero-inflated model
     uses_variable_capture : bool
         Whether this model uses variable capture
+    hierarchical_p : bool
+        Whether hierarchical p/phi prior is enabled
+    hierarchical_gate : bool
+        Whether hierarchical gate prior is enabled
 
     Returns
     -------
@@ -291,12 +269,27 @@ def get_active_parameters(
     mapping = get_parameterization_mapping(parameterization)
     active_params = mapping.get_all_parameters().copy()
 
+    # Add hierarchical hyperparameters when flags are set
+    if hierarchical_p:
+        if parameterization in (
+            Parameterization.MEAN_ODDS,
+            Parameterization.ODDS_RATIO,
+        ):
+            active_params.update({"log_phi_loc", "log_phi_scale"})
+        else:
+            active_params.update({"logit_p_loc", "logit_p_scale"})
+
     # Add model-specific parameters
     if is_zero_inflated:
         active_params.add("gate")
+        if hierarchical_gate:
+            active_params.update({"logit_gate_loc", "logit_gate_scale"})
 
     if uses_variable_capture:
-        if parameterization == Parameterization.ODDS_RATIO:
+        if parameterization in (
+            Parameterization.MEAN_ODDS,
+            Parameterization.ODDS_RATIO,
+        ):
             active_params.add("phi_capture")
         else:
             active_params.add("p_capture")

@@ -99,6 +99,22 @@ class ModelConfig(BaseModel):
         False, description="Use unconstrained parameterization"
     )
 
+    # Hierarchical flags
+    hierarchical_p: bool = Field(
+        False,
+        description=(
+            "Gene-specific p/phi with hierarchical prior. "
+            "Requires unconstrained=True."
+        ),
+    )
+    hierarchical_gate: bool = Field(
+        False,
+        description=(
+            "Gene-specific gate with hierarchical prior. "
+            "Only valid for zero-inflated models. Requires unconstrained=True."
+        ),
+    )
+
     # Mixture configuration
     n_components: Optional[int] = Field(
         None, gt=1, description="Number of mixture components"
@@ -169,6 +185,31 @@ class ModelConfig(BaseModel):
     # --------------------------------------------------------------------------
 
     @model_validator(mode="after")
+    def validate_hierarchical_flags(self) -> "ModelConfig":
+        """Validate hierarchical flag consistency.
+
+        - hierarchical_gate requires a zero-inflated model.
+        - Both hierarchical flags require unconstrained=True.
+        """
+        if self.hierarchical_gate and not self.is_zero_inflated:
+            raise ValueError(
+                "hierarchical_gate=True requires a zero-inflated model "
+                "(zinb or zinbvcp), but base_model="
+                f"{self.base_model!r}."
+            )
+        if self.hierarchical_p and not self.unconstrained:
+            raise ValueError(
+                "hierarchical_p=True requires unconstrained=True."
+            )
+        if self.hierarchical_gate and not self.unconstrained:
+            raise ValueError(
+                "hierarchical_gate=True requires unconstrained=True."
+            )
+        return self
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
     def validate_param_specs_consistency(self) -> "ModelConfig":
         """Validate that param_specs overrides are consistent with config.
 
@@ -205,6 +246,8 @@ class ModelConfig(BaseModel):
             is_mixture,
             is_zero_inflated,
             uses_variable_capture,
+            hierarchical_p=self.hierarchical_p,
+            hierarchical_gate=self.hierarchical_gate,
         )
 
         unexpected_params = provided_params - active_params
@@ -248,8 +291,8 @@ class ModelConfig(BaseModel):
     @computed_field
     @property
     def is_hierarchical(self) -> bool:
-        """Check if this model uses a hierarchical (gene-specific p) parameterization."""
-        return str(self.parameterization).startswith("hierarchical")
+        """Check if this model uses any hierarchical prior (p/phi or gate)."""
+        return self.hierarchical_p or self.hierarchical_gate
 
     # --------------------------------------------------------------------------
 
@@ -263,6 +306,8 @@ class ModelConfig(BaseModel):
             is_mixture=self.is_mixture,
             is_zero_inflated=self.is_zero_inflated,
             uses_variable_capture=self.uses_variable_capture,
+            hierarchical_p=self.hierarchical_p,
+            hierarchical_gate=self.hierarchical_gate,
         )
 
     # --------------------------------------------------------------------------

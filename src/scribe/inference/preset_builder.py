@@ -53,6 +53,8 @@ def build_config_from_preset(
     parameterization: str = "canonical",
     inference_method: str = "svi",
     unconstrained: bool = False,
+    hierarchical_p: bool = False,
+    hierarchical_gate: bool = False,
     guide_rank: Optional[int] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
@@ -284,6 +286,12 @@ def build_config_from_preset(
 
     if unconstrained:
         builder.unconstrained()
+
+    if hierarchical_p:
+        builder.with_hierarchical_p()
+
+    if hierarchical_gate:
+        builder.with_hierarchical_gate()
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)

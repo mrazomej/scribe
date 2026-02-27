@@ -43,13 +43,9 @@ from ..builders.parameter_specs import (
     BetaPrimeSpec,
     DerivedParam,
     ExpNormalSpec,
-    HierarchicalExpNormalSpec,
-    HierarchicalSigmoidNormalSpec,
     LogNormalSpec,
-    NormalWithTransformSpec,
     ParamSpec,
     SigmoidNormalSpec,
-    SoftplusNormalSpec,
 )
 from ..config import GuideFamilyConfig
 
@@ -494,394 +490,11 @@ class MeanOddsParameterization(Parameterization):
 
 
 # ==============================================================================
-# Hierarchical Parameterization Classes
+# NOTE: Hierarchical parameterization classes have been removed.
+# Hierarchical priors on p/phi and gate are now controlled via boolean flags
+# (hierarchical_p, hierarchical_gate) in ModelConfig. The factory dynamically
+# replaces flat specs with hierarchical triplets when these flags are set.
 # ==============================================================================
-#
-# These parameterizations relax the shared-p assumption of the standard
-# Dirichlet-Multinomial factorization by placing a hierarchical prior on the
-# success probability (or odds ratio).  The generative model becomes:
-#
-#     hyper_loc   ~ Normal(0, 1)           (population-level location)
-#     hyper_scale ~ Softplus(Normal(0, 1)) (population-level spread)
-#     param_g     = transform(Normal(hyper_loc, hyper_scale))  per gene
-#
-# This provides adaptive shrinkage: the data determine how much gene-specific
-# variation to allow.  When hyper_scale -> 0, genes collapse to a shared value
-# (recovering the standard model).  When hyper_scale is large, genes have
-# diverse values.
-# ==============================================================================
-
-# ------------------------------------------------------------------------------
-# Hierarchical Canonical Parameterization
-# ------------------------------------------------------------------------------
-
-
-class HierarchicalCanonicalParameterization(Parameterization):
-    """Hierarchical canonical: gene-specific p_g with hyperprior, direct r.
-
-    Relaxes the shared-p assumption by placing a hierarchical Normal prior
-    on the logit-space success probability.  Each gene draws its own
-    ``p_g`` from the learned population distribution.
-
-    Core parameters:
-    - logit_p_loc: Population mean of logit(p) (Normal, scalar)
-    - logit_p_scale: Population spread of logit(p) (Softplus, scalar)
-    - p: Gene-specific success probability (hierarchical sigmoid)
-    - r: Dispersion parameter (ExpNormal or LogNormal)
-
-    No derived parameters are computed.
-    """
-
-    @property
-    def name(self) -> str:
-        return "hierarchical_canonical"
-
-    @property
-    def core_parameters(self) -> List[str]:
-        return ["logit_p_loc", "logit_p_scale", "p", "r"]
-
-    @property
-    def gene_param_name(self) -> str:
-        return "r"
-
-    def build_param_specs(
-        self,
-        unconstrained: bool,
-        guide_families: GuideFamilyConfig,
-        n_components: Optional[int] = None,
-        mixture_params: Optional[List[str]] = None,
-    ) -> List[ParamSpec]:
-        """Build parameter specs for hierarchical canonical parameterization.
-
-        Parameters
-        ----------
-        unconstrained : bool
-            Ignored (always unconstrained for hierarchical).
-        guide_families : GuideFamilyConfig
-            Per-parameter guide family configuration.
-        n_components : Optional[int]
-            Number of mixture components.
-        mixture_params : Optional[List[str]]
-            Parameters to mark as mixture-specific.
-
-        Returns
-        -------
-        List[ParamSpec]
-            Parameter specifications including hyperparameters and
-            hierarchical gene-specific p.
-        """
-        p_family = guide_families.get("p")
-        r_family = guide_families.get("r")
-
-        # Determine which parameters are mixture-specific
-        if n_components is not None:
-            if mixture_params is None:
-                mixture_params = ["p", "r"]
-            is_p_mixture = "p" in mixture_params
-            is_r_mixture = "r" in mixture_params
-        else:
-            is_p_mixture = False
-            is_r_mixture = False
-
-        return [
-            # --- Hyperparameters (global scalars) ---
-            # logit_p_loc: unconstrained location in logit space
-            NormalWithTransformSpec(
-                name="logit_p_loc",
-                shape_dims=(),
-                default_params=(0.0, 1.0),
-            ),
-            # logit_p_scale: positive scale in logit space
-            SoftplusNormalSpec(
-                name="logit_p_scale",
-                shape_dims=(),
-                default_params=(0.0, 0.5),
-            ),
-            # --- Hierarchical gene-specific p ---
-            HierarchicalSigmoidNormalSpec(
-                name="p",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                hyper_loc_name="logit_p_loc",
-                hyper_scale_name="logit_p_scale",
-                is_gene_specific=True,
-                guide_family=p_family,
-                is_mixture=is_p_mixture,
-            ),
-            # --- Standard gene-specific r ---
-            ExpNormalSpec(
-                name="r",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                guide_family=r_family,
-                is_mixture=is_r_mixture,
-            ),
-        ]
-
-    def build_derived_params(self) -> List[DerivedParam]:
-        """No derived parameters for hierarchical canonical."""
-        return []
-
-
-# ------------------------------------------------------------------------------
-# Hierarchical Mean Probability Parameterization
-# ------------------------------------------------------------------------------
-
-
-class HierarchicalMeanProbParameterization(Parameterization):
-    """Hierarchical mean-prob: gene-specific p_g with hyperprior, mu, derives r.
-
-    Relaxes the shared-p assumption while keeping the mean-probability
-    derived parameterization.  Gene-specific ``p_g`` is drawn from a
-    hierarchical Normal prior in logit space, and ``r`` is derived as
-    ``r = mu * (1 - p) / p``.
-
-    Core parameters:
-    - logit_p_loc: Population mean of logit(p)
-    - logit_p_scale: Population spread of logit(p)
-    - p: Gene-specific success probability (hierarchical sigmoid)
-    - mu: Gene-specific mean expression (ExpNormal or LogNormal)
-
-    Derived parameters:
-    - r = mu * (1 - p) / p
-    """
-
-    @property
-    def name(self) -> str:
-        return "hierarchical_mean_prob"
-
-    @property
-    def core_parameters(self) -> List[str]:
-        return ["logit_p_loc", "logit_p_scale", "p", "mu"]
-
-    @property
-    def gene_param_name(self) -> str:
-        return "mu"
-
-    def build_param_specs(
-        self,
-        unconstrained: bool,
-        guide_families: GuideFamilyConfig,
-        n_components: Optional[int] = None,
-        mixture_params: Optional[List[str]] = None,
-    ) -> List[ParamSpec]:
-        """Build parameter specs for hierarchical mean-prob parameterization.
-
-        Parameters
-        ----------
-        unconstrained : bool
-            Ignored (always unconstrained for hierarchical).
-        guide_families : GuideFamilyConfig
-            Per-parameter guide family configuration.
-        n_components : Optional[int]
-            Number of mixture components.
-        mixture_params : Optional[List[str]]
-            Parameters to mark as mixture-specific.
-
-        Returns
-        -------
-        List[ParamSpec]
-            Parameter specifications including hyperparameters,
-            hierarchical p, and standard mu.
-        """
-        p_family = guide_families.get("p")
-        mu_family = guide_families.get("mu")
-
-        if n_components is not None:
-            if mixture_params is None:
-                mixture_params = ["p", "mu"]
-            is_p_mixture = "p" in mixture_params
-            is_mu_mixture = "mu" in mixture_params
-        else:
-            is_p_mixture = False
-            is_mu_mixture = False
-
-        return [
-            # --- Hyperparameters (global scalars) ---
-            NormalWithTransformSpec(
-                name="logit_p_loc",
-                shape_dims=(),
-                default_params=(0.0, 1.0),
-            ),
-            SoftplusNormalSpec(
-                name="logit_p_scale",
-                shape_dims=(),
-                default_params=(0.0, 0.5),
-            ),
-            # --- Hierarchical gene-specific p ---
-            HierarchicalSigmoidNormalSpec(
-                name="p",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                hyper_loc_name="logit_p_loc",
-                hyper_scale_name="logit_p_scale",
-                is_gene_specific=True,
-                guide_family=p_family,
-                is_mixture=is_p_mixture,
-            ),
-            # --- Standard gene-specific mu ---
-            ExpNormalSpec(
-                name="mu",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                guide_family=mu_family,
-                is_mixture=is_mu_mixture,
-            ),
-        ]
-
-    def build_derived_params(self) -> List[DerivedParam]:
-        """Build derived parameter: r = mu * (1 - p) / p.
-
-        Returns
-        -------
-        List[DerivedParam]
-            Single derived parameter for dispersion r.
-
-        Notes
-        -----
-        Both p and mu are now gene-specific, so no special broadcasting
-        is needed — they have the same shape.
-        """
-        return [DerivedParam("r", _compute_r_from_mu_p, ["p", "mu"])]
-
-
-# ------------------------------------------------------------------------------
-# Hierarchical Mean Odds Parameterization
-# ------------------------------------------------------------------------------
-
-
-class HierarchicalMeanOddsParameterization(Parameterization):
-    """Hierarchical mean-odds: gene-specific phi_g with hyperprior, mu, derives p & r.
-
-    Relaxes the shared-phi assumption while keeping the numerically stable
-    mean-odds derived parameterization.  Gene-specific ``phi_g`` is drawn
-    from a hierarchical Normal prior in log space, and both ``p`` and ``r``
-    are derived:
-
-        p = 1 / (1 + phi)
-        r = mu * phi
-
-    Core parameters:
-    - log_phi_loc: Population mean of log(phi)
-    - log_phi_scale: Population spread of log(phi)
-    - phi: Gene-specific odds ratio (hierarchical exp)
-    - mu: Gene-specific mean expression (ExpNormal or LogNormal)
-
-    Derived parameters:
-    - p = 1 / (1 + phi)
-    - r = mu * phi
-    """
-
-    @property
-    def name(self) -> str:
-        return "hierarchical_mean_odds"
-
-    @property
-    def core_parameters(self) -> List[str]:
-        return ["log_phi_loc", "log_phi_scale", "phi", "mu"]
-
-    @property
-    def gene_param_name(self) -> str:
-        return "mu"
-
-    def build_param_specs(
-        self,
-        unconstrained: bool,
-        guide_families: GuideFamilyConfig,
-        n_components: Optional[int] = None,
-        mixture_params: Optional[List[str]] = None,
-    ) -> List[ParamSpec]:
-        """Build parameter specs for hierarchical mean-odds parameterization.
-
-        Parameters
-        ----------
-        unconstrained : bool
-            Ignored (always unconstrained for hierarchical).
-        guide_families : GuideFamilyConfig
-            Per-parameter guide family configuration.
-        n_components : Optional[int]
-            Number of mixture components.
-        mixture_params : Optional[List[str]]
-            Parameters to mark as mixture-specific.
-
-        Returns
-        -------
-        List[ParamSpec]
-            Parameter specifications including hyperparameters,
-            hierarchical phi, and standard mu.
-        """
-        phi_family = guide_families.get("phi")
-        mu_family = guide_families.get("mu")
-
-        if n_components is not None:
-            if mixture_params is None:
-                mixture_params = ["phi", "mu"]
-            is_phi_mixture = "phi" in mixture_params
-            is_mu_mixture = "mu" in mixture_params
-        else:
-            is_phi_mixture = False
-            is_mu_mixture = False
-
-        return [
-            # --- Hyperparameters (global scalars) ---
-            NormalWithTransformSpec(
-                name="log_phi_loc",
-                shape_dims=(),
-                default_params=(0.0, 1.0),
-            ),
-            SoftplusNormalSpec(
-                name="log_phi_scale",
-                shape_dims=(),
-                default_params=(0.0, 0.5),
-            ),
-            # --- Hierarchical gene-specific phi ---
-            HierarchicalExpNormalSpec(
-                name="phi",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                hyper_loc_name="log_phi_loc",
-                hyper_scale_name="log_phi_scale",
-                is_gene_specific=True,
-                guide_family=phi_family,
-                is_mixture=is_phi_mixture,
-            ),
-            # --- Standard gene-specific mu ---
-            ExpNormalSpec(
-                name="mu",
-                shape_dims=("n_genes",),
-                default_params=(0.0, 1.0),
-                is_gene_specific=True,
-                guide_family=mu_family,
-                is_mixture=is_mu_mixture,
-            ),
-        ]
-
-    def build_derived_params(self) -> List[DerivedParam]:
-        """Build derived parameters: p = 1/(1+phi), r = mu*phi.
-
-        Returns
-        -------
-        List[DerivedParam]
-            Derived parameters for dispersion r and probability p.
-
-        Notes
-        -----
-        Both phi and mu are gene-specific, so element-wise operations
-        work directly without special broadcasting.
-        """
-        return [
-            DerivedParam("r", _compute_r_from_mu_phi, ["phi", "mu"]),
-            DerivedParam("p", lambda phi: 1.0 / (1.0 + phi), ["phi"]),
-        ]
-
-    def transform_model_param(self, param_name: str) -> str:
-        """Transform p_capture to phi_capture for mean_odds parameterization."""
-        if param_name == "p_capture":
-            return "phi_capture"
-        return param_name
-
 
 # ==============================================================================
 # Helper Functions for Derived Parameters
@@ -970,6 +583,7 @@ def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
     return mu * (1 - p) / p
 
 
+
 # ==============================================================================
 # Parameterization Registry
 # ==============================================================================
@@ -978,9 +592,6 @@ def _compute_r_from_mu_p(p: jnp.ndarray, mu: jnp.ndarray) -> jnp.ndarray:
 _canonical = CanonicalParameterization()
 _mean_prob = MeanProbParameterization()
 _mean_odds = MeanOddsParameterization()
-_hier_canonical = HierarchicalCanonicalParameterization()
-_hier_mean_prob = HierarchicalMeanProbParameterization()
-_hier_mean_odds = HierarchicalMeanOddsParameterization()
 
 # Registry mapping names to parameterization instances
 PARAMETERIZATIONS = {
@@ -988,10 +599,6 @@ PARAMETERIZATIONS = {
     "canonical": _canonical,
     "mean_prob": _mean_prob,
     "mean_odds": _mean_odds,
-    # Hierarchical parameterizations (gene-specific p/phi with hyperprior)
-    "hierarchical_canonical": _hier_canonical,
-    "hierarchical_mean_prob": _hier_mean_prob,
-    "hierarchical_mean_odds": _hier_mean_odds,
     # Backward compatibility
     "standard": _canonical,
     "linked": _mean_prob,
@@ -1004,10 +611,6 @@ __all__ = [
     "CanonicalParameterization",
     "MeanProbParameterization",
     "MeanOddsParameterization",
-    # Hierarchical
-    "HierarchicalCanonicalParameterization",
-    "HierarchicalMeanProbParameterization",
-    "HierarchicalMeanOddsParameterization",
     "PARAMETERIZATIONS",
     # Helper functions for derived parameter broadcasting
     "_broadcast_scalar_for_mixture",

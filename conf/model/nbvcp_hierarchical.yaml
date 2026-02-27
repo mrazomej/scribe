@@ -3,6 +3,7 @@
 # Combines variable capture probability with relaxed shared-p assumption.
 
 model: nbvcp
-parameterization: hierarchical_canonical
+parameterization: canonical
 unconstrained: true
+hierarchical_p: true
 n_components: null

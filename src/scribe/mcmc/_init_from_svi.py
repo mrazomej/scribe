@@ -30,14 +30,12 @@ _EPS = 1e-6
 _MEAN_ODDS_PARAMETERIZATIONS = {
     Parameterization.MEAN_ODDS,
     Parameterization.ODDS_RATIO,
-    Parameterization.HIERARCHICAL_MEAN_ODDS,
 }
 
 # Parameterization enum values that correspond to "mean_prob" family
 _MEAN_PROB_PARAMETERIZATIONS = {
     Parameterization.MEAN_PROB,
     Parameterization.LINKED,
-    Parameterization.HIERARCHICAL_MEAN_PROB,
 }
 
 # Known parameter names and their distribution support types.

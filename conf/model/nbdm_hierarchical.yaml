@@ -4,6 +4,7 @@
 # Each gene draws its own p_g from a learned population Normal in logit space.
 
 model: nbdm
-parameterization: hierarchical_canonical
+parameterization: canonical
 unconstrained: true
+hierarchical_p: true
 n_components: null

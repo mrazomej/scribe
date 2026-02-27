@@ -83,6 +83,8 @@ class ModelConfigBuilder:
         self._parameterization: Parameterization = Parameterization.STANDARD
         self._inference_method: InferenceMethod = InferenceMethod.SVI
         self._unconstrained: bool = False
+        self._hierarchical_p: bool = False
+        self._hierarchical_gate: bool = False
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._guide_families: Optional[GuideFamilyConfig] = None
@@ -152,6 +154,31 @@ class ModelConfigBuilder:
 
     def unconstrained(self) -> "ModelConfigBuilder":
         """Use unconstrained parameterization."""
+        self._unconstrained = True
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_hierarchical_p(self) -> "ModelConfigBuilder":
+        """Enable gene-specific p/phi with hierarchical prior.
+
+        Automatically enables unconstrained parameterization, which is
+        required for hierarchical priors.
+        """
+        self._hierarchical_p = True
+        self._unconstrained = True
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_hierarchical_gate(self) -> "ModelConfigBuilder":
+        """Enable gene-specific gate with hierarchical prior.
+
+        Automatically enables unconstrained parameterization, which is
+        required for hierarchical priors. Only valid for zero-inflated
+        models (zinb, zinbvcp).
+        """
+        self._hierarchical_gate = True
         self._unconstrained = True
         return self
 
@@ -511,6 +538,8 @@ class ModelConfigBuilder:
             parameterization=self._parameterization,
             inference_method=self._inference_method,
             unconstrained=self._unconstrained,
+            hierarchical_p=self._hierarchical_p,
+            hierarchical_gate=self._hierarchical_gate,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             guide_families=self._guide_families,

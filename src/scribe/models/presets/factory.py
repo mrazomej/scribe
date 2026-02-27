@@ -33,7 +33,14 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 import numpyro
 
 from ..builders import GuideBuilder, ModelBuilder
-from ..builders.parameter_specs import ExpNormalSpec, GaussianLatentSpec
+from ..builders.parameter_specs import (
+    ExpNormalSpec,
+    GaussianLatentSpec,
+    HierarchicalExpNormalSpec,
+    HierarchicalSigmoidNormalSpec,
+    NormalWithTransformSpec,
+    SoftplusNormalSpec,
+)
 from ..components.guide_families import VAELatentGuide
 from ..components.vae_components import (
     DecoderOutputHead,
@@ -258,13 +265,14 @@ def _create_vae_model(
     for param_name in extra_param_names:
         transformed = param_strategy.transform_model_param(param_name)
         if transformed not in decoder_param_names:
-            extra_spec = build_extra_param_spec(
+            specs = build_extra_param_spec(
                 param_name=param_name,
                 unconstrained=unconstrained,
                 guide_families=guide_families,
                 param_strategy=param_strategy,
+                hierarchical_gate=model_config.hierarchical_gate,
             )
-            extra_specs.append(extra_spec)
+            extra_specs.extend(specs)
 
     param_specs = [latent_marker] + non_decoder_specs + extra_specs
 
@@ -508,19 +516,32 @@ def create_model(
     )
 
     # ==========================================================================
+    # Step 4.5: Apply hierarchical_p flag (replace flat p/phi with triplet)
+    # ==========================================================================
+    if model_config.hierarchical_p:
+        param_specs = _hierarchicalize_p(
+            param_specs=param_specs,
+            param_key=param_key,
+            guide_families=guide_families,
+            n_components=model_config.n_components,
+            mixture_params=effective_mixture_params,
+        )
+
+    # ==========================================================================
     # Step 5: Add model-specific extra parameters
     # ==========================================================================
     extra_param_names = MODEL_EXTRA_PARAMS[base_model]
     for param_name in extra_param_names:
-        extra_spec = build_extra_param_spec(
+        extra_specs = build_extra_param_spec(
             param_name=param_name,
             unconstrained=model_config.unconstrained,
             guide_families=guide_families,
             param_strategy=param_strategy,
             n_components=model_config.n_components,
             mixture_params=effective_mixture_params,
+            hierarchical_gate=model_config.hierarchical_gate,
         )
-        param_specs.append(extra_spec)
+        param_specs.extend(extra_specs)
 
     # ==========================================================================
     # Step 6: Apply user-provided prior/guide overrides
@@ -681,7 +702,6 @@ def create_model_from_params(
 def _get_parameterization_key(param: Union[str, ParamEnum]) -> str:
     """Convert parameterization enum or string to registry key."""
     if isinstance(param, ParamEnum):
-        # Map enum values to registry keys
         enum_to_key = {
             ParamEnum.STANDARD: "canonical",
             ParamEnum.LINKED: "mean_prob",
@@ -689,6 +709,97 @@ def _get_parameterization_key(param: Union[str, ParamEnum]) -> str:
         }
         return enum_to_key.get(param, param.value)
     return param
+
+
+# ------------------------------------------------------------------------------
+
+
+def _hierarchicalize_p(
+    param_specs: List,
+    param_key: str,
+    guide_families,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+) -> List:
+    """Replace the flat p or phi spec with a hierarchical triplet.
+
+    Given a list of parameter specs, this function finds the p (or phi) spec
+    and replaces it with three specs: hyperprior loc, hyperprior scale, and
+    a hierarchical gene-specific spec. The p/phi hyper names depend on the
+    parameterization.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current list of parameter specs (from parameterization strategy).
+    param_key : str
+        Parameterization registry key ("canonical", "mean_prob", "mean_odds").
+    guide_families : GuideFamilyConfig
+        Per-parameter guide family configuration.
+    n_components : int, optional
+        Number of mixture components.
+    mixture_params : List[str], optional
+        Parameters marked as mixture-specific.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated parameter specs with the flat p/phi replaced by the
+        hierarchical triplet.
+    """
+    # Determine target parameter and hyperparameter names
+    if param_key == "mean_odds":
+        target_name = "phi"
+        hyper_loc_name = "log_phi_loc"
+        hyper_scale_name = "log_phi_scale"
+        HierSpec = HierarchicalExpNormalSpec
+    else:
+        target_name = "p"
+        hyper_loc_name = "logit_p_loc"
+        hyper_scale_name = "logit_p_scale"
+        HierSpec = HierarchicalSigmoidNormalSpec
+
+    # Get guide family for the target parameter
+    target_family = guide_families.get(target_name)
+
+    # Determine mixture flag for the target parameter
+    is_target_mixture = False
+    if n_components is not None:
+        if mixture_params is None:
+            is_target_mixture = True
+        else:
+            is_target_mixture = target_name in mixture_params
+
+    # Build the hierarchical triplet
+    hyper_loc = NormalWithTransformSpec(
+        name=hyper_loc_name,
+        shape_dims=(),
+        default_params=(0.0, 1.0),
+    )
+    hyper_scale = SoftplusNormalSpec(
+        name=hyper_scale_name,
+        shape_dims=(),
+        default_params=(0.0, 0.5),
+    )
+    hier_spec = HierSpec(
+        name=target_name,
+        shape_dims=("n_genes",),
+        default_params=(0.0, 1.0),
+        hyper_loc_name=hyper_loc_name,
+        hyper_scale_name=hyper_scale_name,
+        is_gene_specific=True,
+        guide_family=target_family,
+        is_mixture=is_target_mixture,
+    )
+
+    # Replace the flat spec with the hierarchical triplet
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == target_name:
+            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
 
 
 # ------------------------------------------------------------------------------
