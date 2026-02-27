@@ -32,9 +32,9 @@ Data YAML requirements
 The data configuration YAML must include the following additional fields
 (beyond the standard ``name`` / ``path`` / ``preprocessing``):
 
-    split_by : str
-        Column name in ``adata.obs`` whose unique values define the data
-        subsets.
+    split_by : str or list[str]
+        Column name(s) in ``adata.obs`` whose unique values (or unique
+        combinations for multiple columns) define the data subsets.
     n_jobs : int or null, optional
         Number of parallel joblib workers.  Defaults to the number of
         visible CUDA GPUs, falling back to 1 if none are detected.
@@ -195,21 +195,29 @@ def _load_data_config(data_name: str) -> dict:
 
 
 def _discover_covariate_values(
-    data_path: str, split_by: str
-) -> list[str]:
-    """Load h5ad and return sorted unique values of a covariate column.
+    data_path: str, split_by: str | list[str]
+) -> list[str] | list[tuple[str, ...]]:
+    """Load h5ad and return unique value(s) for one or more covariate columns.
+
+    For a single column (``split_by`` is a ``str``), returns a sorted list of
+    unique string values found in that column.
+
+    For multiple columns (``split_by`` is a ``list[str]``), uses the DataFrame
+    path: ``adata.obs[split_by].drop_duplicates()`` to enumerate all unique
+    row combinations, returning a list of tuples sorted lexicographically.
 
     Parameters
     ----------
     data_path : str
         Path to the h5ad (or CSV) file.
-    split_by : str
-        Column name in ``adata.obs``.
+    split_by : str or list[str]
+        Column name(s) in ``adata.obs``.
 
     Returns
     -------
-    list[str]
-        Sorted unique string values found in the column.
+    list[str] or list[tuple[str, ...]]
+        Single-column: sorted unique string values.
+        Multi-column: sorted unique tuples of string values, one per column.
     """
     # Resolve relative paths against the project root
     abs_path = (
@@ -220,18 +228,40 @@ def _discover_covariate_values(
 
     adata = sc.read_h5ad(abs_path)
 
-    if split_by not in adata.obs.columns:
-        raise ValueError(
-            f"split_by column '{split_by}' not found in adata.obs.\n"
-            f"Available columns: {list(adata.obs.columns)}"
+    if isinstance(split_by, list):
+        # Multi-column path: use the DataFrame to get all unique combinations
+        missing = [c for c in split_by if c not in adata.obs.columns]
+        if missing:
+            raise ValueError(
+                f"split_by columns {missing} not found in adata.obs.\n"
+                f"Available columns: {list(adata.obs.columns)}"
+            )
+        combos = (
+            adata.obs[split_by]
+            .astype(str)
+            .drop_duplicates()
+            .sort_values(split_by)
+            .itertuples(index=False, name=None)
         )
-
-    values = sorted(adata.obs[split_by].astype(str).unique())
-    if len(values) == 0:
-        raise ValueError(
-            f"No values found in adata.obs['{split_by}']."
-        )
-    return values
+        values = list(combos)
+        if not values:
+            raise ValueError(
+                f"No unique combinations found for columns {split_by}."
+            )
+        return values
+    else:
+        # Single-column path: existing behaviour
+        if split_by not in adata.obs.columns:
+            raise ValueError(
+                f"split_by column '{split_by}' not found in adata.obs.\n"
+                f"Available columns: {list(adata.obs.columns)}"
+            )
+        values = sorted(adata.obs[split_by].astype(str).unique())
+        if len(values) == 0:
+            raise ValueError(
+                f"No values found in adata.obs['{split_by}']."
+            )
+        return values
 
 
 def _sanitize_value(value: str) -> str:
@@ -258,20 +288,27 @@ def _sanitize_value(value: str) -> str:
 
 def _generate_tmp_yamls(
     data_cfg: dict,
-    split_by: str,
-    covariate_values: list[str],
+    split_by: str | list[str],
+    covariate_values: list[str] | list[tuple[str, ...]],
     gpu_ids: list[str],
 ) -> list[str]:
-    """Write temporary data YAML configs for each covariate value.
+    """Write temporary data YAML configs for each covariate value (or combination).
+
+    For a single ``split_by`` column each config receives scalar
+    ``subset_column`` / ``subset_value`` fields.  For multiple columns each
+    config receives list-valued ``subset_column`` / ``subset_value`` fields
+    (one entry per column), which ``load_and_preprocess_anndata`` handles by
+    ANDing per-column equality masks.
 
     Parameters
     ----------
     data_cfg : dict
         The original data config contents.
-    split_by : str
-        The covariate column name.
-    covariate_values : list[str]
-        Unique values of the covariate column.
+    split_by : str or list[str]
+        The covariate column name(s).
+    covariate_values : list[str] or list[tuple[str, ...]]
+        Unique values (single column) or unique row combinations (multi-column)
+        as returned by ``_discover_covariate_values``.
     gpu_ids : list[str]
         Physical GPU ID strings (e.g. ``["0", "1"]`` or ``["2", "3"]``).
         Jobs are assigned round-robin.  If empty, all configs get
@@ -301,7 +338,17 @@ def _generate_tmp_yamls(
     effective_gpu_ids = gpu_ids if gpu_ids else ["0"]
 
     for idx, value in enumerate(covariate_values):
-        safe_value = _sanitize_value(value)
+        if isinstance(value, tuple):
+            # Multi-column: join sanitized values for the config name
+            safe_value = "__".join(_sanitize_value(str(v)) for v in value)
+            subset_column = list(split_by)
+            subset_value = [str(v) for v in value]
+        else:
+            # Single-column: existing behaviour
+            safe_value = _sanitize_value(value)
+            subset_column = split_by
+            subset_value = value
+
         tmp_name = f"{original_name}_{safe_value}"
         tmp_names.append(tmp_name)
 
@@ -309,8 +356,8 @@ def _generate_tmp_yamls(
         tmp_cfg = {
             "name": tmp_name,
             "path": abs_path,
-            "subset_column": split_by,
-            "subset_value": value,
+            "subset_column": subset_column,
+            "subset_value": subset_value,
             "gpu_id": effective_gpu_ids[idx % len(effective_gpu_ids)],
         }
 

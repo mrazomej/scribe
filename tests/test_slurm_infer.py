@@ -176,3 +176,31 @@ def test_resolve_inference_script_falls_back_when_split_by_is_null_override(
         project_dir=tmp_path,
     )
     assert script == "infer.py"
+
+
+def test_resolve_inference_script_uses_split_entrypoint_when_split_by_is_list(
+    tmp_path: Path,
+):
+    """Select infer_split.py when split_by is a YAML list of column names."""
+    conf_data_dir = tmp_path / "conf" / "data" / "batch_correction"
+    conf_data_dir.mkdir(parents=True, exist_ok=True)
+    config_path = conf_data_dir / "a549.yaml"
+    # YAML list notation for split_by
+    config_path.write_text(
+        "\n".join(
+            [
+                "# @package data",
+                "name: a549",
+                "path: /tmp/mock.h5ad",
+                "split_by:",
+                "  - treatment",
+                "  - kit",
+            ]
+        )
+    )
+
+    script = resolve_inference_script(
+        overrides=["data=batch_correction/a549"],
+        project_dir=tmp_path,
+    )
+    assert script == "infer_split.py"
