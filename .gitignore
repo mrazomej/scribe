@@ -110,6 +110,7 @@ Temporary Items
 # User-specific data configs (see conf/data/example.yaml for template)
 conf/data/
 !conf/data/example.yaml
+conf/paths/paths.local.yaml
 
 # Data Folders
 data/**

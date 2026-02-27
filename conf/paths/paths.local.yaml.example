@@ -1,0 +1,6 @@
+# Example machine-specific paths configuration.
+# Copy to conf/paths/paths.local.yaml and customize locally.
+# This local file is git-ignored.
+
+# Example shared storage destination for outputs.
+outputs_dir: /projects/hybrid-modeling/s3/altos-lab-hybrid-modeling/scribe/outputs
