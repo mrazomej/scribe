@@ -59,7 +59,9 @@ def _extract_de_inputs(results, component=None):
     Reads the posterior samples from a ``ScribeSVIResults`` or
     ``ScribeMCMCResults`` object and returns the arrays that
     ``compute_clr_differences`` needs, automatically detecting
-    hierarchical (gene-specific p) models.
+    hierarchical (gene-specific p) models.  Also extracts ``mu`` and
+    ``phi`` samples when available (``mean_prob`` and ``mean_odds``
+    parameterizations) for numerically stable biological-level DE.
 
     Parameters
     ----------
@@ -77,6 +79,12 @@ def _extract_de_inputs(results, component=None):
     p_samples : jnp.ndarray or None
         Posterior samples of the gene-specific success probability
         ``p`` if the model is hierarchical; ``None`` otherwise.
+    mu_samples : jnp.ndarray or None
+        Posterior samples of the biological mean ``mu`` when the
+        parameterization stores it (``mean_odds``, ``mean_prob``).
+    phi_samples : jnp.ndarray or None
+        Posterior samples of the odds ratio ``phi`` when the
+        parameterization is ``mean_odds``.
     gene_names : list of str or None
         Gene names from ``results.var.index``, or ``None`` if
         ``results.var`` is not available.
@@ -100,11 +108,19 @@ def _extract_de_inputs(results, component=None):
     # scalar p per sample (shape N,) which broadcasts during computation.
     p_samples = results.posterior_samples.get("p")
 
+    # Extract native parameterization samples when available.
+    # mean_odds and mean_prob both sample mu directly; mean_odds also
+    # samples phi.  Using these avoids numerically catastrophic derived
+    # computations (mu = r*(1-p)/p, beta = p/(1-p)) near the p -> 1
+    # boundary.
+    mu_samples = results.posterior_samples.get("mu")
+    phi_samples = results.posterior_samples.get("phi")
+
     gene_names = None
     if results.var is not None:
         gene_names = results.var.index.tolist()
 
-    return r_samples, p_samples, gene_names
+    return r_samples, p_samples, mu_samples, phi_samples, gene_names
 
 
 # --------------------------------------------------------------------------
@@ -614,6 +630,15 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
     p_samples_A: Optional[jnp.ndarray] = field(default=None, repr=False)
     p_samples_B: Optional[jnp.ndarray] = field(default=None, repr=False)
 
+    # --- Native parameterization samples (numerically stable path) ---
+    # mu is available for mean_odds and mean_prob parameterizations.
+    # phi is available for mean_odds only.  When present, biological
+    # metrics use these directly instead of deriving from (r, p).
+    mu_samples_A: Optional[jnp.ndarray] = field(default=None, repr=False)
+    mu_samples_B: Optional[jnp.ndarray] = field(default=None, repr=False)
+    phi_samples_A: Optional[jnp.ndarray] = field(default=None, repr=False)
+    phi_samples_B: Optional[jnp.ndarray] = field(default=None, repr=False)
+
     # --- Informational ---
     n_samples: int = field(default=0, repr=True)
 
@@ -703,6 +728,10 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
                 r_samples_B=self.r_samples_B,
                 p_samples_A=self.p_samples_A,
                 p_samples_B=self.p_samples_B,
+                mu_samples_A=self.mu_samples_A,
+                mu_samples_B=self.mu_samples_B,
+                phi_samples_A=self.phi_samples_A,
+                phi_samples_B=self.phi_samples_B,
                 tau_lfc=tau_lfc,
                 tau_var=tau_var,
                 tau_kl=tau_kl,
@@ -964,6 +993,10 @@ class ScribeEmpiricalDEResults(ScribeDEResults):
             r_samples_B=self.r_samples_B,
             p_samples_A=self.p_samples_A,
             p_samples_B=self.p_samples_B,
+            mu_samples_A=self.mu_samples_A,
+            mu_samples_B=self.mu_samples_B,
+            phi_samples_A=self.phi_samples_A,
+            phi_samples_B=self.phi_samples_B,
             sigma_grid=sigma_grid,
             shrinkage_max_iter=shrinkage_max_iter,
             shrinkage_tol=shrinkage_tol,
@@ -1327,8 +1360,12 @@ def compare(
             )
 
         # Extract arrays from results objects
-        r_A, p_A, names_A = _extract_de_inputs(model_A, component_A)
-        r_B, p_B, names_B = _extract_de_inputs(model_B, component_B)
+        r_A, p_A, mu_A, phi_A, names_A = _extract_de_inputs(
+            model_A, component_A
+        )
+        r_B, p_B, mu_B, phi_B, names_B = _extract_de_inputs(
+            model_B, component_B
+        )
 
         # Use gene_names from the results if not explicitly provided
         if gene_names is None:
@@ -1340,6 +1377,12 @@ def compare(
             p_samples_A = p_A
         if p_samples_B is None:
             p_samples_B = p_B
+
+        # Capture native mu/phi samples for biological-level DE
+        _mu_samples_A = mu_A
+        _mu_samples_B = mu_B
+        _phi_samples_A = phi_A
+        _phi_samples_B = phi_B
 
         # gene_mask and gene-specific p are mutually exclusive in
         # compute_clr_differences; when p is gene-specific, silently
@@ -1363,6 +1406,14 @@ def compare(
     # ------------------------------------------------------------------
     # Standard dispatch by method
     # ------------------------------------------------------------------
+
+    # Default native-param variables for the raw-array code path (no
+    # results objects).  When results objects are used, these are set
+    # in the block above.
+    if not (_a_is_results and _b_is_results):
+        _mu_samples_A = _mu_samples_B = None
+        _phi_samples_A = _phi_samples_B = None
+
     if method == "parametric":
         return _compare_parametric(
             model_A,
@@ -1389,6 +1440,10 @@ def compare(
             p_samples_A=p_samples_A,
             p_samples_B=p_samples_B,
             compute_biological=compute_biological,
+            mu_samples_A=_mu_samples_A,
+            mu_samples_B=_mu_samples_B,
+            phi_samples_A=_phi_samples_A,
+            phi_samples_B=_phi_samples_B,
         )
     elif method == "shrinkage":
         return _compare_shrinkage(
@@ -1410,6 +1465,10 @@ def compare(
             shrinkage_max_iter=shrinkage_max_iter,
             shrinkage_tol=shrinkage_tol,
             compute_biological=compute_biological,
+            mu_samples_A=_mu_samples_A,
+            mu_samples_B=_mu_samples_B,
+            phi_samples_A=_phi_samples_A,
+            phi_samples_B=_phi_samples_B,
         )
     else:
         raise ValueError(
@@ -1527,6 +1586,10 @@ def _compare_empirical(
     p_samples_A: Optional[jnp.ndarray] = None,
     p_samples_B: Optional[jnp.ndarray] = None,
     compute_biological: bool = True,
+    mu_samples_A: Optional[jnp.ndarray] = None,
+    mu_samples_B: Optional[jnp.ndarray] = None,
+    phi_samples_A: Optional[jnp.ndarray] = None,
+    phi_samples_B: Optional[jnp.ndarray] = None,
 ) -> ScribeEmpiricalDEResults:
     """Build an empirical DE comparison from posterior r samples.
 
@@ -1562,6 +1625,18 @@ def _compare_empirical(
         When provided, Gamma-based composition sampling is used.
     p_samples_B : jnp.ndarray, optional
         Gene-specific success probability samples for condition B.
+    compute_biological : bool, default=True
+        Whether to store NB parameter samples for biological-level DE.
+    mu_samples_A : jnp.ndarray, optional
+        Native mean-expression samples for condition A (``mean_odds``
+        or ``mean_prob`` parameterization).
+    mu_samples_B : jnp.ndarray, optional
+        Native mean-expression samples for condition B.
+    phi_samples_A : jnp.ndarray, optional
+        Native odds-ratio samples for condition A (``mean_odds``
+        parameterization only).
+    phi_samples_B : jnp.ndarray, optional
+        Native odds-ratio samples for condition B.
 
     Returns
     -------
@@ -1584,6 +1659,29 @@ def _compare_empirical(
         if p_samples_B is not None
         else None
     )
+
+    # Slice native mu/phi samples the same way
+    mu_bio_A = (
+        _slice_component(mu_samples_A, component_A, "A")
+        if mu_samples_A is not None
+        else None
+    )
+    mu_bio_B = (
+        _slice_component(mu_samples_B, component_B, "B")
+        if mu_samples_B is not None
+        else None
+    )
+    phi_bio_A = (
+        _slice_component(phi_samples_A, component_A, "A")
+        if phi_samples_A is not None
+        else None
+    )
+    phi_bio_B = (
+        _slice_component(phi_samples_B, component_B, "B")
+        if phi_samples_B is not None
+        else None
+    )
+
     # Truncate to the shorter sample count (same logic as CLR path)
     N_bio = min(r_bio_A.shape[0], r_bio_B.shape[0])
     r_bio_A, r_bio_B = r_bio_A[:N_bio], r_bio_B[:N_bio]
@@ -1591,6 +1689,14 @@ def _compare_empirical(
         p_bio_A = p_bio_A[:N_bio]
     if p_bio_B is not None:
         p_bio_B = p_bio_B[:N_bio]
+    if mu_bio_A is not None:
+        mu_bio_A = mu_bio_A[:N_bio]
+    if mu_bio_B is not None:
+        mu_bio_B = mu_bio_B[:N_bio]
+    if phi_bio_A is not None:
+        phi_bio_A = phi_bio_A[:N_bio]
+    if phi_bio_B is not None:
+        phi_bio_B = phi_bio_B[:N_bio]
 
     delta_samples = compute_clr_differences(
         r_samples_A=r_samples_A,
@@ -1632,6 +1738,10 @@ def _compare_empirical(
         r_samples_B=r_bio_B if compute_biological else None,
         p_samples_A=p_bio_A if compute_biological else None,
         p_samples_B=p_bio_B if compute_biological else None,
+        mu_samples_A=mu_bio_A if compute_biological else None,
+        mu_samples_B=mu_bio_B if compute_biological else None,
+        phi_samples_A=phi_bio_A if compute_biological else None,
+        phi_samples_B=phi_bio_B if compute_biological else None,
     )
 
 
@@ -1659,6 +1769,10 @@ def _compare_shrinkage(
     shrinkage_max_iter: int = 200,
     shrinkage_tol: float = 1e-8,
     compute_biological: bool = True,
+    mu_samples_A: Optional[jnp.ndarray] = None,
+    mu_samples_B: Optional[jnp.ndarray] = None,
+    phi_samples_A: Optional[jnp.ndarray] = None,
+    phi_samples_B: Optional[jnp.ndarray] = None,
 ) -> ScribeShrinkageDEResults:
     """Build a shrinkage DE comparison from posterior r samples.
 
@@ -1702,36 +1816,29 @@ def _compare_shrinkage(
         Maximum EM iterations.
     shrinkage_tol : float
         EM convergence tolerance.
+    compute_biological : bool, default=True
+        Whether to store NB parameter samples for biological-level DE.
+    mu_samples_A : jnp.ndarray, optional
+        Native mean-expression samples for condition A.
+    mu_samples_B : jnp.ndarray, optional
+        Native mean-expression samples for condition B.
+    phi_samples_A : jnp.ndarray, optional
+        Native odds-ratio samples for condition A.
+    phi_samples_B : jnp.ndarray, optional
+        Native odds-ratio samples for condition B.
 
     Returns
     -------
     ScribeShrinkageDEResults
     """
-    from ._empirical import compute_clr_differences, _slice_component
-
-    # Capture sliced r/p samples for biological-level DE
-    r_bio_A = _slice_component(r_samples_A, component_A, "A")
-    r_bio_B = _slice_component(r_samples_B, component_B, "B")
-    p_bio_A = (
-        _slice_component(p_samples_A, component_A, "A")
-        if p_samples_A is not None
-        else None
-    )
-    p_bio_B = (
-        _slice_component(p_samples_B, component_B, "B")
-        if p_samples_B is not None
-        else None
-    )
-    N_bio = min(r_bio_A.shape[0], r_bio_B.shape[0])
-    r_bio_A, r_bio_B = r_bio_A[:N_bio], r_bio_B[:N_bio]
-    if p_bio_A is not None:
-        p_bio_A = p_bio_A[:N_bio]
-    if p_bio_B is not None:
-        p_bio_B = p_bio_B[:N_bio]
-
-    delta_samples = compute_clr_differences(
+    # Delegate to the empirical builder, which handles slicing, CLR
+    # computation, and gene-name filtering.
+    empirical = _compare_empirical(
         r_samples_A=r_samples_A,
         r_samples_B=r_samples_B,
+        gene_names=gene_names,
+        label_A=label_A,
+        label_B=label_B,
         component_A=component_A,
         component_B=component_B,
         paired=paired,
@@ -1741,33 +1848,15 @@ def _compare_shrinkage(
         gene_mask=gene_mask,
         p_samples_A=p_samples_A,
         p_samples_B=p_samples_B,
+        compute_biological=compute_biological,
+        mu_samples_A=mu_samples_A,
+        mu_samples_B=mu_samples_B,
+        phi_samples_A=phi_samples_A,
+        phi_samples_B=phi_samples_B,
     )
 
-    # Filter gene_names when gene_mask is provided
-    if gene_mask is not None and gene_names is not None:
-        import numpy as _np
-
-        gene_mask_arr = _np.asarray(gene_mask, dtype=bool)
-        gene_names = [n for n, m in zip(gene_names, gene_mask_arr) if m]
-
-    D = delta_samples.shape[1]
-    if gene_names is None:
-        gene_names = [f"gene_{i}" for i in range(D)]
-    elif len(gene_names) != D:
-        raise ValueError(
-            f"gene_names has length {len(gene_names)} but samples have "
-            f"D={D} genes."
-        )
-
-    return ScribeShrinkageDEResults(
-        delta_samples=delta_samples,
-        gene_names=gene_names,
-        label_A=label_A,
-        label_B=label_B,
-        r_samples_A=r_bio_A if compute_biological else None,
-        r_samples_B=r_bio_B if compute_biological else None,
-        p_samples_A=p_bio_A if compute_biological else None,
-        p_samples_B=p_bio_B if compute_biological else None,
+    # Wrap in a shrinkage results object (shares underlying arrays)
+    return empirical.shrink(
         sigma_grid=sigma_grid,
         shrinkage_max_iter=shrinkage_max_iter,
         shrinkage_tol=shrinkage_tol,

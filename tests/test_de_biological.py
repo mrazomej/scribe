@@ -325,3 +325,240 @@ class TestHelpers:
         stats = _summarise_nonneg_metric(samples, tau=1.0)
         np.testing.assert_allclose(stats["mean"], [3.0, 0.1167], atol=0.01)
         np.testing.assert_allclose(stats["prob_effect"], [1.0, 0.0])
+
+
+# --------------------------------------------------------------------------
+# Test: parameterization-aware computation (phi path = mean_odds)
+# --------------------------------------------------------------------------
+
+
+class TestPhiPath:
+    """Verify that supplying mu and phi uses the numerically stable path."""
+
+    @pytest.fixture
+    def mean_odds_params(self):
+        """Construct consistent (r, p, mu, phi) for mean_odds."""
+        N, D = 500, 10
+        phi_A = jnp.ones((N, D)) * 4.0
+        phi_B = jnp.ones((N, D)) * 4.0
+        mu_A = jnp.ones((N, D)) * 20.0
+        mu_B = jnp.ones((N, D)) * 10.0
+        # Derived: r = mu * phi, p = 1 / (1 + phi)
+        r_A = mu_A * phi_A
+        r_B = mu_B * phi_B
+        p_A = 1.0 / (1.0 + phi_A)
+        p_B = 1.0 / (1.0 + phi_B)
+        return r_A, p_A, r_B, p_B, mu_A, mu_B, phi_A, phi_B
+
+    def test_lfc_matches_fallback(self, mean_odds_params):
+        """phi path and fallback should agree for well-conditioned params."""
+        r_A, p_A, r_B, p_B, mu_A, mu_B, phi_A, phi_B = mean_odds_params
+        res_phi = biological_differential_expression(
+            r_A, r_B, p_A, p_B,
+            mu_samples_A=mu_A, mu_samples_B=mu_B,
+            phi_samples_A=phi_A, phi_samples_B=phi_B,
+        )
+        res_fallback = biological_differential_expression(r_A, r_B, p_A, p_B)
+        np.testing.assert_allclose(
+            res_phi["lfc_mean"], res_fallback["lfc_mean"], atol=1e-4
+        )
+
+    def test_kl_matches_fallback(self, mean_odds_params):
+        """KL via beta=1/phi should match beta=p/(1-p) for good params."""
+        r_A, p_A, r_B, p_B, mu_A, mu_B, phi_A, phi_B = mean_odds_params
+        res_phi = biological_differential_expression(
+            r_A, r_B, p_A, p_B,
+            mu_samples_A=mu_A, mu_samples_B=mu_B,
+            phi_samples_A=phi_A, phi_samples_B=phi_B,
+        )
+        res_fallback = biological_differential_expression(r_A, r_B, p_A, p_B)
+        np.testing.assert_allclose(
+            res_phi["kl_mean"], res_fallback["kl_mean"], rtol=1e-3
+        )
+
+    def test_variance_via_phi(self, mean_odds_params):
+        """var = mu * (1 + phi) should match var = mu / p."""
+        r_A, p_A, r_B, p_B, mu_A, mu_B, phi_A, phi_B = mean_odds_params
+        res_phi = biological_differential_expression(
+            r_A, r_B, p_A, p_B,
+            mu_samples_A=mu_A, mu_samples_B=mu_B,
+            phi_samples_A=phi_A, phi_samples_B=phi_B,
+        )
+        # var_A = 20 * (1 + 4) = 100
+        np.testing.assert_allclose(res_phi["var_A_mean"], 100.0, atol=1e-2)
+        # var_B = 10 * (1 + 4) = 50
+        np.testing.assert_allclose(res_phi["var_B_mean"], 50.0, atol=1e-2)
+
+    def test_phi_broadcast(self):
+        """Shared phi (shape (N,)) broadcasts correctly."""
+        N, D = 200, 5
+        phi_shared = jnp.ones((N,)) * 2.0
+        mu_A = jnp.ones((N, D)) * 10.0
+        mu_B = jnp.ones((N, D)) * 5.0
+        r_A = mu_A * phi_shared[:, None]
+        r_B = mu_B * phi_shared[:, None]
+        p = 1.0 / (1.0 + phi_shared)
+        result = biological_differential_expression(
+            r_A, r_B, p, p,
+            mu_samples_A=mu_A, mu_samples_B=mu_B,
+            phi_samples_A=phi_shared, phi_samples_B=phi_shared,
+        )
+        np.testing.assert_allclose(
+            result["lfc_mean"], np.log(2), atol=1e-4
+        )
+
+
+# --------------------------------------------------------------------------
+# Test: parameterization-aware computation (mu path = mean_prob)
+# --------------------------------------------------------------------------
+
+
+class TestMuPath:
+    """Verify that supplying only mu (no phi) uses the mu path."""
+
+    def test_lfc_from_mu(self):
+        """LFC should use mu directly when provided."""
+        N, D = 300, 5
+        mu_A = jnp.ones((N, D)) * 20.0
+        mu_B = jnp.ones((N, D)) * 10.0
+        p = jnp.ones((N, D)) * 0.3
+        r_A = mu_A * (1.0 - p) / p
+        r_B = mu_B * (1.0 - p) / p
+
+        result = biological_differential_expression(
+            r_A, r_B, p, p,
+            mu_samples_A=mu_A, mu_samples_B=mu_B,
+        )
+        np.testing.assert_allclose(
+            result["lfc_mean"], np.log(2), atol=1e-4
+        )
+
+    def test_kl_uses_p_for_beta(self):
+        """Without phi, beta should still come from p/(1-p)."""
+        N, D = 300, 5
+        mu = jnp.ones((N, D)) * 10.0
+        p = jnp.ones((N, D)) * 0.3
+        r = mu * (1.0 - p) / p
+
+        # Identical conditions → KL = 0
+        result = biological_differential_expression(
+            r, r, p, p, mu_samples_A=mu, mu_samples_B=mu,
+        )
+        np.testing.assert_allclose(result["kl_mean"], 0.0, atol=1e-5)
+
+
+# --------------------------------------------------------------------------
+# Test: near-zero expression regression (phi path vs fallback)
+# --------------------------------------------------------------------------
+
+
+class TestNearZeroExpression:
+    """Regression test: phi path should be stable where fallback blows up.
+
+    For genes with near-zero expression, phi -> 0 and p -> 1.  The
+    fallback path computes beta = p / (1 - p) which diverges, while
+    the phi path computes beta = 1 / phi which is large but doesn't
+    suffer from catastrophic cancellation in the (1 - p) subtraction.
+
+    Both paths give large metrics for truly-zero genes (beta is huge
+    either way), but the phi path avoids *infinite* or *NaN* values
+    that arise from float32 precision loss in (1 - p) when p ≈ 1.
+    """
+
+    def test_phi_path_finite_at_low_expression(self):
+        """phi path produces finite KL even when phi is very small."""
+        N, D = 100, 5
+        # phi ~ 1e-6 → p ≈ 1 - 1e-6, mu ~ 0.001
+        phi_small = jnp.ones((N, D)) * 1e-6
+        mu_tiny = jnp.ones((N, D)) * 0.001
+        r = mu_tiny * phi_small
+        p = 1.0 / (1.0 + phi_small)
+
+        # Small perturbation in condition B
+        phi_small_B = jnp.ones((N, D)) * 2e-6
+        mu_tiny_B = jnp.ones((N, D)) * 0.002
+        r_B = mu_tiny_B * phi_small_B
+        p_B = 1.0 / (1.0 + phi_small_B)
+
+        result = biological_differential_expression(
+            r, r_B, p, p_B,
+            mu_samples_A=mu_tiny, mu_samples_B=mu_tiny_B,
+            phi_samples_A=phi_small, phi_samples_B=phi_small_B,
+        )
+
+        # All values should be finite (no inf/nan)
+        assert jnp.all(jnp.isfinite(result["lfc_mean"]))
+        assert jnp.all(jnp.isfinite(result["kl_mean"]))
+        assert jnp.all(jnp.isfinite(result["lvr_mean"]))
+
+    def test_lfc_correct_at_low_expression(self):
+        """LFC from direct mu should be log(2) regardless of expression."""
+        N, D = 100, 3
+        phi = jnp.ones((N, D)) * 1e-6
+        mu_A = jnp.ones((N, D)) * 2e-4
+        mu_B = jnp.ones((N, D)) * 1e-4
+        r_A = mu_A * phi
+        r_B = mu_B * phi
+        p = 1.0 / (1.0 + phi)
+
+        result = biological_differential_expression(
+            r_A, r_B, p, p,
+            mu_samples_A=mu_A, mu_samples_B=mu_B,
+            phi_samples_A=phi, phi_samples_B=phi,
+        )
+        np.testing.assert_allclose(
+            result["lfc_mean"], np.log(2), atol=1e-4
+        )
+
+    def test_phi_path_identical_gives_zero_kl(self):
+        """Identical small-phi conditions → KL = 0 (no spurious signal)."""
+        N, D = 100, 5
+        phi = jnp.ones((N, D)) * 1e-5
+        mu = jnp.ones((N, D)) * 0.01
+        r = mu * phi
+        p = 1.0 / (1.0 + phi)
+
+        result = biological_differential_expression(
+            r, r, p, p,
+            mu_samples_A=mu, mu_samples_B=mu,
+            phi_samples_A=phi, phi_samples_B=phi,
+        )
+        np.testing.assert_allclose(result["kl_mean"], 0.0, atol=1e-5)
+        np.testing.assert_allclose(result["lfc_mean"], 0.0, atol=1e-5)
+
+
+# --------------------------------------------------------------------------
+# Test: results object integration with native params
+# --------------------------------------------------------------------------
+
+
+class TestResultsObjectWithNativeParams:
+    """ScribeEmpiricalDEResults should pass mu/phi to biological_level."""
+
+    def test_biological_level_with_phi(self):
+        N, D = 200, 5
+        phi = jnp.ones((N, D)) * 3.0
+        mu_A = jnp.ones((N, D)) * 15.0
+        mu_B = jnp.ones((N, D)) * 15.0
+        r = mu_A * phi
+        p = 1.0 / (1.0 + phi)
+
+        results = ScribeEmpiricalDEResults(
+            delta_samples=jnp.zeros((N, D)),
+            gene_names=[f"g{i}" for i in range(D)],
+            label_A="A",
+            label_B="B",
+            r_samples_A=r,
+            r_samples_B=r,
+            p_samples_A=p,
+            p_samples_B=p,
+            mu_samples_A=mu_A,
+            mu_samples_B=mu_B,
+            phi_samples_A=phi,
+            phi_samples_B=phi,
+        )
+
+        bio = results.biological_level()
+        # Identical conditions → all metrics ~ 0
+        np.testing.assert_allclose(bio["lfc_mean"], 0.0, atol=1e-5)
+        np.testing.assert_allclose(bio["kl_mean"], 0.0, atol=1e-5)

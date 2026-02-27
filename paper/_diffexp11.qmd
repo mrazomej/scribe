@@ -402,6 +402,54 @@ providing a non-compositional check that is especially valuable for lowly
 expressed genes where the CLR transform amplifies noise.
 
 
+### Caveat: the NB parameter-space boundary {#sec-diffexp-bio-caveat}
+
+While the biological metrics are free of compositional closure, they have their
+own boundary artifact.  For genes with near-zero biological expression, the
+Gamma rate $\beta_g \to \infty$ regardless of parameterization.  In this regime,
+tiny and **unidentifiable** posterior fluctuations produce enormous $\beta_g$
+ratios between conditions, inflating all three biological metrics.
+
+The severity of this artifact depends on the model's parameterization:
+
+- **Canonical / mean_prob** ($p$ sampled directly): the Gamma rate is
+  $\beta_g = p_g / (1 - p_g)$.  As $p_g \to 1$, the $(1 - p_g)$ subtraction
+  suffers from catastrophic cancellation in finite-precision arithmetic (float32),
+  amplifying the instability beyond what the mathematical singularity alone would
+  produce.
+- **Mean_odds** ($\phi$ sampled directly): the Gamma rate is $\beta_g = 1/\phi_g$.
+  As $\phi_g \to 0$ the rate still diverges, but the computation $1/\phi$ is a
+  simple reciprocal with **no subtraction**, so it avoids the catastrophic
+  cancellation that plagues the $p/(1-p)$ form.
+
+The LFC similarly benefits from the `mean_odds` parameterization: since $\mu_g$
+is sampled directly, the biological LFC $\log(\mu_A / \mu_B)$ never involves
+the numerically fragile $r(1-p)/p$ reconstruction.
+
+**Recommendation:** use the `mean_odds` parameterization for models where
+biological DE metrics will be computed.  The pipeline automatically detects
+the parameterization and selects the most stable computation path.  Regardless
+of parameterization, **filter genes by minimum biological expression** before
+interpreting the results.  The `max_bio_expr` field in the output (defined as
+$\max(\hat{\mu}_g^A, \hat{\mu}_g^B)$) is provided for exactly this purpose.
+A threshold of $\mu_{\min} \approx 0.1$--$1.0$ typically suffices.
+
+
+### Parameterization-aware computation {#sec-diffexp-bio-param}
+
+The biological DE pipeline selects the most numerically stable formulae based
+on which posterior samples are available:
+
+| Parameterization | $\mu_g$ | $\text{var}_g$ | $\beta_g$ (Gamma rate) |
+|---|---|---|---|
+| `mean_odds` | sampled | $\mu_g (1 + \phi_g)$ | $1 / \phi_g$ |
+| `mean_prob` | sampled | $\mu_g / p_g$ | $p_g / (1 - p_g)$ |
+| `canonical` | $r_g (1 - p_g) / p_g$ | $\mu_g / p_g$ | $p_g / (1 - p_g)$ |
+
+The three tiers are selected automatically — the user does not need to specify
+anything beyond using results objects.
+
+
 ### Implementation notes {#sec-diffexp-bio-implementation}
 
 All four metrics are computed by default when calling `compare()` with
@@ -426,7 +474,19 @@ bio_results = de.biological_level(
 )
 ```
 
-The posterior samples of $(r_g, p_g)$ are stored in the results object and
-reused for both CLR and biological computations. Setting
-`compute_biological=False` in `compare()` disables the storage of these samples,
-saving memory when only CLR metrics are needed.
+When results objects are passed to `compare()`, the pipeline auto-extracts
+`mu` and `phi` samples from `posterior_samples` alongside the standard `r` and
+`p`.  These native-parameterization samples are stored in the results object
+and used by `biological_level()` to select the best computation path (see
+@sec-diffexp-bio-param). Setting `compute_biological=False` in `compare()`
+disables the storage of all these samples, saving memory when only CLR metrics
+are needed.
+
+To filter out genes with unreliable metrics (see @sec-diffexp-bio-caveat):
+
+```python
+# Filter genes with near-zero expression in both conditions
+reliable = bio_results["max_bio_expr"] > 0.1
+bio_lfc_filtered = bio_results["lfc_mean"][reliable]
+bio_kl_filtered = bio_results["kl_mean"][reliable]
+```
