@@ -1120,23 +1120,33 @@ class TestDenoiseTupleMethod:
         assert not jnp.allclose(r1, r2)
 
     def test_tuple_sample_zi_zero_keeps_genuine_zeros(self, rng):
-        """Sampled ZI zeros: genuine NB zeros stay at 0, gate zeros get replaced.
+        """Sampled ZI zeros: genuine NB zeros use NB posterior (VCP-aware).
 
-        With gate=1.0 (all zeros from dropout), all zeros should be
-        replaced.  With gate=0.0 (all real), all zeros stay at 0.
+        With gate=1.0 (all from dropout), zeros are replaced by prior
+        NB samples.  With gate=0.0 (all genuine NB), the NB posterior
+        at u=0 is used: positive when VCP is present (unobserved mRNA),
+        zero when there is no capture probability.
         """
         counts = jnp.array([[0, 0, 0]], dtype=jnp.float32)
         r = jnp.array([5.0, 3.0, 7.0])
         p = jnp.float32(0.4)
         nu = jnp.array([0.5])
 
-        # gate = 0 → all genuine NB zeros → should remain 0
+        # gate = 0, WITH VCP → genuine NB zeros get the NB posterior
+        # (positive because capture loss hides real expression)
         gate_zero = jnp.array([0.0, 0.0, 0.0])
-        result_no_gate = denoise_counts(
+        result_vcp = denoise_counts(
             counts, r, p, p_capture=nu, gate=gate_zero,
             method=("mean", "sample"), rng_key=rng,
         )
-        np.testing.assert_allclose(result_no_gate, 0.0, atol=1e-5)
+        assert jnp.all(result_vcp >= 0)
+
+        # gate = 0, WITHOUT VCP → genuine NB zeros stay at 0
+        result_no_vcp = denoise_counts(
+            counts, r, p, p_capture=None, gate=gate_zero,
+            method=("mean", "sample"), rng_key=rng,
+        )
+        np.testing.assert_allclose(result_no_vcp, 0.0, atol=1e-5)
 
         # gate = 1 → all from dropout → should all be positive
         gate_one = jnp.array([1.0, 1.0, 1.0])

@@ -1476,20 +1476,31 @@ def _denoise_batch(
                 total_count=r, probs=p_eff
             ).sample(key_gate)
 
-        # NB pathway value at u=0 (only needed for mean/mode combination;
-        # the sample path keeps genuine NB zeros as-is).
-        if zi_zero_method in ("mean", "mode"):
-            if zi_zero_method == general_method:
-                nb_zero_val = denoised_nb
-            elif zi_zero_method == "mean":
-                nb_zero_val = (counts + r * probs_post) / one_minus_pp
-            else:
-                alpha_z = r + counts
-                d_mode_z = jnp.floor(
-                    jnp.maximum(alpha_z - 1.0, 0.0)
-                    * probs_post / one_minus_pp
-                )
-                nb_zero_val = counts + d_mode_z
+        # NB pathway value at u=0: the posterior for unobserved mRNA
+        # given that the NB component produced the zero.  For VCP models
+        # this is positive (capture loss hides real expression); without
+        # VCP, probs_post=0 so nb_zero_val collapses to 0.
+        if zi_zero_method == general_method:
+            nb_zero_val = denoised_nb
+        elif zi_zero_method == "mean":
+            nb_zero_val = (counts + r * probs_post) / one_minus_pp
+        elif zi_zero_method == "mode":
+            alpha_z = r + counts
+            d_mode_z = jnp.floor(
+                jnp.maximum(alpha_z - 1.0, 0.0)
+                * probs_post / one_minus_pp
+            )
+            nb_zero_val = counts + d_mode_z
+        else:
+            # Sample from the NB posterior for unobserved transcripts
+            # at u=0.  For VCP, d ~ NB(r, probs_post) gives the mRNA
+            # lost to capture.  Without VCP probs_post=0 → d=0.
+            alpha_z = r + counts
+            key_nb_z, rng_key = random.split(rng_key)
+            d_sample_z = dist.NegativeBinomialProbs(
+                total_count=alpha_z, probs=probs_post
+            ).sample(key_nb_z)
+            nb_zero_val = counts + d_sample_z
 
         # Combine gate and NB pathways at zero positions
         if zi_zero_method == "mean":
@@ -1499,13 +1510,14 @@ def _denoise_batch(
         else:
             # Sample: use w to decide whether the zero was from dropout.
             # If gate fired (dropout), sample a replacement from the
-            # biological prior NB(r, p).  Otherwise keep the zero — it
-            # was a genuine NB zero.
+            # biological prior NB(r, p).  If genuine NB zero, use the
+            # NB posterior (accounts for mRNA lost to capture in VCP;
+            # collapses to 0 without VCP since probs_post=0).
             key_bern, rng_key = random.split(rng_key)
             chose_gate = (
                 dist.Bernoulli(probs=w).sample(key_bern).astype(bool)
             )
-            zinb_zero = jnp.where(chose_gate, gate_val, 0.0)
+            zinb_zero = jnp.where(chose_gate, gate_val, nb_zero_val)
 
         denoised = jnp.where(is_zero, zinb_zero, denoised_nb)
 
