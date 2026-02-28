@@ -76,14 +76,17 @@ def _get_predictive_samples_for_plot(
     results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
 ):
     """Get PPC samples for plotting from SVI results."""
-    results.get_ppc_samples(
+    ppc_payload = results.get_ppc_samples(
         rng_key=rng_key,
         n_samples=n_samples,
         batch_size=batch_size,
         store_samples=store_samples,
         counts=counts,
     )
-    return np.array(results.predictive_samples)
+    predictive_samples = ppc_payload.get("predictive_samples")
+    if predictive_samples is None:
+        predictive_samples = results.predictive_samples
+    return np.array(predictive_samples)
 
 
 @dispatch(scribe.ScribeMCMCResults)
@@ -99,7 +102,13 @@ def _get_predictive_samples_for_plot(
     )
     predictive_np = np.array(predictive_samples)
     if n_samples is not None and predictive_np.shape[0] > int(n_samples):
-        predictive_np = predictive_np[: int(n_samples)]
+        key_parts = np.asarray(rng_key, dtype=np.uint64).ravel()
+        seed = int(key_parts[0] * np.uint64(2**32) + key_parts[1])
+        draw_rng = np.random.default_rng(seed)
+        selected_idx = draw_rng.choice(
+            predictive_np.shape[0], size=int(n_samples), replace=False
+        )
+        predictive_np = predictive_np[selected_idx]
         if store_samples:
             results.predictive_samples = predictive_np
     return predictive_np
