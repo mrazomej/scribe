@@ -304,6 +304,59 @@ For VCP models the per-cell capture probability inflates counts to recover
 the pre-capture expression level.  For ZINB models, zero observations are
 additionally corrected for technical dropout using the gate posterior.
 
+**Tuple Method for Independent Control of ZINB Zeros:**
+
+The `method` parameter accepts a tuple `(general_method, zi_zero_method)` for
+independent control of the denoising method at non-zero positions vs. zero
+positions in ZINB models.  A single string like `"mean"` is equivalent to
+`("mean", "mean")`.
+
+```python
+# Mean for non-zeros, sample replacement for ZINB dropout zeros
+denoised = results.denoise_counts_map(
+    counts=observed_counts,
+    method=("mean", "sample"),
+    rng_key=rng_key,
+)
+```
+
+When `zi_zero_method="sample"`, the gate weight `w` (posterior probability that
+the zero came from dropout) is used as a Bernoulli probability: if the draw says
+"dropout", the zero is replaced with a sample from the biological prior NB(r, p);
+otherwise the zero is kept as a genuine biological zero.
+
+**Exporting Denoised Counts as AnnData / h5ad:**
+
+The `get_denoised_anndata()` method combines denoising with AnnData packaging,
+optionally writing the result to an h5ad file.  It copies cell/gene metadata
+from the original data and records denoising provenance in `.uns`.
+
+```python
+# Single denoised dataset (MAP-based, default method=("mean", "sample"))
+adata_denoised = results.get_denoised_anndata(
+    counts=observed_counts,
+    rng_key=rng_key,
+)
+# adata_denoised.X           → denoised counts
+# adata_denoised.layers["original_counts"] → input counts
+# adata_denoised.uns["scribe_denoising"]   → provenance metadata
+
+# Multiple datasets (first = MAP, rest = posterior samples)
+adatas = results.get_denoised_anndata(
+    counts=observed_counts,
+    rng_key=rng_key,
+    n_datasets=5,
+)
+# adatas[0] uses MAP estimates, adatas[1:] use posterior draws
+
+# Pass an AnnData template to copy obs/var metadata
+adata_denoised = results.get_denoised_anndata(
+    adata=original_adata,      # extracts counts + copies metadata
+    rng_key=rng_key,
+    path="denoised.h5ad",      # write directly to disk
+)
+```
+
 **Amortized Capture Probability and PPC:**
 
 When using amortized capture probability (enabled via
@@ -490,6 +543,8 @@ ScribeSVIResults
        counts (posterior mean/mode/sample of true transcripts)
      - `denoise_counts_posterior()`: Full-posterior Bayesian denoising
        (propagates parameter uncertainty across posterior draws)
+     - `get_denoised_anndata()`: Export denoised counts as AnnData/h5ad
+       with metadata, supporting tuple method and multi-dataset generation
      - `_sample_standard_model()`: Helper for standard (non-mixture) models
      - `_sample_mixture_model()`: Helper for mixture models
    - Dependencies: Uses `ModelHelpersMixin`, `ParameterExtractionMixin`
