@@ -1,4 +1,6 @@
+import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 import jax.numpy as jnp
 import scanpy as sc
 from anndata import AnnData
@@ -18,6 +20,7 @@ def load_and_preprocess_anndata(
     return_jax: bool = True,
     subset_column: Optional[Union[str, list[str]]] = None,
     subset_value: Optional[Union[str, list[str]]] = None,
+    filter_obs: Optional[dict[str, list[str]]] = None,
 ) -> Union[jnp.ndarray, AnnData]:
     """
     Load count data from a CSV or h5ad file and optionally apply scanpy
@@ -49,6 +52,15 @@ def load_and_preprocess_anndata(
         The value(s) within ``subset_column`` to keep.  Must be the same length
         as ``subset_column`` when both are lists.  Ignored when
         ``subset_column`` is ``None``.
+    filter_obs : Optional[dict[str, list[str]]], default None
+        Declarative observation-level pre-filter applied **before**
+        ``subset_column``/``subset_value`` and preprocessing.  Keys are column
+        names in ``adata.obs``; values are lists of allowed values for that
+        column.  For each entry, only observations whose column value is in the
+        allowed list are retained (an ``isin`` filter).  When multiple columns
+        are specified, the per-column masks are ANDed (all conditions must hold).
+        This is useful for excluding unwanted categories (e.g. specific siRNA
+        treatments) prior to covariate-split inference via ``infer_split.py``.
 
     Returns
     -------
@@ -74,8 +86,47 @@ def load_and_preprocess_anndata(
             f"Unsupported file format: {extension}. Please use .csv or .h5ad"
         )
 
+    # Newer anndata versions (≥0.10) may return adata.X as a lazy _CSRDataset
+    # rather than a proper scipy sparse matrix, even without explicit backing
+    # mode. Materialise it immediately so all downstream operations (scanpy
+    # preprocessing, subsetting, and JAX conversion) work with standard arrays.
+    if not (sp.issparse(adata.X) or isinstance(adata.X, np.ndarray)):
+        adata.X = adata.X[:]
+
     # Print the original shape of the data
     print(f"Original data shape: {adata.shape}")
+
+    # Apply declarative obs-level pre-filter before any split-based subsetting.
+    # Each key in filter_obs is a column name and each value is a list of
+    # allowed values; rows not matching ANY column are dropped.
+    if filter_obs is not None:
+        # Normalise OmegaConf containers to plain Python types
+        if isinstance(filter_obs, DictConfig):
+            filter_obs = OmegaConf.to_container(filter_obs, resolve=True)
+
+        for col, allowed in filter_obs.items():
+            if col not in adata.obs.columns:
+                raise ValueError(
+                    f"filter_obs column '{col}' not found in adata.obs. "
+                    f"Available columns: {list(adata.obs.columns)}"
+                )
+            # Normalise ListConfig values to plain lists
+            if isinstance(allowed, ListConfig):
+                allowed = list(allowed)
+            allowed_str = [str(v) for v in allowed]
+            mask = adata.obs[col].astype(str).isin(allowed_str)
+            n_before = adata.shape[0]
+            adata = adata[mask].copy()
+            print(
+                f"filter_obs {col} in {allowed}: "
+                f"{adata.shape[0]}/{n_before} cells retained"
+            )
+
+        if adata.shape[0] == 0:
+            raise ValueError(
+                "No observations remain after applying filter_obs: "
+                f"{filter_obs}"
+            )
 
     # Subset by covariate column(s) if requested (used by infer_split.py).
     # Both single-column (str) and multi-column (list[str]) are supported;

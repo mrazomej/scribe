@@ -195,7 +195,9 @@ def _load_data_config(data_name: str) -> dict:
 
 
 def _discover_covariate_values(
-    data_path: str, split_by: str | list[str]
+    data_path: str,
+    split_by: str | list[str],
+    filter_obs: dict[str, list[str]] | None = None,
 ) -> list[str] | list[tuple[str, ...]]:
     """Load h5ad and return unique value(s) for one or more covariate columns.
 
@@ -212,6 +214,11 @@ def _discover_covariate_values(
         Path to the h5ad (or CSV) file.
     split_by : str or list[str]
         Column name(s) in ``adata.obs``.
+    filter_obs : dict[str, list[str]] or None, optional
+        Declarative observation-level pre-filter applied before discovering
+        split values.  Keys are column names in ``adata.obs``; values are
+        lists of allowed values.  Only observations matching all conditions
+        are considered when enumerating unique split_by values.
 
     Returns
     -------
@@ -227,6 +234,29 @@ def _discover_covariate_values(
     )
 
     adata = sc.read_h5ad(abs_path)
+
+    # Apply filter_obs pre-filter so that only relevant rows participate in
+    # the unique-value discovery (avoids creating split jobs for combinations
+    # that would be empty after filtering).
+    if filter_obs:
+        n_total = adata.shape[0]
+        for col, allowed in filter_obs.items():
+            if col not in adata.obs.columns:
+                raise ValueError(
+                    f"filter_obs column '{col}' not found in adata.obs.\n"
+                    f"Available columns: {list(adata.obs.columns)}"
+                )
+            allowed_str = [str(v) for v in allowed]
+            adata = adata[adata.obs[col].astype(str).isin(allowed_str)]
+        if adata.shape[0] == 0:
+            raise ValueError(
+                "No observations remain after applying filter_obs: "
+                f"{filter_obs}"
+            )
+        print(
+            f"filter_obs applied: {adata.shape[0]:,}/{n_total:,} cells "
+            f"retained after filtering by {filter_obs}"
+        )
 
     if isinstance(split_by, list):
         # Multi-column path: use the DataFrame to get all unique combinations
@@ -526,9 +556,22 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Discover covariate values
     # ------------------------------------------------------------------
+    filter_obs = data_cfg.get("filter_obs")
+    if filter_obs:
+        # Format each filter condition as "column in [values]" for readability
+        filter_parts = [
+            f"{col} in {vals}" for col, vals in filter_obs.items()
+        ]
+        console.print(
+            f"[bold yellow]Pre-filter (filter_obs):[/bold yellow] "
+            f"[cyan]{', '.join(filter_parts)}[/cyan]"
+        )
+
     console.print("[dim]Loading data to discover covariate values...[/dim]")
     data_path = data_cfg["path"]
-    covariate_values = _discover_covariate_values(data_path, split_by)
+    covariate_values = _discover_covariate_values(
+        data_path, split_by, filter_obs=filter_obs
+    )
     console.print(
         f"[green]✓[/green] Found [bold]{len(covariate_values)}[/bold] "
         f"unique values: {covariate_values}"

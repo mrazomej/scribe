@@ -462,6 +462,7 @@ def main(cfg: DictConfig) -> None:
         return_jax=not needs_adata,
         subset_column=cfg.data.get("subset_column"),
         subset_value=cfg.data.get("subset_value"),
+        filter_obs=cfg.data.get("filter_obs"),
     )
     # Keep a plain-array view for viz utilities that don't accept AnnData
     if needs_adata:

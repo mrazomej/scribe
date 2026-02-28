@@ -453,6 +453,42 @@ gpu_results = scribe.run_scribe(
 )
 ```
 
+## Data Configuration
+
+### Observation Pre-Filtering (`filter_obs`)
+
+Data YAML configs support an optional `filter_obs` field for declarative
+observation-level row filtering.  This is applied **before** both the
+`split_by` covariate discovery (in `infer_split.py`) and per-job subsetting,
+ensuring that unwanted categories are excluded at the earliest stage.
+
+Keys are column names in `adata.obs`; values are lists of allowed values.
+When multiple columns are specified, the per-column conditions are ANDed
+(all must hold).
+
+```yaml
+# conf/data/batch_correction/a549.yaml
+filter_obs:
+  siRNA: ["SCRAMBLE"]
+
+split_by:
+  - "treatment"
+  - "kit"
+```
+
+The same parameter is available on `load_and_preprocess_anndata()` for
+programmatic use:
+
+```python
+from scribe.data_loader import load_and_preprocess_anndata
+
+adata = load_and_preprocess_anndata(
+    "data.h5ad",
+    return_jax=False,
+    filter_obs={"siRNA": ["SCRAMBLE"], "batch": ["A", "B"]},
+)
+```
+
 ## Module Documentation
 
 Each module has comprehensive documentation with detailed examples:
