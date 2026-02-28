@@ -76,16 +76,36 @@ def _get_predictive_samples_for_plot(
     results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
 ):
     """Get PPC samples for plotting from SVI results."""
-    ppc_payload = results.get_ppc_samples(
+    # Generate posterior draws explicitly for this plotting call so we can run
+    # one PPC batch at a time without relying on persistent cached samples.
+    posterior_samples = results.get_posterior_samples(
         rng_key=rng_key,
         n_samples=n_samples,
-        batch_size=batch_size,
-        store_samples=store_samples,
+        # Use full-cell posterior draws to keep local latent parameter shapes
+        # consistent with downstream predictive generation across all cells.
+        batch_size=None,
+        store_samples=False,
         counts=counts,
     )
-    predictive_samples = ppc_payload.get("predictive_samples")
-    if predictive_samples is None:
-        predictive_samples = results.predictive_samples
+    previous_posterior_samples = results.posterior_samples
+    previous_predictive_samples = results.predictive_samples
+    predictive_samples = None
+    try:
+        results.posterior_samples = posterior_samples
+        predictive_samples = results.get_predictive_samples(
+            rng_key=rng_key,
+            batch_size=batch_size,
+            store_samples=False,
+        )
+    finally:
+        if store_samples:
+            results.posterior_samples = posterior_samples
+            if predictive_samples is not None:
+                results.predictive_samples = predictive_samples
+        else:
+            results.posterior_samples = previous_posterior_samples
+            results.predictive_samples = previous_predictive_samples
+
     return np.array(predictive_samples)
 
 

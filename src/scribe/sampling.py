@@ -27,7 +27,7 @@ from jax import random, vmap
 import jax.numpy as jnp
 import numpyro.distributions as dist
 from numpyro.infer import Predictive
-from typing import Dict, Optional, Union, Callable, List
+from typing import Dict, Optional, Tuple, Union, Callable, List
 from numpyro.infer import SVI
 from numpyro.handlers import block
 
@@ -880,6 +880,57 @@ def _sample_posterior_ppc_single(
 # Bayesian denoising of observed counts
 # ------------------------------------------------------------------------------
 
+# Allowed values for individual method elements
+_VALID_DENOISE_METHODS = {"mean", "mode", "sample"}
+
+
+def _validate_denoise_method(method: Union[str, Tuple[str, str]]) -> None:
+    """Validate the ``method`` argument for denoising functions.
+
+    Accepts a single string or a tuple of two strings, each of which
+    must be one of ``'mean'``, ``'mode'``, or ``'sample'``.
+
+    Parameters
+    ----------
+    method : str or tuple of (str, str)
+        The method specification to validate.
+
+    Raises
+    ------
+    ValueError
+        If the method is not a valid string or 2-tuple of valid strings.
+    """
+    if isinstance(method, str):
+        if method not in _VALID_DENOISE_METHODS:
+            raise ValueError(
+                f"method must be one of {_VALID_DENOISE_METHODS} or a "
+                f"2-tuple thereof, got '{method}'"
+            )
+    elif isinstance(method, tuple):
+        if len(method) != 2:
+            raise ValueError(
+                f"method tuple must have exactly 2 elements, "
+                f"got {len(method)}"
+            )
+        for i, m in enumerate(method):
+            if m not in _VALID_DENOISE_METHODS:
+                raise ValueError(
+                    f"method[{i}] must be one of {_VALID_DENOISE_METHODS}, "
+                    f"got '{m}'"
+                )
+    else:
+        raise ValueError(
+            f"method must be a string or a 2-tuple of strings, "
+            f"got {type(method).__name__}"
+        )
+
+
+def _method_needs_rng(method: Union[str, Tuple[str, str]]) -> bool:
+    """Return True if any element of ``method`` requires an RNG key."""
+    if isinstance(method, str):
+        return method == "sample"
+    return "sample" in method
+
 
 def denoise_counts(
     counts: jnp.ndarray,
@@ -887,7 +938,7 @@ def denoise_counts(
     p: jnp.ndarray,
     p_capture: Optional[jnp.ndarray] = None,
     gate: Optional[jnp.ndarray] = None,
-    method: str = "mean",
+    method: Union[str, Tuple[str, str]] = "mean",
     rng_key: Optional[random.PRNGKey] = None,
     return_variance: bool = False,
     mixing_weights: Optional[jnp.ndarray] = None,
@@ -928,16 +979,27 @@ def denoise_counts(
         ``(n_components, n_genes)`` for a single param set; with a leading
         ``n_samples`` dimension for multi-sample.  ``None`` for models
         without zero-inflation.
-    method : {'mean', 'mode', 'sample'}, optional
-        Summary statistic to return.
+    method : str or tuple of (str, str), optional
+        Summary statistic to return.  Accepts either a single string
+        applied uniformly to all positions, or a tuple
+        ``(general_method, zi_zero_method)`` for independent control:
+
+        * ``general_method``: used for non-zero positions and for all
+          positions in non-ZINB models (no gate).
+        * ``zi_zero_method``: used exclusively for zero positions in
+          ZINB models (the gate/NB mixture posterior).
+
+        Valid values for each element:
 
         * ``'mean'``: closed-form posterior mean (shrinkage estimator).
         * ``'mode'``: posterior mode (MAP denoised count).
         * ``'sample'``: one stochastic draw from the denoised posterior.
 
+        A single string ``s`` is equivalent to ``(s, s)``.
         Default: ``'mean'``.
     rng_key : random.PRNGKey or None, optional
-        JAX PRNG key.  Required when ``method='sample'``.
+        JAX PRNG key.  Required when any element of ``method`` is
+        ``'sample'``.
     return_variance : bool, optional
         If ``True``, return a dictionary with keys ``'denoised_counts'``
         and ``'variance'`` instead of a plain array.  Default: ``False``.
@@ -1000,12 +1062,17 @@ def denoise_counts(
     >>> denoised = denoise_counts(counts, r, p, p_capture=nu)
     >>> denoised.shape
     (2, 3)
+
+    Tuple method for independent control of ZINB zeros:
+
+    >>> denoised = denoise_counts(
+    ...     counts, r, p, p_capture=nu,
+    ...     gate=jnp.array([0.2, 0.3, 0.1]),
+    ...     method=("mean", "sample"),
+    ... )
     """
-    if method not in ("mean", "mode", "sample"):
-        raise ValueError(
-            f"method must be 'mean', 'mode', or 'sample', got '{method}'"
-        )
-    if method == "sample" and rng_key is None:
+    _validate_denoise_method(method)
+    if _method_needs_rng(method) and rng_key is None:
         rng_key = random.PRNGKey(42)
 
     is_mixture = mixing_weights is not None
@@ -1034,7 +1101,7 @@ def denoise_counts(
     n_samples = r.shape[0]
     keys = (
         random.split(rng_key, n_samples)
-        if method == "sample"
+        if _method_needs_rng(method)
         else [None] * n_samples
     )
 
@@ -1098,7 +1165,7 @@ def _denoise_single(
     p: jnp.ndarray,
     p_capture: Optional[jnp.ndarray],
     gate: Optional[jnp.ndarray],
-    method: str,
+    method: Union[str, Tuple[str, str]],
     rng_key: Optional[random.PRNGKey],
     return_variance: bool,
     mixing_weights: Optional[jnp.ndarray],
@@ -1125,10 +1192,11 @@ def _denoise_single(
     gate : jnp.ndarray or None
         Gate probability.  ``(n_genes,)`` or ``(n_components, n_genes)`` or
         ``None``.
-    method : str
-        ``'mean'``, ``'mode'``, or ``'sample'``.
+    method : str or tuple of (str, str)
+        Denoising method.  A single string or ``(general, zi_zeros)``
+        tuple; see :func:`denoise_counts`.
     rng_key : random.PRNGKey or None
-        PRNG key (only needed for ``method='sample'``).
+        PRNG key (needed when any element of ``method`` is ``'sample'``).
     return_variance : bool
         Whether to include variance in the output.
     mixing_weights : jnp.ndarray or None
@@ -1187,7 +1255,7 @@ def _denoise_standard(
     p: jnp.ndarray,
     p_capture: Optional[jnp.ndarray],
     gate: Optional[jnp.ndarray],
-    method: str,
+    method: Union[str, Tuple[str, str]],
     rng_key: Optional[random.PRNGKey],
     return_variance: bool,
     cell_batch_size: Optional[int],
@@ -1216,10 +1284,11 @@ def _denoise_standard(
     gate : jnp.ndarray or None
         Gate probability ``(n_genes,)`` or ``(n_cells, n_genes)`` or
         ``None``.
-    method : str
-        ``'mean'``, ``'mode'``, or ``'sample'``.
+    method : str or tuple of (str, str)
+        Denoising method.  A single string or ``(general, zi_zeros)``
+        tuple; see :func:`denoise_counts`.
     rng_key : random.PRNGKey or None
-        PRNG key for ``method='sample'``.
+        PRNG key (needed when any element of ``method`` is ``'sample'``).
     return_variance : bool
         Whether to return variance alongside denoised counts.
     cell_batch_size : int or None
@@ -1234,6 +1303,8 @@ def _denoise_standard(
 
     if cell_batch_size is None:
         cell_batch_size = n_cells
+
+    needs_rng = _method_needs_rng(method)
 
     n_batches = (n_cells + cell_batch_size - 1) // cell_batch_size
     denoised_parts: List[jnp.ndarray] = []
@@ -1266,7 +1337,7 @@ def _denoise_standard(
             else p
         )
 
-        if method == "sample":
+        if needs_rng:
             rng_key, batch_key = random.split(rng_key)
         else:
             batch_key = None
@@ -1294,7 +1365,7 @@ def _denoise_batch(
     p: jnp.ndarray,
     p_capture: Optional[jnp.ndarray],
     gate: Optional[jnp.ndarray],
-    method: str,
+    method: Union[str, Tuple[str, str]],
     rng_key: Optional[random.PRNGKey],
 ) -> tuple:
     """Denoise a single batch of cells (no further splitting).
@@ -1316,10 +1387,12 @@ def _denoise_batch(
     gate : jnp.ndarray or None
         Gate probability, ``(n_genes,)`` or ``(batch_cells, n_genes)`` or
         ``None``.
-    method : str
-        ``'mean'``, ``'mode'``, or ``'sample'``.
+    method : str or tuple of (str, str)
+        Denoising method.  A single string applies uniformly; a tuple
+        ``(general_method, zi_zero_method)`` allows the ZINB zero
+        correction to use a different method from the rest.
     rng_key : random.PRNGKey or None
-        PRNG key for ``method='sample'``.
+        PRNG key (needed when any element of ``method`` is ``'sample'``).
 
     Returns
     -------
@@ -1328,6 +1401,12 @@ def _denoise_batch(
     variance : jnp.ndarray
         Posterior variance ``(batch_cells, n_genes)``.
     """
+    # Normalize method to (general_method, zi_zero_method)
+    if isinstance(method, str):
+        general_method, zi_zero_method = method, method
+    else:
+        general_method, zi_zero_method = method
+
     # Per-cell p arrives as (batch_cells, 1) from the gathering step in
     # _denoise_single / _denoise_mixture_marginal, gene-specific p as
     # (n_genes,), and scalar p as ().  All broadcast correctly with
@@ -1348,11 +1427,11 @@ def _denoise_batch(
     one_minus_pp = 1.0 - probs_post
 
     # ------------------------------------------------------------------
-    # NB denoising applied to every position
+    # NB denoising applied to every position (uses general_method)
     # ------------------------------------------------------------------
-    if method == "mean":
+    if general_method == "mean":
         denoised_nb = (counts + r * probs_post) / one_minus_pp
-    elif method == "mode":
+    elif general_method == "mode":
         alpha = r + counts
         # Mode of NB(alpha, p'): floor((alpha-1) * probs / (1-probs))
         # when alpha > 1, else 0.
@@ -1361,7 +1440,7 @@ def _denoise_batch(
         )
         denoised_nb = counts + d_mode
     else:
-        # method == "sample"
+        # general_method == "sample"
         alpha = r + counts
         key_nb, rng_key = random.split(rng_key)
         d_sample = dist.NegativeBinomialProbs(
@@ -1375,6 +1454,7 @@ def _denoise_batch(
     # ------------------------------------------------------------------
     # ZINB zero correction: when gate is present and u_g = 0, the
     # denoised posterior is a mixture of gate and NB pathways.
+    # Uses zi_zero_method for the zero positions.
     # ------------------------------------------------------------------
     if gate is not None:
         is_zero = counts == 0
@@ -1384,9 +1464,9 @@ def _denoise_batch(
 
         # Gate pathway: the cell was expressing normally but dropout
         # prevented observation.  Denoised count follows the prior NB(r, p).
-        if method == "mean":
+        if zi_zero_method == "mean":
             gate_val = r * p_eff / (1.0 - p_eff)
-        elif method == "mode":
+        elif zi_zero_method == "mode":
             gate_val = jnp.floor(
                 jnp.maximum(r - 1.0, 0.0) * p_eff / (1.0 - p_eff)
             )
@@ -1396,22 +1476,36 @@ def _denoise_batch(
                 total_count=r, probs=p_eff
             ).sample(key_gate)
 
-        # NB pathway value at u=0 is already in denoised_nb
-        # (since counts=0 is included in the general NB formula).
-        nb_zero_val = denoised_nb  # used only at is_zero positions
+        # NB pathway value at u=0 (only needed for mean/mode combination;
+        # the sample path keeps genuine NB zeros as-is).
+        if zi_zero_method in ("mean", "mode"):
+            if zi_zero_method == general_method:
+                nb_zero_val = denoised_nb
+            elif zi_zero_method == "mean":
+                nb_zero_val = (counts + r * probs_post) / one_minus_pp
+            else:
+                alpha_z = r + counts
+                d_mode_z = jnp.floor(
+                    jnp.maximum(alpha_z - 1.0, 0.0)
+                    * probs_post / one_minus_pp
+                )
+                nb_zero_val = counts + d_mode_z
 
-        if method == "mean":
+        # Combine gate and NB pathways at zero positions
+        if zi_zero_method == "mean":
             zinb_zero = w * gate_val + (1.0 - w) * nb_zero_val
-        elif method == "mode":
-            # Use the dominant pathway's mode
+        elif zi_zero_method == "mode":
             zinb_zero = jnp.where(w > 0.5, gate_val, nb_zero_val)
         else:
-            # Sample: draw pathway per gene, then sample from that pathway
+            # Sample: use w to decide whether the zero was from dropout.
+            # If gate fired (dropout), sample a replacement from the
+            # biological prior NB(r, p).  Otherwise keep the zero — it
+            # was a genuine NB zero.
             key_bern, rng_key = random.split(rng_key)
             chose_gate = (
                 dist.Bernoulli(probs=w).sample(key_bern).astype(bool)
             )
-            zinb_zero = jnp.where(chose_gate, gate_val, nb_zero_val)
+            zinb_zero = jnp.where(chose_gate, gate_val, 0.0)
 
         denoised = jnp.where(is_zero, zinb_zero, denoised_nb)
 
@@ -1493,7 +1587,7 @@ def _denoise_mixture_marginal(
     p: jnp.ndarray,
     p_capture: Optional[jnp.ndarray],
     gate: Optional[jnp.ndarray],
-    method: str,
+    method: Union[str, Tuple[str, str]],
     rng_key: Optional[random.PRNGKey],
     return_variance: bool,
     mixing_weights: jnp.ndarray,
@@ -1501,16 +1595,16 @@ def _denoise_mixture_marginal(
 ) -> Union[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Denoise by marginalising over mixture components.
 
-    For ``method='mean'``:
+    For ``method='mean'`` (or general_method ``'mean'``):
 
     .. math::
 
         \\mathbb{E}[m_g \\mid u_g] = \\sum_k w_k \\,
         \\mathbb{E}[m_g \\mid u_g, \\text{comp}=k]
 
-    For ``method='sample'``: sample a component per cell from
-    ``mixing_weights``, then sample from that component's denoised
-    posterior.
+    For ``method='sample'`` (or general_method ``'sample'``): sample a
+    component per cell from ``mixing_weights``, then sample from that
+    component's denoised posterior.
 
     Parameters
     ----------
@@ -1524,10 +1618,12 @@ def _denoise_mixture_marginal(
         Capture probability ``(n_cells,)`` or ``None``.
     gate : jnp.ndarray or None
         Gate ``(n_genes,)`` or ``(n_components, n_genes)`` or ``None``.
-    method : str
-        ``'mean'``, ``'mode'``, or ``'sample'``.
+    method : str or tuple of (str, str)
+        Denoising method.  A single string or ``(general, zi_zeros)``
+        tuple; see :func:`denoise_counts`.  The general_method controls
+        whether components are sampled or marginalised.
     rng_key : random.PRNGKey or None
-        PRNG key for ``method='sample'``.
+        PRNG key (needed when any element of ``method`` is ``'sample'``).
     return_variance : bool
         Whether to return variance.
     mixing_weights : jnp.ndarray
@@ -1540,10 +1636,13 @@ def _denoise_mixture_marginal(
     jnp.ndarray or Dict[str, jnp.ndarray]
         Denoised counts (and optionally variance).
     """
+    # Extract general_method to decide marginalisation vs sampling path
+    general_method = method[0] if isinstance(method, tuple) else method
+
     n_components = r.shape[0]
     p_is_comp = p.ndim >= 1 and p.shape[0] == n_components
 
-    if method == "sample":
+    if general_method == "sample":
         # Sample component per cell, gather per-cell params, then use
         # the standard (non-mixture) path.
         key_comp, key_rest = random.split(rng_key)
@@ -1563,7 +1662,9 @@ def _denoise_mixture_marginal(
             method, key_rest, return_variance, cell_batch_size,
         )
 
-    # Marginalise over components (mean or mode)
+    # Marginalise over components (mean or mode for the general path).
+    # An rng_key may still be needed if zi_zero_method is "sample".
+    needs_rng = _method_needs_rng(method)
     n_cells, n_genes = counts.shape
     denoised_acc = jnp.zeros((n_cells, n_genes))
     variance_acc = jnp.zeros((n_cells, n_genes))
@@ -1575,9 +1676,15 @@ def _denoise_mixture_marginal(
             gate[k] if gate is not None and gate.ndim == 2 else gate
         )
 
+        # Split rng_key per component if the zi_zero path needs sampling
+        if needs_rng:
+            rng_key, comp_key = random.split(rng_key)
+        else:
+            comp_key = None
+
         out_k = _denoise_standard(
             counts, r_k, p_k, p_capture, g_k,
-            method, None, True, cell_batch_size,
+            method, comp_key, True, cell_batch_size,
         )
 
         d_k = out_k["denoised_counts"]
