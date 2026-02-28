@@ -233,6 +233,110 @@ def _get_cell_assignment_probabilities_for_plot(
     return sample_probs.mean(axis=0)
 
 
+# ---------------------------------------------------------------------------
+# Biological PPC samples (NB(r, p) only, no technical noise)
+# ---------------------------------------------------------------------------
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_biological_ppc_samples_for_plot(
+    results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
+):
+    """Get biological PPC samples from SVI results.
+
+    Samples from NB(r, p) only, stripping capture probability and
+    zero-inflation gate.  Follows the same save/restore pattern as
+    ``_get_predictive_samples_for_plot``.
+    """
+    bio_result = results.get_ppc_samples_biological(
+        rng_key=rng_key,
+        n_samples=n_samples,
+        batch_size=batch_size,
+        store_samples=store_samples,
+        counts=counts,
+    )
+    bio_samples = np.array(bio_result["predictive_samples"])
+    if store_samples:
+        results.predictive_samples = bio_samples
+    return bio_samples
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_biological_ppc_samples_for_plot(
+    results, *, rng_key, n_samples, counts, batch_size=None, store_samples=True
+):
+    """Get biological PPC samples from MCMC results.
+
+    Samples from NB(r, p) only.  Optionally subsamples to ``n_samples``
+    posterior draws.
+    """
+    _ = counts
+    bio_samples = results.get_ppc_samples_biological(
+        rng_key=rng_key,
+        batch_size=batch_size,
+        store_samples=store_samples,
+    )
+    bio_np = np.array(bio_samples)
+    if n_samples is not None and bio_np.shape[0] > int(n_samples):
+        key_parts = np.asarray(rng_key, dtype=np.uint64).ravel()
+        seed = int(key_parts[0] * np.uint64(2**32) + key_parts[1])
+        draw_rng = np.random.default_rng(seed)
+        idx = draw_rng.choice(bio_np.shape[0], size=int(n_samples), replace=False)
+        bio_np = bio_np[idx]
+    if store_samples:
+        results.predictive_samples = bio_np
+    return bio_np
+
+
+# ---------------------------------------------------------------------------
+# Denoised observed counts (single point-estimate matrix)
+# ---------------------------------------------------------------------------
+
+
+@dispatch(scribe.ScribeSVIResults)
+def _get_denoised_counts_for_plot(
+    results, *, counts, rng_key, method=("mean", "sample"), cell_batch_size=None
+):
+    """MAP-denoise observed counts for SVI results.
+
+    Returns a 2-D ``(n_cells, n_genes)`` numpy array.
+    """
+    denoised = results.denoise_counts_map(
+        counts=counts,
+        method=method,
+        rng_key=rng_key,
+        cell_batch_size=cell_batch_size,
+        store_result=False,
+        verbose=False,
+    )
+    return np.array(denoised)
+
+
+@dispatch(scribe.ScribeMCMCResults)
+def _get_denoised_counts_for_plot(
+    results, *, counts, rng_key, method=("mean", "sample"), cell_batch_size=None
+):
+    """Denoise observed counts for MCMC results.
+
+    Averages over posterior samples to produce a single 2-D
+    ``(n_cells, n_genes)`` numpy array.
+    """
+    denoised = results.denoise_counts(
+        counts=counts,
+        method=method,
+        rng_key=rng_key,
+        cell_batch_size=cell_batch_size,
+        store_result=False,
+        verbose=False,
+    )
+    return np.array(denoised).mean(axis=0)
+
+
+# ---------------------------------------------------------------------------
+# Training diagnostics
+# ---------------------------------------------------------------------------
+
+
 @dispatch(scribe.ScribeSVIResults)
 def _get_training_diagnostic_payload(results):
     """Build training diagnostics payload for SVI loss plots."""

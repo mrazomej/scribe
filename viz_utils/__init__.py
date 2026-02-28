@@ -11,6 +11,7 @@ from .cache import _build_umap_cache_path
 from .loss import plot_loss
 from .ecdf import plot_ecdf
 from .ppc import plot_ppc
+from .bio_ppc import plot_bio_ppc
 from .umap import plot_umap
 from .heatmap import plot_correlation_heatmap
 from .mixture_ppc import plot_mixture_ppc, plot_mixture_composition
@@ -20,6 +21,7 @@ __all__ = [
     "plot_loss",
     "plot_ecdf",
     "plot_ppc",
+    "plot_bio_ppc",
     "plot_umap",
     "plot_correlation_heatmap",
     "plot_mixture_ppc",
