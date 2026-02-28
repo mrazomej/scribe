@@ -93,12 +93,17 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # ------------------------------------------------------------------
     # Denoised observed counts (full matrix, then gene-index)
     # ------------------------------------------------------------------
-    console.print("[dim]Denoising observed counts (MAP)...[/dim]")
+    # Use ("sample", "sample") so the denoised histogram has realistic
+    # stochastic variability comparable to the biological PPC bands.
+    # ("mean", "sample") would create artificial density spikes because
+    # every cell with the same observed count maps to a single value.
+    console.print("[dim]Denoising observed counts (MAP, sample)...[/dim]")
     key_denoise = random.PRNGKey(99)
     denoised_full = _get_denoised_counts_for_plot(
         results,
         counts=counts,
         rng_key=key_denoise,
+        method=("sample", "sample"),
     )
 
     # Build a position map: original gene index → position inside the
