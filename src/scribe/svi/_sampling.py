@@ -1636,7 +1636,7 @@ class SamplingMixin:
         # Store denoising provenance metadata
         out_uns = dict(uns) if uns else {}
         out_uns["scribe_denoising"] = {
-            "method": method,
+            "method": list(method) if isinstance(method, tuple) else method,
             "dataset_index": dataset_index,
             "parameter_source": parameter_source,
         }

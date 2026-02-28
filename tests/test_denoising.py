@@ -1318,7 +1318,7 @@ class TestGetDenoisedAnnData:
             counts=counts, rng_key=rng,
             method=("mode", "sample"), verbose=False,
         )
-        assert adata.uns["scribe_denoising"]["method"] == ("mode", "sample")
+        assert adata.uns["scribe_denoising"]["method"] == ["mode", "sample"]
 
     def test_svi_string_method_works(self, dataset, rng):
         """Plain string method also works for get_denoised_anndata."""
