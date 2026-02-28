@@ -51,7 +51,7 @@ ScribeMCMCResults(@dataclass)
  ├── GeneSubsettingMixin        # __getitem__ gene indexing
  ├── ComponentMixin             # get_component, get_components
  ├── ModelHelpersMixin          # _model(), _log_likelihood_fn()
- ├── SamplingMixin              # PPC, biological PPC, denoising, prior predictive
+ ├── SamplingMixin              # PPC, biological PPC, denoising, AnnData export, prior predictive
  ├── LikelihoodMixin            # log_likelihood()
  ├── NormalizationMixin         # normalize_counts()
  └── MixtureAnalysisMixin       # cell_type_probabilities()
@@ -221,6 +221,29 @@ result = results.denoise_counts(
     rng_key=rng_key,
 )
 # result["denoised_counts"] and result["variance"]
+```
+
+The `method` parameter accepts a tuple `(general_method, zi_zero_method)` for
+independent control of ZINB zero denoising.  When `zi_zero_method="sample"`, the
+gate weight is used as a Bernoulli probability: dropout zeros are replaced with
+samples from the biological prior, genuine NB zeros are kept at zero.
+
+**Exporting Denoised Counts as AnnData / h5ad:**
+
+```python
+# Single denoised dataset (posterior-mean params, default ("mean", "sample"))
+adata_denoised = results.get_denoised_anndata(
+    counts=observed_counts,
+    rng_key=rng_key,
+)
+
+# Multiple datasets (first = posterior mean, rest = individual MCMC draws)
+adatas = results.get_denoised_anndata(
+    counts=observed_counts,
+    rng_key=rng_key,
+    n_datasets=5,
+    path="denoised.h5ad",  # writes denoised_0.h5ad .. denoised_4.h5ad
+)
 ```
 
 **Mixture Model Analysis:**
