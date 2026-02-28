@@ -1015,3 +1015,390 @@ class TestDenoiseGeneSpecificP:
         assert result["denoised_counts"].shape == (n_cells, n_genes)
         assert result["variance"].shape == (n_cells, n_genes)
         assert jnp.all(result["variance"] >= 0)
+
+
+# ==============================================================================
+# Tests for tuple method (independent control of non-zero and ZI zero methods)
+# ==============================================================================
+
+
+class TestDenoiseTupleMethod:
+    """Tests for the ``(general_method, zi_zero_method)`` tuple interface."""
+
+    def test_string_backward_compat(self):
+        """Single string method still works exactly as before."""
+        counts = jnp.array([[5, 0, 3], [0, 2, 0]], dtype=jnp.float32)
+        r = jnp.array([2.0, 1.5, 3.0])
+        p = jnp.float32(0.4)
+        nu = jnp.array([0.5, 0.7])
+
+        result_str = denoise_counts(counts, r, p, p_capture=nu, method="mean")
+        result_tuple = denoise_counts(
+            counts, r, p, p_capture=nu, method=("mean", "mean"),
+        )
+        np.testing.assert_allclose(result_str, result_tuple, atol=1e-5)
+
+    def test_tuple_mean_mean_matches_string_mean(self):
+        """Tuple ("mean", "mean") is identical to string "mean" for ZINB."""
+        counts = jnp.array([[5, 0, 3], [0, 2, 0]], dtype=jnp.float32)
+        r = jnp.array([2.0, 1.5, 3.0])
+        p = jnp.float32(0.4)
+        nu = jnp.array([0.5, 0.7])
+        gate = jnp.array([0.3, 0.3, 0.3])
+
+        result_str = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate, method="mean",
+        )
+        result_tuple = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate, method=("mean", "mean"),
+        )
+        np.testing.assert_allclose(result_str, result_tuple, atol=1e-5)
+
+    def test_tuple_nonzero_positions_match_general(self, rng):
+        """Non-zero positions use the general method, unaffected by zi_zero."""
+        counts = jnp.array([[5, 0, 3], [0, 2, 0]], dtype=jnp.float32)
+        r = jnp.array([2.0, 1.5, 3.0])
+        p = jnp.float32(0.4)
+        nu = jnp.array([0.5, 0.7])
+        gate = jnp.array([0.3, 0.3, 0.3])
+        nonzero_mask = counts > 0
+
+        # general_method="mean", zi_zero_method="sample"
+        result_tuple = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate,
+            method=("mean", "sample"), rng_key=rng,
+        )
+        result_mean = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate, method="mean",
+        )
+
+        # Non-zero positions should be identical (both use "mean")
+        np.testing.assert_allclose(
+            result_tuple[nonzero_mask], result_mean[nonzero_mask], atol=1e-5,
+        )
+
+    def test_tuple_mode_general_nonzero(self, rng):
+        """With ("mode", "sample"), non-zero positions match mode method."""
+        counts = jnp.array([[5, 0, 3], [0, 2, 0]], dtype=jnp.float32)
+        r = jnp.array([2.0, 1.5, 3.0])
+        p = jnp.float32(0.4)
+        nu = jnp.array([0.5, 0.7])
+        gate = jnp.array([0.3, 0.3, 0.3])
+        nonzero_mask = counts > 0
+
+        result_tuple = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate,
+            method=("mode", "sample"), rng_key=rng,
+        )
+        result_mode = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate, method="mode",
+        )
+
+        np.testing.assert_allclose(
+            result_tuple[nonzero_mask], result_mode[nonzero_mask], atol=1e-5,
+        )
+
+    def test_tuple_sample_zi_zeros_stochastic(self, rng):
+        """ZINB zeros with zi_zero_method="sample" vary across RNG keys."""
+        counts = jnp.array([[0, 0, 0]], dtype=jnp.float32)
+        r = jnp.array([3.0, 5.0, 2.0])
+        p = jnp.float32(0.4)
+        nu = jnp.array([0.5])
+        gate = jnp.array([0.5, 0.5, 0.5])
+
+        key1, key2 = random.split(rng)
+        r1 = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate,
+            method=("mean", "sample"), rng_key=key1,
+        )
+        r2 = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate,
+            method=("mean", "sample"), rng_key=key2,
+        )
+
+        # With high gate probability, at least some zeros should differ
+        assert not jnp.allclose(r1, r2)
+
+    def test_tuple_sample_zi_zero_keeps_genuine_zeros(self, rng):
+        """Sampled ZI zeros: genuine NB zeros stay at 0, gate zeros get replaced.
+
+        With gate=1.0 (all zeros from dropout), all zeros should be
+        replaced.  With gate=0.0 (all real), all zeros stay at 0.
+        """
+        counts = jnp.array([[0, 0, 0]], dtype=jnp.float32)
+        r = jnp.array([5.0, 3.0, 7.0])
+        p = jnp.float32(0.4)
+        nu = jnp.array([0.5])
+
+        # gate = 0 → all genuine NB zeros → should remain 0
+        gate_zero = jnp.array([0.0, 0.0, 0.0])
+        result_no_gate = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate_zero,
+            method=("mean", "sample"), rng_key=rng,
+        )
+        np.testing.assert_allclose(result_no_gate, 0.0, atol=1e-5)
+
+        # gate = 1 → all from dropout → should all be positive
+        gate_one = jnp.array([1.0, 1.0, 1.0])
+        result_all_gate = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate_one,
+            method=("mean", "sample"), rng_key=rng,
+        )
+        assert jnp.all(result_all_gate >= 0)
+
+    def test_tuple_shape_and_non_negative(self, rng):
+        """Tuple method returns correct shape and non-negative values."""
+        n_cells, n_genes = 8, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        counts = counts.at[0, :].set(0)
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.float32(0.4)
+        nu = jnp.ones(n_cells) * 0.5
+        gate = jnp.ones(n_genes) * 0.3
+
+        for method in [
+            ("mean", "sample"),
+            ("mode", "sample"),
+            ("mean", "mode"),
+            ("sample", "sample"),
+        ]:
+            result = denoise_counts(
+                counts, r, p, p_capture=nu, gate=gate,
+                method=method, rng_key=rng,
+            )
+            assert result.shape == (n_cells, n_genes), f"method={method}"
+            assert jnp.all(result >= 0), f"method={method}"
+
+    def test_invalid_tuple_raises(self):
+        """Invalid tuple elements raise ValueError."""
+        counts = jnp.ones((2, 3), dtype=jnp.float32)
+        r = jnp.ones(3)
+        p = jnp.float32(0.5)
+
+        with pytest.raises(ValueError, match="method"):
+            denoise_counts(counts, r, p, method=("mean", "invalid"))
+        with pytest.raises(ValueError, match="method"):
+            denoise_counts(counts, r, p, method=("bad",))
+        with pytest.raises(ValueError, match="method"):
+            denoise_counts(counts, r, p, method=123)
+
+    def test_tuple_without_gate_same_as_general(self, rng):
+        """Without gate, tuple zi_zero has no effect (no ZI zeros to handle)."""
+        counts = jnp.array([[5, 0, 3], [0, 2, 0]], dtype=jnp.float32)
+        r = jnp.array([2.0, 1.5, 3.0])
+        p = jnp.float32(0.4)
+        nu = jnp.array([0.5, 0.7])
+
+        result_mean = denoise_counts(
+            counts, r, p, p_capture=nu, method="mean",
+        )
+        result_tuple = denoise_counts(
+            counts, r, p, p_capture=nu,
+            method=("mean", "sample"), rng_key=rng,
+        )
+
+        np.testing.assert_allclose(result_mean, result_tuple, atol=1e-5)
+
+    def test_tuple_multi_sample(self, rng):
+        """Tuple method works with multi-sample (posterior) arrays."""
+        n_samples, n_cells, n_genes = 3, 6, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 2
+        counts = counts.at[0, :].set(0)
+        r = jnp.ones((n_samples, n_genes)) * 5.0
+        p = jnp.ones(n_samples) * 0.3
+        nu = jnp.ones((n_samples, n_cells)) * 0.6
+        gate = jnp.ones(n_genes) * 0.3
+
+        result = denoise_counts(
+            counts, r, p, p_capture=nu, gate=gate,
+            method=("mean", "sample"), rng_key=rng,
+        )
+        assert result.shape == (n_samples, n_cells, n_genes)
+        assert jnp.all(result >= 0)
+
+    def test_tuple_cell_batching_matches_full(self, rng):
+        """Cell batching with tuple method matches unbatched result."""
+        n_cells, n_genes = 15, 4
+        counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
+        r = jnp.ones(n_genes) * 5.0
+        p = jnp.float32(0.3)
+        nu = jnp.ones(n_cells) * 0.5
+
+        # No gate → deterministic for both components of the tuple
+        full = denoise_counts(
+            counts, r, p, p_capture=nu, method=("mean", "mean"),
+        )
+        batched = denoise_counts(
+            counts, r, p, p_capture=nu,
+            method=("mean", "mean"), cell_batch_size=4,
+        )
+        np.testing.assert_allclose(full, batched, atol=1e-5)
+
+
+# ==============================================================================
+# Tests for get_denoised_anndata (SVI and MCMC)
+# ==============================================================================
+
+
+class TestGetDenoisedAnnData:
+    """Tests for ``get_denoised_anndata()`` on SVI and MCMC results."""
+
+    @pytest.mark.parametrize("model", ["nbdm", "zinb", "nbvcp", "zinbvcp"])
+    def test_svi_single_dataset_structure(self, dataset, rng, model):
+        """SVI get_denoised_anndata returns valid AnnData for all models."""
+        from anndata import AnnData
+
+        counts, n_cells, n_genes = dataset
+        results = _fit_svi(model, counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, verbose=False,
+        )
+
+        assert isinstance(adata, AnnData)
+        assert adata.X.shape == (n_cells, n_genes)
+        assert "original_counts" in adata.layers
+        np.testing.assert_allclose(
+            adata.layers["original_counts"], np.asarray(counts),
+        )
+        assert "scribe_denoising" in adata.uns
+        meta = adata.uns["scribe_denoising"]
+        assert meta["dataset_index"] == 0
+        assert meta["parameter_source"] == "map"
+
+    def test_svi_no_original_counts_layer(self, dataset, rng):
+        """include_original_counts=False omits the layer."""
+        counts, _, _ = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng,
+            include_original_counts=False, verbose=False,
+        )
+        assert "original_counts" not in adata.layers
+
+    def test_svi_multi_dataset(self, dataset, rng):
+        """n_datasets > 1 returns a list of AnnData objects."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        adatas = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, n_datasets=3, verbose=False,
+        )
+
+        assert isinstance(adatas, list)
+        assert len(adatas) == 3
+
+        # First dataset is MAP-based
+        assert adatas[0].uns["scribe_denoising"]["parameter_source"] == "map"
+
+        # Subsequent datasets are posterior-sample-based
+        for i in range(1, 3):
+            meta = adatas[i].uns["scribe_denoising"]
+            assert meta["dataset_index"] == i
+            assert "posterior_sample" in meta["parameter_source"]
+            assert adatas[i].X.shape == (n_cells, n_genes)
+
+    def test_svi_tuple_method_stored_in_metadata(self, dataset, rng):
+        """Tuple method value is recorded in .uns metadata."""
+        counts, _, _ = dataset
+        results = _fit_svi("zinbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng,
+            method=("mode", "sample"), verbose=False,
+        )
+        assert adata.uns["scribe_denoising"]["method"] == ("mode", "sample")
+
+    def test_svi_string_method_works(self, dataset, rng):
+        """Plain string method also works for get_denoised_anndata."""
+        counts, _, _ = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, method="mean", verbose=False,
+        )
+        assert isinstance(adata.X, np.ndarray)
+
+    def test_svi_requires_counts_or_adata(self, dataset, rng):
+        """Raises ValueError if neither counts nor adata is provided."""
+        counts, _, _ = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        with pytest.raises(ValueError, match="counts.*adata"):
+            results.get_denoised_anndata(rng_key=rng, verbose=False)
+
+    def test_svi_denoised_non_negative(self, dataset, rng):
+        """Denoised .X values are non-negative."""
+        counts, _, _ = dataset
+        results = _fit_svi("zinbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, verbose=False,
+        )
+        assert np.all(adata.X >= -1e-5)
+
+    @pytest.mark.parametrize("model", ["nbdm", "zinb", "nbvcp", "zinbvcp"])
+    def test_mcmc_single_dataset_structure(self, dataset, rng, model):
+        """MCMC get_denoised_anndata returns valid AnnData for all models."""
+        from anndata import AnnData
+
+        counts, n_cells, n_genes = dataset
+        results = _fit_mcmc(model, counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, verbose=False,
+        )
+
+        assert isinstance(adata, AnnData)
+        assert adata.X.shape == (n_cells, n_genes)
+        assert "original_counts" in adata.layers
+        assert "scribe_denoising" in adata.uns
+        assert adata.uns["scribe_denoising"]["dataset_index"] == 0
+
+    def test_mcmc_multi_dataset(self, dataset, rng):
+        """MCMC n_datasets > 1 returns a list."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_mcmc("nbvcp", counts)
+
+        adatas = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, n_datasets=2, verbose=False,
+        )
+
+        assert isinstance(adatas, list)
+        assert len(adatas) == 2
+        assert adatas[0].uns["scribe_denoising"]["parameter_source"] == (
+            "posterior_mean"
+        )
+        assert "mcmc_sample" in adatas[1].uns["scribe_denoising"][
+            "parameter_source"
+        ]
+
+    def test_svi_adata_template(self, dataset, rng):
+        """Passing adata as template copies obs/var metadata."""
+        import pandas as pd
+        from anndata import AnnData
+
+        counts, n_cells, n_genes = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        # Create a template with metadata
+        obs = pd.DataFrame(
+            {"cell_type": [f"type_{i}" for i in range(n_cells)]},
+            index=[f"cell_{i}" for i in range(n_cells)],
+        )
+        var = pd.DataFrame(
+            {"gene_name": [f"gene_{g}" for g in range(n_genes)]},
+            index=[f"gene_{g}" for g in range(n_genes)],
+        )
+        template = AnnData(
+            X=np.asarray(counts), obs=obs, var=var,
+        )
+
+        out = results.get_denoised_anndata(
+            adata=template, rng_key=rng, verbose=False,
+        )
+
+        assert list(out.obs.columns) == ["cell_type"]
+        assert list(out.var.columns) == ["gene_name"]
+        assert out.obs.index.tolist() == obs.index.tolist()
