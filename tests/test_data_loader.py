@@ -183,3 +183,106 @@ def test_no_subset_returns_all_cells(tmp_path):
 
     result = load_and_preprocess_anndata(path, return_jax=False)
     assert result.shape[0] == 3
+
+
+# ---------------------------------------------------------------------------
+# filter_obs pre-filtering
+# ---------------------------------------------------------------------------
+
+
+def test_filter_obs_retains_matching_cells(tmp_path):
+    """filter_obs should keep only rows whose column value is in the allowed list."""
+    obs = pd.DataFrame(
+        {
+            "siRNA": ["SCRAMBLE", "SCRAMBLE", "KD_TP53", "KD_RB1"],
+            "treatment": ["ctrl", "drug", "ctrl", "drug"],
+        },
+        index=[f"c{i}" for i in range(4)],
+    )
+    path = _make_h5ad(tmp_path, obs)
+
+    result = load_and_preprocess_anndata(
+        path,
+        return_jax=False,
+        filter_obs={"siRNA": ["SCRAMBLE"]},
+    )
+    assert result.shape[0] == 2
+    assert (result.obs["siRNA"] == "SCRAMBLE").all()
+
+
+def test_filter_obs_combined_with_subset(tmp_path):
+    """filter_obs runs before subset_column/subset_value; both should compose."""
+    obs = pd.DataFrame(
+        {
+            "siRNA": ["SCRAMBLE", "SCRAMBLE", "KD_TP53", "KD_TP53"],
+            "treatment": ["ctrl", "drug", "ctrl", "drug"],
+        },
+        index=[f"c{i}" for i in range(4)],
+    )
+    path = _make_h5ad(tmp_path, obs)
+
+    # filter_obs keeps SCRAMBLE rows; subset then keeps treatment=drug
+    result = load_and_preprocess_anndata(
+        path,
+        return_jax=False,
+        filter_obs={"siRNA": ["SCRAMBLE"]},
+        subset_column="treatment",
+        subset_value="drug",
+    )
+    assert result.shape[0] == 1
+    assert result.obs["siRNA"].iloc[0] == "SCRAMBLE"
+    assert result.obs["treatment"].iloc[0] == "drug"
+
+
+def test_filter_obs_raises_on_missing_column(tmp_path):
+    """Referencing a non-existent column in filter_obs should raise ValueError."""
+    obs = pd.DataFrame(
+        {"treatment": ["ctrl", "drug"]},
+        index=["c0", "c1"],
+    )
+    path = _make_h5ad(tmp_path, obs)
+
+    with pytest.raises(ValueError, match="filter_obs column.*not found"):
+        load_and_preprocess_anndata(
+            path,
+            return_jax=False,
+            filter_obs={"nonexistent": ["val"]},
+        )
+
+
+def test_filter_obs_raises_when_no_cells_remain(tmp_path):
+    """Filtering to zero cells should raise ValueError."""
+    obs = pd.DataFrame(
+        {"siRNA": ["KD_TP53", "KD_RB1"]},
+        index=["c0", "c1"],
+    )
+    path = _make_h5ad(tmp_path, obs)
+
+    with pytest.raises(ValueError, match="No observations remain"):
+        load_and_preprocess_anndata(
+            path,
+            return_jax=False,
+            filter_obs={"siRNA": ["SCRAMBLE"]},
+        )
+
+
+def test_filter_obs_multiple_columns(tmp_path):
+    """filter_obs with multiple columns ANDs the conditions across columns."""
+    obs = pd.DataFrame(
+        {
+            "siRNA": ["SCRAMBLE", "SCRAMBLE", "KD_TP53", "SCRAMBLE"],
+            "batch": ["A", "B", "A", "A"],
+        },
+        index=[f"c{i}" for i in range(4)],
+    )
+    path = _make_h5ad(tmp_path, obs)
+
+    # Keep siRNA=SCRAMBLE AND batch=A → c0 and c3
+    result = load_and_preprocess_anndata(
+        path,
+        return_jax=False,
+        filter_obs={"siRNA": ["SCRAMBLE"], "batch": ["A"]},
+    )
+    assert result.shape[0] == 2
+    assert (result.obs["siRNA"] == "SCRAMBLE").all()
+    assert (result.obs["batch"] == "A").all()
