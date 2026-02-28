@@ -42,6 +42,7 @@ from viz_utils import (
     plot_loss,
     plot_ecdf,
     plot_ppc,
+    plot_bio_ppc,
     plot_umap,
     plot_correlation_heatmap,
     plot_mixture_ppc,
@@ -123,6 +124,13 @@ Examples:
         help="Enable posterior predictive check plots",
     )
     parser.add_argument(
+        "--bio-ppc",
+        action="store_true",
+        default=None,
+        dest="bio_ppc",
+        help="Enable biological PPC plot (NB(r,p) bands + denoised data)",
+    )
+    parser.add_argument(
         "--umap",
         action="store_true",
         default=None,
@@ -159,7 +167,7 @@ Examples:
         "--all",
         action="store_true",
         dest="all_plots",
-        help="Enable all plots (loss, ECDF, PPC, UMAP, heatmap, "
+        help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
         "mixture PPC, mixture composition, annotation PPC)",
     )
 
@@ -247,6 +255,7 @@ def _load_default_viz_config():
                 "loss": True,
                 "ecdf": True,
                 "ppc": False,
+                "bio_ppc": False,
                 "umap": False,
                 "heatmap": False,
                 "mixture_ppc": False,
@@ -313,6 +322,7 @@ def _build_viz_config(args):
         viz_cfg.loss = True
         viz_cfg.ecdf = True
         viz_cfg.ppc = True
+        viz_cfg.bio_ppc = True
         viz_cfg.umap = True
         viz_cfg.heatmap = True
         viz_cfg.mixture_ppc = True
@@ -326,6 +336,8 @@ def _build_viz_config(args):
         viz_cfg.ecdf = False
     if args.ppc:
         viz_cfg.ppc = True
+    if args.bio_ppc:
+        viz_cfg.bio_ppc = True
     if args.umap:
         viz_cfg.umap = True
     if args.heatmap:
@@ -725,6 +737,26 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                     f"[red]  Failed to generate PPC plots: {e}[/red]"
                 )
 
+    if viz_cfg.bio_ppc:
+        if not overwrite and _plot_exists(figs_dir, "_bio_ppc", fmt):
+            plots_skipped.append("bio-PPC")
+            console.print(
+                "[yellow]  Skipping bio-PPC (already exists)[/yellow]"
+            )
+        else:
+            console.print(
+                "[dim]Generating biological PPC (denoised) "
+                "plots...[/dim]"
+            )
+            try:
+                plot_bio_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
+                plots_generated.append("bio-PPC")
+                console.print("[green]  Bio-PPC plots saved[/green]")
+            except Exception as e:
+                console.print(
+                    f"[red]  Failed to generate bio-PPC plots: {e}[/red]"
+                )
+
     if viz_cfg.umap:
         if not overwrite and _plot_exists(figs_dir, "_umap", fmt):
             plots_skipped.append("UMAP")
@@ -946,6 +978,8 @@ def main() -> None:
         enabled_plots.append("ECDF")
     if viz_cfg.ppc:
         enabled_plots.append("PPC")
+    if viz_cfg.bio_ppc:
+        enabled_plots.append("bio-PPC")
     if viz_cfg.umap:
         enabled_plots.append("UMAP")
     if viz_cfg.heatmap:

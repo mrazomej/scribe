@@ -8,6 +8,7 @@ viz:
   loss: true
   ecdf: false
   ppc: false
+  bio_ppc: false  # Biological PPC: NB(r,p) bands + denoised data histogram
   umap: false  # Disabled by default (can be slow for large datasets)
   heatmap: false  # Disabled by default (requires posterior sampling which can be slow)
   mixture_ppc: false  # Only runs when mixture_model=true, shows genes differing between components
