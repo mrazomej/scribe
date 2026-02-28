@@ -10,7 +10,7 @@ import scribe
 from ._common import console
 from .cache import _build_umap_cache_path
 from .config import _get_config_values
-from .dispatch import _get_map_like_predictive_samples_for_plot
+from .dispatch import _get_predictive_samples_for_plot
 
 
 def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
@@ -292,7 +292,7 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
                 )
 
     console.print(
-        f"[dim]Generating {n_ppc_samples} predictive sample(s) for "
+        f"[dim]Generating {n_ppc_samples} posterior predictive sample(s) for "
         f"synthetic dataset...[/dim]"
     )
 
@@ -307,14 +307,12 @@ def plot_umap(results, counts, figs_dir, cfg, viz_cfg, force_refit=False):
 
     all_umap_synthetic = []
     for i in range(n_ppc_samples):
-        sample_arr = _get_map_like_predictive_samples_for_plot(
+        sample_arr = _get_predictive_samples_for_plot(
             results_sub,
             rng_key=random.PRNGKey(42 + i),
             n_samples=1,
-            cell_batch_size=batch_size or 1000,
-            use_mean=True,
+            batch_size=batch_size or 1000,
             store_samples=False,
-            verbose=(i == 0),
             counts=counts,
         )
 
