@@ -621,6 +621,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
         return_jax=False,
         subset_column=orig_cfg.data.get("subset_column"),
         subset_value=orig_cfg.data.get("subset_value"),
+        filter_obs=orig_cfg.data.get("filter_obs"),
     )
 
     # Extract the correct count matrix (from layer or .X)
