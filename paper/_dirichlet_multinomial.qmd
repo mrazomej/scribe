@@ -3,6 +3,9 @@ editor:
     render-on-save: true
 bibliography: references.bib
 csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
 ---
 
 # Dirichlet-Multinomial model derivation {#sec-dirichlet-multinomial}
@@ -115,91 +118,180 @@ capture $\nu$ and the probability of success $p$ of the original negative
 binomial distribution. This result will be relevant later when we define the
 variable capture probability model.
 
-If we assume each gene is independent of the others, our data for a single cell
+### Graphical model
+
+The generative model described above is summarized in the following graphical
+model. The biophysical parameter $p$ is shared across all genes and all cells.
+Each gene $g$ has its own dispersion parameter $r_g$. Each cell $c$ has its own
+capture probability $\nu_c$. The effective UMI-level parameter $\hat{p}_c$ is
+deterministically derived from $p$ and $\nu_c$ and is therefore not a free
+parameter. The observed UMI count $u_{gc}$ depends on $r_g$ and $\hat{p}_c$.
+
+```{.tikz caption="Graphical model for the Dirichlet-Multinomial generative model. White nodes are latent variables, gray nodes are observed variables, and the deterministic node $\\hat{p}_c$ (double border) is derived from $p$ and $\\nu_c$. Plates indicate replication across genes and cells." label="fig-nbdm-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+\begin{tikzpicture}[
+  >=stealth,
+  node distance=10mm and 14mm,
+  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
+  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  det/.style={circle, draw, double, minimum size=8mm, inner sep=1pt},
+  plate/.style={draw, rounded corners, inner sep=4mm}
+]
+  % Global parameter
+  \node[latent] (p) {$p$};
+
+  % Gene-level parameter
+  \node[latent, below left=12mm and 6mm of p] (rg) {$r_g$};
+
+  % Cell-level parameter
+  \node[latent, below right=12mm and 6mm of p] (nuc) {$\nu_c$};
+
+  % Deterministic node
+  \node[det, below=of nuc] (phat) {$\hat{p}_c$};
+
+  % Observed count
+  \node[obs, below=12mm of rg, xshift=10mm] (u) {$u_{gc}$};
+
+  % Edges
+  \draw[->] (p) -- (phat);
+  \draw[->] (nuc) -- (phat);
+  \draw[->] (rg) -- (u);
+  \draw[->] (phat) -- (u);
+
+  % Gene plate
+  \begin{scope}[on background layer]
+    \node[plate, fit=(rg)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+  \end{scope}
+
+  % Cell plate
+  \begin{scope}[on background layer]
+    \node[plate, fit=(nuc)(phat)(u), label={[yshift=1mm]south east:$c=1,\ldots,C$}] (cellplate) {};
+  \end{scope}
+\end{tikzpicture}
+```
+
+### Factorization at the mRNA level
+
+Since all genes are assumed to be independent and share the same parameter $p$,
+the joint distribution of the true mRNA counts for a single cell,
 
 $$
-\underline{u} = \left(u_1, u_2, \ldots, u_G\right),
-$${#eq-umivector}
+\underline{m} = \left(m_1, m_2, \ldots, m_G\right),
+$${#eq-mrnavector}
 
-is the result of drawing $G$ independent negative binomial random variables. The
-joint distribution of the vector $\underline{u}$ is then simply given by the
-product of the marginal distributions, i.e.,
+is simply the product of the marginal distributions,
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
-\prod_{g=1}^G \pi(u_g \mid r_g, \hat{p}),
-$${#eq-umivector-joint}
+\pi(\underline{m} \mid \underline{r}, p) = 
+\prod_{g=1}^G \pi(m_g \mid r_g, p),
+$${#eq-mrnavector-joint}
 
 where $\underline{r} = \left(r_1, r_2, \ldots, r_G\right)$ is the vector of
-parameters of the negative binomial distribution for each gene---recall that we
-assumed that all genes share the same parameter $p$, now $\hat{p}$.
-
-Again, as we will show in our final result for this section, it is possible to
-rewrite the joint distribution of independent negative binomial random variables
-sharing the same parameter $\hat{p}$ as 
+gene-specific dispersion parameters. As we will prove in detail later in this
+section, the shared $p$ parameter enables a remarkable factorization: the joint
+distribution of independent negative binomial random variables sharing the same
+second parameter $p$ can be rewritten as
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
-\pi(u_T \mid r_T, \hat{p})
-\pi(\underline{u} \mid u_T, \underline{r}),
-$${#eq-umivector-joint-nb}
+\pi(\underline{m} \mid \underline{r}, p) = 
+\pi(m_T \mid r_T, p)
+\pi(\underline{m} \mid m_T, \underline{r}),
+$${#eq-mrnavector-joint-nb}
 
 where
 
 $$
-\pi(u_T \mid r_T, \hat{p}) = \text{NB}(u_T \mid r_T, \hat{p}),
-$${#eq-umivector-joint-nb-u-dist}
+\pi(m_T \mid r_T, p) = \text{NB}(m_T \mid r_T, p),
+$${#eq-mrnavector-joint-nb-m-dist}
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) = 
-\text{Dirichlet-Multinomial}(\underline{u} \mid u_T, \underline{r}),
-$${#eq-umivector-joint-nb-u-dist-dirichlet-multinomial}
+\pi(\underline{m} \mid m_T, \underline{r}) = 
+\text{Dirichlet-Multinomial}(\underline{m} \mid m_T, \underline{r}),
+$${#eq-mrnavector-joint-nb-m-dist-dirichlet-multinomial}
 
-with $u_T$ being the total number of transcripts in the cell,
+with $m_T$ being the total number of transcripts in the cell,
 
 $$
-u_T = \sum_{g=1}^G u_g,
-$${#eq-umivector-joint-nb-u}
+m_T = \sum_{g=1}^G m_g,
+$${#eq-mrnavector-joint-nb-m}
 
 and $r_T$ being the equivalent sum of the $r$ parameters of the negative
 binomial distribution for each gene,
 
 $$
 r_T = \sum_{g=1}^G r_g.
-$${#eq-umivector-joint-nb-r}
+$${#eq-mrnavector-joint-nb-r}
+
+This factorization is the central mathematical result of this section.
+Crucially, the compositional term---the Dirichlet-Multinomial---depends only on
+the dispersion parameters $\underline{r}$ and **not** on $p$. This separation
+is what will later enable us to use the inferred $\underline{r}$ parameters for
+normalization and differential expression, independently of the value of $p$.
+
+### Factorization at the UMI level
+
+Since the factorization holds for any set of independent negative binomials
+sharing a common second parameter, it also applies at the UMI level. For a
+given cell with capture probability $\nu_c$, the effective parameter
+$\hat{p}_c = p / (\nu_c + p(1 - \nu_c))$ is the same for all genes---because
+both $p$ and $\nu_c$ are gene-uniform---so we can write
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}_c) = 
+\prod_{g=1}^G \pi(u_g \mid r_g, \hat{p}_c),
+$${#eq-umivector-joint}
+
+where $\underline{u} = (u_1, u_2, \ldots, u_G)$ is the vector of observed UMI
+counts. The same factorization gives
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}_c) = 
+\pi(u_T \mid r_T, \hat{p}_c)
+\pi(\underline{u} \mid u_T, \underline{r}),
+$${#eq-umivector-joint-nb}
+
+with $u_T = \sum_{g=1}^G u_g$. Note that $\hat{p}_c$ varies across cells
+(through $\nu_c$), but the Dirichlet-Multinomial compositional term
+$\pi(\underline{u} \mid u_T, \underline{r})$ is the same at both the mRNA and
+UMI levels, depending only on $\underline{r}$.
 
 ## Bayesian inference
 
-Given this very simple and compact generative model, we want to perform Bayesian
-inference on the parameters of the model. By Bayes' theorem, we have that
+Given this generative model, we want to perform Bayesian inference on the
+parameters of the model. The parameters we infer are: a single global $p$
+(shared across all genes and all cells), a gene-specific dispersion $r_g$ for
+each gene, and a cell-specific capture probability $\nu_c$ for each cell. The
+effective parameter $\hat{p}_c = p / (\nu_c + p(1 - \nu_c))$ is derived from
+$p$ and $\nu_c$, and is never directly inferred.
+
+By Bayes' theorem, we have that
 
 $$
-\pi(\underline{r}, \hat{p} \mid \underline{u}) \propto
+\pi(\underline{r}, p, \underline{\nu} \mid \underline{\underline{U}}) \propto
 \overbrace{
-\pi(\underline{u} \mid \underline{r}, \hat{p}) 
+\pi(\underline{\underline{U}} \mid \underline{r}, p, \underline{\nu}) 
 }^{\text{likelihood}}
-\overbrace{\pi(\underline{r}, \hat{p})}^{\text{prior}}
+\overbrace{\pi(\underline{r}, p, \underline{\nu})}^{\text{prior}}
 $${#eq-bayes-theorem}
 
-where the proportionality constant is independent of the model parameters.
+where $\underline{\nu} = (\nu_1, \nu_2, \ldots, \nu_C)$ is the vector of
+cell-specific capture probabilities, and the proportionality constant is
+independent of the model parameters.
 
 ### Prior
 
-For the prior, we can assume that each of the parameters is independent of each
-other, resulting in
+For the prior, we assume the parameters are independent,
 
 $$
-\pi(\underline{r}, \hat{p}) =
-\prod_{g=1}^G \pi(r_g) \cdot \pi(\hat{p}).
+\pi(\underline{r}, p, \underline{\nu}) =
+\prod_{g=1}^G \pi(r_g) \cdot \pi(p) \cdot \prod_{c=1}^C \pi(\nu_c).
 $${#eq-prior}
 
-The parameter $\hat{p}$ is a probability, thus, $\hat{p} \in [0, 1]$. The 
-natural prior for this interval is given by the Beta distribution. Thus, we
-assign
+The parameter $p$ is a probability, thus, $p \in [0, 1]$. The natural prior
+for this interval is given by the Beta distribution. Thus, we assign
 
 $$
-\hat{p} \sim \text{Beta}(\alpha_p, \beta_p), \; \alpha_p, \beta_p > 0.
-$${#eq-prior-hatp}
+p \sim \text{Beta}(\alpha_p, \beta_p), \; \alpha_p, \beta_p > 0.
+$${#eq-prior-p}
 
 Each of the $r_g$ parameters is a positive real number, thus, we can assign any
 strictly positive prior to each of them. A natural choice is to assign a Gamma
@@ -210,42 +302,48 @@ $$
 r_g \sim \text{Gamma}(\alpha_r, \beta_r), \; \alpha_r, \beta_r > 0.
 $${#eq-prior-rg}
 
+Similarly, each $\nu_c \in [0, 1]$ receives a Beta prior,
+
+$$
+\nu_c \sim \text{Beta}(\alpha_\nu, \beta_\nu), \; \alpha_\nu, \beta_\nu > 0.
+$${#eq-prior-nu}
 
 ### Likelihood
 
-For the likelihood function, we have the---yet to be proven---functional forms
-in @eq-umivector-joint-nb-u-dist and
-@eq-umivector-joint-nb-u-dist-dirichlet-multinomial. Thus, the likelihood
-function is given by
+The likelihood is the product of independent negative binomial distributions
+across all genes and cells. For each cell $c$ and gene $g$, the observed UMI
+count $u_{gc}$ follows a negative binomial distribution with gene-specific
+dispersion $r_g$ and cell-specific effective probability $\hat{p}_c$,
 
 $$
-u_T \mid r_T, \hat{p} \sim \text{NB}(r_T, \hat{p}),
+u_{gc} \mid r_g, \hat{p}_c \sim \text{NB}(r_g, \hat{p}_c),
+\quad \hat{p}_c = \frac{p}{\nu_c + p(1 - \nu_c)}.
 $${#eq-likelihood-u}
 
-and
+Assuming all cells are independent, our Bayesian model takes the form
 
 $$
-\underline{u} \mid u_T, \underline{r} \sim 
-\text{Dirichlet-Multinomial}(\underline{u} \mid u_T, \underline{r}).
-$${#eq-likelihood-u-dirichlet-multinomial}
-
-If we assume that all cells are independent, our Bayesian model takes the form 
-
-$$
-\pi(\underline{r}, \hat{p} \mid \underline{\underline{U}}) \propto
-\prod_{c=1}^C \left[
-    \pi(u_{T,c} \mid r_T, \hat{p})
-    \pi(\underline{u}_c \mid u_{T,c}, \underline{r})
-\right] \cdot \prod_{g=1}^G \pi(r_g) \cdot \pi(\hat{p}).
+\pi(\underline{r}, p, \underline{\nu} \mid \underline{\underline{U}}) \propto
+\prod_{c=1}^C \prod_{g=1}^G
+    \pi(u_{gc} \mid r_g, \hat{p}_c)
+\cdot \prod_{g=1}^G \pi(r_g) \cdot \pi(p) \cdot \prod_{c=1}^C \pi(\nu_c).
 $${#eq-bayes-model}
+
+Note that inference operates on the product of independent negative binomials
+directly---the NB $\times$ DM factorization derived above is **not** used during
+model fitting. The factorization is instead a mathematical property of the
+generative model that we exploit *after* inference: once posterior samples of
+$\underline{r}$ are obtained, the mRNA-level factorization tells us that
+compositions follow a $\text{Dirichlet}(\underline{r})$ distribution, which is
+how we perform normalization and differential expression (see later sections).
 
 To justify this functional form, there are two main steps we need to prove:
 
 - The composition of a negative binomial distribution with a binomial
 distribution results in a negative binomial distribution.
 - The joint distribution of independent negative binomials sharing the same
-parameter $p$ can be expressed as the product of a negative binomial distribution
-and a Dirichlet-Multinomial distribution.
+parameter $p$ can be expressed as the product of a negative binomial
+distribution and a Dirichlet-Multinomial distribution.
     - A negative binomial can be expressed as a composition of a Poisson and a
     Gamma distribution.
     - The joint distribution of independent Poisson random variables can be
@@ -551,7 +649,8 @@ In words, this says: "Take the expectation of $z^u$ conditioned on a specific
 value of $m$, then take the expectation of that result over all possible values
 of $m$."
 
-We can be more explicit about the structure of $u$ by substituting its definition in terms of the $b_i$ random variables,
+We can be more explicit about the structure of $u$ by substituting its
+definition in terms of the $b_i$ random variables,
 
 $$
 \mathcal{P}_u(z) = \left\langle\left\langle 
@@ -697,28 +796,29 @@ model later on.
 
 ## Joint distribution of negative binomial random variables
 
-We have shown that the distribution of $u$ is negative binomial with parameters
-$r$ and $\hat{p}$. Recall that we assumed that each gene $g$ has a unique $r_g$
-parameter, but share the $p$ parameter---now $\hat{p}$ since we assume the
-capture probability for all transcripts is the same. Earlier in
-@eq-umivector-joint-nb we claimed that this joint distribution of negative
-binomials with shared $\hat{p}$ parameter could be described as the product of a
-negative binomial and a dirichlet-multinomial distribution. Let's show that this
-is indeed the case.
+We now prove the factorization claimed in @eq-mrnavector-joint-nb. Since all
+genes share the same biophysical parameter $p$, the joint distribution of true
+mRNA counts $\underline{m}$ is a product of independent negative binomials with
+a common second parameter. We will show that this joint distribution factors
+into the product of a negative binomial (governing total counts) and a
+Dirichlet-Multinomial (governing compositions). The proof works for any set of
+independent negative binomials sharing a common parameter; the same result
+therefore applies at the UMI level within each cell, where the shared parameter
+is $\hat{p}_c$.
 
 The first step consists of showing that a single negative binomial can be
 expressed as a compound distribution of a Poisson and a gamma distribution.
 
 ### Negative binomial as a Poisson-Gamma compound distribution
 
-The negative binomial distribution can be expressed as a Poisson-Gamma
-compound distribution. In other words, we can write
+The negative binomial distribution can be expressed as a Poisson-Gamma compound
+distribution. In other words, we can write
 
 $$
-\pi(u \mid r, \hat{p}) = 
+\pi(m \mid r, p) = 
 \int_0^{\infty} d \lambda \,
 \overbrace{
-    \pi(u \mid \lambda) 
+    \pi(m \mid \lambda) 
 }^{\text{Poisson}}
 \times
 \underbrace{
@@ -726,11 +826,11 @@ $$
 }_{\text{Gamma}},
 $${#eq-nb-factorized-dist}
 
-where $\pi(u \mid \lambda)$ is the probability mass function of a Poisson
+where $\pi(m \mid \lambda)$ is the probability mass function of a Poisson
 distribution, i.e.,
 
 $$
-\pi(u \mid \lambda) = \frac{\lambda^u e^{-\lambda}}{u!},
+\pi(m \mid \lambda) = \frac{\lambda^m e^{-\lambda}}{m!},
 $${#eq-poisson-dist}
 
 and $\pi(\lambda \mid r, \theta)$ is the probability density
@@ -742,12 +842,11 @@ $$
 $${#eq-gamma-dist}
 
 where $\Gamma(\cdot)$ is the gamma function, and $\theta$ is the rate parameter
-of the gamma distribution. This parameter relates to the original $\hat{p}$
-parameter of the negative binomial distribution via
+of the gamma distribution. This parameter relates to $p$ via
 
 $$
-\theta = \frac{\hat{p}}{1-\hat{p}}.
-$${#eq-theta-hatp}
+\theta = \frac{p}{1-p}.
+$${#eq-theta-p}
 
 What @eq-nb-factorized-dist says is that sampling from a negative binomial
 distribution is equivalent to sampling from a Poisson distribution whose rate
@@ -756,44 +855,44 @@ Substituting @eq-poisson-dist and @eq-gamma-dist into @eq-nb-factorized-dist, we
 get
 
 $$
-\pi(u \mid r, \hat{p}) = 
-\int_0^{\infty} d \lambda \, \frac{\lambda^u e^{-\lambda}}{u!}
+\pi(m \mid r, p) = 
+\int_0^{\infty} d \lambda \, \frac{\lambda^m e^{-\lambda}}{m!}
 \frac{\lambda^{r-1} e^{-\theta \lambda} \theta^r}{\Gamma(r)}.
 $${#eq-nb-poisson-gamma-2}
 
-Substituting @eq-theta-hatp into @eq-nb-poisson-gamma-2, results in
+Substituting @eq-theta-p into @eq-nb-poisson-gamma-2, results in
 
 $$
-\pi(u \mid r, \hat{p}) = 
+\pi(m \mid r, p) = 
 \int_0^{\infty} d \lambda 
-\frac{\lambda^u e^{-\lambda}}{u!} 
+\frac{\lambda^m e^{-\lambda}}{m!} 
 \frac{
-    \lambda^{r-1} e^{-\left(\frac{\hat{p}}{1-\hat{p}}\right) \lambda}}
+    \lambda^{r-1} e^{-\left(\frac{p}{1-p}\right) \lambda}}
 {\Gamma(r)}
-\left(\frac{\hat{p}}{1-\hat{p}}\right)^r.
+\left(\frac{p}{1-p}\right)^r.
 $${#eq-nb-poisson-gamma-3}
 
 Taking out terms that do not depend on $\lambda$ and grouping the remaining
 terms, we obtain
 
 $$
-\pi(u \mid r, \hat{p}) =
-\frac{1}{u!\Gamma(r)}
-\left(\frac{\hat{p}}{1-\hat{p}}\right)^r 
+\pi(m \mid r, p) =
+\frac{1}{m!\Gamma(r)}
+\left(\frac{p}{1-p}\right)^r 
 \int_0^{\infty} d \lambda \,
-\lambda^{u+r-1} e^{-\left(\frac{1}{1-\hat{p}}\right) \lambda}.
+\lambda^{m+r-1} e^{-\left(\frac{1}{1-p}\right) \lambda}.
 $${#eq-nb-poisson-gamma-4}
 
 Let's focus on the integral. Let us define
 
 $$
-x = \left(\frac{1}{1-\hat{p}}\right) \lambda.
+x = \left(\frac{1}{1-p}\right) \lambda.
 $${#eq-nb-poisson-gamma-5}
 
 Then, we have that
 
 $$
-dx = \left(\frac{1}{1-\hat{p}}\right) d\lambda.
+dx = \left(\frac{1}{1-p}\right) d\lambda.
 $${#eq-nb-poisson-gamma-6}
 
 Furthermore, the integration limits upon this change of variables are
@@ -813,39 +912,39 @@ We then substitute the change of variables from @eq-nb-poisson-gamma-5 and
 
 $$
 \int_0^{\infty} d \lambda \,
-\lambda^{u+r-1} e^{-\left(\frac{1}{1-\hat{p}}\right) \lambda} = 
-\int_0^{\infty} dx \, (1-\hat{p}) [(1-\hat{p}) x]^{u+r-1} e^{-x}.
+\lambda^{m+r-1} e^{-\left(\frac{1}{1-p}\right) \lambda} = 
+\int_0^{\infty} dx \, (1-p) [(1-p) x]^{m+r-1} e^{-x}.
 $${#eq-nb-poisson-gamma-7}
 
 We then factorize the terms that do not depend on $x$, obtaining
 
 $$
-\int_0^{\infty} dx \, (1-\hat{p}) [(1-\hat{p}) x]^{u+r-1} e^{-x} = 
-(1-\hat{p})^{u+r} \int_0^{\infty} dx \, x^{u+r-1} e^{-x}.
+\int_0^{\infty} dx \, (1-p) [(1-p) x]^{m+r-1} e^{-x} = 
+(1-p)^{m+r} \int_0^{\infty} dx \, x^{m+r-1} e^{-x}.
 $${#eq-nb-poisson-gamma-8}
 
 Notice that the integral on the right-hand side is exactly the definition of the
-Gamma function with parameter $u+r$. Therefore, we can write
+Gamma function with parameter $m+r$. Therefore, we can write
 
 $$
-(1-\hat{p})^{u+r} \int_0^{\infty} dx \, x^{u+r-1} e^{-x} = 
-(1-\hat{p})^{u+r} \Gamma(u+r).
+(1-p)^{m+r} \int_0^{\infty} dx \, x^{m+r-1} e^{-x} = 
+(1-p)^{m+r} \Gamma(m+r).
 $${#eq-nb-poisson-gamma-9}
 
 Now we can substitute the result from @eq-nb-poisson-gamma-9 back into our
-original expression for $\pi(u \mid r, \hat{p})$,
+original expression for $\pi(m \mid r, p)$,
 
 $$
-\pi(u \mid r, \hat{p}) = 
-\frac{1}{u!\Gamma(r)}
-\left(\frac{\hat{p}}{1-\hat{p}}\right)^r
-(1-\hat{p})^{u+r} \Gamma(u+r).
+\pi(m \mid r, p) = 
+\frac{1}{m!\Gamma(r)}
+\left(\frac{p}{1-p}\right)^r
+(1-p)^{m+r} \Gamma(m+r).
 $${#eq-nb-poisson-gamma-11}
 
 Rearranging the terms and simplifying, we get
 
 $$
-\pi(u \mid r, \hat{p}) = \frac{\Gamma(u+r)}{u!\Gamma(r)}(1-\hat{p})^u \, \hat{p}^r,
+\pi(m \mid r, p) = \frac{\Gamma(m+r)}{m!\Gamma(r)}(1-p)^m \, p^r,
 $${#eq-nb-poisson-gamma-12}
 
 When $r$ is a positive integer, we can express the Gamma functions in terms of
@@ -853,14 +952,14 @@ factorials using the relationship $\Gamma(x) = (x-1)!$. This allows us to
 rewrite @eq-nb-poisson-gamma-12 as
 
 $$
-\pi(u \mid r, \hat{p}) = \frac{(u+r-1)!}{(r-1)!u!}(1-\hat{p})^u \hat{p}^r,
+\pi(m \mid r, p) = \frac{(m+r-1)!}{(r-1)!m!}(1-p)^m p^r,
 $${#eq-nb-poisson-gamma-13}
 
 which we recognize as a binomial coefficient, giving us the familiar form of
 the negative binomial distribution
 
 $$
-\pi(u \mid r, \hat{p}) = \binom{u+r-1}{u}(1-\hat{p})^u \hat{p}^r.
+\pi(m \mid r, p) = \binom{m+r-1}{m}(1-p)^m p^r.
 $${#eq-nb-poisson-gamma-14}
 
 For general real-valued $r > 0$, the result still holds with the generalized
@@ -872,17 +971,17 @@ distribution of a Poisson and a gamma distribution. Furthermore, this result
 implies that the joint distribution of our $G$ independent negative binomials,
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) =
-\prod_{g=1}^G \pi\left(u_g \mid r_g, \hat{p}\right),
+\pi(\underline{m} \mid \underline{r}, p) =
+\prod_{g=1}^G \pi\left(m_g \mid r_g, p\right),
 $${#eq-nb-joint-dist}
 
 can be expressed as
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) = \prod_{g=1}^G 
+\pi(\underline{m} \mid \underline{r}, p) = \prod_{g=1}^G 
 \int_0^{\infty} d \lambda_g \, 
 \overbrace{
-\pi\left(u_g \mid \lambda_g\right) 
+\pi\left(m_g \mid \lambda_g\right) 
 }^{\text{Poisson}}
 \times
 \underbrace{
@@ -894,22 +993,22 @@ Moreover, since the $\lambda_g$ parameters are independent, we can factorize
 the integral as
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) = \
+\pi(\underline{m} \mid \underline{r}, p) = \
 \int_0^{\infty} d \lambda_1 
 \int_0^{\infty} d \lambda_2 \cdots 
 \int_0^{\infty} d \lambda_g 
 \prod_{g=1}^G 
-\pi\left(u_g \mid \lambda_g \right) 
+\pi\left(m_g \mid \lambda_g \right) 
 \pi\left(\lambda_g \mid r_g, \theta\right),
 $${#eq-nb-joint-dist-3}
 
 Written more compactly, we can write
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) = \
+\pi(\underline{m} \mid \underline{r}, p) = \
 \int d^G \underline{\lambda} 
 \overbrace{
-\prod_{g=1}^G \pi\left(u_g \mid \lambda_g \right) 
+\prod_{g=1}^G \pi\left(m_g \mid \lambda_g \right) 
 }^{\text{Product of Poissons}}
 \times
 \underbrace{
@@ -942,22 +1041,22 @@ To show why this is the case, let us begin defining the joint distribution over
 these independent Poisson random variables,
 
 $$
-\pi(\underline{u} \mid \underline{\lambda}) =
+\pi(\underline{m} \mid \underline{\lambda}) =
 \prod_{g=1}^G
-\pi\left(u_g \mid \lambda_g\right) =
-\prod_{g=1}^G \frac{\lambda_g^{u_g}}{u_{g}!} e^{-\lambda_g}.
+\pi\left(m_g \mid \lambda_g\right) =
+\prod_{g=1}^G \frac{\lambda_g^{m_g}}{m_{g}!} e^{-\lambda_g}.
 $${#eq-joint-poisson}
 
-Next, we define the sum of the Poisson random variables as $u_T = \sum_g u_g$.
+Next, we define the sum of the Poisson random variables as $m_T = \sum_g m_g$.
 The claim is that if we write the product of a single Poisson and a multinomial,
 
 $$
-\pi(\underline{u} \mid u_T, \underline{\lambda}) 
-\pi(u_T \mid \underline{\lambda}) =
+\pi(\underline{m} \mid m_T, \underline{\lambda}) 
+\pi(m_T \mid \underline{\lambda}) =
 \left[
-    \left(u_T! \prod_{g=1}^G \frac{\rho_g^{u_g}}{u_g!} \right)
+    \left(m_T! \prod_{g=1}^G \frac{\rho_g^{m_g}}{m_g!} \right)
 \left(
-    \frac{\left(\sum_{j=1}^G \lambda_j\right)^{u_T}}{u_T!} 
+    \frac{\left(\sum_{j=1}^G \lambda_j\right)^{m_T}}{m_T!} 
     e^{-\sum_{j=1}^G \lambda_j}
 \right)
 \right]
@@ -982,32 +1081,32 @@ $${#eq-rho-def}
 
 Substituting @eq-rho-def into @eq-poisson-multinomial-1, we get
 $$
-\pi(\underline{u} \mid u_T, \underline{\lambda}) 
-\pi(u_T \mid \underline{\lambda}) =
+\pi(\underline{m} \mid m_T, \underline{\lambda}) 
+\pi(m_T \mid \underline{\lambda}) =
 \prod_{g=1}^G
 \left[
-    \frac{1}{u_{g}!}\left(\frac{\lambda_g}{\sum_{j=1}^G \lambda_j}\right)^{u_g}
+    \frac{1}{m_{g}!}\left(\frac{\lambda_g}{\sum_{j=1}^G \lambda_j}\right)^{m_g}
 \right]
-\left(\sum_{j=1}^G \lambda_j\right)^{u_T} e^{-\sum_{g=1}^G \lambda_g}.
+\left(\sum_{j=1}^G \lambda_j\right)^{m_T} e^{-\sum_{g=1}^G \lambda_g}.
 $${#eq-poisson-multinomial-2}
 
 Next, we rearrange terms and split the sum in the exponential into a product
 
 $$
-\pi(\underline{u} \mid u_T, \underline{\lambda}) 
-\pi(u_T \mid \underline{\lambda}) =
-\frac{1}{\left(\sum_{g=1}^G \lambda_g\right)^{u_T}} 
+\pi(\underline{m} \mid m_T, \underline{\lambda}) 
+\pi(m_T \mid \underline{\lambda}) =
+\frac{1}{\left(\sum_{g=1}^G \lambda_g\right)^{m_T}} 
 \prod_{g=1}^G 
-\frac{\lambda_g^{u_g}}{u_{g}!}\left(\sum_{g=1}^G \lambda_g\right)^{u_T} 
+\frac{\lambda_g^{m_g}}{m_{g}!}\left(\sum_{g=1}^G \lambda_g\right)^{m_T} 
 \prod_{g=1}^G e^{-\lambda_g}.
 $${#eq-poisson-multinomial-3}
 
 Finally, we cancel the common terms and simplify
 
 $$
-\pi(\underline{u} \mid u_T, \underline{\lambda}) 
-\pi(u_T \mid \underline{\lambda}) =
-\prod_{g=1}^G \frac{\lambda_g^{u_g}}{u_{g}!} e^{-\lambda_g}.
+\pi(\underline{m} \mid m_T, \underline{\lambda}) 
+\pi(m_T \mid \underline{\lambda}) =
+\prod_{g=1}^G \frac{\lambda_g^{m_g}}{m_{g}!} e^{-\lambda_g}.
 $${#eq-poisson-multinomial-4}
 
 This shows that the product of Poissons in @eq-poisson-multinomial-1 is
@@ -1029,7 +1128,7 @@ $$
 $${#eq-gamma-dirichlet-1}
 
 can be expressed as the product of a single gamma and a Dirichlet distribution.
-In the same way we defined $u_T$ as the sum of the Poisson random variables, we
+In the same way we defined $m_T$ as the sum of the Poisson random variables, we
 can define $\lambda_T = \sum_{g=1}^G \lambda_g$ as the sum of the gamma random
 variables. The first claim is that the joint distribution of Gamma random
 variables with independent $r_g$ parameters but a common $\theta$ rate
@@ -1571,22 +1670,21 @@ and a multinomial distribution).
 
 To prove this final point, we will make use of all the results derived in the
 previous sections. Recall that we are after the joint distribution of
-independent negative binomial random variables with a shared $\hat{p}$
-parameter,
+independent negative binomial random variables with a shared $p$ parameter,
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) =
-\prod_{g=1}^{G} \pi(u_g \mid r_g, \hat{p}).
+\pi(\underline{m} \mid \underline{r}, p) =
+\prod_{g=1}^{G} \pi(m_g \mid r_g, p).
 $${#eq-joint-target}
 
 We know we can express the negative binomial as a compound distribution between
 a Poisson and a Gamma distribution. Thus, we can rewrite @eq-joint-target as
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\pi(\underline{m} \mid \underline{r}, p) = 
 \int d^G \underline{\lambda} 
 \overbrace{
-\prod_{g=1}^G \pi\left(u_g \mid \lambda_g\right) 
+\prod_{g=1}^G \pi\left(m_g \mid \lambda_g\right) 
 }^{\text{product of Poissons}}
 \times
 \underbrace{
@@ -1602,19 +1700,19 @@ $${#eq-int-lambda-def}
 
 Furthermore, we know that the product of Poissons can be written as the product
 of a Poisson distribution with rate parameter $\lambda_T =\sum_{g=1}^G
-\lambda_g$ and a multinomial distribution with parameters $u_T$ and
+\lambda_g$ and a multinomial distribution with parameters $m_T$ and
 $\underline{\rho}$
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) = 
+\pi(\underline{m} \mid \underline{r}, p) = 
 \int d^G \underline{\lambda} \,
 \left[
     \underbrace{
-    \pi(\underline{u} \mid u_T, \underline{\lambda}) 
+    \pi(\underline{m} \mid m_T, \underline{\lambda}) 
     }_{\text{multinomial}}
     \times
     \overbrace{
-    \pi(u_T \mid \lambda_T) 
+    \pi(m_T \mid \lambda_T) 
     }^{\text{Poisson}}
 \right]
 \times
@@ -1639,14 +1737,14 @@ $\underline{\rho}$ such that $\rho_g \ge 0$ for all $g$ and $\sum_{g=1}^G \rho_g
 We thus have
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\pi(\underline{m} \mid \underline{r}, p) =
 \int_0^{\infty} d \Lambda \int d^{G-1} \underline{\rho} \,
 \underbrace{
-\pi(\underline{u} \mid u_T, \underline{\rho})
+\pi(\underline{m} \mid m_T, \underline{\rho})
 }_{\text{multinomial}}
 \times
 \overbrace{
-\pi(u_T \mid \Lambda)
+\pi(m_T \mid \Lambda)
 }^{\text{Poisson}}
 \times
 \underbrace{
@@ -1661,10 +1759,10 @@ $${#eq-joint-target-int-poisson-multinomial-dirichlet-multinomial}
 Rearranging the terms, we have
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\pi(\underline{m} \mid \underline{r}, p) =
 \int_0^{\infty} d \Lambda \,
 \overbrace{
-\pi(u_T \mid \Lambda)
+\pi(m_T \mid \Lambda)
 }^{\text{Poisson}}
 \times
 \underbrace{
@@ -1676,7 +1774,7 @@ $$
 }^{\text{Dirichlet}}
 \times
 \underbrace{
-\pi(\underline{u} \mid u_T, \underline{\rho})
+\pi(\underline{m} \mid m_T, \underline{\rho})
 }_{\text{multinomial}}.
 $${#eq-joint-target-int-poisson-multinomial-dirichlet-multinomial-rearranged}
 
@@ -1686,8 +1784,8 @@ binomial distribution, i.e.,
 
 $$
 \int_0^{\infty} d \Lambda \,
-\pi(u_T \mid \Lambda) \times \pi\left(\Lambda \mid r_T, \theta\right) =
-\operatorname{NB}\left(u_T \mid r_T, \hat{p}\right).
+\pi(m_T \mid \Lambda) \times \pi\left(\Lambda \mid r_T, \theta\right) =
+\operatorname{NB}\left(m_T \mid r_T, p\right).
 $${#eq-joint-target-int-poisson-gamma-negative-binomial}
 
 The second integral, we recognize as the compound distribution between a
@@ -1695,24 +1793,24 @@ Dirichlet and a multinomial distribution, which has a closed form solution.
 Let's derive this result in detail. We want to evaluate the integral
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) = 
+\pi(\underline{m} \mid m_T, \underline{r}) = 
 \int d^{G-1} \underline{\rho} \, 
 \overbrace{
     \pi(\underline{\rho} \mid \underline{r}) 
 }^{\text{Dirichlet}}
 \times
 \underbrace{
-    \pi(\underline{u} \mid u_T, \underline{\rho})
+    \pi(\underline{m} \mid m_T, \underline{\rho})
 }_{\text{multinomial}}.
 $${#eq-dm-integral-target}
 
 The probability mass function for the Multinomial distribution, which describes
-the probability of observing counts $\underline{u}$ given $u_T$ trials and
+the probability of observing counts $\underline{m}$ given $m_T$ trials and
 success probabilities $\underline{\rho}$, is
 
 $$
-\pi(\underline{u} \mid u_T, \underline{\rho}) = 
-\frac{u_T!}{\prod_{g=1}^G u_g!} \prod_{g=1}^G \rho_g^{u_g}.
+\pi(\underline{m} \mid m_T, \underline{\rho}) = 
+\frac{m_T!}{\prod_{g=1}^G m_g!} \prod_{g=1}^G \rho_g^{m_g}.
 $${#eq-multinomial-pmf}
 
 The probability density function for the Dirichlet distribution, which describes
@@ -1741,13 +1839,13 @@ We substitute @eq-multinomial-pmf and @eq-dirichlet-pdf-rt into
 @eq-dm-integral-target
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) = 
+\pi(\underline{m} \mid m_T, \underline{r}) = 
 \int d^{G-1} \underline{\rho} \, 
 \left( 
     \frac{\Gamma(r_T)}{\prod_{k=1}^G \Gamma(r_k)} \prod_{g=1}^G \rho_g^{r_g-1} 
 \right) 
 \left( 
-    \frac{u_T!}{\prod_{k=1}^G u_k!} \prod_{g=1}^G \rho_g^{u_g} 
+    \frac{m_T!}{\prod_{k=1}^G m_k!} \prod_{g=1}^G \rho_g^{m_g} 
 \right).
 $${#eq-dm-integral-substituted}
 
@@ -1755,30 +1853,30 @@ The terms that do not depend on $\underline{\rho}$ can be taken out of the
 integral. This yields
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) = 
+\pi(\underline{m} \mid m_T, \underline{r}) = 
 \frac{
-    \Gamma(r_T) u_T!
+    \Gamma(r_T) m_T!
 }{
-    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G m_k!\right)
 } 
 \int d^{G-1} \underline{\rho} \, 
 \left( 
-    \prod_{g=1}^G \rho_g^{r_g-1} \right) \left( \prod_{g=1}^G \rho_g^{u_g} 
+    \prod_{g=1}^G \rho_g^{r_g-1} \right) \left( \prod_{g=1}^G \rho_g^{m_g} 
 \right).
 $${#eq-dm-integral-rearranged-1}
 
 We can combine the products of $\rho_g$ terms inside the integral
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) = 
+\pi(\underline{m} \mid m_T, \underline{r}) = 
 \frac{
-    \Gamma(r_T) u_T!
+    \Gamma(r_T) m_T!
 }{
-    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G m_k!\right)
 } 
 \int d^{G-1} \underline{\rho} \, 
 \left(
-    \prod_{g=1}^G \rho_g^{u_g + r_g - 1}
+    \prod_{g=1}^G \rho_g^{m_g + r_g - 1}
 \right).
 $${#eq-dm-integral-rearranged-2}
 
@@ -1788,7 +1886,7 @@ product of a bunch of variables $\rho_g$ over the simplex $S = \{
 same integral in @eq-dirichlet-pdf, which also has the same product of simplex
 variables, the integral would return 1 given that a PDF must be normalized. We
 can use this fact to solve for the integral without having to do any complicated
-math. First, we define $\alpha_g = u_g + r_g$ to be our parameter for the
+math. First, we define $\alpha_g = m_g + r_g$ to be our parameter for the
 Dirichlet PDF. This implies right away that
 
 $$
@@ -1798,57 +1896,57 @@ $$
 $${#eq-dirichlet-integral-value}
 
 i.e., the inverse of the normalization constant of the Dirchlet PDF. The sum of
-the parameters results in $\sum_{g=1}^G (u_g + r_g) = \sum_{g=1}^G u_g +
-\sum_{g=1}^G r_g = u_T + r_T$. Applying @eq-dirichlet-integral-value, the
+the parameters results in $\sum_{g=1}^G (m_g + r_g) = \sum_{g=1}^G m_g +
+\sum_{g=1}^G r_g = m_T + r_T$. Applying @eq-dirichlet-integral-value, the
 integral in @eq-dm-integral-rearranged-2 evaluates to
 
 $$
-\int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{u_g + r_g - 1} = 
-\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+\int d^{G-1} \underline{\rho} \, \prod_{g=1}^G \rho_g^{m_g + r_g - 1} = 
+\frac{\prod_{g=1}^G \Gamma(m_g + r_g)}{\Gamma(m_T + r_T)}.
 $${#eq-dm-specific-integral-result}
 
 Now, we substitute this result back into @eq-dm-integral-rearranged-2
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) = 
+\pi(\underline{m} \mid m_T, \underline{r}) = 
 \frac{
-    \Gamma(r_T) u_T!
+    \Gamma(r_T) m_T!
 }{
-    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G u_k!\right)
+    \left(\prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G m_k!\right)
 } \times
-\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+\frac{\prod_{g=1}^G \Gamma(m_g + r_g)}{\Gamma(m_T + r_T)}.
 $${#eq-dm-intermediate-result}
 
 To match the standard form, we can use the identity $n! = \Gamma(n+1)$. So,
-$u_T! = \Gamma(u_T+1)$ and $u_k! = \Gamma(u_k+1)$. Substituting these into
+$m_T! = \Gamma(m_T+1)$ and $m_k! = \Gamma(m_k+1)$. Substituting these into
 @eq-dm-intermediate-result, we get
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) = 
+\pi(\underline{m} \mid m_T, \underline{r}) = 
 \frac{
-    \Gamma(r_T) \Gamma(u_T+1)
+    \Gamma(r_T) \Gamma(m_T+1)
 }{
     \left(
-        \prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G \Gamma(u_k+1)
+        \prod_{k=1}^G \Gamma(r_k)\right) \left(\prod_{k=1}^G \Gamma(m_k+1)
     \right)
 } \times
-\frac{\prod_{g=1}^G \Gamma(u_g + r_g)}{\Gamma(u_T + r_T)}.
+\frac{\prod_{g=1}^G \Gamma(m_g + r_g)}{\Gamma(m_T + r_T)}.
 $${#eq-dm-intermediate-result-gamma}
 
 Rearranging the terms to group them by gene $g$ and the totals, we arrive at the
 final expression for the Dirichlet-Multinomial distribution
 
 $$
-\pi(\underline{u} \mid u_T, \underline{r}) =
+\pi(\underline{m} \mid m_T, \underline{r}) =
 \frac{
-    \Gamma\left(r_T\right) \Gamma(u_T+1)
+    \Gamma\left(r_T\right) \Gamma(m_T+1)
 }{
-    \Gamma\left(u_T+r_T\right)
+    \Gamma\left(m_T+r_T\right)
 } 
 \prod_{g=1}^G \frac{
-    \Gamma\left(u_g+r_g\right)
+    \Gamma\left(m_g+r_g\right)
 }{
-    \Gamma\left(r_g\right) \Gamma\left(u_g+1\right)
+    \Gamma\left(r_g\right) \Gamma\left(m_g+1\right)
 }.
 $${#eq-joint-target-int-dirichlet-multinomial}
 
@@ -1856,13 +1954,13 @@ Thus, we can write
 @eq-joint-target-int-poisson-multinomial-dirichlet-multinomial-rearranged as 
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\pi(\underline{m} \mid \underline{r}, p) =
 \overbrace{
-\pi\left(u_T \mid r_T, \hat{p}\right)
+\pi\left(m_T \mid r_T, p\right)
 }^{\text{Negative Binomial}}
 \times 
 \underbrace{
-\pi(\underline{u} \mid u_T, \underline{r})
+\pi(\underline{m} \mid m_T, \underline{r})
 }_{\text{Dirichlet-Multinomial}},
 $${#eq-joint-target-final}
 
@@ -1870,24 +1968,32 @@ which is our final result.
 
 ## What does this mean?
 
-As we just showed, The joint distribution of independent negative binomials with
-shared $\hat{p}$ parameter is equivalent to the product of a negative binomial
-distribution and a Dirichlet-Multinomial distribution. This has two important
-consequences for our model for single-cell RNA-seq data:
+As we just showed, the joint distribution of independent negative binomials with
+a shared $p$ parameter is equivalent to the product of a negative binomial
+distribution and a Dirichlet-Multinomial distribution. This has several
+important consequences for our model for single-cell RNA-seq data:
 
-First, the negative binomial is a common distribution in single-cell RNA-seq
-data due to the overdispersion of the counts. This distribution can be
-furthermore justified from biophysical principles, making it a natural choice
-for a parametric model of the counts. Moreover, the functional form we derived
-already accounts for the conversion from mRNA molecules to our observed UMI
-counts via the composition of a negative binomial and a binomial distribution.
-Our derivation shows that with the relatively benign assumption that the
-$\hat{p}$ parameter is shared across all genes, the resulting joint distribution
-has a much simpler functional form---the product of two distributions rather
-than the product of $G$ distributions.
+First, the factorization is enabled by the assumption that the biophysical
+parameter $p$ is shared across all genes **and** all cells. This is an
+mRNA-level assumption about the physics of gene expression. Since the capture
+probability $\nu_c$ is also gene-uniform within each cell, the effective
+UMI-level parameter $\hat{p}_c = p / (\nu_c + p(1 - \nu_c))$ is likewise shared
+across genes within each cell (though it varies from cell to cell). The
+factorization therefore holds at both the mRNA and UMI levels.
 
-Second, in the construction of the negative binomial/Dirichlet multinomial
-model, we summoned the use of $\underline{\rho}$ parameters that lie on the unit
+Second, it is important to note that inference does **not** use the NB $\times$
+DM factorization. The codebase fits the product of independent negative
+binomials $\prod_g \text{NB}(u_{gc} \mid r_g, \hat{p}_c)$ directly, inferring
+the global $p$, gene-specific $\underline{r}$, and cell-specific
+$\underline{\nu}$. The factorization is instead a mathematical property of the
+generative model that we exploit *after* inference: once posterior samples of
+$\underline{r}$ are obtained, the factorization tells us that compositions
+follow a $\text{Dirichlet}(\underline{r})$ distribution. This is how we perform
+normalization, differential expression, and denoising, purely from the
+$\underline{r}$ parameters.
+
+Third, in the construction of the negative binomial/Dirichlet multinomial model,
+we summoned the use of $\underline{\rho}$ parameters that lie on the unit
 simplex. These parameters can be thought of as the fraction of the transcriptome
 occupied by each of the $G$ genes. Commonly, when we want to "normalize" a
 dataset, what we seek is the equivalent of estimating these parameters that

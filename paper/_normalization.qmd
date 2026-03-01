@@ -21,7 +21,7 @@ $$
 $${#eq-norm-dirichlet-conditional}
 
 When performing Bayesian inference on this model, we obtain a posterior
-distribution over the parameters $\pi(\underline{r}, \hat{p} \mid
+distribution over the parameters $\pi(\underline{r}, p, \underline{\nu} \mid
 \underline{\underline{U}})$, where $\underline{\underline{U}}$ represents the
 observed UMI count matrix. In this section, we address a fundamental question:
 how do we characterize the distribution of normalized expression proportions

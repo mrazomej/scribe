@@ -18,23 +18,26 @@ product of a negative binomial (governing total counts) and a
 Dirichlet-Multinomial (governing compositions):
 
 $$
-\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\pi(\underline{m} \mid \underline{r}, p) =
 \underbrace{
-\pi\left(u_T \mid r_T, \hat{p}\right)
+\pi\left(m_T \mid r_T, p\right)
 }_{\text{Negative Binomial}}
 \times 
 \underbrace{
-\pi(\underline{u} \mid u_T, \underline{r})
+\pi(\underline{m} \mid m_T, \underline{r})
 }_{\text{Dirichlet-Multinomial}}.
 $${#eq-hier-factorization-recap}
 
 A crucial consequence of this factorization is that the compositional term
-$\pi(\underline{u} \mid u_T, \underline{r})$ depends only on the concentration
-parameters $\underline{r}$ and not on $\hat{p}$. This is what allows the entire
+$\pi(\underline{m} \mid m_T, \underline{r})$ depends only on the concentration
+parameters $\underline{r}$ and not on $p$. This is what allows the entire
 differential expression framework developed in @sec-diffexp to operate solely on
 the $\underline{r}$ parameters: compositions are drawn from
-$\text{Dirichlet}(\underline{r})$, and the shared $\hat{p}$ is irrelevant for
-compositional inference.
+$\text{Dirichlet}(\underline{r})$, and the shared $p$ is irrelevant for
+compositional inference. Since the capture probability $\nu_c$ is gene-uniform
+within each cell, the same factorization holds at the UMI level (where the
+shared parameter is $\hat{p}_c = p / (\nu_c + p(1-\nu_c))$), and the
+Dirichlet-Multinomial compositional term remains independent of $\nu_c$.
 
 In this section, we ask: **what happens if we relax this assumption?** That is,
 what if each gene has its own success probability $p_g$, so that the true
@@ -72,11 +75,11 @@ u_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
 $${#eq-hier-poisson-gamma-shared}
 
 where the rate parameter $\theta$ is the same for all genes and is related to
-$\hat{p}$ by $\theta = \hat{p} / (1 - \hat{p})$ (see @eq-theta-hatp). The
-crucial property was that when all Gamma random variables share the same rate
-parameter $\theta$, the product of Gamma densities can be factored into a Gamma
-distribution over the total $\Lambda = \sum_g \lambda_g$ and a Dirichlet
-distribution over the proportions $\rho_g = \lambda_g / \Lambda$:
+$p$ by $\theta = p / (1 - p)$ (see @eq-theta-p). The crucial property was that
+when all Gamma random variables share the same rate parameter $\theta$, the
+product of Gamma densities can be factored into a Gamma distribution over the
+total $\Lambda = \sum_g \lambda_g$ and a Dirichlet distribution over the
+proportions $\rho_g = \lambda_g / \Lambda$:
 
 $$
 \prod_{g=1}^G \text{Gamma}(\lambda_g \mid r_g, \theta) =
@@ -84,7 +87,7 @@ $$
 \text{Dirichlet}(\underline{\rho} \mid \underline{r}).
 $${#eq-hier-gamma-dirichlet-factorization}
 
-This factorization of the product of Gammas is what ultimately allowed $\hat{p}$
+This factorization of the product of Gammas is what ultimately allowed $p$
 (and hence $\theta$) to separate from the compositional distribution. But when
 each gene has its own $p_g$, the Poisson-Gamma representation becomes
 
@@ -142,8 +145,9 @@ $${#eq-hier-no-factorization}
 for any functions $f$ and $g$ when the $\theta_g$ are not all equal. The
 distribution of the proportions $\underline{\rho}$ depends on the total
 $\Lambda$, and vice versa. As a consequence, the compositional distribution is
-no longer a Dirichlet, and the parameter $\hat{p}$ can no longer be separated
-from the compositional term.
+no longer a Dirichlet, and when the $p_g$ are gene-specific, the corresponding
+$\theta_g = p_g / (1 - p_g)$ are also gene-specific, and the compositional
+distribution can no longer be separated from the total.
 
 This means that if we wish to perform compositional differential expression with
 gene-specific $p_g$, we cannot simply draw
@@ -202,9 +206,11 @@ in the standard model). The complete generative model for the observed UMI
 counts of a single cell is then:
 
 $$
-u_g \mid r_g, p_g \sim \text{NB}(r_g, p_g),
-\quad g = 1, 2, \ldots, G.
+u_{gc} \mid r_g, p_g, \nu_c \sim \text{NB}(r_g, \hat{p}_{gc}),
+\quad \hat{p}_{gc} = \frac{p_g}{\nu_c + p_g(1 - \nu_c)},
 $${#eq-hier-observation-model}
+
+for $g = 1, 2, \ldots, G$ and $c = 1, 2, \ldots, C$.
 
 ### Graphical model
 
@@ -215,12 +221,13 @@ distribution, and the gene-specific $r_g$ is drawn from its own prior. At the
 cell level, the observed count $u_g$ is drawn from a negative binomial with
 parameters $r_g$ and $p_g$. Across $C$ cells, the full model is:
 
-```{.tikz caption="Graphical model for the hierarchical gene-specific $p_g$ model. White nodes are latent variables, gray nodes are observed variables, and plates indicate replication across genes and cells." label="fig-hierarchical-p-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+```{.tikz caption="Graphical model for the hierarchical gene-specific $p_g$ model. White nodes are latent variables, gray nodes are observed variables, and the deterministic node $\\hat{p}_{gc}$ (double border) is derived from $p_g$ and $\\nu_c$. Plates indicate replication across genes and cells." label="fig-hierarchical-p-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
 \begin{tikzpicture}[
   >=stealth,
-  node distance=10mm and 12mm,
+  node distance=10mm and 14mm,
   latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
   obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  det/.style={circle, draw, double, minimum size=8mm, inner sep=1pt},
   plate/.style={draw, rounded corners, inner sep=4mm}
 ]
   % Hyperparameters
@@ -229,37 +236,45 @@ parameters $r_g$ and $p_g$. Across $C$ cells, the full model is:
 
   % Gene-level variables
   \node[latent, below=of mu, xshift=8mm] (pg) {$p_g$};
-  \node[latent, right=of pg] (rg) {$r_g$};
+  \node[latent, right=18mm of pg] (rg) {$r_g$};
+
+  % Cell-level capture probability
+  \node[latent, right=18mm of rg] (nuc) {$\nu_c$};
+
+  % Deterministic node
+  \node[det, below=of rg] (phat) {$\hat{p}_{gc}$};
 
   % Observed count
-  \node[obs, below=of rg] (u) {$u_{gc}$};
+  \node[obs, below=of phat] (u) {$u_{gc}$};
 
   % Edges
   \draw[->] (mu) -- (pg);
   \draw[->] (sigma) -- (pg);
-  \draw[->] (pg) -- (u);
+  \draw[->] (pg) -- (phat);
+  \draw[->] (nuc) -- (phat);
   \draw[->] (rg) -- (u);
+  \draw[->] (phat) -- (u);
 
   % Gene plate
   \begin{scope}[on background layer]
-    \node[plate, fit=(pg)(rg)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+    \node[plate, fit=(pg)(rg)(phat)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
   \end{scope}
 
-  % Cell plate around observations
+  % Cell plate
   \begin{scope}[on background layer]
-    \node[plate, fit=(u), label={[yshift=1mm]north east:$c=1,\ldots,C$}] (cellplate) {};
+    \node[plate, fit=(nuc)(phat)(u), label={[yshift=1mm]south east:$c=1,\ldots,C$}] (cellplate) {};
   \end{scope}
 \end{tikzpicture}
 ```
 
 $$
-\pi(\underline{r}, \underline{p}, \mu_p, \sigma_p \mid
+\pi(\underline{r}, \underline{p}, \underline{\nu}, \mu_p, \sigma_p \mid
 \underline{\underline{U}}) \propto
 \left[\prod_{c=1}^C \prod_{g=1}^G
-    \pi(u_{gc} \mid r_g, p_g)
+    \pi(u_{gc} \mid r_g, \hat{p}_{gc})
 \right]
 \left[\prod_{g=1}^G \pi(p_g \mid \mu_p, \sigma_p) \, \pi(r_g)\right]
-\pi(\mu_p) \, \pi(\sigma_p).
+\pi(\mu_p) \, \pi(\sigma_p) \prod_{c=1}^C \pi(\nu_c).
 $${#eq-hier-full-model}
 
 ### Interpretation of $\sigma_p$
@@ -410,8 +425,15 @@ $$
 }.
 $${#eq-hier-composition-expanded}
 
-This is the generalized composition formula. To draw a compositional sample from
-the posterior predictive distribution under the hierarchical model, we:
+This is the generalized composition formula. Note that at the UMI level the
+scaling factor would be $(1-\hat{p}_{gc})/\hat{p}_{gc} = \nu_c(1-p_g)/p_g$.
+Since $\nu_c$ is a positive constant across genes within a cell, it cancels in
+the normalization step, so compositions depend only on $\underline{r}$ and
+$\underline{p}$, not on $\nu_c$. This means the same Gamma-based composition
+procedure works identically whether applied at the mRNA or UMI level.
+
+To draw a compositional sample from the posterior predictive distribution under
+the hierarchical model, we:
 
 1. Draw $\gamma_g \sim \text{Gamma}(r_g, 1)$ independently for each gene $g$.
 2. Scale each variate by the gene-specific factor: 
@@ -467,7 +489,9 @@ distribution as $\underline{\rho} \sim \text{Dir}(\underline{r})$.
 This establishes the Gamma-based procedure as a **strict generalization** of
 the Dirichlet sampling used in the standard model: it agrees with Dirichlet
 when the shared-$p$ assumption holds, and correctly incorporates gene-specific
-probabilities when it does not. $\square$
+probabilities when it does not. Note also that compositions are the same at
+both the mRNA and UMI levels, since $\nu_c$ cancels in the normalization (as
+shown above). $\square$
 
 ### What changes when $p_g$ vary {#sec-hier-what-changes}
 

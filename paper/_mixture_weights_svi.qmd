@@ -10,13 +10,13 @@ csl: ieee.csl
 In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model for
 single-cell RNA-seq data, showing that the transcriptional profile of a cell can
 be modeled as a product of independent negative binomial distributions sharing a
-common probability parameter $\hat{p}$. When dealing with heterogeneous cell
-populations, a natural extension is to define a *finite mixture model* in which
-each cell belongs to one of $K$ components, each with its own set of parameters.
-This section addresses a subtle but important issue that arises when performing
-stochastic variational inference (SVI) on such mixture models: **the mixing
-weights become practically non-identifiable in high-dimensional observation
-spaces**.
+common mRNA-level probability parameter $p$. When dealing with heterogeneous
+cell populations, a natural extension is to define a *finite mixture model* in
+which each cell belongs to one of $K$ components, each with its own set of
+parameters. This section addresses a subtle but important issue that arises when
+performing stochastic variational inference (SVI) on such mixture models: **the
+mixing weights become practically non-identifiable in high-dimensional
+observation spaces**.
 
 We first formalize the mixture model setup, then provide a rigorous analysis of
 why this non-identifiability occurs, and finally derive a principled correction
@@ -60,11 +60,12 @@ $${#eq-mix-conditional-likelihood}
 where $\pi(u_{cg} \mid \theta_{kg})$ is the likelihood for gene $g$ under
 component $k$. For the negative binomial model derived in
 @sec-dirichlet-multinomial, each component has parameters $\underline{\theta}_k =
-(\underline{r}_k, \hat{p}_k)$, and the per-gene likelihood is
+(\underline{r}_k, p_k)$, with the cell-specific effective probability
+$\hat{p}_{kc} = p_k / (\nu_c + p_k(1 - \nu_c))$, and the per-gene likelihood is
 
 $$
-\pi(u_{cg} \mid r_{kg}, \hat{p}_k) = 
-\text{NB}(u_{cg} \mid r_{kg}, \hat{p}_k).
+\pi(u_{cg} \mid r_{kg}, \hat{p}_{kc}) = 
+\text{NB}(u_{cg} \mid r_{kg}, \hat{p}_{kc}).
 $${#eq-mix-nb-likelihood}
 
 ### Marginal likelihood

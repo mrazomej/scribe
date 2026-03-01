@@ -361,27 +361,28 @@ classes developed in this work.
 
 ### Pointwise log-likelihood {#sec-mc-nbdm-lik}
 
-For the standard NBDM model with shared success probability $\hat{p}$ (see
+For the standard NBDM model with shared mRNA-level success probability $p$ (see
 @sec-dirichlet-multinomial), the per-cell log-likelihood under sample
-$\theta^{(s)} = (\underline{r}^{(s)}, \hat{p}^{(s)})$ is
-
-$$
-\ell_c^{(s)} = \log \text{NB}(u_{T,c} \mid r_T^{(s)}, \hat{p}^{(s)})
-+ \log \text{DM}(\underline{u}_c \mid u_{T,c}, \underline{r}^{(s)}),
-$${#eq-mc-nbdm-ll}
-
-where $u_{T,c} = \sum_g u_{gc}$ is the total UMI count for cell $c$, and
-$r_T^{(s)} = \sum_g r_g^{(s)}$.
-
-For the hierarchical model with gene-specific probabilities $p_g$ (see
-@sec-hierarchical-p), the NB-DM factorization breaks down (as we proved in
-@sec-hier-factorization-breaks), and the per-cell log-likelihood becomes a sum
-over genes:
+$\theta^{(s)} = (\underline{r}^{(s)}, p^{(s)}, \nu_c^{(s)})$, with the derived
+$\hat{p}_c^{(s)} = p^{(s)} / (\nu_c^{(s)} + p^{(s)}(1 - \nu_c^{(s)}))$, is
 
 $$
 \ell_c^{(s)} = \sum_{g=1}^G
-\log \text{NB}(u_{gc} \mid r_g^{(s)}, p_g^{(s)}).
+\log \text{NB}(u_{gc} \mid r_g^{(s)}, \hat{p}_c^{(s)}),
+$${#eq-mc-nbdm-ll}
+
+where $u_{T,c} = \sum_g u_{gc}$ is the total UMI count for cell $c$.
+
+For the hierarchical model with gene-specific probabilities $p_g$ (see
+@sec-hierarchical-p), the per-cell log-likelihood has the same form but with
+gene-specific effective probabilities:
+
+$$
+\ell_c^{(s)} = \sum_{g=1}^G
+\log \text{NB}(u_{gc} \mid r_g^{(s)}, \hat{p}_{gc}^{(s)}),
 $${#eq-mc-hierarchical-ll}
+
+where $\hat{p}_{gc}^{(s)} = p_g^{(s)} / (\nu_c^{(s)} + p_g^{(s)}(1 - \nu_c^{(s)}))$.
 
 Both @eq-mc-nbdm-ll and @eq-mc-hierarchical-ll are evaluated by the
 `log_likelihood` method of the respective fitted model object. The outputs
