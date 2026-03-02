@@ -1,7 +1,7 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
+# bibliography: references.bib
 csl: ieee.csl
 format:
   html:
@@ -127,7 +127,7 @@ capture probability $\nu_c$. The effective UMI-level parameter $\hat{p}_c$ is
 deterministically derived from $p$ and $\nu_c$ and is therefore not a free
 parameter. The observed UMI count $u_{gc}$ depends on $r_g$ and $\hat{p}_c$.
 
-```{.tikz caption="Graphical model for the Dirichlet-Multinomial generative model. White nodes are latent variables, gray nodes are observed variables, and the deterministic node $\\hat{p}_c$ (double border) is derived from $p$ and $\\nu_c$. Plates indicate replication across genes and cells." label="fig-nbdm-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+```{.tikz caption="Graphical model for the Dirichlet-Multinomial generative model. White nodes are latent variables, gray nodes are observed variables, and the deterministic node $\\hat{p}_c$ (double border) is derived from $p$ and $\\nu_c$. The rounded boxes (plates) indicate replication: the outer plate over $r_g$ and $u_{gc}$ is over genes $g=1,\\ldots,G$, and the inner plate over $\\nu_c$, $\\hat{p}_c$, and $u_{gc}$ is over cells $c=1,\\ldots,C$." label="fig-nbdm-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
 \begin{tikzpicture}[
   >=stealth,
   node distance=10mm and 14mm,
@@ -136,20 +136,21 @@ parameter. The observed UMI count $u_{gc}$ depends on $r_g$ and $\hat{p}_c$.
   det/.style={circle, draw, double, minimum size=8mm, inner sep=1pt},
   plate/.style={draw, rounded corners, inner sep=4mm}
 ]
-  % Global parameter
-  \node[latent] (p) {$p$};
 
   % Gene-level parameter
-  \node[latent, below left=12mm and 6mm of p] (rg) {$r_g$};
-
-  % Cell-level parameter
-  \node[latent, below right=12mm and 6mm of p] (nuc) {$\nu_c$};
+  \node[latent] (rg) {$r_g$};
+  
+  % Observed count
+  \node[obs, right=5mm of rg] (u) {$u_{gc}$};
 
   % Deterministic node
-  \node[det, below=of nuc] (phat) {$\hat{p}_c$};
+  \node[det, right=5mm of u] (phat) {$\hat{p}_c$};
 
-  % Observed count
-  \node[obs, below=12mm of rg, xshift=10mm] (u) {$u_{gc}$};
+  % Cell-level parameter
+  \node[latent, below=3mm of phat] (nuc) {$\nu_c$};
+  
+  % Global parameter
+  \node[latent, above=5mm of phat] (p) {$p$};
 
   % Edges
   \draw[->] (p) -- (phat);
@@ -159,7 +160,7 @@ parameter. The observed UMI count $u_{gc}$ depends on $r_g$ and $\hat{p}_c$.
 
   % Gene plate
   \begin{scope}[on background layer]
-    \node[plate, fit=(rg)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+    \node[plate, fit=(rg)(u), label={[yshift=1mm]north west:$g=1,\ldots,G$}] (geneplate) {};
   \end{scope}
 
   % Cell plate

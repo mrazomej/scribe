@@ -120,11 +120,12 @@ $${#eq-hier-exp-term}
 
 When all $\theta_g = \theta$, this simplifies to $\exp(-\theta \sum_g
 \lambda_g) = \exp(-\theta \Lambda)$, which depends on $\underline{\lambda}$
-only through $\Lambda$. Under the change of variables $\lambda_g = \Lambda
-\rho_g$, this becomes $\exp(-\theta \Lambda)$, which is a function of $\Lambda$
-alone and thus factors cleanly into the Gamma distribution over $\Lambda$.
+only through $\Lambda$ and thus factors cleanly into the Gamma distribution
+over $\Lambda$.
 
-However, when $\theta_g$ vary, the exponent becomes
+However, when $\theta_g$ vary, writing $\lambda_g = \Lambda \rho_g$ (so that
+$\underline{\rho}$ lies on the simplex and $\Lambda = \sum_g \lambda_g$), the
+exponent becomes
 
 $$
 \sum_{g=1}^G \theta_g \lambda_g = 
@@ -221,31 +222,32 @@ distribution, and the gene-specific $r_g$ is drawn from its own prior. At the
 cell level, the observed count $u_g$ is drawn from a negative binomial with
 parameters $r_g$ and $p_g$. Across $C$ cells, the full model is:
 
-```{.tikz caption="Graphical model for the hierarchical gene-specific $p_g$ model. White nodes are latent variables, gray nodes are observed variables, and the deterministic node $\\hat{p}_{gc}$ (double border) is derived from $p_g$ and $\\nu_c$. Plates indicate replication across genes and cells." label="fig-hierarchical-p-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+```{.tikz caption="Graphical model for the hierarchical gene-specific $p_g$ model. White nodes are latent variables, gray nodes are observed variables, and the deterministic node $\\hat{p}_{gc}$ (double border) is derived from $p_g$ and $\\nu_c$. The rounded boxes (plates) indicate replication: the outer plate over $p_g$, $r_g$, $\\hat{p}_{gc}$, and $u_{gc}$ is over genes $g=1,\\ldots,G$, and the inner plate over $\\nu_c$, $\\hat{p}_{gc}$, and $u_{gc}$ is over cells $c=1,\\ldots,C$." label="fig-hierarchical-p-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
 \begin{tikzpicture}[
   >=stealth,
   node distance=10mm and 14mm,
   latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
   obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
   det/.style={circle, draw, double, minimum size=8mm, inner sep=1pt},
-  plate/.style={draw, rounded corners, inner sep=4mm}
+  plate/.style={draw, rounded corners, inner sep=4mm},
+  inner plate/.style={draw, rounded corners, inner sep=2mm}
 ]
   % Hyperparameters
   \node[latent] (mu) {$\mu_p$};
-  \node[latent, right=of mu] (sigma) {$\sigma_p$};
+  \node[latent, right=6mm of mu] (sigma) {$\sigma_p$};
 
-  % Gene-level variables
-  \node[latent, below=of mu, xshift=8mm] (pg) {$p_g$};
-  \node[latent, right=18mm of pg] (rg) {$r_g$};
+  % Gene-level variables (r_g below p_g so it stays out of cell plate)
+  \node[latent, below=6mm of mu, xshift=5mm] (pg) {$p_g$};
+  \node[latent, below=3mm of pg] (rg) {$r_g$};
 
   % Cell-level capture probability
-  \node[latent, right=18mm of rg] (nuc) {$\nu_c$};
+  \node[latent, right=22mm of pg] (nuc) {$\nu_c$};
 
-  % Deterministic node
-  \node[det, below=of rg] (phat) {$\hat{p}_{gc}$};
+  % Deterministic node (directly right of p_g, between p_g and nu_c)
+  \node[det, right=5mm of pg] (phat) {$\hat{p}_{gc}$};
 
   % Observed count
-  \node[obs, below=of phat] (u) {$u_{gc}$};
+  \node[obs, below=3mm of phat] (u) {$u_{gc}$};
 
   % Edges
   \draw[->] (mu) -- (pg);
@@ -260,9 +262,9 @@ parameters $r_g$ and $p_g$. Across $C$ cells, the full model is:
     \node[plate, fit=(pg)(rg)(phat)(u), label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
   \end{scope}
 
-  % Cell plate
+  % Cell plate (nuc, phat, u only; with r_g left of phat, fit no longer includes r_g)
   \begin{scope}[on background layer]
-    \node[plate, fit=(nuc)(phat)(u), label={[yshift=1mm]south east:$c=1,\ldots,C$}] (cellplate) {};
+    \node[inner plate, fit=(nuc)(phat)(u), label={[yshift=1mm]south east:$c=1,\ldots,C$}] (cellplate) {};
   \end{scope}
 \end{tikzpicture}
 ```
