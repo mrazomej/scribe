@@ -30,6 +30,7 @@ Examples
 
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
+import jax.numpy as jnp
 import numpyro
 
 from ..builders import GuideBuilder, ModelBuilder
@@ -114,6 +115,14 @@ def validate_model_guide_compatibility(
     >>> model, guide = create_model(config, validate=False)
     >>> validate_model_guide_compatibility(model, guide, config)
     """
+    # Build dummy dataset_indices for multi-dataset models so that
+    # per-dataset parameters get indexed to per-cell values during the
+    # dry run (otherwise shapes like (n_datasets, n_genes) won't
+    # broadcast with per-cell capture parameters).
+    dataset_indices = None
+    if model_config.n_datasets is not None:
+        dataset_indices = jnp.zeros(n_cells, dtype=jnp.int32)
+
     # Run model to get sample sites
     with numpyro.handlers.seed(rng_seed=0):
         with numpyro.handlers.trace() as model_trace:
@@ -123,6 +132,7 @@ def validate_model_guide_compatibility(
                     n_genes=n_genes,
                     model_config=model_config,
                     counts=None,  # Prior predictive mode
+                    dataset_indices=dataset_indices,
                 )
             except Exception as e:
                 raise RuntimeError(
@@ -145,6 +155,7 @@ def validate_model_guide_compatibility(
                     n_genes=n_genes,
                     model_config=model_config,
                     counts=None,
+                    dataset_indices=dataset_indices,
                 )
             except Exception as e:
                 raise RuntimeError(
