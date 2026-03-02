@@ -967,6 +967,11 @@ class GuideBuilder:
                 and model_config.n_components
             ):
                 dims["n_components"] = model_config.n_components
+            if (
+                hasattr(model_config, "n_datasets")
+                and model_config.n_datasets
+            ):
+                dims["n_datasets"] = model_config.n_datasets
 
             # ================================================================
             # 0. Setup guide for MIXING WEIGHTS if this is a mixture model

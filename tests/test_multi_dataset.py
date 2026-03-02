@@ -7,6 +7,7 @@ Covers:
 - index_dataset_params likelihood helper
 - DatasetMixin.get_dataset and 3-axis __getitem__ on results
 - compare_datasets DE helper
+- Integration: create_model end-to-end with multi-dataset configs
 """
 
 import jax
@@ -23,11 +24,12 @@ from scribe.models.builders.parameter_specs import (
     SigmoidNormalSpec,
     resolve_shape,
 )
-from scribe.models.config import ModelConfig
+from scribe.models.config import ModelConfig, ModelConfigBuilder
 from scribe.models.components.likelihoods.base import (
     broadcast_p_for_mixture,
     index_dataset_params,
 )
+from scribe.models.presets.factory import create_model
 
 
 # ==============================================================================
@@ -913,3 +915,103 @@ class TestMixtureDatasetComposition:
         assert len(r_specs) == 1
         assert r_specs[0].is_dataset is True
         assert r_specs[0].is_mixture is False
+
+
+# ==============================================================================
+# Integration: create_model end-to-end with multi-dataset configs
+# ==============================================================================
+
+
+class TestCreateModelMultiDataset:
+    """End-to-end tests that call create_model with multi-dataset configs.
+
+    These exercise the full pipeline: factory → model builder → guide builder →
+    validation dry run, catching wiring issues like missing dims, mismatched
+    event_dim, or missing dataset_indices in the dry run.
+    """
+
+    @staticmethod
+    def _builder(model_type="zinbvcp", parameterization="mean_odds"):
+        """Create a builder pre-configured for multi-dataset testing."""
+        b = (
+            ModelConfigBuilder()
+            .for_model(model_type)
+            .with_parameterization(parameterization)
+            .unconstrained()
+        )
+        b._n_datasets = 2
+        return b
+
+    def test_hierarchical_dataset_mu_only(self):
+        """Model + guide created successfully with hierarchical_dataset_mu."""
+        b = self._builder()
+        b._hierarchical_dataset_mu = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+
+    def test_hierarchical_dataset_p_gene_specific(self):
+        """Model + guide with gene-specific hierarchical dataset p."""
+        b = self._builder()
+        b._hierarchical_dataset_p = "gene_specific"
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+
+    def test_hierarchical_dataset_mu_and_p(self):
+        """Model + guide with both dataset hierarchical mu and p."""
+        b = self._builder()
+        b._hierarchical_dataset_mu = True
+        b._hierarchical_dataset_p = "gene_specific"
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+
+    def test_hierarchical_dataset_with_gate(self):
+        """Matches the user's real command: dataset mu + p + hierarchical gate."""
+        b = self._builder()
+        b._hierarchical_dataset_mu = True
+        b._hierarchical_dataset_p = "gene_specific"
+        b._hierarchical_gate = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+
+    @pytest.mark.parametrize("model_type", ["nbdm", "zinb", "nbvcp", "zinbvcp"])
+    def test_dataset_mu_all_model_types(self, model_type):
+        """hierarchical_dataset_mu works across all model types."""
+        b = self._builder(model_type=model_type)
+        b._hierarchical_dataset_mu = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+
+    @pytest.mark.parametrize(
+        "parameterization", ["canonical", "mean_prob", "mean_odds"]
+    )
+    def test_dataset_mu_all_parameterizations(self, parameterization):
+        """hierarchical_dataset_mu works across all parameterizations."""
+        b = self._builder(parameterization=parameterization)
+        b._hierarchical_dataset_mu = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+
+    def test_dataset_specs_have_is_dataset_flag(self):
+        """Verify that the returned param_specs include dataset-flagged specs."""
+        b = self._builder()
+        b._hierarchical_dataset_mu = True
+        b._hierarchical_dataset_p = "gene_specific"
+        config = b.build()
+        _, _, specs = create_model(config)
+        dataset_specs = [s for s in specs if getattr(s, "is_dataset", False)]
+        assert len(dataset_specs) >= 2, (
+            "Expected at least mu/r and p/phi dataset specs, "
+            f"got {[s.name for s in dataset_specs]}"
+        )
