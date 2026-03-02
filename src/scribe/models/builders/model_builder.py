@@ -35,6 +35,7 @@ from numpyro.contrib.module import flax_module
 
 from scribe.flows import FlowDistribution
 from .parameter_specs import (
+    DatasetHierarchicalNormalWithTransformSpec,
     DerivedParam,
     DirichletSpec,
     HierarchicalNormalWithTransformSpec,
@@ -292,6 +293,7 @@ class ModelBuilder:
             counts: Optional[jnp.ndarray] = None,
             batch_size: Optional[int] = None,
             annotation_prior_logits: Optional[jnp.ndarray] = None,
+            dataset_indices: Optional[jnp.ndarray] = None,
         ):
             """NumPyro model function.
 
@@ -327,6 +329,11 @@ class ModelBuilder:
                 and model_config.n_components
             ):
                 dims["n_components"] = model_config.n_components
+            if (
+                hasattr(model_config, "n_datasets")
+                and model_config.n_datasets
+            ):
+                dims["n_datasets"] = model_config.n_datasets
 
             param_values: Dict[str, jnp.ndarray] = {}
 
@@ -378,7 +385,18 @@ class ModelBuilder:
                 and s.name != "mixing_weights"  # Already sampled above
             ]
             for spec in global_specs:
-                param_values[spec.name] = sample_prior(spec, dims, model_config)
+                if isinstance(
+                    spec, DatasetHierarchicalNormalWithTransformSpec
+                ):
+                    # Dataset-level hierarchical param (e.g. scalar p
+                    # per dataset) uses learned hyperparameters
+                    param_values[spec.name] = spec.sample_hierarchical(
+                        dims, param_values
+                    )
+                else:
+                    param_values[spec.name] = sample_prior(
+                        spec, dims, model_config
+                    )
 
             # ================================================================
             # 2. Sample GENE-SPECIFIC parameters
@@ -394,9 +412,16 @@ class ModelBuilder:
             # ================================================================
             gene_specs = [s for s in specs if s.is_gene_specific]
             for spec in gene_specs:
-                if isinstance(spec, HierarchicalNormalWithTransformSpec):
+                if isinstance(
+                    spec,
+                    (
+                        HierarchicalNormalWithTransformSpec,
+                        DatasetHierarchicalNormalWithTransformSpec,
+                    ),
+                ):
                     # Hierarchical prior: loc and scale come from
-                    # hyperparameters sampled in step 1
+                    # hyperparameters sampled in step 1 (gene-level or
+                    # dataset-level hierarchy)
                     param_values[spec.name] = spec.sample_hierarchical(
                         dims, param_values
                     )
@@ -534,6 +559,7 @@ class ModelBuilder:
                 model_config=model_config,
                 vae_cell_fn=vae_cell_fn,
                 annotation_prior_logits=annotation_prior_logits,
+                dataset_indices=dataset_indices,
             )
 
         return model

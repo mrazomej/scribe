@@ -34,6 +34,8 @@ import numpyro
 
 from ..builders import GuideBuilder, ModelBuilder
 from ..builders.parameter_specs import (
+    DatasetHierarchicalExpNormalSpec,
+    DatasetHierarchicalSigmoidNormalSpec,
     ExpNormalSpec,
     GaussianLatentSpec,
     HierarchicalExpNormalSpec,
@@ -528,6 +530,34 @@ def create_model(
         )
 
     # ==========================================================================
+    # Step 4.6: Apply dataset-level hierarchy flags
+    # ==========================================================================
+    if model_config.n_datasets is not None:
+        n_ds = model_config.n_datasets
+
+        # Hierarchical mu/r across datasets
+        if model_config.hierarchical_dataset_mu:
+            param_specs = _datasetify_mu(
+                param_specs=param_specs,
+                param_key=param_key,
+                guide_families=guide_families,
+                n_datasets=n_ds,
+            )
+
+        # Dataset-level p/phi
+        if model_config.hierarchical_dataset_p in (
+            "scalar",
+            "gene_specific",
+        ):
+            param_specs = _datasetify_p(
+                param_specs=param_specs,
+                param_key=param_key,
+                guide_families=guide_families,
+                n_datasets=n_ds,
+                mode=model_config.hierarchical_dataset_p,
+            )
+
+    # ==========================================================================
     # Step 5: Add model-specific extra parameters
     # ==========================================================================
     extra_param_names = MODEL_EXTRA_PARAMS[base_model]
@@ -793,6 +823,178 @@ def _hierarchicalize_p(
     )
 
     # Replace the flat spec with the hierarchical triplet
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == target_name:
+            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+
+
+def _datasetify_mu(
+    param_specs: List,
+    param_key: str,
+    guide_families,
+    n_datasets: int,
+) -> List:
+    """Replace mu (or r) with a dataset-hierarchical triplet.
+
+    Adds population-level hyperparameters (loc, scale) and replaces the
+    flat mu/r spec with a ``DatasetHierarchicalExpNormalSpec`` that produces
+    per-dataset gene-specific values.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current list of parameter specs.
+    param_key : str
+        Parameterization registry key ("canonical", "mean_prob", "mean_odds").
+    guide_families : GuideFamilyConfig
+        Per-parameter guide family configuration.
+    n_datasets : int
+        Number of datasets.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated parameter specs with the flat mu/r replaced by a
+        dataset-hierarchical triplet.
+    """
+    # For mean_odds and mean_prob, the target is mu; for canonical, it's r
+    if param_key in ("mean_odds", "mean_prob"):
+        target_name = "mu"
+        hyper_loc_name = "log_mu_dataset_loc"
+        hyper_scale_name = "log_mu_dataset_scale"
+    else:
+        target_name = "r"
+        hyper_loc_name = "log_r_dataset_loc"
+        hyper_scale_name = "log_r_dataset_scale"
+
+    target_family = guide_families.get(target_name)
+
+    # Population-level hyperparameters
+    hyper_loc = NormalWithTransformSpec(
+        name=hyper_loc_name,
+        shape_dims=("n_genes",),
+        default_params=(0.0, 1.0),
+        is_gene_specific=True,
+    )
+    hyper_scale = SoftplusNormalSpec(
+        name=hyper_scale_name,
+        shape_dims=(),
+        default_params=(-2.0, 0.5),
+    )
+    # Dataset-level hierarchical spec
+    hier_spec = DatasetHierarchicalExpNormalSpec(
+        name=target_name,
+        shape_dims=("n_genes",),
+        default_params=(0.0, 1.0),
+        hyper_loc_name=hyper_loc_name,
+        hyper_scale_name=hyper_scale_name,
+        is_gene_specific=True,
+        is_dataset=True,
+        guide_family=target_family,
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == target_name:
+            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+
+
+def _datasetify_p(
+    param_specs: List,
+    param_key: str,
+    guide_families,
+    n_datasets: int,
+    mode: str = "scalar",
+) -> List:
+    """Replace p/phi with a dataset-specific version.
+
+    For mode="scalar": one p per dataset (shared across genes), with a
+    population-level hierarchical prior.
+
+    For mode="gene_specific": single-level hierarchy where each (dataset,
+    gene) pair draws from a shared population distribution.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current list of parameter specs.
+    param_key : str
+        Parameterization registry key.
+    guide_families : GuideFamilyConfig
+        Per-parameter guide family configuration.
+    n_datasets : int
+        Number of datasets.
+    mode : str
+        "scalar" or "gene_specific".
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated parameter specs.
+    """
+    if param_key == "mean_odds":
+        target_name = "phi"
+        hyper_loc_name = "log_phi_dataset_loc"
+        hyper_scale_name = "log_phi_dataset_scale"
+        HierSpec = DatasetHierarchicalExpNormalSpec
+    else:
+        target_name = "p"
+        hyper_loc_name = "logit_p_dataset_loc"
+        hyper_scale_name = "logit_p_dataset_scale"
+        HierSpec = DatasetHierarchicalSigmoidNormalSpec
+
+    target_family = guide_families.get(target_name)
+
+    # Population-level hyperparameters
+    hyper_loc = NormalWithTransformSpec(
+        name=hyper_loc_name,
+        shape_dims=(),
+        default_params=(0.0, 1.0),
+    )
+    hyper_scale = SoftplusNormalSpec(
+        name=hyper_scale_name,
+        shape_dims=(),
+        default_params=(0.0, 0.5),
+    )
+
+    if mode == "scalar":
+        # One p per dataset, shared across genes
+        hier_spec = HierSpec(
+            name=target_name,
+            shape_dims=(),
+            default_params=(0.0, 1.0),
+            hyper_loc_name=hyper_loc_name,
+            hyper_scale_name=hyper_scale_name,
+            is_gene_specific=False,
+            is_dataset=True,
+            guide_family=target_family,
+        )
+    else:
+        # Gene-specific per-dataset: single-level hierarchy
+        hier_spec = HierSpec(
+            name=target_name,
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            hyper_loc_name=hyper_loc_name,
+            hyper_scale_name=hyper_scale_name,
+            is_gene_specific=True,
+            is_dataset=True,
+            guide_family=target_family,
+        )
+
     new_specs = []
     for spec in param_specs:
         if spec.name == target_name:
