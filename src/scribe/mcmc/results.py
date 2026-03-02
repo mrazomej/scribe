@@ -19,6 +19,7 @@ from ..core.serialization import make_model_config_pickle_safe
 from ._parameter_extraction import ParameterExtractionMixin
 from ._gene_subsetting import GeneSubsettingMixin
 from ._component import ComponentMixin
+from ._dataset import DatasetMixin
 from ._model_helpers import ModelHelpersMixin
 from ._sampling import SamplingMixin
 from ._likelihood import LikelihoodMixin
@@ -36,6 +37,7 @@ class ScribeMCMCResults(
     ParameterExtractionMixin,
     GeneSubsettingMixin,
     ComponentMixin,
+    DatasetMixin,
     ModelHelpersMixin,
     SamplingMixin,
     LikelihoodMixin,

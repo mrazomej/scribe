@@ -216,35 +216,59 @@ class GeneSubsettingMixin:
 
     def __getitem__(self, index):
         """
-        Enable indexing of ``ScribeSVIResults`` by genes and components.
+        Enable indexing of ``ScribeSVIResults`` by genes, components,
+        and datasets.
 
         Parameters
         ----------
         index : int, slice, array-like, or tuple
-            Gene selector, or a tuple ``(gene_selector, component_selector)``.
-            When a tuple is provided, gene subsetting is applied first and
-            component selection is applied second.
+            Gene selector, or a tuple of up to three elements:
+
+            * ``(gene_selector, component_selector)``
+            * ``(gene_selector, component_selector, dataset_selector)``
+
+            When a tuple is provided, gene subsetting is applied first,
+            then component selection, then dataset selection.  Use
+            ``slice(None)`` (i.e. ``:``) to pass through an axis, e.g.
+            ``results[:, :, 0]`` selects dataset 0 across all genes and
+            components.
 
         Returns
         -------
         ScribeSVIResults
             Subset result after applying requested indexing operations.
         """
-        # Support two-axis indexing: results[genes, components].
-        # Component selection is delegated to ComponentMixin so selector
-        # semantics remain consistent with get_component/get_components.
+        # Support multi-axis indexing:
+        #   results[genes, components]
+        #   results[genes, components, dataset]
         if isinstance(index, tuple):
-            if len(index) != 2:
+            if len(index) not in (2, 3):
                 raise ValueError(
-                    "Tuple indexing must be (gene_indexer, component_indexer)."
+                    "Tuple indexing must be "
+                    "(gene_indexer, component_indexer) or "
+                    "(gene_indexer, component_indexer, dataset_indexer)."
                 )
-            gene_indexer, component_indexer = index
+            gene_indexer = index[0]
+            component_indexer = index[1]
+            dataset_indexer = index[2] if len(index) == 3 else None
+
             if isinstance(gene_indexer, tuple):
                 raise TypeError(
                     "Nested tuple indexing is not supported for gene selector."
                 )
             gene_subset = self[gene_indexer]
-            return gene_subset.get_component(component_indexer)
+
+            # Apply component selection (skip if slice(None))
+            if isinstance(component_indexer, slice) and component_indexer == slice(None):
+                result = gene_subset
+            else:
+                result = gene_subset.get_component(component_indexer)
+
+            # Apply dataset selection if requested
+            if dataset_indexer is not None:
+                result = result.get_dataset(dataset_indexer)
+
+            return result
 
         # If index is a boolean mask, use it directly
         if isinstance(index, (jnp.ndarray, np.ndarray)) and index.dtype == bool:
