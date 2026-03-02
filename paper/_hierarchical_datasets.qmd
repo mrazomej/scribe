@@ -1,0 +1,908 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Multi-Dataset Hierarchical Models {#sec-hierarchical-datasets}
+
+In the preceding sections, we have developed a rich family of single-cell count
+models---from the basic negative binomial (@sec-dirichlet-multinomial) through
+the variable capture probability extensions (@sec-denoising) to hierarchical
+gene-specific priors on $p_g$ (@sec-hierarchical-p) and the zero-inflation gate
+$\pi_g$ (@sec-hierarchical-gate). In each case, the model was applied to a
+**single dataset**: one count matrix $\underline{\underline{U}}$ arising from
+one experimental condition.
+
+In this section, we extend the framework to the setting where we observe
+**multiple datasets** from related experimental conditions---for example, the
+same cell line processed with different library preparation kits, or the same
+tissue under control and treatment conditions. The key challenge is that each
+dataset may exhibit different technical characteristics (capture efficiency,
+sequencing depth, dropout rates), while sharing most or all of the underlying
+biology. Fitting separate models to each dataset, as we explored in the batch
+correction experiments, can lead to **parameter degeneracy**: the model absorbs
+systematic differences into the wrong parameters, confounding technical and
+biological variation.
+
+We resolve this by fitting a single **joint model** across all datasets, with a
+**hierarchical prior** that links dataset-specific parameters to a shared
+population level. This hierarchy provides adaptive shrinkage: parameters that
+should be shared across datasets (because the biology is the same) are pulled
+toward a common value, while parameters that genuinely differ (because of
+technical or biological variation) are free to deviate. Crucially, the degree of
+shrinkage is learned from the data, not imposed a priori.
+
+## Motivation: the parameter degeneracy problem {#sec-hdata-motivation}
+
+To make the problem concrete, consider the variable capture probability (VCP)
+model from @sec-denoising. For a single cell $c$ belonging to dataset $d$, the
+expected UMI count for gene $g$ under the mean-odds parameterization is
+
+$$
+\mathbb{E}[u_{gc}] = (1 - \pi_g) \cdot \mu_g \cdot \frac{1}{1 + \phi} \cdot \nu_c,
+$${#eq-hdata-expected-count}
+
+where $\mu_g$ is the biological mean expression, $\phi$ is the odds ratio
+(related to $p$ by $p = 1/(1+\phi)$), $\pi_g$ is the zero-inflation gate, and
+$\nu_c$ is the cell-specific capture probability. This formula reveals a
+fundamental **identifiability challenge**: the expected count is a product of
+multiple terms, each of which can compensate for changes in the others.
+
+### Why separate models fail
+
+Suppose we have two datasets from the same cell line, differing only in the
+library preparation kit. Kit 2 has systematically higher total UMI counts per
+cell. Under the true data-generating process, this difference arises from a
+higher capture probability $\nu_c$ in Kit 2. However, when we fit the VCP model
+separately to each dataset, the model has no way to distinguish "Kit 2 captures
+more molecules" from "Kit 2 cells express more." The gene-specific parameters
+$\mu_g$ and $\phi$ (or equivalently $p_g$) can absorb the systematic difference,
+producing different $\mu_g$ estimates across kits even though the underlying
+biology is identical.
+
+More precisely, let $\underline{\theta}^{(1)} = (\mu_g^{(1)}, \phi^{(1)},
+\nu_c^{(1)})$ and $\underline{\theta}^{(2)} = (\mu_g^{(2)}, \phi^{(2)},
+\nu_c^{(2)})$ denote the fitted parameters for datasets 1 and 2. The expected
+count for gene $g$ in cell $c$ of dataset $d$ is
+
+$$
+\mathbb{E}[u_{gc}^{(d)}] = \mu_g^{(d)} \cdot \frac{1}{1 + \phi^{(d)}} \cdot \nu_c^{(d)}.
+$${#eq-hdata-degeneracy}
+
+When the models are fit independently, the data constrain only the **product**
+$\mu_g^{(d)} \cdot (1 + \phi^{(d)})^{-1} \cdot \nu_c^{(d)}$ for each cell and
+gene, not the individual factors. As a consequence, the model can explain the
+higher counts in Kit 2 by inflating $\mu_g^{(2)}$ and deflating $\nu_c^{(2)}$
+relative to Kit 1, or vice versa. This degeneracy is not broken by having many
+genes or many cells---it is a structural feature of the multiplicative
+decomposition in @eq-hdata-degeneracy.
+
+When we subsequently use these fitted models for denoising or differential
+expression, the degeneracy propagates. The denoised counts inherit the
+parameter misallocation, and the batch effect we sought to remove may be
+partially or fully preserved in the denoised data.
+
+### The joint model solution
+
+The solution is to fit all datasets **jointly** in a single model, constraining
+the biological parameters to be shared (or nearly shared) across datasets while
+allowing the technical parameters to vary. This breaks the degeneracy by
+exploiting the fact that the same biology appears in both datasets: if
+$\mu_g^{(1)}$ and $\mu_g^{(2)}$ are forced to be similar, then the systematic
+difference in total UMI counts must be explained by the capture probabilities
+$\nu_c^{(d)}$ and the success probability $p^{(d)}$, which is where it belongs.
+
+The hierarchical prior provides the mechanism for "forcing" similarity: rather
+than setting $\mu_g^{(1)} = \mu_g^{(2)}$ rigidly, we allow dataset-specific
+deviations through a learned population distribution. The tightness of this
+distribution---controlled by a learned variance parameter---determines the
+degree of shrinkage. When the data support identical biology across datasets,
+the variance shrinks to zero and the model recovers shared parameters. When
+there are genuine biological differences, the variance grows to accommodate
+them.
+
+## Setup and notation {#sec-hdata-setup}
+
+We observe $D$ datasets, each containing a count matrix. Dataset $d$ has $C_d$
+cells, so the total number of cells is $C = \sum_{d=1}^D C_d$. We concatenate
+all cells into a single count matrix $\underline{\underline{U}}$ of size
+$G \times C$, and define the **dataset assignment function**
+
+$$
+\sigma(c) = d \quad \text{if cell } c \text{ belongs to dataset } d.
+$${#eq-hdata-assignment}
+
+Crucially, $\sigma(c)$ is **observed** and **fixed**---it is not a latent
+variable to be inferred. This distinguishes the multi-dataset model from a
+mixture model: in a mixture model, cell-to-cluster assignments are latent and
+must be integrated out (or approximated); here, assignments are known and
+conditioning on them is exact.
+
+We write $\mathcal{C}_d = \{c : \sigma(c) = d\}$ for the set of cells in
+dataset $d$, so $|\mathcal{C}_d| = C_d$.
+
+### Relationship to mixture models
+
+Although the multi-dataset model is not a mixture model, it shares structural
+similarities. In a $K$-component mixture, each cell's observation is drawn from
+one of $K$ component distributions, with the assignment governed by learned
+mixing weights. In the multi-dataset model, each cell's observation is drawn
+from one of $D$ dataset-specific distributions, with the assignment given by
+$\sigma(c)$.
+
+The key differences are:
+
+1. **No mixing weights.** Since assignments are observed, there is no Dirichlet
+prior on mixing proportions and no need to marginalize over assignments.
+
+2. **No label switching.** The datasets have fixed, meaningful identities (e.g.,
+"Kit 1" and "Kit 2"), so there is no permutation symmetry to break.
+
+3. **Hierarchical linkage.** The hierarchy across datasets encodes the prior
+that the datasets share biology, which has no analogue in the standard mixture
+model (where components are typically assumed independent a priori).
+
+From an implementation perspective, the multi-dataset model can reuse much of
+the mixture model infrastructure---per-component parameter shapes, indexing into
+parameter arrays---but replaces the soft probabilistic assignment with hard
+deterministic indexing.
+
+## Hierarchical mean expression {#sec-hdata-hierarchical-mu}
+
+We now develop the hierarchical structure for the mean expression parameter
+$\mu_g$, which controls the biological expression level of each gene. This is
+the parameter where the "most genes don't change" prior is most directly
+relevant.
+
+### The population-level prior
+
+In the standard single-dataset model with the mean-odds parameterization, each
+gene's mean expression is drawn from a prior:
+
+$$
+\mu_g \sim \text{LogNormal}(\ell_\mu, s_\mu), \quad g = 1, 2, \ldots, G,
+$${#eq-hdata-mu-prior}
+
+or equivalently $\log(\mu_g) \sim \mathcal{N}(\ell_\mu, s_\mu)$, where
+$\ell_\mu$ and $s_\mu$ are fixed hyperparameters. In the multi-dataset model,
+we promote $\mu_g$ to the role of a **population-level** parameter representing
+the shared biological expression level, and introduce dataset-specific
+deviations.
+
+### Dataset-specific mean expression
+
+For each dataset $d$, gene $g$ has its own mean expression $\mu_g^{(d)}$ drawn
+from a distribution centered on the population value:
+
+$$
+\log(\mu_g^{(d)}) \sim \mathcal{N}\!\left(\log(\mu_g), \; \tau_\mu\right),
+\quad d = 1, \ldots, D,
+$${#eq-hdata-mu-dataset}
+
+where $\tau_\mu > 0$ is a **shared scale parameter** governing the magnitude
+of dataset-to-dataset variation. Since we work in log space, $\tau_\mu$
+controls the **multiplicative** deviation of dataset-specific means from the
+population mean. A dataset-specific mean of
+$\mu_g^{(d)} = \mu_g \cdot e^{\epsilon_{g,d}}$ with $\epsilon_{g,d} \sim
+\mathcal{N}(0, \tau_\mu)$ produces log-fold-changes between datasets that are
+normally distributed with standard deviation $\tau_\mu$.
+
+### Non-centered parameterization
+
+For variational inference, it is often beneficial to use the **non-centered
+parameterization** (NCP), which avoids the funnel geometry that arises when the
+scale $\tau_\mu$ is small. The NCP expresses the dataset-specific deviation
+as a standardized random variable scaled by $\tau_\mu$:
+
+$$
+\epsilon_{g,d} \sim \mathcal{N}(0, 1), \quad
+\log(\mu_g^{(d)}) = \log(\mu_g) + \tau_\mu \cdot \epsilon_{g,d}.
+$${#eq-hdata-mu-ncp}
+
+This is mathematically equivalent to @eq-hdata-mu-dataset but separates the
+latent variable $\epsilon_{g,d}$ (which has a fixed, non-degenerate prior) from
+the scale $\tau_\mu$ (which controls the coupling strength). In the centered
+parameterization, when $\tau_\mu \to 0$, the posterior of $\log(\mu_g^{(d)})$
+concentrates on $\log(\mu_g)$ and the variational approximation must capture a
+very narrow distribution, which is numerically challenging. In the NCP, the
+posterior of $\epsilon_{g,d}$ simply concentrates near zero, which is
+well-behaved.
+
+### Prior on $\tau_\mu$
+
+The scale parameter $\tau_\mu$ requires its own prior. Since $\tau_\mu > 0$,
+we use a Softplus-transformed Normal:
+
+$$
+\tau_\mu \sim \text{Softplus}\!\left(\mathcal{N}(\mu_\tau, \sigma_\tau)\right),
+$${#eq-hdata-tau-prior}
+
+where $\text{Softplus}(x) = \log(1 + e^x)$ ensures strict positivity. The
+default hyperparameters $\mu_\tau$ and $\sigma_\tau$ are chosen to place prior
+mass on small values of $\tau_\mu$, reflecting the belief that datasets from
+similar conditions should have similar expression profiles. Specifically, with
+$\mu_\tau = -2$ and $\sigma_\tau = 0.5$, the prior median of $\tau_\mu$ is
+$\text{Softplus}(-2) \approx 0.127$, corresponding to typical log-fold-changes
+of about 13\% between datasets.
+
+### Shrinkage properties
+
+The hierarchical structure provides **adaptive shrinkage** of dataset-specific
+means toward the population mean, with the degree of shrinkage determined by
+$\tau_\mu$.
+
+**When $\tau_\mu \to 0$** (strong shrinkage): all dataset-specific means
+collapse to the population mean,
+
+$$
+\mu_g^{(d)} \to \mu_g \quad \text{for all } d,
+$${#eq-hdata-mu-shrinkage-strong}
+
+and the multi-dataset model reduces to the single-dataset model. This is the
+regime where the data indicate that the biology is identical across datasets.
+
+**When $\tau_\mu$ is large** (weak shrinkage): dataset-specific means are
+essentially independent,
+
+$$
+\mu_g^{(d)} \approx \text{free parameter for each } (g, d),
+$${#eq-hdata-mu-shrinkage-weak}
+
+and the model reverts to fitting each dataset separately. This is the regime
+where there are genuine biological differences between datasets.
+
+Between these extremes, the posterior of $\tau_\mu$ quantifies the amount of
+dataset-to-dataset variation supported by the data. Genes that show consistent
+expression across datasets contribute to shrinking $\tau_\mu$, while genes that
+differ between datasets resist this shrinkage. The net result is a posterior
+$\tau_\mu$ that balances the evidence from all genes, providing a global
+diagnostic of how similar the datasets are.
+
+### The expected count under the multi-dataset model
+
+Combining the dataset-specific mean expression with the VCP model, the expected
+UMI count for gene $g$ in cell $c$ belonging to dataset $d = \sigma(c)$ is
+
+$$
+\mathbb{E}[u_{gc}] = (1 - \pi_g^{(d)}) \cdot \mu_g^{(d)} \cdot
+\frac{1}{1 + \phi^{(d)}} \cdot \nu_c,
+$${#eq-hdata-expected-count-full}
+
+where $\phi^{(d)}$ is the dataset-specific odds ratio (see @sec-hdata-scalar-p
+below) and $\pi_g^{(d)}$ is the dataset-specific zero-inflation gate (if
+applicable). Notice that the capture probability $\nu_c$ is cell-specific (not
+dataset-specific)---different cells within the same dataset may have different
+capture efficiencies, and the model estimates these individually.
+
+### Canonical parameterization
+
+For the canonical parameterization, the hierarchical structure applies to the
+dispersion parameter $r_g$ instead of $\mu_g$. The population-level prior is
+
+$$
+r_g \sim \text{LogNormal}(\ell_r, s_r),
+$${#eq-hdata-r-prior}
+
+and the dataset-specific dispersion is
+
+$$
+\log(r_g^{(d)}) \sim \mathcal{N}\!\left(\log(r_g), \; \tau_r\right),
+\quad d = 1, \ldots, D,
+$${#eq-hdata-r-dataset}
+
+with $\tau_r$ playing the same role as $\tau_\mu$. The non-centered
+parameterization and shrinkage properties carry over directly. We focus on the
+mean-odds parameterization in the remainder of this section, but all results
+apply mutatis mutandis to the canonical parameterization by replacing
+$\mu_g \leftrightarrow r_g$ and $\tau_\mu \leftrightarrow \tau_r$.
+
+## Dataset-specific scalar $p$ {#sec-hdata-scalar-p}
+
+In the standard model, the success probability $p$ (or equivalently the odds
+ratio $\phi = (1-p)/p$) is a global parameter shared across all genes and all
+cells. In the multi-dataset setting, we allow $p$ to vary across datasets while
+remaining shared across genes within each dataset. This is the simplest way to
+account for systematic technical differences between datasets.
+
+### Model specification
+
+Since $p^{(d)} \in (0, 1)$, we work in the unconstrained logit space and place
+a hierarchical prior:
+
+$$
+\mu_p \sim \mathcal{N}(0, 1),
+$${#eq-hdata-p-scalar-loc}
+
+$$
+\sigma_p \sim \text{Softplus}\!\left(\mathcal{N}(0, 0.5)\right),
+$${#eq-hdata-p-scalar-scale}
+
+$$
+\text{logit}(p^{(d)}) \sim \mathcal{N}(\mu_p, \sigma_p),
+\quad d = 1, \ldots, D.
+$${#eq-hdata-p-scalar-draw}
+
+Here $\mu_p$ is the population mean of the logit-transformed success
+probability, and $\sigma_p$ controls the dataset-to-dataset variation. For the
+mean-odds parameterization, an equivalent formulation uses
+
+$$
+\log(\phi^{(d)}) \sim \mathcal{N}(\mu_\phi, \sigma_\phi),
+$${#eq-hdata-phi-scalar-draw}
+
+where $\phi^{(d)} = (1 - p^{(d)}) / p^{(d)}$ and the hyperparameters are
+reparameterized accordingly.
+
+### Resolving the parameter degeneracy
+
+The dataset-specific scalar $p^{(d)}$ resolves the parameter degeneracy
+identified in @sec-hdata-motivation. In the joint model, the biological mean
+$\mu_g$ is shared across datasets (modulo the small deviations governed by
+$\tau_\mu$). Since the product $\mu_g \cdot (1 + \phi^{(d)})^{-1} \cdot \nu_c$
+must explain the observed counts, and $\mu_g$ is shared, the systematic
+difference in total counts between datasets is forced into $\phi^{(d)}$ and
+$\nu_c$---the technical parameters where it belongs.
+
+To see this more concretely, consider the ratio of expected total counts between
+datasets 1 and 2 for the same gene $g$ and cells with similar capture
+efficiency:
+
+$$
+\frac{\mathbb{E}[u_{gc}^{(2)}]}{\mathbb{E}[u_{gc}^{(1)}]} =
+\frac{\mu_g^{(2)}}{\mu_g^{(1)}} \cdot
+\frac{1 + \phi^{(1)}}{1 + \phi^{(2)}} \cdot
+\frac{\nu_c^{(2)}}{\nu_c^{(1)}}.
+$${#eq-hdata-count-ratio}
+
+When $\tau_\mu$ is small (strong shrinkage on $\mu_g$), the first ratio is
+close to 1, and the count difference is explained entirely by the
+$\phi^{(d)}$ and $\nu_c$ terms. The model correctly attributes the
+systematic Kit 2 enrichment to the technical parameters.
+
+### Recovery of the Dirichlet-Multinomial factorization
+
+When all $p^{(d)}$ are equal---that is, when $\sigma_p \to 0$ and all
+datasets share the same $p^{(d)} = p$---the multi-dataset model reduces to
+the standard model of @sec-dirichlet-multinomial applied to the concatenated
+dataset. In this regime, the factorization
+
+$$
+\pi(\underline{u} \mid \underline{r}, \hat{p}) =
+\pi(u_T \mid r_T, \hat{p}) \times
+\pi(\underline{u} \mid u_T, \underline{r})
+$${#eq-hdata-dm-factorization-recap}
+
+holds within each dataset, with the shared $\hat{p}$ incorporating both the
+gene-level $p$ and the cell-level $\nu_c$. The compositional term
+$\pi(\underline{u} \mid u_T, \underline{r})$ depends only on the dispersion
+parameters $\underline{r}$, just as in the single-dataset case.
+
+When the $p^{(d)}$ differ across datasets, the factorization holds
+**within each dataset** (since all genes in dataset $d$ share $p^{(d)}$), but
+the parameter $\hat{p}$ differs across datasets. Compositions within a
+dataset are still Dirichlet, but the total count distribution differs. This is
+the key distinction from the gene-specific $p_g$ model of
+@sec-hierarchical-p, where the factorization breaks within a single dataset.
+
+### Posterior diagnostic: $\sigma_p$
+
+The posterior of $\sigma_p$ serves as a diagnostic for whether the datasets
+have systematically different technical characteristics:
+
+- If $\sigma_p \approx 0$: the datasets share the same $p$, and the technical
+  variation is fully captured by the cell-specific $\nu_c$.
+
+- If $\sigma_p$ is large: the datasets have genuinely different success
+  probabilities, reflecting systematic differences in library preparation or
+  sequencing.
+
+## Dataset-specific gene-specific $p_g$ {#sec-hdata-gene-specific-p}
+
+The scalar dataset-specific $p^{(d)}$ accounts for systematic differences
+between datasets but assumes all genes within a dataset share the same $p$.
+In some settings, gene-to-gene variation in $p_g$ may be important (as
+discussed in @sec-hierarchical-p), and this variation may itself differ across
+datasets. We now develop two hierarchical structures that allow gene-specific
+$p_g$ to vary both across genes and across datasets.
+
+### Single-level hierarchy {#sec-hdata-pg-single}
+
+The simplest extension treats all dataset-gene combinations as draws from a
+single population distribution. The model is:
+
+$$
+\mu_p \sim \mathcal{N}(0, 1), \quad
+\sigma_p \sim \text{Softplus}\!\left(\mathcal{N}(0, 0.5)\right),
+$${#eq-hdata-pg-single-hyper}
+
+$$
+\text{logit}(p_g^{(d)}) \sim \mathcal{N}(\mu_p, \sigma_p),
+\quad g = 1, \ldots, G, \quad d = 1, \ldots, D.
+$${#eq-hdata-pg-single-draw}
+
+Here, $p_g^{(d)}$ is both gene-specific and dataset-specific, but all
+$G \times D$ parameters share the same population-level hyperparameters
+$(\mu_p, \sigma_p)$. This model allows each gene to have a different $p_g$ in
+each dataset, with the degree of gene-to-gene variation governed by $\sigma_p$.
+
+The single-level hierarchy is appropriate when the datasets have similar
+technical noise characteristics. Since all $p_g^{(d)}$ are drawn from the same
+distribution, there is no mechanism for one dataset to have systematically
+higher or lower $p_g$ values than another---only the cell-specific $\nu_c$
+differs across datasets. Gene-to-gene variation in $p_g$ is allowed, but
+it is governed by the same $\sigma_p$ for all datasets.
+
+For the mean-odds parameterization, the equivalent model uses
+
+$$
+\log(\phi_g^{(d)}) \sim \mathcal{N}(\mu_\phi, \sigma_\phi),
+$${#eq-hdata-phig-single-draw}
+
+where $\phi_g^{(d)} = (1 - p_g^{(d)}) / p_g^{(d)}$.
+
+### Two-level hierarchy {#sec-hdata-pg-two-level}
+
+When datasets may have fundamentally different noise characteristics---for
+example, one kit produces systematically higher dropout rates across all
+genes---the single-level hierarchy is too rigid. The two-level hierarchy
+addresses this by introducing **dataset-level hyperparameters** drawn from a
+**population-level prior**.
+
+**Population level.** The population-level hyperparameters govern the
+distribution of dataset-level parameters:
+
+$$
+\mu_p \sim \mathcal{N}(0, 1), \quad
+\sigma_{\mu_p} \sim \text{Softplus}\!\left(\mathcal{N}(0, 0.5)\right),
+$${#eq-hdata-pg-two-pop}
+
+$$
+\mu_{\sigma_p} \sim \mathcal{N}(-2, 0.5), \quad
+s_{\sigma_p} \sim \text{Softplus}\!\left(\mathcal{N}(0, 0.5)\right).
+$${#eq-hdata-pg-two-pop-scale}
+
+**Dataset level.** Each dataset draws its own hyperparameters from the
+population distribution:
+
+$$
+\mu_p^{(d)} \sim \mathcal{N}(\mu_p, \sigma_{\mu_p}),
+\quad d = 1, \ldots, D,
+$${#eq-hdata-pg-two-dataset-loc}
+
+$$
+\sigma_p^{(d)} \sim \text{Softplus}\!\left(
+\mathcal{N}(\mu_{\sigma_p}, s_{\sigma_p})\right),
+\quad d = 1, \ldots, D.
+$${#eq-hdata-pg-two-dataset-scale}
+
+**Gene level.** Each gene in each dataset draws its $p_g^{(d)}$ from the
+dataset-specific distribution:
+
+$$
+\text{logit}(p_g^{(d)}) \sim \mathcal{N}(\mu_p^{(d)}, \sigma_p^{(d)}),
+\quad g = 1, \ldots, G.
+$${#eq-hdata-pg-two-gene}
+
+This three-tier structure---population, dataset, gene---provides two layers of
+shrinkage:
+
+1. **Across datasets**: the dataset-level means $\mu_p^{(d)}$ are shrunk toward
+   the population mean $\mu_p$, with the degree controlled by $\sigma_{\mu_p}$.
+   When $\sigma_{\mu_p} \to 0$, all datasets share the same population mean
+   $\mu_p$, recovering the single-level hierarchy.
+
+2. **Across genes within each dataset**: the gene-level parameters
+   $\text{logit}(p_g^{(d)})$ are shrunk toward their dataset-specific mean
+   $\mu_p^{(d)}$, with the degree controlled by $\sigma_p^{(d)}$.
+
+### When to use each hierarchy
+
+The choice between single-level and two-level hierarchy depends on the
+experimental context:
+
+- **Single-level** is appropriate for batch correction within a single
+  technology (e.g., two sequencing runs of the same kit type). The technical
+  noise characteristics are expected to be similar, and systematic differences
+  are captured by $\nu_c$.
+
+- **Two-level** is appropriate when datasets may have fundamentally different
+  noise profiles (e.g., different library preparation kits, different
+  sequencing platforms). The dataset-level means $\mu_p^{(d)}$ can absorb
+  systematic shifts, while the dataset-level scales $\sigma_p^{(d)}$ allow
+  for different degrees of gene-to-gene variability.
+
+In practice, the two-level hierarchy subsumes the single-level hierarchy
+(setting $\sigma_{\mu_p} = 0$ recovers the single-level model), so it can be
+used as the default when computational cost permits.
+
+## The complete generative model {#sec-hdata-generative}
+
+We now present the complete generative model for multi-dataset inference,
+combining the hierarchical mean expression from @sec-hdata-hierarchical-mu,
+the dataset-specific scalar $p$ from @sec-hdata-scalar-p, and the optional
+gene-specific $p_g$ from @sec-hdata-gene-specific-p.
+
+### Full model specification
+
+**Population-level hyperparameters:**
+
+$$
+\mu_g \sim \text{LogNormal}(\ell_\mu, s_\mu), \quad g = 1, \ldots, G,
+$${#eq-hdata-gen-mu-pop}
+
+$$
+\tau_\mu \sim \text{Softplus}\!\left(\mathcal{N}(\mu_\tau, \sigma_\tau)\right).
+$${#eq-hdata-gen-tau}
+
+**Dataset-level parameters** (for each $d = 1, \ldots, D$):
+
+$$
+\log(\mu_g^{(d)}) \sim \mathcal{N}\!\left(\log(\mu_g), \; \tau_\mu\right),
+\quad g = 1, \ldots, G,
+$${#eq-hdata-gen-mu-dataset}
+
+$$
+\text{logit}(p^{(d)}) \sim \mathcal{N}(\mu_p, \sigma_p),
+$${#eq-hdata-gen-p-dataset}
+
+or, when using gene-specific $p_g$:
+
+$$
+\text{logit}(p_g^{(d)}) \sim \mathcal{N}(\mu_p^{(d)}, \sigma_p^{(d)}),
+\quad g = 1, \ldots, G.
+$${#eq-hdata-gen-pg-dataset}
+
+**Cell-level parameters** (for each cell $c$ in dataset $d = \sigma(c)$):
+
+$$
+\nu_c \sim \text{Beta}(a_\nu, b_\nu).
+$${#eq-hdata-gen-nu}
+
+**Observation model:**
+
+$$
+u_{gc} \mid \mu_g^{(d)}, p^{(d)}, \nu_c \sim
+\text{NB}\!\left(r_g^{(d)}, \; \hat{p}^{(d)}_c\right),
+$${#eq-hdata-gen-obs}
+
+where $r_g^{(d)} = \mu_g^{(d)} \cdot \phi^{(d)}$ is the dataset-specific
+dispersion (under the mean-odds parameterization), and
+$\hat{p}^{(d)}_c = p^{(d)} / (p^{(d)} + \nu_c (1 - p^{(d)}))$ is the
+effective success probability incorporating the cell-specific capture (see
+@sec-denoising). For zero-inflated models, the observation includes a
+mixture with a point mass at zero governed by $\pi_g^{(d)}$.
+
+### Graphical model
+
+The hierarchical structure across datasets can be represented as a graphical
+model with nested plates. At the top level, the population parameters $\mu_g$
+and $\tau_\mu$ are shared. At the dataset level, each dataset draws its own
+$\mu_g^{(d)}$ and $p^{(d)}$. At the cell level, each cell draws $\nu_c$ and
+generates counts.
+
+```{.tikz caption="Graphical model for the multi-dataset hierarchical model. White nodes are latent variables, gray nodes are observed. The dataset plate replicates dataset-level parameters, and the cell plate (nested within datasets) replicates cell-level parameters and observations. The population-level parameters $\\mu_g$ and $\\tau_\\mu$ are shared across datasets." label="fig-hierarchical-datasets-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+\begin{tikzpicture}[
+  >=stealth,
+  node distance=10mm and 14mm,
+  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
+  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  plate/.style={draw, rounded corners, inner sep=4mm}
+]
+  % Population-level parameters
+  \node[latent] (mu_g) {$\mu_g$};
+  \node[latent, left=14mm of mu_g] (tau) {$\tau_\mu$};
+
+  % p hyperparameters
+  \node[latent, right=28mm of mu_g] (mu_p) {$\mu_p$};
+  \node[latent, right=of mu_p] (sigma_p) {$\sigma_p$};
+
+  % Dataset-level parameters
+  \node[latent, below=14mm of mu_g] (mu_gd) {$\mu_g^{(d)}$};
+  \node[latent, right=14mm of mu_gd] (p_d) {$p^{(d)}$};
+
+  % Cell-level
+  \node[latent, below=12mm of p_d, xshift=-7mm] (nu_c) {$\nu_c$};
+  \node[obs, below=12mm of mu_gd] (u) {$u_{gc}$};
+
+  % Population -> dataset edges
+  \draw[->] (mu_g) -- (mu_gd);
+  \draw[->] (tau) -- (mu_gd);
+  \draw[->] (mu_p) -- (p_d);
+  \draw[->] (sigma_p) -- (p_d);
+
+  % Dataset -> cell edges
+  \draw[->] (mu_gd) -- (u);
+  \draw[->] (p_d) -- (u);
+  \draw[->] (nu_c) -- (u);
+
+  % Gene plate (around population mu_g and dataset-level mu_g^(d) and u)
+  \begin{scope}[on background layer]
+    \node[plate, fit=(mu_g)(mu_gd)(u),
+          label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+  \end{scope}
+
+  % Dataset plate (around dataset-level params and cell plate)
+  \begin{scope}[on background layer]
+    \node[plate, fit=(mu_gd)(p_d)(nu_c)(u),
+          label={[yshift=1mm]south east:$d=1,\ldots,D$}] (datasetplate) {};
+  \end{scope}
+
+  % Cell plate (around nu_c and u)
+  \begin{scope}[on background layer]
+    \node[plate, fit=(nu_c)(u),
+          label={[yshift=1mm]south east:$c \in \mathcal{C}_d$}] (cellplate) {};
+  \end{scope}
+\end{tikzpicture}
+```
+
+### Joint posterior
+
+The full posterior over all parameters is
+
+$$
+\pi\!\left(
+  \{\mu_g\}, \tau_\mu, \mu_p, \sigma_p,
+  \{\mu_g^{(d)}, p^{(d)}\}_{d=1}^{D},
+  \{\nu_c\}_{c=1}^{C}
+  \;\middle|\;
+  \underline{\underline{U}}
+\right) \propto
+$${#eq-hdata-joint-posterior-1}
+
+$$
+\underbrace{
+  \prod_{d=1}^{D} \prod_{c \in \mathcal{C}_d} \prod_{g=1}^{G}
+  \pi(u_{gc} \mid \mu_g^{(d)}, p^{(d)}, \nu_c)
+}_{\text{likelihood}}
+\;\cdot\;
+\underbrace{
+  \prod_{c=1}^{C} \pi(\nu_c)
+}_{\text{cell prior}}
+$${#eq-hdata-joint-posterior-2}
+
+$$
+\times\;
+\underbrace{
+  \prod_{d=1}^{D} \left[
+    \pi(p^{(d)} \mid \mu_p, \sigma_p)
+    \prod_{g=1}^{G} \pi(\mu_g^{(d)} \mid \mu_g, \tau_\mu)
+  \right]
+}_{\text{dataset prior}}
+\;\cdot\;
+\underbrace{
+  \prod_{g=1}^{G} \pi(\mu_g) \;\cdot\;
+  \pi(\tau_\mu) \; \pi(\mu_p) \; \pi(\sigma_p)
+}_{\text{population prior}}.
+$${#eq-hdata-joint-posterior-3}
+
+## Composition sampling across datasets {#sec-hdata-composition}
+
+The differential expression framework from @sec-diffexp relies on drawing
+compositional samples from the posterior predictive distribution. In this
+section, we show how the multi-dataset model provides these samples for
+each dataset, and how the paired structure of the posterior enables principled
+cross-dataset comparisons.
+
+### Per-dataset composition sampling
+
+For a given dataset $d$ with posterior samples of $(\mu_g^{(d)}, \phi^{(d)})$
+(or equivalently $(r_g^{(d)}, p^{(d)})$), compositions are sampled using the
+Gamma-based procedure from @sec-hier-gamma-sampling. At posterior sample index
+$s$:
+
+**When $p^{(d)}$ is scalar** (shared across genes within dataset $d$):
+
+Since all genes share $p^{(d,s)}$, the Dirichlet-Multinomial factorization
+holds within dataset $d$, and compositions are drawn directly as
+
+$$
+\underline{\rho}^{(d,s)} \sim
+\text{Dir}\!\left(\underline{r}^{(d,s)}\right),
+$${#eq-hdata-comp-dirichlet}
+
+where $r_g^{(d,s)} = \mu_g^{(d,s)} \cdot \phi^{(d,s)}$. The gene-specific
+$p_g$ does not enter because $p^{(d)}$ is shared and cancels in the
+normalization (as proved in @sec-hier-dirichlet-reduction).
+
+**When $p_g^{(d)}$ is gene-specific:**
+
+The Gamma-based procedure of @sec-hier-gamma-sampling applies. For each gene:
+
+$$
+\gamma_g^{(d,s)} \sim \text{Gamma}(r_g^{(d,s)}, 1), \qquad
+\tilde{\lambda}_g^{(d,s)} = \gamma_g^{(d,s)} \cdot
+\frac{1 - p_g^{(d,s)}}{p_g^{(d,s)}},
+$${#eq-hdata-comp-gamma}
+
+$$
+\rho_g^{(d,s)} = \frac{\tilde{\lambda}_g^{(d,s)}}{
+    \sum_{j=1}^G \tilde{\lambda}_j^{(d,s)}}.
+$${#eq-hdata-comp-normalize}
+
+### Paired posterior samples
+
+A crucial property of the joint multi-dataset model is that each posterior
+sample $s$ provides parameters for **all datasets simultaneously**. That is,
+from a single variational posterior (or MCMC chain), sample $s$ yields
+
+$$
+\left\{
+  \mu_g^{(1,s)}, \mu_g^{(2,s)}, \ldots, \mu_g^{(D,s)},\;
+  p^{(1,s)}, p^{(2,s)}, \ldots, p^{(D,s)},\;
+  \tau_\mu^{(s)}
+\right\},
+$${#eq-hdata-paired-samples}
+
+where all quantities at the same index $s$ are drawn from the **same posterior
+configuration**. The parameters for different datasets at the same $s$ are
+**correlated** through the shared population-level variables $\mu_g^{(s)}$ and
+$\tau_\mu^{(s)}$.
+
+This pairing is essential for differential expression: when comparing
+compositions between datasets $A$ and $B$, we use the **same** posterior index
+$s$ for both, ensuring that the comparison accounts for the posterior
+correlation introduced by the shared hierarchy. This corresponds to the
+`paired=True` setting in the empirical DE pipeline from
+@sec-diffexp-nonparametric.
+
+## Connection to differential expression {#sec-hdata-de}
+
+The multi-dataset hierarchical model has a natural and powerful connection to
+the differential expression framework of @sec-diffexp. We now make this
+connection explicit.
+
+### Cross-dataset DE via paired CLR differences
+
+Given the joint posterior from the multi-dataset model, the empirical DE
+pipeline from @sec-diffexp-nonparametric applies directly. For each posterior
+sample $s$, we:
+
+1. Draw compositions $\underline{\rho}^{(A,s)}$ and
+   $\underline{\rho}^{(B,s)}$ for the two datasets using the procedure from
+   @sec-hdata-composition.
+
+2. Apply the CLR transform:
+
+$$
+z_{g,\text{CLR}}^{(d,s)} = \log \rho_g^{(d,s)} -
+\frac{1}{G} \sum_{j=1}^G \log \rho_j^{(d,s)}.
+$${#eq-hdata-de-clr}
+
+3. Compute the paired difference:
+
+$$
+\Delta_g^{(s)} = z_{g,\text{CLR}}^{(A,s)} - z_{g,\text{CLR}}^{(B,s)}.
+$${#eq-hdata-de-delta}
+
+4. Compute all gene-level statistics (lfsr, tail probability, PEFP) from the
+   matrix $\{\Delta_g^{(s)}\}_{g,s}$ using the counting procedures of
+   @sec-diffexp-nonparametric.
+
+The pairing in step 3 is valid because samples $A$ and $B$ come from the same
+posterior (they are "within-model comparisons" in the language of
+@sec-diffexp-nonparametric), and their correlation is genuine---it reflects
+the shared information encoded by the hierarchical prior.
+
+### Model-level shrinkage and empirical Bayes
+
+The multi-dataset hierarchical model provides shrinkage at **two distinct
+levels**, which compose naturally:
+
+**Level 1: Model-level shrinkage.** The hierarchical prior on $\mu_g^{(d)}$
+(governed by $\tau_\mu$) shrinks dataset-specific means toward the population
+mean. This acts on the **generative parameters** before any composition
+sampling or CLR transformation. The effect is that genes with consistent
+expression across datasets have their posterior $\mu_g^{(d)}$ values tightly
+coupled, producing small CLR differences $\Delta_g^{(s)}$.
+
+**Level 2: Empirical Bayes shrinkage.** The post-hoc empirical Bayes layer from
+@sec-diffexp-eb operates on the CLR differences $\hat{\Delta}_g$ and their
+standard deviations $s_g$. It learns the population-level distribution of true
+effects across all genes, and shrinks noisy estimates toward zero. This acts on
+the **derived DE statistics**, further concentrating null genes at zero effect.
+
+These two layers are complementary:
+
+- Model-level shrinkage improves the **quality of the posterior** by encoding
+  the shared biology directly in the generative model. It reduces posterior
+  variance for genes that are consistent across datasets.
+
+- Empirical Bayes shrinkage improves the **calibration of the DE calls** by
+  leveraging the empirical distribution of effects across genes. It is
+  particularly effective at controlling false discoveries when the vast majority
+  of genes are null.
+
+The joint effect is more powerful than either layer alone: the hierarchical
+model produces a posterior that already reflects the shared biology, and the EB
+layer further sharpens the inference using genome-wide information.
+
+### Compatibility with the existing pipeline
+
+The multi-dataset DE procedure is fully backward compatible with the existing
+`compare()` function. When the joint model is fitted with `n_datasets > 1`, the
+posterior samples contain per-dataset parameters. The `compare_datasets()`
+helper extracts the relevant dataset slices and calls `compare()` with
+`paired=True`, producing a standard `ScribeDEResults` object that integrates
+seamlessly with all downstream analysis functions (gene-level statistics, PEFP
+error control, gene-set analysis, threshold finding).
+
+Furthermore, when `n_datasets = 1`, the multi-dataset model degenerates to the
+standard single-dataset model, and all existing analysis workflows remain
+unchanged.
+
+## Mathematical summary {#sec-hdata-summary}
+
+We collect the key mathematical results of this section for reference.
+
+**Generative model (multi-dataset hierarchical).** The hierarchical model with
+$D$ datasets and mean-odds parameterization is:
+
+$$
+\boxed{
+\begin{aligned}
+&\textbf{Population level:} \\
+&\quad \mu_g \sim \text{LogNormal}(\ell_\mu, s_\mu), \quad
+\tau_\mu \sim \text{Softplus}(\mathcal{N}(\mu_\tau, \sigma_\tau)), \\
+&\quad \mu_p \sim \mathcal{N}(0, 1), \quad
+\sigma_p \sim \text{Softplus}(\mathcal{N}(0, 0.5)), \\[4pt]
+&\textbf{Dataset level } (d = 1, \ldots, D): \\
+&\quad \log(\mu_g^{(d)}) \sim \mathcal{N}(\log(\mu_g), \tau_\mu), \\
+&\quad \text{logit}(p^{(d)}) \sim \mathcal{N}(\mu_p, \sigma_p), \\[4pt]
+&\textbf{Cell level } (c \in \mathcal{C}_d): \\
+&\quad \nu_c \sim \text{Beta}(a_\nu, b_\nu), \\
+&\quad u_{gc} \sim \text{NB}(r_g^{(d)}, \hat{p}_c^{(d)}).
+\end{aligned}
+}
+$${#eq-hdata-summary-generative}
+
+**Composition sampling.** For dataset $d$ with scalar $p^{(d)}$:
+
+$$
+\boxed{
+\underline{\rho}^{(d)} \sim
+\text{Dir}\!\left(\underline{r}^{(d)}\right), \qquad
+r_g^{(d)} = \mu_g^{(d)} \cdot \phi^{(d)}.
+}
+$${#eq-hdata-summary-composition-scalar}
+
+For dataset $d$ with gene-specific $p_g^{(d)}$:
+
+$$
+\boxed{
+\gamma_g \sim \text{Gamma}(r_g^{(d)}, 1), \qquad
+\rho_g^{(d)} = \frac{
+    \gamma_g \cdot (1 - p_g^{(d)}) / p_g^{(d)}
+}{
+    \sum_{j=1}^G \gamma_j \cdot (1 - p_j^{(d)}) / p_j^{(d)}
+}.
+}
+$${#eq-hdata-summary-composition-gene}
+
+**Shrinkage diagnostics:**
+
+$$
+\boxed{
+\begin{aligned}
+&\tau_\mu \approx 0 \implies \text{identical biology across datasets}, \\
+&\sigma_p \approx 0 \implies \text{identical technical characteristics}, \\
+&\tau_\mu \gg 0 \implies \text{genuine biological differences}.
+\end{aligned}
+}
+$${#eq-hdata-summary-diagnostics}
+
+**Paired DE.** CLR differences between datasets $A$ and $B$ use paired
+posterior samples:
+
+$$
+\boxed{
+\Delta_g^{(s)} = z_{g,\text{CLR}}^{(A,s)} - z_{g,\text{CLR}}^{(B,s)},
+}
+$${#eq-hdata-summary-de}
+
+with all gene-level statistics computed by direct Monte Carlo counting from
+$\{\Delta_g^{(s)}\}_{g,s}$.
