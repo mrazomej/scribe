@@ -285,6 +285,13 @@ class ModelConfig(BaseModel):
                 "hierarchical_dataset_p != 'none' requires "
                 "unconstrained=True."
             )
+        # Prevent conflicting gene-level and dataset-level p hierarchies
+        if self.hierarchical_p and self.hierarchical_dataset_p != "none":
+            raise ValueError(
+                "hierarchical_p=True and hierarchical_dataset_p != 'none' "
+                "cannot be set simultaneously. The dataset-level hierarchy "
+                "subsumes gene-level hierarchical p."
+            )
         return self
 
     # --------------------------------------------------------------------------
