@@ -30,6 +30,7 @@ class MCMCInferenceEngine:
         seed: int = 42,
         mcmc_kwargs: Optional[dict] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
         init_values: Optional[Dict[str, jnp.ndarray]] = None,
     ) -> Any:
         """Execute MCMC inference using NUTS.
@@ -111,6 +112,7 @@ class MCMCInferenceEngine:
             "counts": count_data,
             "model_config": model_config,
             "annotation_prior_logits": annotation_prior_logits,
+            "dataset_indices": dataset_indices,
         }
 
         # Run inference

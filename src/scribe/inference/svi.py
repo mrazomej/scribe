@@ -30,6 +30,7 @@ def _run_svi_inference(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Execute SVI inference with optional early stopping.
 
@@ -128,6 +129,7 @@ def _run_svi_inference(
         "log_progress_lines": log_progress_lines,
         "early_stopping": early_stopping,
         "annotation_prior_logits": annotation_prior_logits,
+        "dataset_indices": dataset_indices,
     }
 
     # Add optional optimizer and loss if provided
