@@ -265,6 +265,16 @@ gene_subset = results[:100]
 gene_component_subset = results[1:4, [1, 2]]
 ```
 
+**Multi-Dataset Support:**
+
+For hierarchical multi-dataset models, `DatasetMixin` (`_dataset.py`) provides
+`get_dataset(d)` to extract single-dataset views from multi-dataset MCMC
+results. Results support 3-axis indexing: `results[:, :, d]` for dataset
+selection (alongside `results[g]` for genes and `results[:, k]` for
+components). The `dataset_indices` parameter in
+`MCMCInferenceEngine.run_inference()` restricts inference to specified
+datasets.
+
 **MCMC Diagnostics:**
 ```python
 # Print summary with R-hat statistics (delegates to wrapped MCMC)
