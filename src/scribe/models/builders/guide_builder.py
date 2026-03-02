@@ -113,7 +113,10 @@ def setup_guide(
     The sampled value will satisfy spec.constraint (unit_interval).
     """
     params = spec.guide if spec.guide is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims, dims,
+        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+    )
 
     # Variational params for Beta must be positive
     alpha = numpyro.param(
@@ -169,7 +172,10 @@ def setup_guide(
         Sampled parameter value from variational distribution.
     """
     params = spec.guide if spec.guide is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims, dims,
+        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+    )
 
     # Variational params for BetaPrime must be positive
     alpha = numpyro.param(
@@ -232,7 +238,10 @@ def setup_guide(
     spec.constraint (positive).
     """
     params = spec.guide if spec.guide is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims, dims,
+        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+    )
 
     loc = numpyro.param(f"{spec.name}_loc", jnp.full(shape, params[0]))
     scale = numpyro.param(
@@ -285,7 +294,10 @@ def setup_guide(
         Sampled parameter value in constrained space.
     """
     params = spec.guide if spec.guide is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims, dims,
+        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+    )
 
     # Variational parameters for the base Normal
     loc = numpyro.param(
@@ -348,59 +360,41 @@ def setup_guide(
         Sampled parameter value from low-rank variational distribution.
     """
     resolved_shape = resolve_shape(
-        spec.shape_dims, dims, is_mixture=spec.is_mixture
+        spec.shape_dims, dims,
+        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
     )
     k = guide.rank
 
-    # For mixture models, resolved_shape is (n_components, n_genes)
-    # For non-mixture, resolved_shape is (n_genes,)
-    if spec.is_mixture:
-        # Mixture model: shape is (n_components, n_genes)
-        n_components = resolved_shape[0]
-        n_genes = resolved_shape[1] if len(resolved_shape) > 1 else 1
+    # LowRankMVN uses the last dimension (n_genes) as the event
+    # dimension. Any leading dimensions (components, datasets, or both)
+    # become batch dimensions of the MVN and are promoted to event dims
+    # via to_event() so the guide's event_dim matches the model's.
+    n_batch_dims = len(resolved_shape) - 1
+    G = resolved_shape[-1] if resolved_shape else 1
 
-        # Variational parameters with shape (n_components, n_genes)
-        loc = numpyro.param(
-            f"log_{spec.name}_loc", jnp.zeros((n_components, n_genes))
-        )
-        W = numpyro.param(
-            f"log_{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k))
-        )
-        raw_diag = numpyro.param(
-            f"log_{spec.name}_raw_diag",
-            -3.0 * jnp.ones((n_components, n_genes)),
-        )
+    loc = numpyro.param(
+        f"log_{spec.name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"log_{spec.name}_W",
+        0.01 * jnp.ones((*resolved_shape, k)) if resolved_shape
+        else 0.01 * jnp.ones((G, k)),
+    )
+    raw_diag = numpyro.param(
+        f"log_{spec.name}_raw_diag",
+        -3.0 * jnp.ones(resolved_shape) if resolved_shape
+        else -3.0 * jnp.ones(G),
+    )
 
-        # Ensure diagonal is positive
-        D = jax.nn.softplus(raw_diag) + 1e-4
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+    transformed_dist = dist.TransformedDistribution(
+        base, dist.transforms.ExpTransform()
+    )
 
-        # Create low-rank MVN:
-        # batch_shape=(n_components,), event_shape=(n_genes,)
-        base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-        # Use to_event(1) to convert batch dimension to event, resulting in
-        # event_shape=(n_components, n_genes) to match model's event_dims=2
-        transformed_dist = dist.TransformedDistribution(
-            base, dist.transforms.ExpTransform()
-        ).to_event(1)
-    else:
-        # Non-mixture: shape is (n_genes,)
-        G = resolved_shape[0] if resolved_shape else 1
-
-        # Low-rank MVN parameters in log-space
-        loc = numpyro.param(f"log_{spec.name}_loc", jnp.zeros(G))
-        W = numpyro.param(f"log_{spec.name}_W", 0.01 * jnp.ones((G, k)))
-        raw_diag = numpyro.param(
-            f"log_{spec.name}_raw_diag", -3.0 * jnp.ones(G)
-        )
-
-        # Ensure diagonal is positive
-        D = jax.nn.softplus(raw_diag) + 1e-4
-
-        # Create low-rank MVN and transform to positive via exp
-        base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-        transformed_dist = dist.TransformedDistribution(
-            base, dist.transforms.ExpTransform()
-        )
+    if n_batch_dims > 0:
+        transformed_dist = transformed_dist.to_event(n_batch_dims)
 
     return numpyro.sample(spec.name, transformed_dist)
 
@@ -460,64 +454,40 @@ def setup_guide(
         # Samples "r" from TransformedDistribution(LowRankMultivariateNormal, ExpTransform)
     """
     resolved_shape = resolve_shape(
-        spec.shape_dims, dims, is_mixture=spec.is_mixture
+        spec.shape_dims, dims,
+        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
     )
     k = guide.rank
 
-    # For mixture models, resolved_shape is (n_components, n_genes)
-    # For non-mixture, resolved_shape is (n_genes,)
-    if spec.is_mixture:
-        # Mixture model: shape is (n_components, n_genes)
-        n_components = resolved_shape[0]
-        n_genes = resolved_shape[1] if len(resolved_shape) > 1 else 1
+    # LowRankMVN uses the last dimension (n_genes) as the event
+    # dimension. Any leading dimensions (components, datasets, or both)
+    # become batch dimensions of the MVN and are promoted to event dims
+    # via to_event() so the guide's event_dim matches the model's.
+    n_batch_dims = len(resolved_shape) - 1
+    G = resolved_shape[-1] if resolved_shape else 1
 
-        # Variational parameters with shape (n_components, n_genes)
-        # Use base parameter name for variational parameters (matching
-        # mean-field pattern)
-        loc = numpyro.param(
-            f"{spec.name}_loc", jnp.zeros((n_components, n_genes))
-        )
-        W = numpyro.param(
-            f"{spec.name}_W", 0.01 * jnp.ones((n_components, n_genes, k))
-        )
-        raw_diag = numpyro.param(
-            f"{spec.name}_raw_diag", -3.0 * jnp.ones((n_components, n_genes))
-        )
+    loc = numpyro.param(
+        f"{spec.name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"{spec.name}_W",
+        0.01 * jnp.ones((*resolved_shape, k)) if resolved_shape
+        else 0.01 * jnp.ones((G, k)),
+    )
+    raw_diag = numpyro.param(
+        f"{spec.name}_raw_diag",
+        -3.0 * jnp.ones(resolved_shape) if resolved_shape
+        else -3.0 * jnp.ones(G),
+    )
 
-        # Ensure diagonal is positive
-        D = jax.nn.softplus(raw_diag) + 1e-4
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+    transformed_dist = dist.TransformedDistribution(base, spec.transform)
 
-        # Create low-rank MVN in unconstrained space
-        # batch_shape=(n_components,), event_shape=(n_genes,)
-        base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+    if n_batch_dims > 0:
+        transformed_dist = transformed_dist.to_event(n_batch_dims)
 
-        # Wrap with transform - handles Jacobian automatically
-        # Use to_event(1) to convert batch dimension to event, resulting in
-        # event_shape=(n_components, n_genes) to match model's event_dims=2
-        transformed_dist = dist.TransformedDistribution(
-            base, spec.transform
-        ).to_event(1)
-    else:
-        # Non-mixture: shape is (n_genes,)
-        G = resolved_shape[0] if resolved_shape else 1
-
-        # Low-rank MVN parameters in unconstrained space
-        # Use base parameter name for variational parameters (matching
-        # mean-field pattern)
-        loc = numpyro.param(f"{spec.name}_loc", jnp.zeros(G))
-        W = numpyro.param(f"{spec.name}_W", 0.01 * jnp.ones((G, k)))
-        raw_diag = numpyro.param(f"{spec.name}_raw_diag", -3.0 * jnp.ones(G))
-
-        # Ensure diagonal is positive
-        D = jax.nn.softplus(raw_diag) + 1e-4
-
-        # Create low-rank MVN in unconstrained space
-        base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
-
-        # Wrap with transform - handles Jacobian automatically
-        transformed_dist = dist.TransformedDistribution(base, spec.transform)
-
-    # Sample in constrained space (transform applied internally)
     return numpyro.sample(spec.constrained_name, transformed_dist)
 
 
