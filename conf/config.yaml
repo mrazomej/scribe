@@ -43,6 +43,16 @@ unconstrained: false
 hierarchical_p: false     # Gene-specific p/phi with hyperprior (requires unconstrained=true)
 hierarchical_gate: false  # Gene-specific gate with hyperprior (ZI models only, requires unconstrained=true)
 
+# --- Multi-Dataset Configuration ---
+# Joint modeling of multiple datasets with hierarchical priors across datasets.
+# Datasets are identified by a column in adata.obs (dataset_key). Assignments
+# are fixed/observed (not inferred like mixture components).
+n_datasets: null          # Number of datasets (null for single-dataset mode)
+dataset_key: null         # Column in adata.obs identifying dataset membership
+dataset_params: null      # Which params are per-dataset (null = default based on hierarchy flags)
+hierarchical_dataset_mu: false  # Hierarchical mu/r across datasets with learned tau
+hierarchical_dataset_p: "none"  # none | scalar | gene_specific | two_level
+
 # Mixture model configuration
 # Set to integer >= 2 for mixture models, null for single component.
 # When annotation_key is provided and n_components is null, the number
