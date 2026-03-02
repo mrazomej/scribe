@@ -966,6 +966,7 @@ class GuideBuilder:
             counts: Optional[jnp.ndarray] = None,
             batch_size: Optional[int] = None,
             annotation_prior_logits: Optional[jnp.ndarray] = None,
+            dataset_indices: Optional[jnp.ndarray] = None,
         ):
             """NumPyro guide function.
 
