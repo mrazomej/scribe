@@ -49,6 +49,7 @@ from viz_utils import (
     plot_mixture_composition,
     plot_annotation_ppc,
 )
+from viz_utils.memory import cleanup_plot_memory
 
 console = Console()
 
@@ -674,6 +675,11 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     # Generate Plots
     # ======================================================================
     fmt = viz_cfg.format
+
+    # Ensure we release plot-related host/GPU memory between heavy stages.
+    def _cleanup_after_plot():
+        cleanup_plot_memory(results=results, reset_result_caches=True)
+
     plots_generated = []
     plots_skipped = []
 
@@ -697,6 +703,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 console.print(
                     f"[red]  Failed to generate loss plot: {e}[/red]"
                 )
+            finally:
+                _cleanup_after_plot()
 
     if viz_cfg.ecdf:
         if not overwrite and _plot_exists(figs_dir, "_ecdf", fmt):
@@ -714,6 +722,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 console.print(
                     f"[red]  Failed to generate ECDF plot: {e}[/red]"
                 )
+            finally:
+                _cleanup_after_plot()
 
     if viz_cfg.ppc:
         # "steps_ppc" matches the regular PPC file (e.g.
@@ -737,6 +747,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 console.print(
                     f"[red]  Failed to generate PPC plots: {e}[/red]"
                 )
+            finally:
+                _cleanup_after_plot()
 
     if viz_cfg.bio_ppc:
         if not overwrite and _plot_exists(figs_dir, "_bio_ppc", fmt):
@@ -757,6 +769,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 console.print(
                     f"[red]  Failed to generate bio-PPC plots: {e}[/red]"
                 )
+            finally:
+                _cleanup_after_plot()
 
     if viz_cfg.umap:
         if not overwrite and _plot_exists(figs_dir, "_umap", fmt):
@@ -783,6 +797,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 console.print(
                     f"[red]  Failed to generate UMAP plot: {e}[/red]"
                 )
+            finally:
+                _cleanup_after_plot()
 
     if viz_cfg.heatmap:
         # Match both single heatmap files
@@ -809,6 +825,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 console.print(
                     f"[red]  Failed to generate heatmap: {e}[/red]"
                 )
+            finally:
+                _cleanup_after_plot()
 
     # Check for mixture model before generating mixture PPC.
     # Prefer results.n_components (handles auto-inferred from annotations)
@@ -844,6 +862,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                         f"[red]  Failed to generate mixture "
                         f"PPC: {e}[/red]"
                     )
+                finally:
+                    _cleanup_after_plot()
         else:
             console.print(
                 "[yellow]  Skipping mixture PPC "
@@ -882,6 +902,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                         f"[red]  Failed to generate mixture "
                         f"composition: {e}[/red]"
                     )
+                finally:
+                    _cleanup_after_plot()
         else:
             console.print(
                 "[yellow]  Skipping mixture composition "
@@ -920,6 +942,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                         f"[red]  Failed to generate annotation "
                         f"PPC: {e}[/red]"
                     )
+                finally:
+                    _cleanup_after_plot()
         elif not is_mixture:
             console.print(
                 "[yellow]  Skipping annotation PPC "

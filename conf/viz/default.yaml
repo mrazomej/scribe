@@ -25,6 +25,10 @@ viz:
     n_rows: 5  # Number of expression bins (logarithmically spaced)
     n_cols: 5  # Number of genes per bin
     n_samples: 1024
+
+  # Biological PPC options
+  bio_ppc_opts:
+    denoise_cell_batch_size: 256  # Cell batching for denoising to reduce GPU memory peaks
   
   # UMAP plot options
   umap_opts:
