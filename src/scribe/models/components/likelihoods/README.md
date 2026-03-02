@@ -95,6 +95,18 @@ the shape against `r` and reshaping accordingly:
 All four likelihood classes use this helper for correct broadcasting when
 building mixture distributions.
 
+## Per-Dataset Parameter Indexing
+
+For multi-dataset models, per-dataset parameters (e.g. `r`, `p` with shape
+`(n_datasets, ...)`) must be indexed to per-cell values. The helper
+`index_dataset_params()` in `base.py` maps these parameters using
+`dataset_indices` (shape `(batch,)`), mapping each cell to its dataset.
+
+All likelihood `sample()` methods now accept an optional `dataset_indices`
+parameter. When provided, per-dataset parameters are automatically indexed
+to per-cell values inside the NumPyro plate context before building the
+observation distribution.
+
 ## VCP Likelihoods
 
 The Variable Capture Probability (VCP) likelihoods model cell-specific technical

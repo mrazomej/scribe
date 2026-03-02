@@ -21,6 +21,7 @@ from .base import (
     Likelihood,
     broadcast_p_for_mixture,
     compute_cell_specific_mixing,
+    index_dataset_params,
     _sample_phi_capture_constrained,
     _sample_phi_capture_unconstrained,
     _sample_p_capture_constrained,
@@ -150,6 +151,7 @@ class NBWithVCPLikelihood(Likelihood):
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
     ) -> None:
         """Sample from NB likelihood with variable capture probability.
 
@@ -157,6 +159,13 @@ class NBWithVCPLikelihood(Likelihood):
         model, per-cell mixing weights are computed inside the cell plate.
         """
         n_cells = dims["n_cells"]
+
+        # Multi-dataset: determine n_datasets for indexing
+        n_datasets = getattr(model_config, "n_datasets", None)
+        use_dataset_indexing = (
+            n_datasets is not None and dataset_indices is not None
+        )
+
         # When vae_cell_fn is set, r (and possibly p) come from the decoder
         # inside the plate; do not read them here.
         if vae_cell_fn is None:
@@ -214,6 +223,18 @@ class NBWithVCPLikelihood(Likelihood):
                 p = param_values["p"]
                 r = param_values["r"]
                 is_mixture = "mixing_weights" in param_values
+
+            # Multi-dataset: index per-dataset parameters to per-cell
+            if use_dataset_indexing:
+                ds_idx = (
+                    dataset_indices[idx] if idx is not None
+                    else dataset_indices
+                )
+                param_values = index_dataset_params(
+                    param_values, ds_idx, n_datasets
+                )
+                p = param_values["p"]
+                r = param_values["r"]
 
             # Check if capture parameter is already in param_values (from
             # posterior_samples)
@@ -429,6 +450,7 @@ class ZINBWithVCPLikelihood(Likelihood):
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
     ) -> None:
         """Sample from ZINB likelihood with variable capture probability.
 
@@ -436,6 +458,13 @@ class ZINBWithVCPLikelihood(Likelihood):
         model, per-cell mixing weights are computed inside the cell plate.
         """
         n_cells = dims["n_cells"]
+
+        # Multi-dataset: determine n_datasets for indexing
+        n_datasets = getattr(model_config, "n_datasets", None)
+        use_dataset_indexing = (
+            n_datasets is not None and dataset_indices is not None
+        )
+
         # When vae_cell_fn is set, r/gate (and possibly p) come from the decoder
         # inside the plate; do not read them here.
         if vae_cell_fn is None:
@@ -496,6 +525,19 @@ class ZINBWithVCPLikelihood(Likelihood):
                 r = param_values["r"]
                 gate = param_values["gate"]
                 is_mixture = "mixing_weights" in param_values
+
+            # Multi-dataset: index per-dataset parameters to per-cell
+            if use_dataset_indexing:
+                ds_idx = (
+                    dataset_indices[idx] if idx is not None
+                    else dataset_indices
+                )
+                param_values = index_dataset_params(
+                    param_values, ds_idx, n_datasets
+                )
+                p = param_values["p"]
+                r = param_values["r"]
+                gate = param_values["gate"]
 
             # Check if capture parameter is already in param_values (from posterior_samples)
             # This happens when generating PPC samples with Predictive

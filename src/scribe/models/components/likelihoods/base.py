@@ -171,6 +171,46 @@ def compute_cell_specific_mixing(
     return jax.nn.softmax(cell_logits, axis=-1)  # (batch, K)
 
 
+# ==============================================================================
+# Helper: index per-dataset parameters by cell dataset assignment
+# ==============================================================================
+
+
+def index_dataset_params(
+    param_values: Dict[str, jnp.ndarray],
+    dataset_indices: jnp.ndarray,
+    n_datasets: int,
+) -> Dict[str, jnp.ndarray]:
+    """Index per-dataset parameters using per-cell dataset assignments.
+
+    For each parameter whose leading dimension equals ``n_datasets``,
+    index into it with ``dataset_indices`` to produce a per-cell value.
+    Non-dataset parameters are passed through unchanged.
+
+    Parameters
+    ----------
+    param_values : Dict[str, jnp.ndarray]
+        All sampled parameter values.
+    dataset_indices : jnp.ndarray, shape ``(batch,)``
+        Integer array mapping each cell in the current batch to a
+        dataset index in ``{0, ..., n_datasets - 1}``.
+    n_datasets : int
+        Number of datasets.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Copy with per-dataset arrays replaced by per-cell arrays.
+    """
+    indexed = {}
+    for name, val in param_values.items():
+        if val.ndim >= 1 and val.shape[0] == n_datasets:
+            indexed[name] = val[dataset_indices]
+        else:
+            indexed[name] = val
+    return indexed
+
+
 # ------------------------------------------------------------------------------
 # Likelihood Base Class
 # ------------------------------------------------------------------------------
@@ -214,6 +254,7 @@ class Likelihood(ABC):
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
     ) -> None:
         """
         Sample observations given parameters.
