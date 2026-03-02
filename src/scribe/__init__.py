@@ -107,7 +107,7 @@ from .api import fit
 from .mcmc import ScribeMCMCResults
 from .svi import ScribeSVIResults
 from .vae import ScribeVAEResults
-from .de import ScribeDEResults, compare
+from .de import ScribeDEResults, compare, compare_datasets
 from .mc import ScribeModelComparisonResults, compare_models
 from . import mc
 
