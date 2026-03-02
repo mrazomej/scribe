@@ -12,7 +12,12 @@ In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model for
 single-cell RNA-seq data, showing that the joint distribution of UMI counts can
 be expressed as the product of a negative binomial distribution for the total
 counts and a Dirichlet-Multinomial distribution for the normalized expression
-proportions. A key result from that derivation is that normalized expression
+proportions. The factorization is at the mRNA level (shared $p$, $\theta =
+p/(1-p)$); we learn $\underline{r}$, $p$, and $\nu$, and $\hat{p}$ is derived. The
+normalization (composition) is justified at the mRNA level and depends only on
+$\underline{r}$; the same structure applies to UMI counts (total
+$\text{NB}(r_T, \hat{p})$, composition DM($\underline{r}$)). A key result from
+that derivation is that normalized expression
 proportions $\underline{\rho} = (\rho_1, \rho_2, \ldots, \rho_G)$ follow a
 Dirichlet distribution conditioned on the dispersion parameters $\underline{r}$,
 
@@ -22,7 +27,8 @@ $${#eq-norm-dirichlet-conditional}
 
 When performing Bayesian inference on this model, we obtain a posterior
 distribution over the parameters $\pi(\underline{r}, \hat{p} \mid
-\underline{\underline{U}})$, where $\underline{\underline{U}}$ represents the
+\underline{\underline{U}})$ (we learn $\underline{r}$, $p$, and $\nu$; $\hat{p}$
+is derived and used to deconvolve capture from biology), where $\underline{\underline{U}}$ represents the
 observed UMI count matrix. In this section, we address a fundamental question:
 how do we characterize the distribution of normalized expression proportions
 $\underline{\rho}$ when accounting for posterior uncertainty in $\underline{r}$?

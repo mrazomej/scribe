@@ -8,11 +8,13 @@ csl: ieee.csl
 # Bayesian denoising of single-cell transcriptional profiles {#sec-denoising}
 
 In @sec-dirichlet-multinomial, we derived the generative model for single-cell
-RNA-seq UMI counts. A key step in that derivation was showing that the
-composition of a negative binomial distribution (representing true transcript
-counts) with a binomial distribution (representing the stochastic capture
-process) yields another negative binomial distribution with an effective
-parameter $\hat{p}$. The variable capture probability (VCP) model further allows
+RNA-seq UMI counts. The shared $p$ (mRNA-level) assumption underlies that
+derivation; $\hat{p}$ is the effective parameter after capture, used to
+deconvolve experimental noise from biology. A key step in that derivation was
+showing that the composition of a negative binomial distribution (representing
+true transcript counts) with a binomial distribution (representing the
+stochastic capture process) yields another negative binomial distribution with
+an effective parameter $\hat{p}$. The variable capture probability (VCP) model further allows
 the capture probability $\nu$ to vary across cells, and the zero-inflated
 variants add a technical dropout gate $g$ that produces spurious zeros.
 
@@ -34,7 +36,7 @@ m_g \sim \text{NB}(r_g, p),
 $${#eq-denoising-true-dist}
 
 where $r_g > 0$ is the gene-specific dispersion parameter and $p \in (0, 1)$ is
-the shared success probability. Recall from @sec-dirichlet-multinomial that the
+the shared success probability (at the mRNA level). Recall from @sec-dirichlet-multinomial that the
 negative binomial PMF is
 
 $$
@@ -362,7 +364,8 @@ $$
 \hat{p} = \frac{p}{\nu_c + p(1-\nu_c)} = \frac{p}{p'}.
 $${#eq-denoising-phat-connection}
 
-This is not a coincidence---the same algebraic structure that relates the
+Inferring $p$ and $\nu$ (hence $\hat{p}$) separates experimental noise from
+underlying biology. This is not a coincidence---the same algebraic structure that relates the
 biological and observed NB parameters also governs the posterior distribution of
 uncaptured transcripts.
 

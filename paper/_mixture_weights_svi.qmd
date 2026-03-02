@@ -9,8 +9,9 @@ csl: ieee.csl
 
 In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model for
 single-cell RNA-seq data, showing that the transcriptional profile of a cell can
-be modeled as a product of independent negative binomial distributions sharing a
-common probability parameter $\hat{p}$. When dealing with heterogeneous cell
+be modeled as a product of independent negative binomial distributions sharing
+the same underlying $p$ (giving a common effective $\hat{p}$ per cell); see
+@sec-dirichlet-multinomial. When dealing with heterogeneous cell
 populations, a natural extension is to define a *finite mixture model* in which
 each cell belongs to one of $K$ components, each with its own set of parameters.
 This section addresses a subtle but important issue that arises when performing

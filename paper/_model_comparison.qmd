@@ -361,7 +361,8 @@ classes developed in this work.
 
 ### Pointwise log-likelihood {#sec-mc-nbdm-lik}
 
-For the standard NBDM model with shared success probability $\hat{p}$ (see
+For the standard NBDM model with effective success probability $\hat{p}$ (shared
+across genes within a cell under the shared-$p$ assumption; see
 @sec-dirichlet-multinomial), the per-cell log-likelihood under sample
 $\theta^{(s)} = (\underline{r}^{(s)}, \hat{p}^{(s)})$ is
 

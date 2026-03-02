@@ -20,7 +20,9 @@ $${#eq-singer_svi_nbdm_theta}
 
 where $p$ is the success probability and $\underline{r}$ is the vector of
 gene-specific parameters. Both parameters are the input of the negative binomial
-distribution, where we assume all genes share the same success probability $p$.
+distribution, where we assume all genes share the same success probability $p$
+(the biophysical parameter at the mRNA level; the observed model uses effective
+$\hat{p} = p/(\nu+p(1-\nu))$).
 
 One very reasonable choice for the variational distribution is to assume the
 same functional form as the prior distribution. We say "reasonable," because for

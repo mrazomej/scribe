@@ -1,7 +1,7 @@
 ---
 editor:
     render-on-save: true
-bibliography: references.bib
+# bibliography: references.bib
 csl: ieee.csl
 ---
 
@@ -49,11 +49,13 @@ indicate that $m_g$ is a random variable that follows the distribution defined
 on the right-hand side. The main assumption we make is that **all genes share
 the same $p_g$ parameter**, i.e., $p_g = p$ for all $g$. As we will show, this
 simplifying assumption allows us to derive a normalization scheme for the entire
-transcriptional profile of a cell. Moreover, this assumption is not as strong as
-it may seem, since the negative binomial distribution is degenerate on its
-parameters. In other words, different combinations of $r_g$ and $p_g$ can lead
-to distributions of very similar shape, making the choice of a single $p_g$ not
-as critical as it may seem.
+transcriptional profile of a cell. This normalization is defined at the mRNA
+level (the composition of the transcriptome); the derivation in UMI space
+follows from this assumption plus the mRNA-level capture process. Moreover, this
+assumption is not as strong as it may seem, since the negative binomial
+distribution is degenerate on its parameters. In other words, different
+combinations of $r_g$ and $p_g$ can lead to distributions of very similar shape,
+making the choice of a single $p_g$ not as critical as it may seem.
 
 Let us now consider the case where we have a cell with $m_g$ transcripts for
 gene $g$. If we assume that each transcript is equally likely to be captured and
@@ -132,7 +134,10 @@ $${#eq-umivector-joint}
 
 where $\underline{r} = \left(r_1, r_2, \ldots, r_G\right)$ is the vector of
 parameters of the negative binomial distribution for each gene---recall that we
-assumed that all genes share the same parameter $p$, now $\hat{p}$.
+assumed that all genes share the same parameter $p$ at the mRNA level. After
+capture, the effective parameter in the UMI model is $\hat{p} = p/(\nu+p(1-\nu))$;
+$\hat{p}$ is shared across genes within a cell and may be cell-specific if $\nu$
+varies by cell.
 
 Again, as we will show in our final result for this section, it is possible to
 rewrite the joint distribution of independent negative binomial random variables
@@ -244,8 +249,10 @@ To justify this functional form, there are two main steps we need to prove:
 - The composition of a negative binomial distribution with a binomial
 distribution results in a negative binomial distribution.
 - The joint distribution of independent negative binomials sharing the same
-parameter $p$ can be expressed as the product of a negative binomial distribution
-and a Dirichlet-Multinomial distribution.
+parameter $p$ (at the mRNA level; the factorization is done at the mRNA level
+with $\theta = p/(1-p)$. We learn $r$, $p$, and $\nu$; $\hat{p}$ is derived.
+Only then is the factorization possible.) can be expressed as the product of a
+negative binomial distribution and a Dirichlet-Multinomial distribution.
     - A negative binomial can be expressed as a composition of a Poisson and a
     Gamma distribution.
     - The joint distribution of independent Poisson random variables can be
@@ -698,9 +705,13 @@ model later on.
 ## Joint distribution of negative binomial random variables
 
 We have shown that the distribution of $u$ is negative binomial with parameters
-$r$ and $\hat{p}$. Recall that we assumed that each gene $g$ has a unique $r_g$
-parameter, but share the $p$ parameter---now $\hat{p}$ since we assume the
-capture probability for all transcripts is the same. Earlier in
+$r$ and $\hat{p}$. We assume that $p$ is shared at the mRNA level. The
+factorization (total NB $\times$ DM) is done at the mRNA level; we learn $r$, $p$,
+and $\nu$, and $\hat{p} = p/(\nu+p(1-\nu))$ is derived. In the UMI model the joint
+has shared $\hat{p}$ (and the same compositional DM($\underline{r}$)); the common
+Gamma rate $\theta$ in the derivation comes from shared $p$ ($\theta = p/(1-p)$
+at the mRNA level). (If $\nu$ is cell-specific, $\hat{p}$ is cell-specific.)
+Earlier in
 @eq-umivector-joint-nb we claimed that this joint distribution of negative
 binomials with shared $\hat{p}$ parameter could be described as the product of a
 negative binomial and a dirichlet-multinomial distribution. Let's show that this
@@ -710,6 +721,15 @@ The first step consists of showing that a single negative binomial can be
 expressed as a compound distribution of a Poisson and a gamma distribution.
 
 ### Negative binomial as a Poisson-Gamma compound distribution
+
+The factorization (product of Gammas $\to$ Gamma($\Lambda$) $\times$ Dirichlet($\underline{\rho}$))
+is done at the mRNA level. At the mRNA level, the success probability $p$ is
+shared across genes, so the Gamma rate $\theta = p/(1-p)$ is common. We learn the
+parameters $r$, $p$, and $\nu$; the effective UMI parameter is
+$\hat{p} = p/(\nu+p(1-\nu))$. Only then is the factorization possible. Below we
+give the compound representation; in the UMI space the marginal is
+$\text{NB}(r, \hat{p})$ and the same compositional structure (DM($\underline{r}$))
+holds.
 
 The negative binomial distribution can be expressed as a Poisson-Gamma
 compound distribution. In other words, we can write
@@ -742,8 +762,11 @@ $$
 $${#eq-gamma-dist}
 
 where $\Gamma(\cdot)$ is the gamma function, and $\theta$ is the rate parameter
-of the gamma distribution. This parameter relates to the original $\hat{p}$
-parameter of the negative binomial distribution via
+of the gamma distribution. This parameter relates to the (mRNA-level) success
+probability $p$ by $\theta = p/(1-p)$; the Gammas share $\theta$ because $p$ is
+shared at the mRNA level. (In the UMI space the compound representation uses the
+effective parameter $\hat{p} = p/(\nu+p(1-\nu))$; the rate is
+$\theta = \hat{p}/(1-\hat{p})$ and the marginal is $\text{NB}(r, \hat{p})$.)
 
 $$
 \theta = \frac{\hat{p}}{1-\hat{p}}.
@@ -1218,7 +1241,8 @@ $${#eq-rho-dist}
 
 In other words, regardless of the value of $\theta$, the joint distribution of
 the $\underline{\rho}$ parameters is a Dirichlet distribution with parameters
-$\underline{r}$. To show show this, we transform the distribution of all
+$\underline{r}$. Thus the compositional (normalization) distribution does not
+depend on $p$ or $\hat{p}$---only on $\underline{r}$. To show this, we transform the distribution of all
 $\underline{\lambda}$ to the joint distribution over $\Lambda, \rho_1, \rho_2,
 \ldots, \rho_{G-1}$. Note that $\rho_G = 1-\rho_1-\rho_2-\cdots-\rho_{G-1}$
 since the $\rho_g$ parameters must sum to 1. For this, we express the
@@ -1562,10 +1586,14 @@ $$
 $${#eq-dirichlet-multinomial-model}
 
 The final step in our proof is to show that the joint distribution of
-independent negative binomials with shared $p$ parameter is equivalent to the
-product of a negative binomial distribution and a dirichlet-multinomial
-distribution (not to be confused with the product of a Dirichlet distribution
-and a multinomial distribution).
+independent negative binomials with shared $p$ parameter (at the mRNA level) is
+equivalent to the product of a negative binomial distribution and a
+dirichlet-multinomial distribution (not to be confused with the product of a
+Dirichlet distribution and a multinomial distribution). The factorization is at
+the mRNA level (shared $p$ $\to$ common $\theta = p/(1-p)$). We learn $r$, $p$,
+and $\nu$; $\hat{p}$ is derived. The UMI likelihood has the same structure (total
+$\text{NB}(r_T, \hat{p})$, composition DM($\underline{r}$)); the compositional
+part depends only on $\underline{r}$.
 
 ### Joint distribution of negative binomials as product of negative binomial and dirichlet-multinomial
 
@@ -1870,9 +1898,16 @@ which is our final result.
 
 ## What does this mean?
 
-As we just showed, The joint distribution of independent negative binomials with
-shared $\hat{p}$ parameter is equivalent to the product of a negative binomial
-distribution and a Dirichlet-Multinomial distribution. This has two important
+The factorization happens at the mRNA level under shared $p$ ($\theta = p/(1-p)$).
+We learn $r$, $p$, and $\nu$; $\hat{p} = p/(\nu+p(1-\nu))$ is derived and used for
+the UMI total. Only then is the factorization possible. Inferring $p$ and $\nu$
+(hence $\hat{p}$) lets us deconvolve experimental noise from biology. The
+compositional part depends only on $\underline{r}$.
+
+As we just showed, the joint distribution of independent negative binomials with
+shared $\hat{p}$ parameter (which follows from shared $p$ and $\nu$) is
+equivalent to the product of a negative binomial distribution and a
+Dirichlet-Multinomial distribution. This has two important
 consequences for our model for single-cell RNA-seq data:
 
 First, the negative binomial is a common distribution in single-cell RNA-seq
@@ -1881,15 +1916,16 @@ furthermore justified from biophysical principles, making it a natural choice
 for a parametric model of the counts. Moreover, the functional form we derived
 already accounts for the conversion from mRNA molecules to our observed UMI
 counts via the composition of a negative binomial and a binomial distribution.
-Our derivation shows that with the relatively benign assumption that the
-$\hat{p}$ parameter is shared across all genes, the resulting joint distribution
-has a much simpler functional form---the product of two distributions rather
-than the product of $G$ distributions.
+The shared-$p$ assumption at the mRNA level yields the factorization above;
+the resulting joint distribution has a much simpler functional form---the product
+of two distributions rather than the product of $G$ distributions.
 
 Second, in the construction of the negative binomial/Dirichlet multinomial
 model, we summoned the use of $\underline{\rho}$ parameters that lie on the unit
 simplex. These parameters can be thought of as the fraction of the transcriptome
-occupied by each of the $G$ genes. Commonly, when we want to "normalize" a
+occupied by each of the $G$ genes. The target of normalization is the underlying
+(mRNA) transcriptome composition; the Dirichlet over $\underline{\rho}$ is
+justified by the shared-$p$ assumption. Commonly, when we want to "normalize" a
 dataset, what we seek is the equivalent of estimating these parameters that
 transform counts into a number between 0 and 1. For example, in the excellent
 work by @breda2021, the authors used the result we derived earlier that the
@@ -1908,7 +1944,7 @@ parameters---the Dirichlet distribution---to then marginalize over them to find
 the joint distribution. The implication of this is that in the math leading up
 to our result, we learn that rather than reporting a single "fraction of the
 transcriptiome per gene" parameter, we should report a distribution over these
-parameters. If desired, we can still report the mean of this distribution to
+parameters (not a single point estimate) to account for overdispersion. If desired, we can still report the mean of this distribution to
 recover a point estimate of this fraction. However, in our view, we would be
 ignoring the important property of accounting for the overdispersion of gene
 expression profiles, which is arguably the main reason to perform single-cell

@@ -12,10 +12,14 @@ format:
 
 In @sec-dirichlet-multinomial, we derived the Dirichlet-Multinomial model under
 the assumption that all genes share a single success probability parameter
-$p_g = p$. This assumption was central to the beautiful factorization of the
-joint distribution of independent negative binomial random variables into the
-product of a negative binomial (governing total counts) and a
-Dirichlet-Multinomial (governing compositions):
+$p_g = p$ at the mRNA level. This assumption was central to the beautiful
+factorization of the joint distribution of independent negative binomial random
+variables into the product of a negative binomial (governing total counts) and a
+Dirichlet-Multinomial (governing compositions). The factorization is done at the
+mRNA level (shared $p$ $\to$ common $\theta = p/(1-p)$). We learn $\underline{r}$,
+$p$, and $\nu$; $\hat{p}$ is derived. The compositional term depends only on
+$\underline{r}$---not on $p$ or $\hat{p}$---so normalization is justified at the
+mRNA level.
 
 $$
 \pi(\underline{u} \mid \underline{r}, \hat{p}) =
@@ -30,11 +34,10 @@ $${#eq-hier-factorization-recap}
 
 A crucial consequence of this factorization is that the compositional term
 $\pi(\underline{u} \mid u_T, \underline{r})$ depends only on the concentration
-parameters $\underline{r}$ and not on $\hat{p}$. This is what allows the entire
+parameters $\underline{r}$ and not on $p$ or $\hat{p}$. This is what allows the entire
 differential expression framework developed in @sec-diffexp to operate solely on
 the $\underline{r}$ parameters: compositions are drawn from
-$\text{Dirichlet}(\underline{r})$, and the shared $\hat{p}$ is irrelevant for
-compositional inference.
+$\text{Dirichlet}(\underline{r})$.
 
 In this section, we ask: **what happens if we relax this assumption?** That is,
 what if each gene has its own success probability $p_g$, so that the true
@@ -65,15 +68,19 @@ model.
 To understand precisely what goes wrong, let us revisit the key step in the
 proof of @eq-hier-factorization-recap. The factorization relied on the
 Poisson-Gamma representation of the negative binomial: for each gene $g$,
+$\theta$ comes from shared $p$ at the mRNA level: $\theta = p/(1-p)$. The
+Gammas share $\theta$ because $p$ is shared, not because of $\hat{p}$. (In the
+UMI space the effective parameter is $\hat{p} = p/(\nu+p(1-\nu))$, used for the
+total count; the composition (Dirichlet) depends only on $\underline{r}$.) For
+each gene $g$,
 
 $$
 \lambda_g \sim \text{Gamma}(r_g, \theta), \qquad
 u_g \mid \lambda_g \sim \text{Poisson}(\lambda_g),
 $${#eq-hier-poisson-gamma-shared}
 
-where the rate parameter $\theta$ is the same for all genes and is related to
-$\hat{p}$ by $\theta = \hat{p} / (1 - \hat{p})$ (see @eq-theta-hatp). The
-crucial property was that when all Gamma random variables share the same rate
+where the rate parameter $\theta = p/(1-p)$ is the same for all genes (see
+@sec-dirichlet-multinomial). The crucial property was that when all Gamma random variables share the same rate
 parameter $\theta$, the product of Gamma densities can be factored into a Gamma
 distribution over the total $\Lambda = \sum_g \lambda_g$ and a Dirichlet
 distribution over the proportions $\rho_g = \lambda_g / \Lambda$:
@@ -84,9 +91,10 @@ $$
 \text{Dirichlet}(\underline{\rho} \mid \underline{r}).
 $${#eq-hier-gamma-dirichlet-factorization}
 
-This factorization of the product of Gammas is what ultimately allowed $\hat{p}$
-(and hence $\theta$) to separate from the compositional distribution. But when
-each gene has its own $p_g$, the Poisson-Gamma representation becomes
+The compositional distribution does not use $p$ or $\theta$---it depends only on
+$\underline{r}$. The factorization is possible because $\theta = p/(1-p)$ is
+common (shared $p$ at the mRNA level); $\hat{p}$ does not drive the
+factorization. But when each gene has its own $p_g$, the Poisson-Gamma representation becomes
 
 $$
 \lambda_g \sim \text{Gamma}(r_g, \theta_g), \qquad
@@ -142,8 +150,8 @@ $${#eq-hier-no-factorization}
 for any functions $f$ and $g$ when the $\theta_g$ are not all equal. The
 distribution of the proportions $\underline{\rho}$ depends on the total
 $\Lambda$, and vice versa. As a consequence, the compositional distribution is
-no longer a Dirichlet, and the parameter $\hat{p}$ can no longer be separated
-from the compositional term.
+no longer a Dirichlet, and the underlying $p$ (or the effective $\hat{p}$) can
+no longer be separated from the compositional term.
 
 This means that if we wish to perform compositional differential expression with
 gene-specific $p_g$, we cannot simply draw

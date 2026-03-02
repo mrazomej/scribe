@@ -125,7 +125,7 @@ posterior is able to capture the expected negative correlation.
 Moreover, all of the $\underline{r}$ parameters exhibit a high degree of
 positive correlation between each other. This is an artifact of the definition
 of $r$ in @eq-singer_svi_nbdm_linked_r, where they all share the same $p$
-parameter, which is why we see a high degree of positive correlation.
+(mRNA-level) parameter, which is why we see a high degree of positive correlation.
 
 ![**Corner plot for the parameters of the model.** This plot shows the joint
 posterior distribution for all pairs of
