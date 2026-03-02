@@ -231,7 +231,8 @@ class NBWithVCPLikelihood(Likelihood):
                     else dataset_indices
                 )
                 param_values = index_dataset_params(
-                    param_values, ds_idx, n_datasets
+                    param_values, ds_idx, n_datasets,
+                    param_specs=model_config.param_specs,
                 )
                 p = param_values["p"]
                 r = param_values["r"]
@@ -533,7 +534,8 @@ class ZINBWithVCPLikelihood(Likelihood):
                     else dataset_indices
                 )
                 param_values = index_dataset_params(
-                    param_values, ds_idx, n_datasets
+                    param_values, ds_idx, n_datasets,
+                    param_specs=model_config.param_specs,
                 )
                 p = param_values["p"]
                 r = param_values["r"]

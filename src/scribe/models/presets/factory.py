@@ -888,21 +888,24 @@ def _datasetify_mu(
         shape_dims=(),
         default_params=(-2.0, 0.5),
     )
-    # Dataset-level hierarchical spec
-    hier_spec = DatasetHierarchicalExpNormalSpec(
-        name=target_name,
-        shape_dims=("n_genes",),
-        default_params=(0.0, 1.0),
-        hyper_loc_name=hyper_loc_name,
-        hyper_scale_name=hyper_scale_name,
-        is_gene_specific=True,
-        is_dataset=True,
-        guide_family=target_family,
-    )
 
     new_specs = []
     for spec in param_specs:
         if spec.name == target_name:
+            # Preserve is_mixture from the original spec so the dataset-
+            # hierarchical parameter keeps its component dimension.
+            orig_is_mixture = getattr(spec, "is_mixture", False)
+            hier_spec = DatasetHierarchicalExpNormalSpec(
+                name=target_name,
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name=hyper_loc_name,
+                hyper_scale_name=hyper_scale_name,
+                is_gene_specific=True,
+                is_dataset=True,
+                is_mixture=orig_is_mixture,
+                guide_family=target_family,
+            )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
             new_specs.append(spec)
@@ -970,34 +973,36 @@ def _datasetify_p(
         default_params=(0.0, 0.5),
     )
 
-    if mode == "scalar":
-        # One p per dataset, shared across genes
-        hier_spec = HierSpec(
-            name=target_name,
-            shape_dims=(),
-            default_params=(0.0, 1.0),
-            hyper_loc_name=hyper_loc_name,
-            hyper_scale_name=hyper_scale_name,
-            is_gene_specific=False,
-            is_dataset=True,
-            guide_family=target_family,
-        )
-    else:
-        # Gene-specific per-dataset: single-level hierarchy
-        hier_spec = HierSpec(
-            name=target_name,
-            shape_dims=("n_genes",),
-            default_params=(0.0, 1.0),
-            hyper_loc_name=hyper_loc_name,
-            hyper_scale_name=hyper_scale_name,
-            is_gene_specific=True,
-            is_dataset=True,
-            guide_family=target_family,
-        )
-
     new_specs = []
     for spec in param_specs:
         if spec.name == target_name:
+            # Preserve is_mixture from the original spec so the dataset-
+            # hierarchical parameter keeps its component dimension.
+            orig_is_mixture = getattr(spec, "is_mixture", False)
+            if mode == "scalar":
+                hier_spec = HierSpec(
+                    name=target_name,
+                    shape_dims=(),
+                    default_params=(0.0, 1.0),
+                    hyper_loc_name=hyper_loc_name,
+                    hyper_scale_name=hyper_scale_name,
+                    is_gene_specific=False,
+                    is_dataset=True,
+                    is_mixture=orig_is_mixture,
+                    guide_family=target_family,
+                )
+            else:
+                hier_spec = HierSpec(
+                    name=target_name,
+                    shape_dims=("n_genes",),
+                    default_params=(0.0, 1.0),
+                    hyper_loc_name=hyper_loc_name,
+                    hyper_scale_name=hyper_scale_name,
+                    is_gene_specific=True,
+                    is_dataset=True,
+                    is_mixture=orig_is_mixture,
+                    guide_family=target_family,
+                )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
             new_specs.append(spec)

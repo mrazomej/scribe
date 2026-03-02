@@ -207,7 +207,8 @@ class NegativeBinomialLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets
+                            param_values, dataset_indices, n_datasets,
+                            param_specs=model_config.param_specs,
                         )
                         numpyro.sample("counts", self._build_dist(cell_pv))
                 elif batch_size is None:
@@ -215,7 +216,8 @@ class NegativeBinomialLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets
+                            param_values, dataset_indices, n_datasets,
+                            param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
                             "counts", self._build_dist(cell_pv), obs=counts
@@ -227,7 +229,8 @@ class NegativeBinomialLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices[idx], n_datasets
+                            param_values, dataset_indices[idx], n_datasets,
+                            param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
                             "counts",

@@ -46,15 +46,16 @@ low-rank) works without modification.
 
 #### Dataset-Level Hierarchical Specs
 
-For multi-dataset models, **`DatasetHierarchicalNormalWithTransformSpec`** is the
-base class for per-dataset parameters drawn from population-level hyperparameters.
-Subclasses: **`DatasetHierarchicalExpNormalSpec`** (positive params: mu, r, phi;
-exp transform) and **`DatasetHierarchicalSigmoidNormalSpec`** ((0,1) params: p,
-gate; sigmoid transform). The **`ParamSpec`** base class adds an **`is_dataset`**
-flag; when True, `resolve_shape` prepends the `n_datasets` dimension to the
-parameter shape. The model builder calls **`sample_hierarchical()`** on these
-specs, which draws per-dataset parameters from the population-level loc/scale
-hyperparameters already in `param_values`.
+For multi-dataset models, **`DatasetHierarchicalNormalWithTransformSpec`** is
+the base class for per-dataset parameters drawn from population-level
+hyperparameters. Subclasses: **`DatasetHierarchicalExpNormalSpec`** (positive
+params: mu, r, phi; exp transform) and
+**`DatasetHierarchicalSigmoidNormalSpec`** ((0,1) params: p, gate; sigmoid
+transform). The **`ParamSpec`** base class adds an **`is_dataset`** flag; when
+True, `resolve_shape` prepends the `n_datasets` dimension to the parameter
+shape. The model builder calls **`sample_hierarchical()`** on these specs, which
+draws per-dataset parameters from the population-level loc/scale hyperparameters
+already in `param_values`.
 
 ### ParamSpec Attributes
 

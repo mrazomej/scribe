@@ -96,8 +96,12 @@ class DatasetMixin:
         """Slice MCMC samples for a single dataset.
 
         For per-dataset parameters the samples have shape
-        ``(n_samples, n_datasets, ...)``.  This slices axis 1 at
-        ``dataset_index`` and squeezes the dataset dimension.
+        ``(n_samples, n_datasets, ...)``.  When a parameter is also
+        mixture-specific, its shape is ``(n_samples, n_components,
+        n_datasets, ...)``, so the dataset axis is 2 instead of 1.
+
+        Uses ``ParamSpec`` metadata (``is_mixture``) for unambiguous
+        axis identification.
 
         Parameters
         ----------
@@ -116,28 +120,22 @@ class DatasetMixin:
         if samples is None:
             return None
 
-        specs_by_name = {}
+        specs_by_name: Dict[str, object] = {}
         if getattr(self.model_config, "param_specs", None):
             specs_by_name = {s.name: s for s in self.model_config.param_specs}
+
+        n_components = getattr(self.model_config, "n_components", None)
 
         new_samples: Dict[str, jnp.ndarray] = {}
         for key, values in samples.items():
             spec = specs_by_name.get(key)
             is_ds = spec is not None and getattr(spec, "is_dataset", False)
-            # Per-dataset samples: (n_samples, n_datasets, ...)
-            if is_ds and hasattr(values, "ndim") and values.ndim > 1:
-                # Find the dataset axis (typically axis 1 after sample axis 0)
-                dataset_axis = None
-                if values.shape[1] == n_datasets:
-                    dataset_axis = 1
-                else:
-                    candidates = [
-                        ax
-                        for ax in range(1, values.ndim)
-                        if values.shape[ax] == n_datasets
-                    ]
-                    dataset_axis = candidates[0] if candidates else None
+            is_mix = spec is not None and getattr(spec, "is_mixture", False)
 
+            if is_ds and hasattr(values, "ndim") and values.ndim > 1:
+                dataset_axis = self._find_dataset_axis_in_samples(
+                    values, n_datasets, is_mix, n_components
+                )
                 if dataset_axis is not None:
                     slicer = [slice(None)] * values.ndim
                     slicer[dataset_axis] = dataset_index
@@ -147,3 +145,50 @@ class DatasetMixin:
             new_samples[key] = values
 
         return new_samples
+
+    @staticmethod
+    def _find_dataset_axis_in_samples(
+        values: jnp.ndarray,
+        n_datasets: int,
+        is_mixture: bool,
+        n_components: Optional[int],
+    ) -> Optional[int]:
+        """Determine the dataset axis in an MCMC sample tensor.
+
+        Parameters
+        ----------
+        values : jnp.ndarray
+            Sample tensor (axis 0 = MCMC samples).
+        n_datasets : int
+            Number of datasets.
+        is_mixture : bool
+            Whether the parameter also carries a component axis.
+        n_components : Optional[int]
+            Number of mixture components.
+
+        Returns
+        -------
+        Optional[int]
+            Dataset axis index, or ``None``.
+        """
+        if is_mixture and n_components is not None:
+            # Shape (S, K, D, ...) — dataset axis is 2
+            if values.ndim >= 3 and values.shape[2] == n_datasets:
+                return 2
+            # Fallback search (skip sample axis 0)
+            candidates = [
+                ax
+                for ax in range(1, values.ndim)
+                if values.shape[ax] == n_datasets
+            ]
+            return candidates[0] if candidates else None
+
+        # Non-mixture: (S, D, ...) — dataset axis is 1
+        if values.shape[1] == n_datasets:
+            return 1
+        candidates = [
+            ax
+            for ax in range(1, values.ndim)
+            if values.shape[ax] == n_datasets
+        ]
+        return candidates[0] if candidates else None

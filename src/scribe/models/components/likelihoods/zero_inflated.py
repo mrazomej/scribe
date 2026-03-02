@@ -187,7 +187,8 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets
+                            param_values, dataset_indices, n_datasets,
+                            param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
                             "counts", self._build_dist(cell_pv)
@@ -197,7 +198,8 @@ class ZeroInflatedNBLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets
+                            param_values, dataset_indices, n_datasets,
+                            param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
                             "counts",
@@ -214,6 +216,7 @@ class ZeroInflatedNBLikelihood(Likelihood):
                             param_values,
                             dataset_indices[idx],
                             n_datasets,
+                            param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
                             "counts",
