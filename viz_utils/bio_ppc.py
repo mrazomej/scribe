@@ -71,7 +71,7 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     )
 
     # ------------------------------------------------------------------
-    # Biological PPC samples (gene-subset, stored on results)
+    # Biological PPC samples (gene-subset)
     # ------------------------------------------------------------------
     results_subset = results[selected_idx]
 
@@ -81,17 +81,17 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     console.print(
         f"[dim]Generating {n_samples} biological PPC samples...[/dim]"
     )
-    _ = _get_biological_ppc_samples_for_plot(
+    bio_predictive_samples = _get_biological_ppc_samples_for_plot(
         results_subset,
         rng_key=rng_key,
         n_samples=n_samples,
         counts=counts,
         batch_size=None,
-        store_samples=True,
+        store_samples=False,
     )
 
     # ------------------------------------------------------------------
-    # Denoised observed counts (full matrix, then gene-index)
+    # Denoised observed counts (only selected genes)
     # ------------------------------------------------------------------
     # Use ("sample", "sample") so the denoised histogram has realistic
     # stochastic variability comparable to the biological PPC bands.
@@ -99,11 +99,17 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     # every cell with the same observed count maps to a single value.
     console.print("[dim]Denoising observed counts (MAP, sample)...[/dim]")
     key_denoise = random.PRNGKey(99)
-    denoised_full = _get_denoised_counts_for_plot(
-        results,
-        counts=counts,
+    # Denoising only selected genes significantly reduces peak device memory.
+    denoise_cell_batch_size = int(
+        viz_cfg.get("bio_ppc_opts", {}).get("denoise_cell_batch_size", 256)
+    )
+    counts_subset = counts[:, selected_idx]
+    denoised_subset = _get_denoised_counts_for_plot(
+        results_subset,
+        counts=counts_subset,
         rng_key=key_denoise,
         method=("sample", "sample"),
+        cell_batch_size=denoise_cell_batch_size,
     )
 
     # Build a position map: original gene index → position inside the
@@ -144,12 +150,12 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
             # Credible bands from biological PPC
             credible_regions = scribe.stats.compute_histogram_credible_regions(
-                results_subset.predictive_samples[:, :, subset_pos],
+                bio_predictive_samples[:, :, subset_pos],
                 credible_regions=[95, 68, 50],
             )
 
             # Denoised data histogram
-            denoised_gene = denoised_full[:, gene_idx]
+            denoised_gene = denoised_subset[:, subset_pos]
             hist_results = np.histogram(
                 denoised_gene,
                 bins=credible_regions["bin_edges"],
@@ -220,4 +226,4 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     )
     plt.close(fig)
 
-    del results_subset
+    del results_subset, counts_subset, denoised_subset, bio_predictive_samples
