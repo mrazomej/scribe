@@ -55,6 +55,10 @@ def build_config_from_preset(
     unconstrained: bool = False,
     hierarchical_p: bool = False,
     hierarchical_gate: bool = False,
+    n_datasets: Optional[int] = None,
+    dataset_params: Optional[List[str]] = None,
+    hierarchical_dataset_mu: bool = False,
+    hierarchical_dataset_p: str = "none",
     guide_rank: Optional[int] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
@@ -292,6 +296,15 @@ def build_config_from_preset(
 
     if hierarchical_gate:
         builder.with_hierarchical_gate()
+
+    # Multi-dataset configuration: set builder fields directly
+    if n_datasets is not None:
+        builder._n_datasets = n_datasets
+        builder._dataset_params = dataset_params
+        builder._hierarchical_dataset_mu = hierarchical_dataset_mu
+        builder._hierarchical_dataset_p = hierarchical_dataset_p
+        if hierarchical_dataset_mu or hierarchical_dataset_p != "none":
+            builder._unconstrained = True
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)

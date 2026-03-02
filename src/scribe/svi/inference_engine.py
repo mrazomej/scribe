@@ -542,6 +542,7 @@ class SVIInferenceEngine:
         log_progress_lines: bool = False,
         early_stopping: Optional[EarlyStoppingConfig] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
         progress: bool = True,
     ) -> SVIRunResult:
         """
@@ -581,6 +582,10 @@ class SVIInferenceEngine:
             (even with ``enabled=False``), the custom training loop is used
             so that checkpoints are saved and training can be resumed. Only
             falls back to NumPyro's built-in ``svi.run()`` when ``None``.
+        dataset_indices : Optional[jnp.ndarray], default=None
+            Per-cell integer array mapping each cell to its dataset index
+            ``{0, ..., n_datasets-1}``.  Required when
+            ``model_config.n_datasets`` is set.
         progress : bool, default=True
             Whether to show progress bar during training.
 
@@ -641,6 +646,7 @@ class SVIInferenceEngine:
             "batch_size": batch_size,
             "model_config": model_config,
             "annotation_prior_logits": annotation_prior_logits,
+            "dataset_indices": dataset_indices,
         }
 
         # Choose execution mode based on early stopping configuration.
