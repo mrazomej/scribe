@@ -64,6 +64,16 @@ unconstrained parameterizations via the `unconstrained` boolean field. Prior and
 guide hyperparameters are stored in `param_specs` (list of `ParamSpec`); see
 `scribe.models.builders.parameter_specs`.
 
+#### Multi-Dataset Hierarchical Model
+
+For joint multi-dataset modeling, the following fields control dataset-level structure:
+
+- `n_datasets: Optional[int]` — Number of datasets for joint multi-dataset modeling
+- `dataset_params: Optional[List[str]]` — Which parameters are per-dataset
+- `hierarchical_dataset_mu: bool` — Hierarchical mu/r across datasets (requires `unconstrained`)
+- `hierarchical_dataset_p: str` — Mode for dataset-specific p: `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
+- `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
+
 ### PriorConfig / UnconstrainedPriorConfig
 
 Prior parameter configurations with automatic validation:
