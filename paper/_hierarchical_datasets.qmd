@@ -520,12 +520,78 @@ In practice, the two-level hierarchy subsumes the single-level hierarchy
 (setting $\sigma_{\mu_p} = 0$ recovers the single-level model), so it can be
 used as the default when computational cost permits.
 
+## Dataset-specific hierarchical gate {#sec-hdata-hierarchical-gate}
+
+For zero-inflated models (ZINB, ZINBVCP), the gate parameter $\pi_g$ governs
+the probability of structural zeros per gene (see @sec-hierarchical-gate for
+the full treatment). When datasets have different sequencing depths or
+dropout characteristics, a single shared gate may be insufficient: the model
+is forced to compromise between the different zero-inflation rates of each
+dataset, leading to a bimodal or otherwise distorted gate distribution.
+
+The solution is to make the gate per-dataset and gene-specific, with a
+hierarchical prior that provides shrinkage across datasets---exactly mirroring
+the structure used for $\mu_g^{(d)}$ and $p_g^{(d)}$ above. Since
+$\pi_g \in (0,1)$, we work in logit space, following the same strategy as the
+gene-level hierarchical gate in @sec-hgate-model.
+
+### Model specification
+
+**Population-level hyperparameters:**
+
+$$
+\mu_\pi^{\text{pop}} \sim \mathcal{N}(\mu_{\pi,0}, \sigma_{\pi,0}),
+$${#eq-hdata-gate-hyper-loc}
+
+$$
+\sigma_\pi^{\text{pop}} \sim \text{Softplus}\!\left(\mathcal{N}(\mu_{\sigma,0},
+\sigma_{\sigma,0})\right),
+$${#eq-hdata-gate-hyper-scale}
+
+where the default hyperparameters follow the "default off" convention from
+@sec-hgate-model: $\mu_{\pi,0} = -5$ (placing the population mean deep in the
+no-zero-inflation regime) and $\sigma_{\sigma,0}$ controls the permitted
+gene-to-gene spread. Both hyperparameters are gene-specific (the loc) and
+scalar (the scale), respectively, matching the architecture of the gene-level
+hierarchical gate.
+
+**Dataset-specific gate:**
+
+$$
+\text{logit}(\pi_g^{(d)}) \sim
+\mathcal{N}\!\left(\mu_\pi^{\text{pop}}, \sigma_\pi^{\text{pop}}\right),
+\quad g = 1, \ldots, G, \quad d = 1, \ldots, D.
+$${#eq-hdata-gate-draw}
+
+Each gene in each dataset draws its own gate from the shared population
+distribution, producing a $G \times D$ matrix of gate values. The degree of
+dataset-to-dataset variation in the gate is governed by $\sigma_\pi^{\text{pop}}$:
+
+- When $\sigma_\pi^{\text{pop}} \to 0$: all datasets share the same gate for
+  each gene, recovering the single-dataset hierarchical gate of
+  @sec-hierarchical-gate.
+
+- When $\sigma_\pi^{\text{pop}}$ is large: each dataset is free to have its
+  own gene-specific dropout rates, accommodating kits with fundamentally
+  different zero-inflation characteristics.
+
+### Relationship to the gene-level gate hierarchy
+
+The dataset-level gate hierarchy subsumes the gene-level hierarchy of
+@sec-hierarchical-gate. In the gene-level version, all cells share one gate
+$\pi_g$ per gene; in the dataset-level version, each dataset has its own
+$\pi_g^{(d)}$, drawn from the same population distribution. Setting
+$D = 1$ recovers the gene-level model exactly. For this reason, the two
+options are mutually exclusive in the implementation: enabling the dataset-level
+gate hierarchy automatically replaces the gene-level one.
+
 ## The complete generative model {#sec-hdata-generative}
 
 We now present the complete generative model for multi-dataset inference,
 combining the hierarchical mean expression from @sec-hdata-hierarchical-mu,
-the dataset-specific scalar $p$ from @sec-hdata-scalar-p, and the optional
-gene-specific $p_g$ from @sec-hdata-gene-specific-p.
+the dataset-specific scalar $p$ from @sec-hdata-scalar-p, the optional
+gene-specific $p_g$ from @sec-hdata-gene-specific-p, and the optional
+dataset-specific gate from @sec-hdata-hierarchical-gate.
 
 ### Full model specification
 
@@ -849,10 +915,16 @@ $$
 &\quad \mu_g \sim \text{LogNormal}(\ell_\mu, s_\mu), \quad
 \tau_\mu \sim \text{Softplus}(\mathcal{N}(\mu_\tau, \sigma_\tau)), \\
 &\quad \mu_p \sim \mathcal{N}(0, 1), \quad
-\sigma_p \sim \text{Softplus}(\mathcal{N}(0, 0.5)), \\[4pt]
+\sigma_p \sim \text{Softplus}(\mathcal{N}(0, 0.5)), \\
+&\quad \mu_\pi^{\text{pop}} \sim \mathcal{N}(\mu_{\pi,0}, \sigma_{\pi,0}),
+\quad \sigma_\pi^{\text{pop}} \sim \text{Softplus}(\mathcal{N}(\mu_{\sigma,0},
+\sigma_{\sigma,0})), \;\; \text{(ZI models)} \\[4pt]
 &\textbf{Dataset level } (d = 1, \ldots, D): \\
 &\quad \log(\mu_g^{(d)}) \sim \mathcal{N}(\log(\mu_g), \tau_\mu), \\
-&\quad \text{logit}(p^{(d)}) \sim \mathcal{N}(\mu_p, \sigma_p), \\[4pt]
+&\quad \text{logit}(p^{(d)}) \sim \mathcal{N}(\mu_p, \sigma_p), \\
+&\quad \text{logit}(\pi_g^{(d)}) \sim
+\mathcal{N}(\mu_\pi^{\text{pop}}, \sigma_\pi^{\text{pop}}),
+\;\; \text{(ZI models)} \\[4pt]
 &\textbf{Cell level } (c \in \mathcal{C}_d): \\
 &\quad \nu_c \sim \text{Beta}(a_\nu, b_\nu), \\
 &\quad u_{gc} \sim \text{NB}(r_g^{(d)}, \hat{p}_c^{(d)}).
@@ -890,6 +962,7 @@ $$
 \begin{aligned}
 &\tau_\mu \approx 0 \implies \text{identical biology across datasets}, \\
 &\sigma_p \approx 0 \implies \text{identical technical characteristics}, \\
+&\sigma_\pi^{\text{pop}} \approx 0 \implies \text{identical dropout/zero-inflation}, \\
 &\tau_\mu \gg 0 \implies \text{genuine biological differences}.
 \end{aligned}
 }
