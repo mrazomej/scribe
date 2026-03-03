@@ -171,7 +171,8 @@ VCP likelihoods accept an optional `biology_informed_spec`
 library-size-anchored Normal prior on the latent variable `eta_c`. When active:
 
 1. **Pre-plate**: Log library sizes are computed from `counts` (or synthetic
-   values during dry runs). For data-driven mode, the shared `mu_eta` is sampled.
+   values during dry runs). When `shared_capture_scaling` is enabled, the shared
+   `mu_eta` is sampled.
 2. **Inside plate**: `eta_c ~ N(log_M0 - log_L_c, sigma_M^2)` is sampled via
    `_sample_capture_biology_informed()`, then transformed to `p_capture` or
    `phi_capture` via exact formulas.

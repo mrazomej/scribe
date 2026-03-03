@@ -69,6 +69,7 @@ def build_config_from_preset(
     horseshoe_slab_df: int = 4,
     horseshoe_slab_scale: float = 2.0,
     capture_prior: str = "default",
+    shared_capture_scaling: bool = False,
     organism: Optional[str] = None,
     total_mrna_mean: Optional[float] = None,
     total_mrna_log_sigma: Optional[float] = None,
@@ -336,6 +337,7 @@ def build_config_from_preset(
 
     # Biology-informed capture prior configuration
     builder._capture_prior = capture_prior
+    builder._shared_capture_scaling = shared_capture_scaling
     builder._organism = organism
     builder._total_mrna_mean = total_mrna_mean
     builder._total_mrna_log_sigma = total_mrna_log_sigma

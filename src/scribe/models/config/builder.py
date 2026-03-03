@@ -99,6 +99,7 @@ class ModelConfigBuilder:
         self._horseshoe_slab_df: int = 4
         self._horseshoe_slab_scale: float = 2.0
         self._capture_prior: str = "default"
+        self._shared_capture_scaling: bool = False
         self._organism: Optional[str] = None
         self._total_mrna_mean: Optional[float] = None
         self._total_mrna_log_sigma: Optional[float] = None
@@ -207,22 +208,26 @@ class ModelConfigBuilder:
         organism: Optional[str] = None,
         total_mrna_mean: Optional[float] = None,
         total_mrna_log_sigma: Optional[float] = None,
+        shared_capture_scaling: bool = False,
     ) -> "ModelConfigBuilder":
         """Configure the biology-informed capture probability prior.
 
         Parameters
         ----------
         mode : str
-            Prior mode: ``"flat"``, ``"biology_informed"``, or
-            ``"data_driven"``.
+            Prior mode: ``"default"`` or ``"biology_informed"``.
         organism : str, optional
             Organism name for default M_0 lookup (e.g. ``"human"``).
         total_mrna_mean : float, optional
             Override total mRNA per cell (M_0).
         total_mrna_log_sigma : float, optional
             Override log-scale std-dev of cell-to-cell mRNA variation.
+        shared_capture_scaling : bool
+            If True, learn a shared mu_eta parameter across datasets
+            instead of using a fixed M_0.
         """
         self._capture_prior = mode
+        self._shared_capture_scaling = shared_capture_scaling
         if organism is not None:
             self._organism = organism
         if total_mrna_mean is not None:
@@ -616,6 +621,7 @@ class ModelConfigBuilder:
             horseshoe_slab_df=self._horseshoe_slab_df,
             horseshoe_slab_scale=self._horseshoe_slab_scale,
             capture_prior=self._capture_prior,
+            shared_capture_scaling=self._shared_capture_scaling,
             organism=self._organism,
             total_mrna_mean=self._total_mrna_mean,
             total_mrna_log_sigma=self._total_mrna_log_sigma,

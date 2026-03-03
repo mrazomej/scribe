@@ -1,8 +1,8 @@
 """Tests for biology-informed capture probability prior.
 
 Tests organism prior resolution, BiologyInformedCaptureSpec creation,
-ModelConfig validation, and model dry-run with the biology-informed and
-data-driven capture priors.
+ModelConfig validation, shared_capture_scaling auto-promote, and
+model dry-run with the biology-informed capture prior.
 """
 
 import math
@@ -125,14 +125,48 @@ class TestModelConfigCapturePrior:
         # Explicit value wins over organism default
         assert config.total_mrna_mean == 150_000
 
-    def test_data_driven_no_organism_ok(self):
-        """data_driven doesn't strictly require organism/M_0."""
+    def test_shared_capture_scaling_with_biology_informed(self):
+        """shared_capture_scaling with biology_informed keeps the prior mode."""
         builder = ModelConfigBuilder()
         builder._base_model = "nbvcp"
-        builder._capture_prior = "data_driven"
-        builder._total_mrna_mean = 200_000
+        builder._capture_prior = "biology_informed"
+        builder._shared_capture_scaling = True
+        builder._organism = "human"
         config = builder.build()
-        assert config.capture_prior == "data_driven"
+        assert config.capture_prior == "biology_informed"
+        assert config.shared_capture_scaling is True
+        assert config.total_mrna_mean == 200_000
+
+    def test_shared_capture_scaling_auto_promotes_default(self):
+        """shared_capture_scaling with default auto-promotes to biology_informed."""
+        builder = ModelConfigBuilder()
+        builder._base_model = "nbvcp"
+        builder._shared_capture_scaling = True
+        config = builder.build()
+        # Auto-promoted from default to biology_informed
+        assert config.capture_prior == "biology_informed"
+        assert config.shared_capture_scaling is True
+        # Falls back to mammalian default
+        assert config.total_mrna_mean == 200_000
+        assert config.total_mrna_log_sigma == 0.5
+
+    def test_shared_capture_scaling_auto_promote_with_organism(self):
+        """Auto-promote uses organism M_0 as center when provided."""
+        builder = ModelConfigBuilder()
+        builder._base_model = "nbvcp"
+        builder._shared_capture_scaling = True
+        builder._organism = "yeast"
+        config = builder.build()
+        assert config.capture_prior == "biology_informed"
+        assert config.total_mrna_mean == 60_000
+
+    def test_shared_capture_scaling_requires_vcp(self):
+        """shared_capture_scaling with non-VCP model should raise."""
+        with pytest.raises(ValueError, match="VCP"):
+            builder = ModelConfigBuilder()
+            builder._base_model = "nbdm"
+            builder._shared_capture_scaling = True
+            builder.build()
 
     def test_capture_prior_requires_vcp(self):
         """Non-flat capture_prior with non-VCP model should raise."""
@@ -149,6 +183,14 @@ class TestModelConfigCapturePrior:
             builder = ModelConfigBuilder()
             builder._base_model = "nbvcp"
             builder._capture_prior = "invalid_mode"
+            builder.build()
+
+    def test_data_driven_is_no_longer_valid_mode(self):
+        """'data_driven' was replaced by shared_capture_scaling flag."""
+        with pytest.raises(ValueError, match="capture_prior"):
+            builder = ModelConfigBuilder()
+            builder._base_model = "nbvcp"
+            builder._capture_prior = "data_driven"
             builder.build()
 
 
@@ -258,12 +300,13 @@ class TestBuildCaptureSpec:
         assert spec.use_phi_capture is True
         assert spec.log_M0 == pytest.approx(math.log(200_000))
 
-    def test_data_driven_returns_bio_spec_data_driven(self):
-        """Data-driven config should return BiologyInformedCaptureSpec with data_driven=True."""
+    def test_shared_scaling_returns_bio_spec_data_driven(self):
+        """shared_capture_scaling should produce BiologyInformedCaptureSpec with data_driven=True."""
         builder = ModelConfigBuilder()
         builder._base_model = "nbvcp"
         builder._parameterization = Parameterization.MEAN_ODDS
-        builder._capture_prior = "data_driven"
+        builder._capture_prior = "biology_informed"
+        builder._shared_capture_scaling = True
         builder._organism = "mouse"
         config = builder.build()
 
@@ -334,16 +377,38 @@ class TestModelDryRun:
         assert bio_specs[0].use_phi_capture is False
         assert bio_specs[0].log_M0 == pytest.approx(math.log(60_000))
 
-    def test_nbvcp_data_driven(self):
-        """NBVCP with data-driven prior should create."""
+    def test_nbvcp_shared_capture_scaling(self):
+        """NBVCP with shared_capture_scaling should create with data_driven spec."""
         from scribe.models.presets.factory import create_model
 
         builder = ModelConfigBuilder()
         builder._base_model = "nbvcp"
         builder._parameterization = Parameterization.MEAN_ODDS
         builder._unconstrained = True
-        builder._capture_prior = "data_driven"
+        builder._capture_prior = "biology_informed"
+        builder._shared_capture_scaling = True
         builder._organism = "human"
+        config = builder.build()
+
+        model_fn, guide_fn, param_specs = create_model(config)
+        assert model_fn is not None
+
+        bio_specs = [
+            s for s in param_specs
+            if isinstance(s, BiologyInformedCaptureSpec)
+        ]
+        assert len(bio_specs) == 1
+        assert bio_specs[0].data_driven is True
+
+    def test_nbvcp_auto_promote_shared_scaling(self):
+        """Auto-promoted shared_capture_scaling should create successfully."""
+        from scribe.models.presets.factory import create_model
+
+        builder = ModelConfigBuilder()
+        builder._base_model = "nbvcp"
+        builder._parameterization = Parameterization.MEAN_ODDS
+        builder._unconstrained = True
+        builder._shared_capture_scaling = True
         config = builder.build()
 
         model_fn, guide_fn, param_specs = create_model(config)

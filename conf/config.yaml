@@ -71,10 +71,11 @@ horseshoe_slab_scale: 2.0       # Slab scale (Inverse-Gamma on c^2)
 # --- Biology-Informed Capture Prior ---
 # Anchors p_capture to library size via known total mRNA per cell.
 # See paper/_capture_prior.qmd for derivation.
-capture_prior: "default"     # "default", "biology_informed", "data_driven"
-organism: null               # "human", "mouse", "yeast", "ecoli" (sets M_0 defaults)
-total_mrna_mean: null        # Override M_0 directly (takes precedence over organism)
-total_mrna_log_sigma: null   # Override sigma_M directly (default: 0.5)
+capture_prior: "default"          # "default" or "biology_informed"
+shared_capture_scaling: false     # learn shared mu_eta across datasets (auto-promotes default to biology_informed)
+organism: null                    # "human", "mouse", "yeast", "ecoli" (sets M_0 defaults)
+total_mrna_mean: null             # Override M_0 directly (takes precedence over organism)
+total_mrna_log_sigma: null        # Override sigma_M directly (default: 0.5)
 
 # Mixture model configuration
 # Set to integer >= 2 for mixture models, null for single component.
