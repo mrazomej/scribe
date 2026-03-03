@@ -320,7 +320,7 @@ def build_config_from_preset(
         ):
             builder._unconstrained = True
 
-    # Horseshoe prior configuration
+    # Horseshoe prior configuration (implies unconstrained + dataset config)
     builder._horseshoe_p = horseshoe_p
     builder._horseshoe_gate = horseshoe_gate
     builder._horseshoe_dataset_mu = horseshoe_dataset_mu
@@ -329,6 +329,14 @@ def build_config_from_preset(
     builder._horseshoe_tau0 = horseshoe_tau0
     builder._horseshoe_slab_df = horseshoe_slab_df
     builder._horseshoe_slab_scale = horseshoe_slab_scale
+    if horseshoe_p or horseshoe_gate:
+        builder._unconstrained = True
+    if (
+        horseshoe_dataset_mu
+        or horseshoe_dataset_p
+        or horseshoe_dataset_gate
+    ):
+        builder._unconstrained = True
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)

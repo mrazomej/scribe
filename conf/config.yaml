@@ -56,13 +56,14 @@ hierarchical_dataset_gate: false  # Hierarchical gate across datasets with learn
 
 # --- Horseshoe Prior Configuration ---
 # Regularized horseshoe (Piironen & Vehtari 2017) replaces the single global
-# scale in a hierarchy with per-gene local shrinkage. Each flag requires its
-# corresponding hierarchy flag to be enabled.
-horseshoe_p: false              # Horseshoe for gene-level hierarchical p (requires hierarchical_p=true)
-horseshoe_gate: false           # Horseshoe for gene-level hierarchical gate (requires hierarchical_gate=true)
-horseshoe_dataset_mu: false     # Horseshoe for dataset-level hierarchical mu (requires hierarchical_dataset_mu=true)
-horseshoe_dataset_p: false      # Horseshoe for dataset-level hierarchical p (requires hierarchical_dataset_p != "none")
-horseshoe_dataset_gate: false   # Horseshoe for dataset-level hierarchical gate (requires hierarchical_dataset_gate=true)
+# scale in a hierarchy with per-gene local shrinkage. Each flag is MUTUALLY
+# EXCLUSIVE with its corresponding normal hierarchy flag — the horseshoe
+# implicitly creates the hierarchy, so do NOT set both.
+horseshoe_p: false              # Horseshoe for gene-level p (mutually exclusive with hierarchical_p)
+horseshoe_gate: false           # Horseshoe for gene-level gate (mutually exclusive with hierarchical_gate)
+horseshoe_dataset_mu: false     # Horseshoe for dataset-level mu (mutually exclusive with hierarchical_dataset_mu)
+horseshoe_dataset_p: false      # Horseshoe for dataset-level p (mutually exclusive with hierarchical_dataset_p)
+horseshoe_dataset_gate: false   # Horseshoe for dataset-level gate (mutually exclusive with hierarchical_dataset_gate)
 horseshoe_tau0: 1.0             # Global shrinkage scale (Half-Cauchy prior on tau)
 horseshoe_slab_df: 4            # Slab degrees of freedom (Inverse-Gamma on c^2)
 horseshoe_slab_scale: 2.0       # Slab scale (Inverse-Gamma on c^2)

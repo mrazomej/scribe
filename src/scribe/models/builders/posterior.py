@@ -137,10 +137,10 @@ def get_posterior_distributions(
         raise ValueError(f"Unknown parameterization: {parameterization}")
 
     # -------------------------------------------------------------------------
-    # Override p/phi with hierarchical version when hierarchical_p is enabled
+    # Override p/phi with hierarchical version (normal or horseshoe)
     # -------------------------------------------------------------------------
     horseshoe_p = getattr(model_config, "horseshoe_p", False)
-    if hierarchical_p:
+    if hierarchical_p or horseshoe_p:
         if parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
@@ -196,7 +196,7 @@ def get_posterior_distributions(
     horseshoe_dataset_mu = getattr(
         model_config, "horseshoe_dataset_mu", False
     )
-    if hierarchical_dataset_mu:
+    if hierarchical_dataset_mu or horseshoe_dataset_mu:
         if parameterization in (
             Parameterization.CANONICAL,
             Parameterization.STANDARD,
@@ -241,7 +241,7 @@ def get_posterior_distributions(
     # Dataset-level hierarchical p/phi: hyperparameters + per-dataset override
     # -------------------------------------------------------------------------
     horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
-    if hierarchical_dataset_p != "none":
+    if hierarchical_dataset_p != "none" or horseshoe_dataset_p:
         if parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
@@ -292,7 +292,7 @@ def get_posterior_distributions(
     horseshoe_dataset_gate = getattr(
         model_config, "horseshoe_dataset_gate", False
     )
-    if hierarchical_dataset_gate:
+    if hierarchical_dataset_gate or horseshoe_dataset_gate:
         if horseshoe_dataset_gate:
             distributions.update(
                 _build_hyperparameter_posteriors(
@@ -325,8 +325,10 @@ def get_posterior_distributions(
     # Add zero-inflation gate if applicable
     # -------------------------------------------------------------------------
     horseshoe_gate = getattr(model_config, "horseshoe_gate", False)
-    if is_zero_inflated and not hierarchical_dataset_gate:
-        if hierarchical_gate and horseshoe_gate:
+    if is_zero_inflated and not (
+        hierarchical_dataset_gate or horseshoe_dataset_gate
+    ):
+        if horseshoe_gate:
             # Horseshoe gene-level gate: hyper_loc + horseshoe trio + raw z
             distributions.update(
                 _build_hyperparameter_posteriors(

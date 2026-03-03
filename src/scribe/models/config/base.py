@@ -189,36 +189,37 @@ class ModelConfig(BaseModel):
     horseshoe_p: bool = Field(
         False,
         description=(
-            "Use regularized horseshoe prior for gene-level hierarchical p. "
-            "Requires hierarchical_p=True."
+            "Regularized horseshoe prior for gene-level p. "
+            "Mutually exclusive with hierarchical_p."
         ),
     )
     horseshoe_gate: bool = Field(
         False,
         description=(
-            "Use regularized horseshoe prior for gene-level hierarchical gate. "
-            "Requires hierarchical_gate=True."
+            "Regularized horseshoe prior for gene-level gate. "
+            "Mutually exclusive with hierarchical_gate."
         ),
     )
     horseshoe_dataset_mu: bool = Field(
         False,
         description=(
-            "Use regularized horseshoe prior for dataset-level hierarchical mu. "
-            "Requires hierarchical_dataset_mu=True."
+            "Regularized horseshoe prior for dataset-level mu. "
+            "Mutually exclusive with hierarchical_dataset_mu."
         ),
     )
     horseshoe_dataset_p: bool = Field(
         False,
         description=(
-            "Use regularized horseshoe prior for dataset-level hierarchical p. "
-            "Requires hierarchical_dataset_p != 'none'."
+            "Regularized horseshoe prior for dataset-level p "
+            "(gene-specific). Mutually exclusive with "
+            "hierarchical_dataset_p."
         ),
     )
     horseshoe_dataset_gate: bool = Field(
         False,
         description=(
-            "Use regularized horseshoe prior for dataset-level hierarchical gate. "
-            "Requires hierarchical_dataset_gate=True."
+            "Regularized horseshoe prior for dataset-level gate. "
+            "Mutually exclusive with hierarchical_dataset_gate."
         ),
     )
     horseshoe_tau0: float = Field(
@@ -376,35 +377,107 @@ class ModelConfig(BaseModel):
                 "subsumes gene-level hierarchical gate."
             )
 
-        # Horseshoe prior validation: each flag requires its hierarchy enabled
-        if self.horseshoe_p and not self.hierarchical_p:
+        # Horseshoe prior validation: mutually exclusive with normal hierarchy
+        if self.horseshoe_p and self.hierarchical_p:
             raise ValueError(
-                "horseshoe_p=True requires hierarchical_p=True."
+                "horseshoe_p and hierarchical_p are mutually exclusive. "
+                "horseshoe_p already implies a hierarchical prior."
             )
-        if self.horseshoe_gate and not self.hierarchical_gate:
+        if self.horseshoe_p and not self.unconstrained:
             raise ValueError(
-                "horseshoe_gate=True requires hierarchical_gate=True."
+                "horseshoe_p=True requires unconstrained=True."
             )
-        if self.horseshoe_dataset_mu and not self.hierarchical_dataset_mu:
+        if self.horseshoe_gate and self.hierarchical_gate:
             raise ValueError(
-                "horseshoe_dataset_mu=True requires "
-                "hierarchical_dataset_mu=True."
+                "horseshoe_gate and hierarchical_gate are mutually exclusive. "
+                "horseshoe_gate already implies a hierarchical prior."
             )
+        if self.horseshoe_gate and not self.unconstrained:
+            raise ValueError(
+                "horseshoe_gate=True requires unconstrained=True."
+            )
+        if self.horseshoe_gate and not self.is_zero_inflated:
+            raise ValueError(
+                "horseshoe_gate=True requires a zero-inflated model "
+                f"(zinb or zinbvcp), but base_model={self.base_model!r}."
+            )
+        if self.horseshoe_dataset_mu and self.hierarchical_dataset_mu:
+            raise ValueError(
+                "horseshoe_dataset_mu and hierarchical_dataset_mu are "
+                "mutually exclusive. horseshoe_dataset_mu already implies "
+                "a hierarchical prior."
+            )
+        if self.horseshoe_dataset_mu:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "horseshoe_dataset_mu=True requires n_datasets >= 2."
+                )
+            if not self.unconstrained:
+                raise ValueError(
+                    "horseshoe_dataset_mu=True requires unconstrained=True."
+                )
         if (
             self.horseshoe_dataset_p
-            and self.hierarchical_dataset_p == "none"
+            and self.hierarchical_dataset_p != "none"
         ):
             raise ValueError(
-                "horseshoe_dataset_p=True requires "
-                "hierarchical_dataset_p != 'none'."
+                "horseshoe_dataset_p and hierarchical_dataset_p are "
+                "mutually exclusive. horseshoe_dataset_p already implies "
+                "a gene-specific hierarchical prior."
             )
-        if (
-            self.horseshoe_dataset_gate
-            and not self.hierarchical_dataset_gate
-        ):
+        if self.horseshoe_dataset_p:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "horseshoe_dataset_p=True requires n_datasets >= 2."
+                )
+            if not self.unconstrained:
+                raise ValueError(
+                    "horseshoe_dataset_p=True requires unconstrained=True."
+                )
+        if self.horseshoe_dataset_gate and self.hierarchical_dataset_gate:
             raise ValueError(
-                "horseshoe_dataset_gate=True requires "
-                "hierarchical_dataset_gate=True."
+                "horseshoe_dataset_gate and hierarchical_dataset_gate are "
+                "mutually exclusive. horseshoe_dataset_gate already implies "
+                "a hierarchical prior."
+            )
+        if self.horseshoe_dataset_gate:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "horseshoe_dataset_gate=True requires n_datasets >= 2."
+                )
+            if not self.unconstrained:
+                raise ValueError(
+                    "horseshoe_dataset_gate=True requires unconstrained=True."
+                )
+            if not self.is_zero_inflated:
+                raise ValueError(
+                    "horseshoe_dataset_gate=True requires a zero-inflated "
+                    f"model (zinb or zinbvcp), but base_model="
+                    f"{self.base_model!r}."
+                )
+        # Prevent conflicting gene-level p hierarchies with dataset-level
+        if self.horseshoe_p and self.hierarchical_dataset_p != "none":
+            raise ValueError(
+                "horseshoe_p and hierarchical_dataset_p are mutually "
+                "exclusive. Use horseshoe_dataset_p for dataset-level."
+            )
+        if self.horseshoe_p and self.horseshoe_dataset_p:
+            raise ValueError(
+                "horseshoe_p and horseshoe_dataset_p are mutually "
+                "exclusive. The dataset-level horseshoe subsumes "
+                "gene-level."
+            )
+        # Prevent conflicting gene-level gate hierarchies with dataset-level
+        if self.horseshoe_gate and self.hierarchical_dataset_gate:
+            raise ValueError(
+                "horseshoe_gate and hierarchical_dataset_gate are mutually "
+                "exclusive."
+            )
+        if self.horseshoe_gate and self.horseshoe_dataset_gate:
+            raise ValueError(
+                "horseshoe_gate and horseshoe_dataset_gate are mutually "
+                "exclusive. The dataset-level horseshoe subsumes "
+                "gene-level."
             )
         return self
 
