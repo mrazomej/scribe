@@ -1054,6 +1054,93 @@ class SoftplusNormalSpec(NormalWithTransformSpec):
 
 
 # ==============================================================================
+# Biology-Informed Capture Probability Specification
+# ==============================================================================
+
+
+class BiologyInformedCaptureSpec(ParamSpec):
+    """Capture prior anchored to library size via total mRNA per cell.
+
+    Instead of an uninformative Beta(1,1) or BetaPrime(1,1) prior, this spec
+    defines the capture probability through the latent variable
+
+        eta_c = log(M_c / L_c)
+
+    with a Normal prior whose mean depends on the observed library size:
+
+        eta_c ~ N(log M_0 - log L_c, sigma_M^2)
+
+    The capture parameter is then computed via exact (no-approximation)
+    transformations:
+
+        phi_capture_c = exp(eta_c) - 1    (mean_odds parameterization)
+        p_capture_c   = exp(-eta_c)       (canonical / mean_prob)
+
+    For the data-driven variant, log M_0 is replaced by a learned shared
+    parameter mu_eta ~ N(log M_0, sigma_mu^2).
+
+    Parameters
+    ----------
+    name : str
+        Capture parameter name ("phi_capture" or "p_capture").
+    log_M0 : float
+        log(M_0) where M_0 is the expected total mRNA per cell.
+    sigma_M : float
+        Log-scale std-dev of cell-to-cell mRNA variation.
+    data_driven : bool
+        If True, log_M0 is replaced by a learned shared latent variable.
+    sigma_mu : float
+        Prior std-dev on the shared log_M0 parameter (data-driven mode).
+    use_phi_capture : bool
+        If True, output phi_capture = exp(eta) - 1.
+        If False, output p_capture = exp(-eta).
+
+    See Also
+    --------
+    paper/_capture_prior.qmd : Full derivation and biological motivation.
+    """
+
+    log_M0: float = Field(
+        ..., description="log(M_0): log of expected total mRNA per cell."
+    )
+    sigma_M: float = Field(
+        ..., gt=0, description="Log-scale cell-to-cell mRNA variation."
+    )
+    data_driven: bool = Field(
+        False,
+        description="If True, log_M0 becomes a learned shared parameter.",
+    )
+    sigma_mu: float = Field(
+        1.0,
+        gt=0,
+        description="Prior std-dev on shared log_M0 (data-driven mode).",
+    )
+    use_phi_capture: bool = Field(
+        ...,
+        description=(
+            "True → phi_capture = exp(eta)-1; "
+            "False → p_capture = exp(-eta)."
+        ),
+    )
+
+    def _get_distribution_type(self) -> Type:
+        """Return Normal as the base distribution type for eta."""
+        return dist.Normal
+
+    @property
+    def support(self) -> constraints.Constraint:
+        """Capture parameter is positive (phi) or unit-interval (p)."""
+        if self.use_phi_capture:
+            return constraints.positive
+        return constraints.unit_interval
+
+    @property
+    def arg_constraints(self) -> Dict[str, constraints.Constraint]:
+        """Normal base distribution constraints for eta."""
+        return dist.Normal.arg_constraints
+
+
+# ==============================================================================
 # Hierarchical Normal + Transform Specifications
 # ==============================================================================
 #
@@ -2443,3 +2530,53 @@ def sample_prior(
             .expand(shape)
             .to_event(len(shape)),
         )
+
+
+# ------------------------------------------------------------------------------
+# Biology-Informed Capture Probability Prior Sampling
+# ------------------------------------------------------------------------------
+
+
+@dispatch(BiologyInformedCaptureSpec, dict, object)
+def sample_prior(
+    spec: BiologyInformedCaptureSpec,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+) -> jnp.ndarray:
+    """Sample capture parameter from biology-informed prior.
+
+    The actual per-cell sampling of eta_c happens inside the VCP likelihood
+    (which has access to counts and library sizes). This dispatch handles
+    the shared mu_eta parameter for data-driven mode, and delegates
+    per-cell sampling to the likelihood.
+
+    For data-driven mode, samples the shared total-mRNA parameter:
+        mu_eta ~ N(log_M0, sigma_mu^2)
+
+    For biology-informed mode (fixed M_0), this is a no-op — the VCP
+    likelihood reads log_M0 from the spec directly.
+
+    Parameters
+    ----------
+    spec : BiologyInformedCaptureSpec
+        The capture parameter specification.
+    dims : Dict[str, int]
+        Dimension sizes (includes n_cells).
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray or None
+        The shared mu_eta sample (data-driven) or None (biology-informed).
+    """
+    if spec.data_driven:
+        # Sample the shared log-total-mRNA parameter (outside cell plate)
+        mu_eta = numpyro.sample(
+            "mu_eta",
+            dist.Normal(spec.log_M0, spec.sigma_mu),
+        )
+        return mu_eta
+    # Biology-informed with fixed M_0: no-op here; VCP likelihood handles
+    # per-cell eta_c sampling
+    return None

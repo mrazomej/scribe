@@ -71,6 +71,58 @@ def _sample_p_capture_unconstrained(
     return numpyro.sample(constrained_name, transformed_dist)
 
 
+# ------------------------------------------------------------------------------
+
+
+def _sample_capture_biology_informed(
+    log_lib_sizes: jnp.ndarray,
+    log_M0: float,
+    sigma_M: float,
+    use_phi_capture: bool,
+) -> jnp.ndarray:
+    """Sample capture parameter from biology-informed prior.
+
+    Samples the latent variable eta_c = log(M_c / L_c) from a Normal
+    prior whose mean is anchored to the observed library size, then
+    applies the exact transformation to the capture parameter.
+
+    Parameters
+    ----------
+    log_lib_sizes : jnp.ndarray
+        Per-cell log library sizes, shape ``(batch,)``.
+    log_M0 : float
+        log(M_0) where M_0 is expected total mRNA per cell.
+        For data-driven mode, this is the sampled shared parameter.
+    sigma_M : float
+        Log-scale std-dev of cell-to-cell mRNA variation.
+    use_phi_capture : bool
+        If True, return phi_capture = exp(eta) - 1.
+        If False, return p_capture = exp(-eta).
+
+    Returns
+    -------
+    jnp.ndarray
+        Capture parameter values, shape ``(batch,)``.
+    """
+    # eta_c ~ N(log_M0 - log_L_c, sigma_M^2)
+    prior_mean = log_M0 - log_lib_sizes
+    eta = numpyro.sample(
+        "eta_capture",
+        dist.Normal(prior_mean, sigma_M).to_event(0),
+    )
+
+    if use_phi_capture:
+        # phi_capture = exp(eta) - 1   (exact, see _capture_prior.qmd)
+        capture_value = jnp.exp(eta) - 1.0
+        numpyro.deterministic("phi_capture", capture_value)
+    else:
+        # p_capture = exp(-eta)         (exact, see _capture_prior.qmd)
+        capture_value = jnp.exp(-eta)
+        numpyro.deterministic("p_capture", capture_value)
+
+    return capture_value
+
+
 # ==============================================================================
 # Helper for broadcasting scalar/gene-specific p in mixture models
 # ==============================================================================
