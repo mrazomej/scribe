@@ -98,6 +98,10 @@ class ModelConfigBuilder:
         self._horseshoe_tau0: float = 1.0
         self._horseshoe_slab_df: int = 4
         self._horseshoe_slab_scale: float = 2.0
+        self._capture_prior: str = "default"
+        self._organism: Optional[str] = None
+        self._total_mrna_mean: Optional[float] = None
+        self._total_mrna_log_sigma: Optional[float] = None
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._guide_families: Optional[GuideFamilyConfig] = None
@@ -193,6 +197,51 @@ class ModelConfigBuilder:
         """
         self._hierarchical_gate = True
         self._unconstrained = True
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_capture_prior(
+        self,
+        mode: str = "biology_informed",
+        organism: Optional[str] = None,
+        total_mrna_mean: Optional[float] = None,
+        total_mrna_log_sigma: Optional[float] = None,
+    ) -> "ModelConfigBuilder":
+        """Configure the biology-informed capture probability prior.
+
+        Parameters
+        ----------
+        mode : str
+            Prior mode: ``"flat"``, ``"biology_informed"``, or
+            ``"data_driven"``.
+        organism : str, optional
+            Organism name for default M_0 lookup (e.g. ``"human"``).
+        total_mrna_mean : float, optional
+            Override total mRNA per cell (M_0).
+        total_mrna_log_sigma : float, optional
+            Override log-scale std-dev of cell-to-cell mRNA variation.
+        """
+        self._capture_prior = mode
+        if organism is not None:
+            self._organism = organism
+        if total_mrna_mean is not None:
+            self._total_mrna_mean = total_mrna_mean
+        if total_mrna_log_sigma is not None:
+            self._total_mrna_log_sigma = total_mrna_log_sigma
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_organism(self, organism: str) -> "ModelConfigBuilder":
+        """Set the organism for biology-informed priors.
+
+        Parameters
+        ----------
+        organism : str
+            Organism name (e.g. ``"human"``, ``"mouse"``, ``"yeast"``).
+        """
+        self._organism = organism
         return self
 
     # --------------------------------------------------------------------------
@@ -566,6 +615,10 @@ class ModelConfigBuilder:
             horseshoe_tau0=self._horseshoe_tau0,
             horseshoe_slab_df=self._horseshoe_slab_df,
             horseshoe_slab_scale=self._horseshoe_slab_scale,
+            capture_prior=self._capture_prior,
+            organism=self._organism,
+            total_mrna_mean=self._total_mrna_mean,
+            total_mrna_log_sigma=self._total_mrna_log_sigma,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             guide_families=self._guide_families,
