@@ -15,6 +15,149 @@ from jax import random
 
 from ..utils import numpyro_to_scipy
 
+
+# ==============================================================================
+# Horseshoe NCP MAP Reconstruction
+# ==============================================================================
+
+
+def _horseshoe_eff_scale(
+    tau: jnp.ndarray,
+    lam: jnp.ndarray,
+    c_sq: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute the regularized horseshoe effective scale.
+
+    Parameters
+    ----------
+    tau : jnp.ndarray
+        Global shrinkage (scalar).
+    lam : jnp.ndarray
+        Per-gene local scales.
+    c_sq : jnp.ndarray
+        Slab parameter (scalar).
+
+    Returns
+    -------
+    jnp.ndarray
+        Effective scale ``tau * c * lambda / sqrt(c^2 + tau^2 * lambda^2)``.
+    """
+    c = jnp.sqrt(c_sq)
+    return tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+
+
+def _reconstruct_horseshoe_maps(
+    map_estimates: Dict[str, jnp.ndarray],
+    model_config,
+) -> Dict[str, jnp.ndarray]:
+    """Reconstruct constrained MAP estimates from NCP horseshoe components.
+
+    When a horseshoe prior with NCP is used, the MAP contains entries for
+    ``{raw_name}`` (z), ``tau_{prefix}``, ``lambda_{prefix}``, and
+    ``c_sq_{prefix}`` instead of the constrained parameter.  This function
+    computes ``constrained = transform(hyper_loc + eff_scale * z)`` and
+    injects it into the MAP dict.
+
+    Parameters
+    ----------
+    map_estimates : Dict[str, jnp.ndarray]
+        MAP estimates including raw z and horseshoe hyperparameters.
+    model_config
+        Model configuration with horseshoe flags.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Updated MAP with constrained parameters added.
+    """
+    configs = []
+
+    # Gene-level horseshoe p
+    if getattr(model_config, "horseshoe_p", False):
+        parameterization = model_config.parameterization
+        if parameterization in ("mean_odds", "odds_ratio"):
+            configs.append(
+                ("phi_raw", "phi", "phi", "log_phi_loc", jnp.exp)
+            )
+        else:
+            configs.append(
+                ("p_raw", "p", "p", "logit_p_loc", sigmoid)
+            )
+
+    # Gene-level horseshoe gate
+    if getattr(model_config, "horseshoe_gate", False):
+        configs.append(
+            ("gate_raw", "gate", "gate", "logit_gate_loc", sigmoid)
+        )
+
+    # Dataset-level horseshoe mu
+    if getattr(model_config, "horseshoe_dataset_mu", False):
+        parameterization = model_config.parameterization
+        if parameterization in ("canonical", "standard"):
+            configs.append(
+                ("r_raw", "r", "r_dataset", "log_r_dataset_loc", jnp.exp)
+            )
+        else:
+            configs.append(
+                ("mu_raw", "mu", "mu_dataset", "log_mu_dataset_loc", jnp.exp)
+            )
+
+    # Dataset-level horseshoe p
+    if getattr(model_config, "horseshoe_dataset_p", False):
+        parameterization = model_config.parameterization
+        if parameterization in ("mean_odds", "odds_ratio"):
+            configs.append(
+                (
+                    "phi_raw_dataset",
+                    "phi",
+                    "phi_dataset",
+                    "log_phi_dataset_loc",
+                    jnp.exp,
+                )
+            )
+        else:
+            configs.append(
+                (
+                    "p_raw_dataset",
+                    "p",
+                    "p_dataset",
+                    "logit_p_dataset_loc",
+                    sigmoid,
+                )
+            )
+
+    # Dataset-level horseshoe gate
+    if getattr(model_config, "horseshoe_dataset_gate", False):
+        configs.append(
+            (
+                "gate_raw_dataset",
+                "gate",
+                "gate_dataset",
+                "logit_gate_dataset_loc",
+                sigmoid,
+            )
+        )
+
+    for raw_name, target_name, hs_prefix, loc_name, transform in configs:
+        if raw_name not in map_estimates:
+            continue
+
+        z = map_estimates[raw_name]
+        tau = map_estimates.get(f"tau_{hs_prefix}")
+        lam = map_estimates.get(f"lambda_{hs_prefix}")
+        c_sq = map_estimates.get(f"c_sq_{hs_prefix}")
+        loc = map_estimates.get(loc_name)
+
+        if any(v is None for v in (tau, lam, c_sq, loc)):
+            continue
+
+        eff = _horseshoe_eff_scale(tau, lam, c_sq)
+        unconstrained = loc + eff * z
+        map_estimates[target_name] = transform(unconstrained)
+
+    return map_estimates
+
+
 # ==============================================================================
 # Parameter Extraction Mixin
 # ==============================================================================
@@ -419,6 +562,11 @@ class ParameterExtractionMixin:
                     "NaN values were replaced with means of the distributions",
                     UserWarning,
                 )
+
+        # Reconstruct constrained parameters from NCP horseshoe if applicable
+        map_estimates = _reconstruct_horseshoe_maps(
+            map_estimates, self.model_config
+        )
 
         # Compute canonical parameters if requested
         if canonical:

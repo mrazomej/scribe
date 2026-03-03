@@ -77,6 +77,13 @@ structure:
   p: `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
 
+#### Horseshoe Prior Configuration
+
+Five flags enable regularized horseshoe shrinkage (each requires its hierarchy
+flag): `horseshoe_p`, `horseshoe_gate`, `horseshoe_dataset_mu`,
+`horseshoe_dataset_p`, `horseshoe_dataset_gate`. Shared hyperparameters:
+`horseshoe_tau0`, `horseshoe_slab_df`, `horseshoe_slab_scale`.
+
 ### PriorConfig / UnconstrainedPriorConfig
 
 Prior parameter configurations with automatic validation:

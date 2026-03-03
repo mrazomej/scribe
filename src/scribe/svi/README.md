@@ -511,6 +511,9 @@ ScribeSVIResults
      - `get_map()`: Get maximum a posteriori (MAP) estimates
      - `_compute_canonical_parameters()`: Convert to canonical (p, r) form
      - `_convert_to_canonical()`: Deprecated conversion method
+     - `_reconstruct_horseshoe_maps()`: Reconstruct constrained MAP from NCP
+       z components for horseshoe priors
+     - `_horseshoe_eff_scale()`: Compute regularized horseshoe effective scale
    - Dependencies: Uses `ModelHelpersMixin` methods
 
 4. **GeneSubsettingMixin** (`_gene_subsetting.py`)

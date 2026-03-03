@@ -1306,6 +1306,122 @@ class HierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
 
 
 # ==============================================================================
+# Horseshoe Gene-Level Hierarchical Specifications
+# ==============================================================================
+
+
+class HorseshoeHierarchicalSigmoidNormalSpec(
+    HierarchicalNormalWithTransformSpec
+):
+    """Gene-level horseshoe prior with Sigmoid transform and NCP.
+
+    Replaces the single global scale of ``HierarchicalSigmoidNormalSpec``
+    with a regularized horseshoe structure (per-gene local scales).  Uses
+    non-centered parameterization: samples ``z_g ~ Normal(0, 1)`` and
+    computes the constrained parameter deterministically.
+
+    Generative model (NCP form)::
+
+        tau       ~ HalfCauchy(tau_0)                  [global shrinkage]
+        lambda_g  ~ HalfCauchy(1)                      [per-gene local scale]
+        c^2       ~ InvGamma(slab_df/2, slab_df*s^2/2) [slab]
+        lt_g      = c * lambda_g / sqrt(c^2 + tau^2 * lambda_g^2)
+        z_g       ~ Normal(0, 1)                       [NCP raw]
+        p_g       = sigmoid(hyper_loc + tau * lt_g * z_g) [deterministic]
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g. ``"p"`` or ``"gate"``).
+    tau_name : str
+        Name of the global shrinkage site (``HalfCauchySpec``).
+    lambda_name : str
+        Name of the per-gene local scale site (``HalfCauchySpec``).
+    c_sq_name : str
+        Name of the slab site (``InverseGammaSpec``).
+    raw_name : str
+        Sample-site name for the NCP ``z`` variable (e.g. ``"p_raw"``).
+    uses_ncp : bool
+        Always ``True`` for this spec.
+
+    See Also
+    --------
+    HierarchicalSigmoidNormalSpec : Normal-hierarchy version without horseshoe.
+    HorseshoeDatasetSigmoidNormalSpec : Dataset-level variant.
+    """
+
+    tau_name: str = Field(
+        ..., description="Name of the global shrinkage HalfCauchy site"
+    )
+    lambda_name: str = Field(
+        ..., description="Name of the per-gene local scale HalfCauchy site"
+    )
+    c_sq_name: str = Field(
+        ..., description="Name of the slab InverseGamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SigmoidTransform()
+    )
+
+    # ------------------------------------------------------------------
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic transform.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes.
+        param_values : Dict[str, jnp.ndarray]
+            Must contain ``hyper_loc_name``, ``tau_name``,
+            ``lambda_name``, ``c_sq_name``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Constrained parameter in (0, 1).
+        """
+        loc = param_values[self.hyper_loc_name]
+        tau = param_values[self.tau_name]
+        lam = param_values[self.lambda_name]
+        c_sq = param_values[self.c_sq_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        # Regularized local scale: c * lambda / sqrt(c^2 + tau^2 * lambda^2)
+        c = jnp.sqrt(c_sq)
+        eff_scale = tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+
+        # NCP: sample z ~ Normal(0, 1)
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        # Deterministic transform: constrained = transform(loc + eff_scale * z)
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
+# ==============================================================================
 # Dataset-Level Hierarchical Specification
 # ==============================================================================
 
@@ -1484,6 +1600,308 @@ class DatasetHierarchicalSigmoidNormalSpec(
     transform: Transform = Field(
         default_factory=lambda: dist.transforms.SigmoidTransform()
     )
+
+
+# ==============================================================================
+# Horseshoe Dataset-Level Hierarchical Specifications
+# ==============================================================================
+
+
+class HorseshoeDatasetExpNormalSpec(DatasetHierarchicalNormalWithTransformSpec):
+    """Dataset-level horseshoe prior with Exp transform and NCP.
+
+    Replaces the single global scale of ``DatasetHierarchicalExpNormalSpec``
+    with a regularized horseshoe structure.  Uses NCP: samples
+    ``z_{g,d} ~ Normal(0, 1)`` and computes ``mu_g^{(d)}`` deterministically.
+
+    Generative model (NCP form)::
+
+        tau        ~ HalfCauchy(tau_0)                   [global shrinkage]
+        lambda_g   ~ HalfCauchy(1)                       [per-gene local scale]
+        c^2        ~ InvGamma(slab_df/2, slab_df*s^2/2)  [slab]
+        lt_g       = c * lambda_g / sqrt(c^2 + tau^2 * lambda_g^2)
+        z_{g,d}    ~ Normal(0, 1)                        [NCP raw, (D, G)]
+        mu_g^{(d)} = exp(hyper_loc_g + tau * lt_g * z_{g,d})  [deterministic]
+
+    Parameters
+    ----------
+    tau_name : str
+        Name of the global shrinkage site.
+    lambda_name : str
+        Name of the per-gene local scale site.
+    c_sq_name : str
+        Name of the slab site.
+    raw_name : str
+        Sample-site name for the NCP ``z`` variable (e.g. ``"mu_raw"``).
+    uses_ncp : bool
+        Always ``True``.
+
+    See Also
+    --------
+    DatasetHierarchicalExpNormalSpec : Normal-hierarchy version.
+    HorseshoeHierarchicalSigmoidNormalSpec : Gene-level variant.
+    """
+
+    tau_name: str = Field(
+        ..., description="Name of the global shrinkage HalfCauchy site"
+    )
+    lambda_name: str = Field(
+        ..., description="Name of the per-gene local scale HalfCauchy site"
+    )
+    c_sq_name: str = Field(
+        ..., description="Name of the slab InverseGamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+    # ------------------------------------------------------------------
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic transform.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes.
+        param_values : Dict[str, jnp.ndarray]
+            Must contain ``hyper_loc_name``, ``tau_name``,
+            ``lambda_name``, ``c_sq_name``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Constrained parameter in (0, inf) with shape
+            ``(n_datasets, n_genes)``.
+        """
+        loc = param_values[self.hyper_loc_name]
+        tau = param_values[self.tau_name]
+        lam = param_values[self.lambda_name]
+        c_sq = param_values[self.c_sq_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        # Regularized local scale: c * lambda / sqrt(c^2 + tau^2 * lambda^2)
+        c = jnp.sqrt(c_sq)
+        eff_scale = tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+
+        # NCP: sample z ~ Normal(0, 1)
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        # Deterministic transform: constrained = exp(loc + eff_scale * z)
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
+class HorseshoeDatasetSigmoidNormalSpec(
+    DatasetHierarchicalNormalWithTransformSpec
+):
+    """Dataset-level horseshoe prior with Sigmoid transform and NCP.
+
+    Replaces the single global scale of ``DatasetHierarchicalSigmoidNormalSpec``
+    with a regularized horseshoe structure.  Used for dataset-level ``p``
+    and dataset-level ``gate``.
+
+    Generative model (NCP form)::
+
+        tau        ~ HalfCauchy(tau_0)                   [global shrinkage]
+        lambda_g   ~ HalfCauchy(1)                       [per-gene local scale]
+        c^2        ~ InvGamma(slab_df/2, slab_df*s^2/2)  [slab]
+        lt_g       = c * lambda_g / sqrt(c^2 + tau^2 * lambda_g^2)
+        z_{g,d}    ~ Normal(0, 1)                        [NCP raw]
+        p_g^{(d)}  = sigmoid(hyper_loc_g + tau * lt_g * z_{g,d})
+
+    Parameters
+    ----------
+    tau_name : str
+        Name of the global shrinkage site.
+    lambda_name : str
+        Name of the per-gene local scale site.
+    c_sq_name : str
+        Name of the slab site.
+    raw_name : str
+        Sample-site name for the NCP ``z`` variable.
+    uses_ncp : bool
+        Always ``True``.
+
+    See Also
+    --------
+    DatasetHierarchicalSigmoidNormalSpec : Normal-hierarchy version.
+    """
+
+    tau_name: str = Field(
+        ..., description="Name of the global shrinkage HalfCauchy site"
+    )
+    lambda_name: str = Field(
+        ..., description="Name of the per-gene local scale HalfCauchy site"
+    )
+    c_sq_name: str = Field(
+        ..., description="Name of the slab InverseGamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SigmoidTransform()
+    )
+
+    # ------------------------------------------------------------------
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic transform.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes.
+        param_values : Dict[str, jnp.ndarray]
+            Must contain ``hyper_loc_name``, ``tau_name``,
+            ``lambda_name``, ``c_sq_name``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Constrained parameter in (0, 1).
+        """
+        loc = param_values[self.hyper_loc_name]
+        tau = param_values[self.tau_name]
+        lam = param_values[self.lambda_name]
+        c_sq = param_values[self.c_sq_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        # Regularized local scale
+        c = jnp.sqrt(c_sq)
+        eff_scale = tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+
+        # NCP: sample z ~ Normal(0, 1)
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        # Deterministic transform
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
+# ==============================================================================
+# Horseshoe Hyperparameter Specifications
+# ==============================================================================
+
+
+class HalfCauchySpec(ParamSpec):
+    """Half-Cauchy distributed parameter for horseshoe shrinkage scales.
+
+    Used for the global shrinkage ``tau`` (scalar) and per-gene local
+    scales ``lambda_g`` (gene-specific) in the regularized horseshoe.
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g. ``"tau_p"``, ``"lambda_p"``).
+    shape_dims : Tuple[str, ...]
+        Shape dimensions. Scalar ``()`` for tau, ``("n_genes",)`` for lambda.
+    scale : float
+        Scale parameter of the Half-Cauchy distribution (default 1.0).
+        For tau, this is ``tau_0`` controlling expected sparsity.
+    default_params : Tuple[float, ...]
+        Not used for HalfCauchy (scale is set via ``scale`` field).
+        Defaults to ``(1.0,)`` to satisfy ParamSpec.
+    """
+
+    scale: float = Field(1.0, description="Scale of the HalfCauchy prior")
+    default_params: Tuple[float, ...] = Field(
+        default=(1.0,), description="Unused; scale is set via 'scale' field."
+    )
+
+    def _get_distribution_type(self):
+        return dist.HalfCauchy
+
+    @property
+    def constrained_name(self) -> str:
+        """Half-Cauchy is already positive; constrained name equals name."""
+        return self.name
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+
+class InverseGammaSpec(ParamSpec):
+    """Inverse-Gamma distributed parameter for the horseshoe slab.
+
+    Used for the slab ``c^2`` that bounds the maximum effective scale
+    in the regularized horseshoe.
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g. ``"c_sq_p"``).
+    shape_dims : Tuple[str, ...]
+        Shape dimensions (typically scalar ``()``).
+    concentration : float
+        Shape parameter ``alpha = slab_df / 2``.
+    rate : float
+        Rate parameter ``beta = slab_df * slab_scale^2 / 2``.
+    default_params : Tuple[float, ...]
+        Not used for InverseGamma. Defaults to ``(2.0, 8.0)`` (typical values).
+    """
+
+    concentration: float = Field(
+        ..., description="Shape parameter (slab_df / 2)"
+    )
+    rate: float = Field(
+        ..., description="Rate parameter (slab_df * slab_scale^2 / 2)"
+    )
+    default_params: Tuple[float, ...] = Field(
+        default=(2.0, 8.0),
+        description="Unused; concentration and rate set directly.",
+    )
+
+    def _get_distribution_type(self):
+        return dist.InverseGamma
+
+    @property
+    def constrained_name(self) -> str:
+        """InverseGamma is already positive; constrained name equals name."""
+        return self.name
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
 
 # ==============================================================================
@@ -1844,3 +2262,94 @@ def sample_prior(
 
     # Sample directly in constrained space (transform applied internally)
     return numpyro.sample(spec.constrained_name, transformed_dist)
+
+
+# ------------------------------------------------------------------------------
+# Half-Cauchy Distribution Prior Sampling
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HalfCauchySpec, dict, object)
+def sample_prior(
+    spec: HalfCauchySpec,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+) -> jnp.ndarray:
+    """Sample from Half-Cauchy prior (horseshoe shrinkage scales).
+
+    Parameters
+    ----------
+    spec : HalfCauchySpec
+        The parameter specification.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    if shape == ():
+        return numpyro.sample(spec.name, dist.HalfCauchy(spec.scale))
+    else:
+        return numpyro.sample(
+            spec.name,
+            dist.HalfCauchy(spec.scale).expand(shape).to_event(len(shape)),
+        )
+
+
+# ------------------------------------------------------------------------------
+# Inverse-Gamma Distribution Prior Sampling
+# ------------------------------------------------------------------------------
+
+
+@dispatch(InverseGammaSpec, dict, object)
+def sample_prior(
+    spec: InverseGammaSpec,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+) -> jnp.ndarray:
+    """Sample from Inverse-Gamma prior (horseshoe slab).
+
+    Parameters
+    ----------
+    spec : InverseGammaSpec
+        The parameter specification.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    if shape == ():
+        return numpyro.sample(
+            spec.name,
+            dist.InverseGamma(spec.concentration, spec.rate),
+        )
+    else:
+        return numpyro.sample(
+            spec.name,
+            dist.InverseGamma(spec.concentration, spec.rate)
+            .expand(shape)
+            .to_event(len(shape)),
+        )

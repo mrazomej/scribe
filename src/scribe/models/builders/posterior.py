@@ -139,30 +139,49 @@ def get_posterior_distributions(
     # -------------------------------------------------------------------------
     # Override p/phi with hierarchical version when hierarchical_p is enabled
     # -------------------------------------------------------------------------
+    horseshoe_p = getattr(model_config, "horseshoe_p", False)
     if hierarchical_p:
         if parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
         ):
-            # Hierarchical phi: hyperparameters + per-gene phi
+            target_name = "phi"
+            loc_name = "log_phi_loc"
+            scale_name = "log_phi_scale"
+            prefix = "phi"
+        else:
+            target_name = "p"
+            loc_name = "logit_p_loc"
+            scale_name = "logit_p_scale"
+            prefix = "p"
+
+        if horseshoe_p:
+            # Horseshoe: hyper_loc + horseshoe trio + raw z
             distributions.update(
                 _build_hyperparameter_posteriors(
-                    params, "log_phi_loc", "log_phi_scale"
+                    params, loc_name, loc_name
                 )
             )
-            distributions["phi"] = _build_exp_normal_posterior(
-                params, "phi", is_mixture, split, is_scalar=False
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(params, prefix)
+            )
+            distributions[f"{target_name}_raw"] = _build_normal_posterior(
+                params, f"{target_name}_raw"
             )
         else:
-            # Hierarchical p: hyperparameters + per-gene p
             distributions.update(
                 _build_hyperparameter_posteriors(
-                    params, "logit_p_loc", "logit_p_scale"
+                    params, loc_name, scale_name
                 )
             )
-            distributions["p"] = _build_sigmoid_normal_posterior(
-                params, "p", is_scalar=False, split=split
-            )
+            if target_name == "phi":
+                distributions[target_name] = _build_exp_normal_posterior(
+                    params, target_name, is_mixture, split, is_scalar=False
+                )
+            else:
+                distributions[target_name] = _build_sigmoid_normal_posterior(
+                    params, target_name, is_scalar=False, split=split
+                )
 
     # -------------------------------------------------------------------------
     # Dataset-level hierarchical mu/r: hyperparameters + per-dataset override
@@ -174,36 +193,54 @@ def get_posterior_distributions(
         model_config, "hierarchical_dataset_p", "none"
     )
 
+    horseshoe_dataset_mu = getattr(
+        model_config, "horseshoe_dataset_mu", False
+    )
     if hierarchical_dataset_mu:
         if parameterization in (
             Parameterization.CANONICAL,
             Parameterization.STANDARD,
         ):
-            hyper_loc, hyper_scale = "log_r_dataset_loc", "log_r_dataset_scale"
+            hyper_loc = "log_r_dataset_loc"
+            hyper_scale = "log_r_dataset_scale"
             target = "r"
+            hs_prefix = "r_dataset"
         else:
-            hyper_loc, hyper_scale = (
-                "log_mu_dataset_loc",
-                "log_mu_dataset_scale",
-            )
+            hyper_loc = "log_mu_dataset_loc"
+            hyper_scale = "log_mu_dataset_scale"
             target = "mu"
+            hs_prefix = "mu_dataset"
 
-        distributions.update(
-            _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
-        )
-        # Override the base mu/r with the per-dataset version
-        if low_rank:
-            distributions[target] = _build_low_rank_exp_normal_posterior(
-                params, target, is_mixture, split
+        if horseshoe_dataset_mu:
+            # Horseshoe: hyper_loc posterior + horseshoe trio + raw z
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
+            )
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
+            )
+            distributions[f"{target}_raw"] = _build_normal_posterior(
+                params, f"{target}_raw"
             )
         else:
-            distributions[target] = _build_exp_normal_posterior(
-                params, target, is_mixture, split
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params, hyper_loc, hyper_scale
+                )
             )
+            if low_rank:
+                distributions[target] = _build_low_rank_exp_normal_posterior(
+                    params, target, is_mixture, split
+                )
+            else:
+                distributions[target] = _build_exp_normal_posterior(
+                    params, target, is_mixture, split
+                )
 
     # -------------------------------------------------------------------------
     # Dataset-level hierarchical p/phi: hyperparameters + per-dataset override
     # -------------------------------------------------------------------------
+    horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
     if hierarchical_dataset_p != "none":
         if parameterization in (
             Parameterization.MEAN_ODDS,
@@ -211,21 +248,40 @@ def get_posterior_distributions(
         ):
             hyper_loc = "log_phi_dataset_loc"
             hyper_scale = "log_phi_dataset_scale"
-            distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
-            )
-            distributions["phi"] = _build_exp_normal_posterior(
-                params, "phi", is_mixture, split, is_scalar=False
-            )
+            target = "phi"
+            hs_prefix = "phi_dataset"
+            raw_name = "phi_raw_dataset"
         else:
             hyper_loc = "logit_p_dataset_loc"
             hyper_scale = "logit_p_dataset_scale"
+            target = "p"
+            hs_prefix = "p_dataset"
+            raw_name = "p_raw_dataset"
+
+        if horseshoe_dataset_p:
             distributions.update(
-                _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_loc)
             )
-            distributions["p"] = _build_sigmoid_normal_posterior(
-                params, "p", is_scalar=False, split=split
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
             )
+            distributions[raw_name] = _build_normal_posterior(
+                params, raw_name
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params, hyper_loc, hyper_scale
+                )
+            )
+            if target == "phi":
+                distributions[target] = _build_exp_normal_posterior(
+                    params, target, is_mixture, split, is_scalar=False
+                )
+            else:
+                distributions[target] = _build_sigmoid_normal_posterior(
+                    params, target, is_scalar=False, split=split
+                )
 
     # -------------------------------------------------------------------------
     # Dataset-level hierarchical gate
@@ -233,29 +289,73 @@ def get_posterior_distributions(
     hierarchical_dataset_gate = getattr(
         model_config, "hierarchical_dataset_gate", False
     )
+    horseshoe_dataset_gate = getattr(
+        model_config, "horseshoe_dataset_gate", False
+    )
     if hierarchical_dataset_gate:
-        distributions.update(
-            _build_hyperparameter_posteriors(
-                params, "logit_gate_dataset_loc", "logit_gate_dataset_scale"
+        if horseshoe_dataset_gate:
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params,
+                    "logit_gate_dataset_loc",
+                    "logit_gate_dataset_loc",
+                )
             )
-        )
-        distributions["gate"] = _build_sigmoid_normal_posterior(
-            params, "gate", is_scalar=False, split=split
-        )
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(
+                    params, "gate_dataset"
+                )
+            )
+            distributions["gate_raw_dataset"] = _build_normal_posterior(
+                params, "gate_raw_dataset"
+            )
+        else:
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params,
+                    "logit_gate_dataset_loc",
+                    "logit_gate_dataset_scale",
+                )
+            )
+            distributions["gate"] = _build_sigmoid_normal_posterior(
+                params, "gate", is_scalar=False, split=split
+            )
 
     # -------------------------------------------------------------------------
     # Add zero-inflation gate if applicable
     # -------------------------------------------------------------------------
+    horseshoe_gate = getattr(model_config, "horseshoe_gate", False)
     if is_zero_inflated and not hierarchical_dataset_gate:
-        if hierarchical_gate:
+        if hierarchical_gate and horseshoe_gate:
+            # Horseshoe gene-level gate: hyper_loc + horseshoe trio + raw z
+            distributions.update(
+                _build_hyperparameter_posteriors(
+                    params, "logit_gate_loc", "logit_gate_loc"
+                )
+            )
+            distributions.update(
+                _build_horseshoe_hyperparameter_posteriors(params, "gate")
+            )
+            distributions["gate_raw"] = _build_normal_posterior(
+                params, "gate_raw"
+            )
+        elif hierarchical_gate:
             distributions.update(
                 _build_hyperparameter_posteriors(
                     params, "logit_gate_loc", "logit_gate_scale"
                 )
             )
-        distributions.update(
-            _build_gate_posterior(params, unconstrained, is_mixture, split)
-        )
+            distributions.update(
+                _build_gate_posterior(
+                    params, unconstrained, is_mixture, split
+                )
+            )
+        else:
+            distributions.update(
+                _build_gate_posterior(
+                    params, unconstrained, is_mixture, split
+                )
+            )
 
     # -------------------------------------------------------------------------
     # Add capture probability if applicable
@@ -447,6 +547,62 @@ def _build_hyperparameter_posteriors(
     )
 
     return distributions
+
+
+def _build_horseshoe_hyperparameter_posteriors(
+    params: Dict[str, jnp.ndarray],
+    prefix: str,
+) -> Dict[str, Any]:
+    """Build LogNormal posteriors for horseshoe hyperparameters.
+
+    The horseshoe trio (tau, lambda, c_sq) all have LogNormal variational
+    posteriors since they are positive-valued.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Guide parameters.  Must contain ``tau_{prefix}_loc``,
+        ``tau_{prefix}_scale``, etc.
+    prefix : str
+        Naming prefix (e.g. ``"p"``, ``"mu_dataset"``).
+
+    Returns
+    -------
+    Dict[str, Any]
+        Posterior distributions for tau, lambda, and c_sq.
+    """
+    distributions = {}
+
+    for role in ("tau", "lambda", "c_sq"):
+        name = f"{role}_{prefix}"
+        loc = params[f"{name}_loc"]
+        scale = params[f"{name}_scale"]
+        distributions[name] = dist.LogNormal(loc, scale)
+
+    return distributions
+
+
+def _build_normal_posterior(
+    params: Dict[str, jnp.ndarray],
+    name: str,
+) -> dist.Distribution:
+    """Build a plain Normal posterior for NCP raw z variables.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Guide parameters.
+    name : str
+        Parameter name (e.g. ``"p_raw"``, ``"mu_raw"``).
+
+    Returns
+    -------
+    dist.Normal
+        Normal posterior for the z variable.
+    """
+    loc = params[f"{name}_loc"]
+    scale = params[f"{name}_scale"]
+    return dist.Normal(loc, scale)
 
 
 def _build_gate_posterior(

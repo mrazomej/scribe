@@ -48,6 +48,11 @@ from .parameter_specs import (
     BetaSpec,
     DirichletSpec,
     ExpNormalSpec,
+    HalfCauchySpec,
+    HorseshoeDatasetExpNormalSpec,
+    HorseshoeDatasetSigmoidNormalSpec,
+    HorseshoeHierarchicalSigmoidNormalSpec,
+    InverseGammaSpec,
     LogNormalSpec,
     NormalWithTransformSpec,
     ParamSpec,
@@ -114,8 +119,10 @@ def setup_guide(
     """
     params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(
-        spec.shape_dims, dims,
-        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
     )
 
     # Variational params for Beta must be positive
@@ -173,8 +180,10 @@ def setup_guide(
     """
     params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(
-        spec.shape_dims, dims,
-        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
     )
 
     # Variational params for BetaPrime must be positive
@@ -239,8 +248,10 @@ def setup_guide(
     """
     params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(
-        spec.shape_dims, dims,
-        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
     )
 
     loc = numpyro.param(f"{spec.name}_loc", jnp.full(shape, params[0]))
@@ -295,8 +306,10 @@ def setup_guide(
     """
     params = spec.guide if spec.guide is not None else spec.default_params
     shape = resolve_shape(
-        spec.shape_dims, dims,
-        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
     )
 
     # Variational parameters for the base Normal
@@ -360,8 +373,10 @@ def setup_guide(
         Sampled parameter value from low-rank variational distribution.
     """
     resolved_shape = resolve_shape(
-        spec.shape_dims, dims,
-        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
     )
     k = guide.rank
 
@@ -378,13 +393,19 @@ def setup_guide(
     )
     W = numpyro.param(
         f"log_{spec.name}_W",
-        0.01 * jnp.ones((*resolved_shape, k)) if resolved_shape
-        else 0.01 * jnp.ones((G, k)),
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
     )
     raw_diag = numpyro.param(
         f"log_{spec.name}_raw_diag",
-        -3.0 * jnp.ones(resolved_shape) if resolved_shape
-        else -3.0 * jnp.ones(G),
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
     )
 
     D = jax.nn.softplus(raw_diag) + 1e-4
@@ -397,6 +418,665 @@ def setup_guide(
         transformed_dist = transformed_dist.to_event(n_batch_dims)
 
     return numpyro.sample(spec.name, transformed_dist)
+
+
+# ==============================================================================
+# Horseshoe Hyperparameter Guide Dispatches
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# HalfCauchy MeanField Guide (LogNormal variational family)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HalfCauchySpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: HalfCauchySpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for Half-Cauchy parameters using LogNormal.
+
+    LogNormal is the natural variational family for Half-Cauchy posteriors:
+    positive support, right-skewed, and reparameterizable.
+
+    Parameters
+    ----------
+    spec : HalfCauchySpec
+        Half-Cauchy parameter specification.
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    loc = numpyro.param(
+        f"{spec.name}_loc",
+        jnp.full(shape, 0.0) if shape else jnp.array(0.0),
+    )
+    scale = numpyro.param(
+        f"{spec.name}_scale",
+        jnp.full(shape, 0.5) if shape else jnp.array(0.5),
+        constraint=constraints.positive,
+    )
+
+    if shape == ():
+        d = dist.LogNormal(loc, scale)
+    else:
+        d = dist.LogNormal(loc, scale).to_event(len(shape))
+
+    return numpyro.sample(spec.name, d)
+
+
+# ------------------------------------------------------------------------------
+# HalfCauchy LowRank Guide (LogNormal variational family)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HalfCauchySpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: HalfCauchySpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide for Half-Cauchy parameters using LogNormal.
+
+    Parameters
+    ----------
+    spec : HalfCauchySpec
+        Half-Cauchy parameter specification (gene-specific lambda).
+    guide : LowRankGuide
+        Low-rank guide marker with rank.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    resolved_shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+    k = guide.rank
+
+    n_batch_dims = len(resolved_shape) - 1
+    G = resolved_shape[-1] if resolved_shape else 1
+
+    loc = numpyro.param(
+        f"log_{spec.name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"log_{spec.name}_W",
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
+    )
+    raw_diag = numpyro.param(
+        f"log_{spec.name}_raw_diag",
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
+    )
+
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+    transformed_dist = dist.TransformedDistribution(
+        base, dist.transforms.ExpTransform()
+    )
+
+    if n_batch_dims > 0:
+        transformed_dist = transformed_dist.to_event(n_batch_dims)
+
+    return numpyro.sample(spec.name, transformed_dist)
+
+
+# ------------------------------------------------------------------------------
+# InverseGamma MeanField Guide (LogNormal variational family)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(InverseGammaSpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: InverseGammaSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for Inverse-Gamma parameters using LogNormal.
+
+    Parameters
+    ----------
+    spec : InverseGammaSpec
+        Inverse-Gamma parameter specification (slab c^2).
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    loc = numpyro.param(
+        f"{spec.name}_loc",
+        jnp.full(shape, 1.0) if shape else jnp.array(1.0),
+    )
+    scale = numpyro.param(
+        f"{spec.name}_scale",
+        jnp.full(shape, 0.5) if shape else jnp.array(0.5),
+        constraint=constraints.positive,
+    )
+
+    if shape == ():
+        d = dist.LogNormal(loc, scale)
+    else:
+        d = dist.LogNormal(loc, scale).to_event(len(shape))
+
+    return numpyro.sample(spec.name, d)
+
+
+# ------------------------------------------------------------------------------
+# InverseGamma LowRank Guide (LogNormal variational family)
+# ------------------------------------------------------------------------------
+
+
+@dispatch(InverseGammaSpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: InverseGammaSpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide for Inverse-Gamma parameters using LogNormal.
+
+    Parameters
+    ----------
+    spec : InverseGammaSpec
+        Inverse-Gamma parameter specification.
+    guide : LowRankGuide
+        Low-rank guide marker with rank.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled positive parameter value.
+    """
+    resolved_shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+    k = guide.rank
+    G = resolved_shape[-1] if resolved_shape else 1
+
+    loc = numpyro.param(
+        f"log_{spec.name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"log_{spec.name}_W",
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
+    )
+    raw_diag = numpyro.param(
+        f"log_{spec.name}_raw_diag",
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
+    )
+
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+    transformed_dist = dist.TransformedDistribution(
+        base, dist.transforms.ExpTransform()
+    )
+    return numpyro.sample(spec.name, transformed_dist)
+
+
+# ==============================================================================
+# Horseshoe NCP Coefficient Guide Dispatches
+# ==============================================================================
+# These guides target the raw z variable (Normal(0,1)), NOT the constrained
+# parameter.  The constrained parameter is computed deterministically in the
+# model via numpyro.deterministic.
+
+
+# ------------------------------------------------------------------------------
+# Gene-level Horseshoe Sigmoid (for p, gate) — MeanField
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HorseshoeHierarchicalSigmoidNormalSpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: HorseshoeHierarchicalSigmoidNormalSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for horseshoe NCP z variable (gene-level).
+
+    Targets the raw ``z`` variable with a Normal(loc, scale) guide.
+    The constrained parameter is handled by numpyro.deterministic in the model.
+
+    Parameters
+    ----------
+    spec : HorseshoeHierarchicalSigmoidNormalSpec
+        Horseshoe gene-level parameter specification.
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value (unconstrained).
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.full(shape, 0.0) if shape else jnp.array(0.0),
+    )
+    scale = numpyro.param(
+        f"{spec.raw_name}_scale",
+        jnp.full(shape, 1.0) if shape else jnp.array(1.0),
+        constraint=constraints.positive,
+    )
+
+    if shape == ():
+        z_dist = dist.Normal(loc, scale)
+    else:
+        z_dist = dist.Normal(loc, scale).to_event(len(shape))
+
+    return numpyro.sample(spec.raw_name, z_dist)
+
+
+# ------------------------------------------------------------------------------
+# Gene-level Horseshoe Sigmoid (for p, gate) — LowRank
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HorseshoeHierarchicalSigmoidNormalSpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: HorseshoeHierarchicalSigmoidNormalSpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide for horseshoe NCP z variable (gene-level).
+
+    Parameters
+    ----------
+    spec : HorseshoeHierarchicalSigmoidNormalSpec
+        Horseshoe gene-level parameter specification.
+    guide : LowRankGuide
+        Low-rank guide marker with rank.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value (unconstrained).
+    """
+    resolved_shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+    k = guide.rank
+
+    n_batch_dims = len(resolved_shape) - 1
+    G = resolved_shape[-1] if resolved_shape else 1
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"{spec.raw_name}_W",
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
+    )
+    raw_diag = numpyro.param(
+        f"{spec.raw_name}_raw_diag",
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
+    )
+
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    z_dist = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    if n_batch_dims > 0:
+        z_dist = z_dist.to_event(n_batch_dims)
+
+    return numpyro.sample(spec.raw_name, z_dist)
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level Horseshoe Exp (for mu) — MeanField
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HorseshoeDatasetExpNormalSpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: HorseshoeDatasetExpNormalSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for horseshoe NCP z variable (dataset-level mu).
+
+    Parameters
+    ----------
+    spec : HorseshoeDatasetExpNormalSpec
+        Horseshoe dataset-level mu specification.
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value with shape ``(n_datasets, n_genes)``.
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.full(shape, 0.0) if shape else jnp.array(0.0),
+    )
+    scale = numpyro.param(
+        f"{spec.raw_name}_scale",
+        jnp.full(shape, 1.0) if shape else jnp.array(1.0),
+        constraint=constraints.positive,
+    )
+
+    if shape == ():
+        z_dist = dist.Normal(loc, scale)
+    else:
+        z_dist = dist.Normal(loc, scale).to_event(len(shape))
+
+    return numpyro.sample(spec.raw_name, z_dist)
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level Horseshoe Exp (for mu) — LowRank
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HorseshoeDatasetExpNormalSpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: HorseshoeDatasetExpNormalSpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide for horseshoe NCP z variable (dataset-level mu).
+
+    Parameters
+    ----------
+    spec : HorseshoeDatasetExpNormalSpec
+        Horseshoe dataset-level mu specification.
+    guide : LowRankGuide
+        Low-rank guide marker with rank.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value.
+    """
+    resolved_shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+    k = guide.rank
+
+    n_batch_dims = len(resolved_shape) - 1
+    G = resolved_shape[-1] if resolved_shape else 1
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"{spec.raw_name}_W",
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
+    )
+    raw_diag = numpyro.param(
+        f"{spec.raw_name}_raw_diag",
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
+    )
+
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    z_dist = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    if n_batch_dims > 0:
+        z_dist = z_dist.to_event(n_batch_dims)
+
+    return numpyro.sample(spec.raw_name, z_dist)
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level Horseshoe Sigmoid (for p, gate) — MeanField
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HorseshoeDatasetSigmoidNormalSpec, MeanFieldGuide, dict, object)
+def setup_guide(
+    spec: HorseshoeDatasetSigmoidNormalSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for horseshoe NCP z variable (dataset-level p/gate).
+
+    Parameters
+    ----------
+    spec : HorseshoeDatasetSigmoidNormalSpec
+        Horseshoe dataset-level p or gate specification.
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value.
+    """
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.full(shape, 0.0) if shape else jnp.array(0.0),
+    )
+    scale = numpyro.param(
+        f"{spec.raw_name}_scale",
+        jnp.full(shape, 1.0) if shape else jnp.array(1.0),
+        constraint=constraints.positive,
+    )
+
+    if shape == ():
+        z_dist = dist.Normal(loc, scale)
+    else:
+        z_dist = dist.Normal(loc, scale).to_event(len(shape))
+
+    return numpyro.sample(spec.raw_name, z_dist)
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level Horseshoe Sigmoid (for p, gate) — LowRank
+# ------------------------------------------------------------------------------
+
+
+@dispatch(HorseshoeDatasetSigmoidNormalSpec, LowRankGuide, dict, object)
+def setup_guide(
+    spec: HorseshoeDatasetSigmoidNormalSpec,
+    guide: LowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    **kwargs,
+) -> jnp.ndarray:
+    """LowRank guide for horseshoe NCP z variable (dataset-level p/gate).
+
+    Parameters
+    ----------
+    spec : HorseshoeDatasetSigmoidNormalSpec
+        Horseshoe dataset-level p or gate specification.
+    guide : LowRankGuide
+        Low-rank guide marker with rank.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled z value.
+    """
+    resolved_shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
+    k = guide.rank
+
+    n_batch_dims = len(resolved_shape) - 1
+    G = resolved_shape[-1] if resolved_shape else 1
+
+    loc = numpyro.param(
+        f"{spec.raw_name}_loc",
+        jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+    )
+    W = numpyro.param(
+        f"{spec.raw_name}_W",
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
+    )
+    raw_diag = numpyro.param(
+        f"{spec.raw_name}_raw_diag",
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
+    )
+
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    z_dist = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    if n_batch_dims > 0:
+        z_dist = z_dist.to_event(n_batch_dims)
+
+    return numpyro.sample(spec.raw_name, z_dist)
 
 
 # ------------------------------------------------------------------------------
@@ -454,8 +1134,10 @@ def setup_guide(
         # Samples "r" from TransformedDistribution(LowRankMultivariateNormal, ExpTransform)
     """
     resolved_shape = resolve_shape(
-        spec.shape_dims, dims,
-        is_mixture=spec.is_mixture, is_dataset=spec.is_dataset,
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
     )
     k = guide.rank
 
@@ -472,13 +1154,19 @@ def setup_guide(
     )
     W = numpyro.param(
         f"{spec.name}_W",
-        0.01 * jnp.ones((*resolved_shape, k)) if resolved_shape
-        else 0.01 * jnp.ones((G, k)),
+        (
+            0.01 * jnp.ones((*resolved_shape, k))
+            if resolved_shape
+            else 0.01 * jnp.ones((G, k))
+        ),
     )
     raw_diag = numpyro.param(
         f"{spec.name}_raw_diag",
-        -3.0 * jnp.ones(resolved_shape) if resolved_shape
-        else -3.0 * jnp.ones(G),
+        (
+            -3.0 * jnp.ones(resolved_shape)
+            if resolved_shape
+            else -3.0 * jnp.ones(G)
+        ),
     )
 
     D = jax.nn.softplus(raw_diag) + 1e-4
@@ -967,10 +1655,7 @@ class GuideBuilder:
                 and model_config.n_components
             ):
                 dims["n_components"] = model_config.n_components
-            if (
-                hasattr(model_config, "n_datasets")
-                and model_config.n_datasets
-            ):
+            if hasattr(model_config, "n_datasets") and model_config.n_datasets:
                 dims["n_datasets"] = model_config.n_datasets
 
             # ================================================================

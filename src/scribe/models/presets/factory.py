@@ -39,8 +39,13 @@ from ..builders.parameter_specs import (
     DatasetHierarchicalSigmoidNormalSpec,
     ExpNormalSpec,
     GaussianLatentSpec,
+    HalfCauchySpec,
     HierarchicalExpNormalSpec,
     HierarchicalSigmoidNormalSpec,
+    HorseshoeDatasetExpNormalSpec,
+    HorseshoeDatasetSigmoidNormalSpec,
+    HorseshoeHierarchicalSigmoidNormalSpec,
+    InverseGammaSpec,
     NormalWithTransformSpec,
     SoftplusNormalSpec,
 )
@@ -598,6 +603,37 @@ def create_model(
         )
 
     # ==========================================================================
+    # Step 5.7: Apply horseshoe priors (upgrade normal hierarchies in-place)
+    # ==========================================================================
+    horseshoe_kwargs = _horseshoe_kwargs_from_config(model_config)
+
+    # Gene-level horseshoe p
+    if getattr(model_config, "horseshoe_p", False):
+        param_specs = _horseshoe_p(
+            param_specs, param_key, **horseshoe_kwargs
+        )
+
+    # Gene-level horseshoe gate
+    if getattr(model_config, "horseshoe_gate", False):
+        param_specs = _horseshoe_gate(param_specs, **horseshoe_kwargs)
+
+    # Dataset-level horseshoe mu
+    if getattr(model_config, "horseshoe_dataset_mu", False):
+        param_specs = _horseshoe_dataset_mu(
+            param_specs, param_key, **horseshoe_kwargs
+        )
+
+    # Dataset-level horseshoe p
+    if getattr(model_config, "horseshoe_dataset_p", False):
+        param_specs = _horseshoe_dataset_p(
+            param_specs, param_key, **horseshoe_kwargs
+        )
+
+    # Dataset-level horseshoe gate
+    if getattr(model_config, "horseshoe_dataset_gate", False):
+        param_specs = _horseshoe_dataset_gate(param_specs, **horseshoe_kwargs)
+
+    # ==========================================================================
     # Step 6: Apply user-provided prior/guide overrides
     # ==========================================================================
     # Merge priors from model_config.param_specs with explicit priors argument
@@ -1104,6 +1140,423 @@ def _datasetify_gate(
                 guide_family=gate_family,
             )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ==============================================================================
+# Horseshoe Factory Helpers
+# ==============================================================================
+
+
+def _horseshoe_kwargs_from_config(model_config: ModelConfig) -> dict:
+    """Extract horseshoe hyperparameters from model config.
+
+    These are shared across all horseshoe usages (gene-level and dataset-level).
+
+    Parameters
+    ----------
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    dict
+        Keys: ``tau0``, ``slab_df``, ``slab_scale``.
+    """
+    return {
+        "tau0": getattr(model_config, "horseshoe_tau0", 1.0),
+        "slab_df": getattr(model_config, "horseshoe_slab_df", 4),
+        "slab_scale": getattr(model_config, "horseshoe_slab_scale", 2.0),
+    }
+
+
+def _make_horseshoe_hypers(
+    prefix: str,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> Tuple:
+    """Create the three horseshoe hyperparameter specs for a given prefix.
+
+    Parameters
+    ----------
+    prefix : str
+        Naming prefix, e.g. ``"p"``, ``"gate"``, ``"mu_dataset"``.
+    tau0 : float
+        Scale for the global shrinkage Half-Cauchy.
+    slab_df : int
+        Degrees of freedom for the slab Inverse-Gamma.
+    slab_scale : float
+        Scale for the slab Inverse-Gamma.
+
+    Returns
+    -------
+    Tuple[HalfCauchySpec, HalfCauchySpec, InverseGammaSpec]
+        (tau_spec, lambda_spec, c_sq_spec)
+    """
+    tau_name = f"tau_{prefix}"
+    lambda_name = f"lambda_{prefix}"
+    c_sq_name = f"c_sq_{prefix}"
+
+    tau_spec = HalfCauchySpec(
+        name=tau_name,
+        shape_dims=(),
+        scale=tau0,
+    )
+    lambda_spec = HalfCauchySpec(
+        name=lambda_name,
+        shape_dims=("n_genes",),
+        scale=1.0,
+        is_gene_specific=True,
+    )
+    c_sq_spec = InverseGammaSpec(
+        name=c_sq_name,
+        shape_dims=(),
+        concentration=slab_df / 2.0,
+        rate=slab_df * slab_scale**2 / 2.0,
+    )
+    return tau_spec, lambda_spec, c_sq_spec
+
+
+# ------------------------------------------------------------------------------
+# Gene-level horseshoe p
+# ------------------------------------------------------------------------------
+
+
+def _horseshoe_p(
+    param_specs: List,
+    param_key: str,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> List:
+    """Upgrade gene-level hierarchical p/phi to horseshoe.
+
+    Finds the hierarchical triplet (hyper_loc, hyper_scale, hier-p) produced
+    by ``_hierarchicalize_p``, replaces hyper_scale (SoftplusNormalSpec) with
+    the horseshoe trio (tau, lambda, c_sq), and replaces the
+    ``HierarchicalSigmoidNormalSpec``/``HierarchicalExpNormalSpec`` with the
+    corresponding horseshoe spec.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_hierarchicalize_p`` has run.
+    param_key : str
+        Parameterization key.
+    tau0, slab_df, slab_scale : float
+        Horseshoe hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with horseshoe p.
+    """
+    if param_key == "mean_odds":
+        target_name = "phi"
+        scale_name = "log_phi_scale"
+        loc_name = "log_phi_loc"
+        prefix = "phi"
+    else:
+        target_name = "p"
+        scale_name = "logit_p_scale"
+        loc_name = "logit_p_loc"
+        prefix = "p"
+
+    raw_name = f"{target_name}_raw"
+    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
+        prefix, tau0, slab_df, slab_scale
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            # Replace the SoftplusNormal hyper_scale with horseshoe trio
+            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
+        elif spec.name == target_name and isinstance(
+            spec, (HierarchicalSigmoidNormalSpec, HierarchicalExpNormalSpec)
+        ):
+            # Replace the hierarchical spec with horseshoe variant
+            horseshoe_spec = HorseshoeHierarchicalSigmoidNormalSpec(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"tau_{prefix}",
+                tau_name=f"tau_{prefix}",
+                lambda_name=f"lambda_{prefix}",
+                c_sq_name=f"c_sq_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(horseshoe_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Gene-level horseshoe gate
+# ------------------------------------------------------------------------------
+
+
+def _horseshoe_gate(
+    param_specs: List,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> List:
+    """Upgrade gene-level hierarchical gate to horseshoe.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``build_gate_spec(hierarchical=True)`` has run.
+    tau0, slab_df, slab_scale : float
+        Horseshoe hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with horseshoe gate.
+    """
+    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
+        "gate", tau0, slab_df, slab_scale
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == "logit_gate_scale":
+            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
+        elif spec.name == "gate" and isinstance(
+            spec, HierarchicalSigmoidNormalSpec
+        ):
+            horseshoe_spec = HorseshoeHierarchicalSigmoidNormalSpec(
+                name="gate",
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name="logit_gate_loc",
+                hyper_scale_name="tau_gate",
+                tau_name="tau_gate",
+                lambda_name="lambda_gate",
+                c_sq_name="c_sq_gate",
+                raw_name="gate_raw",
+                is_gene_specific=spec.is_gene_specific,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(horseshoe_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level horseshoe mu
+# ------------------------------------------------------------------------------
+
+
+def _horseshoe_dataset_mu(
+    param_specs: List,
+    param_key: str,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> List:
+    """Upgrade dataset-level hierarchical mu/r to horseshoe.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_datasetify_mu`` has run.
+    param_key : str
+        Parameterization key.
+    tau0, slab_df, slab_scale : float
+        Horseshoe hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with horseshoe dataset mu.
+    """
+    if param_key in ("mean_odds", "mean_prob"):
+        target_name = "mu"
+        scale_name = "log_mu_dataset_scale"
+        loc_name = "log_mu_dataset_loc"
+        prefix = "mu_dataset"
+    else:
+        target_name = "r"
+        scale_name = "log_r_dataset_scale"
+        loc_name = "log_r_dataset_loc"
+        prefix = "r_dataset"
+
+    raw_name = f"{target_name}_raw"
+    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
+        prefix, tau0, slab_df, slab_scale
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
+        elif spec.name == target_name and isinstance(
+            spec, DatasetHierarchicalExpNormalSpec
+        ):
+            horseshoe_spec = HorseshoeDatasetExpNormalSpec(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"tau_{prefix}",
+                tau_name=f"tau_{prefix}",
+                lambda_name=f"lambda_{prefix}",
+                c_sq_name=f"c_sq_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(horseshoe_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level horseshoe p
+# ------------------------------------------------------------------------------
+
+
+def _horseshoe_dataset_p(
+    param_specs: List,
+    param_key: str,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> List:
+    """Upgrade dataset-level hierarchical p/phi to horseshoe.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_datasetify_p`` has run.
+    param_key : str
+        Parameterization key.
+    tau0, slab_df, slab_scale : float
+        Horseshoe hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with horseshoe dataset p.
+    """
+    if param_key == "mean_odds":
+        target_name = "phi"
+        scale_name = "log_phi_dataset_scale"
+        loc_name = "log_phi_dataset_loc"
+        prefix = "phi_dataset"
+    else:
+        target_name = "p"
+        scale_name = "logit_p_dataset_scale"
+        loc_name = "logit_p_dataset_loc"
+        prefix = "p_dataset"
+
+    raw_name = f"{target_name}_raw_dataset"
+    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
+        prefix, tau0, slab_df, slab_scale
+    )
+
+    # Determine the correct horseshoe spec class based on the target transform
+    if param_key == "mean_odds":
+        TargetHierClass = DatasetHierarchicalExpNormalSpec
+        HorseshoeClass = HorseshoeDatasetExpNormalSpec
+    else:
+        TargetHierClass = DatasetHierarchicalSigmoidNormalSpec
+        HorseshoeClass = HorseshoeDatasetSigmoidNormalSpec
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == scale_name:
+            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
+        elif spec.name == target_name and isinstance(spec, TargetHierClass):
+            horseshoe_spec = HorseshoeClass(
+                name=target_name,
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name=loc_name,
+                hyper_scale_name=f"tau_{prefix}",
+                tau_name=f"tau_{prefix}",
+                lambda_name=f"lambda_{prefix}",
+                c_sq_name=f"c_sq_{prefix}",
+                raw_name=raw_name,
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(horseshoe_spec)
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+# Dataset-level horseshoe gate
+# ------------------------------------------------------------------------------
+
+
+def _horseshoe_dataset_gate(
+    param_specs: List,
+    tau0: float = 1.0,
+    slab_df: int = 4,
+    slab_scale: float = 2.0,
+) -> List:
+    """Upgrade dataset-level hierarchical gate to horseshoe.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Specs after ``_datasetify_gate`` has run.
+    tau0, slab_df, slab_scale : float
+        Horseshoe hyperparameters.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated specs with horseshoe dataset gate.
+    """
+    tau_spec, lambda_spec, c_sq_spec = _make_horseshoe_hypers(
+        "gate_dataset", tau0, slab_df, slab_scale
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == "logit_gate_dataset_scale":
+            new_specs.extend([tau_spec, lambda_spec, c_sq_spec])
+        elif spec.name == "gate" and isinstance(
+            spec, DatasetHierarchicalSigmoidNormalSpec
+        ):
+            horseshoe_spec = HorseshoeDatasetSigmoidNormalSpec(
+                name="gate",
+                shape_dims=spec.shape_dims,
+                default_params=spec.default_params,
+                hyper_loc_name="logit_gate_dataset_loc",
+                hyper_scale_name="tau_gate_dataset",
+                tau_name="tau_gate_dataset",
+                lambda_name="lambda_gate_dataset",
+                c_sq_name="c_sq_gate_dataset",
+                raw_name="gate_raw_dataset",
+                is_gene_specific=spec.is_gene_specific,
+                is_dataset=spec.is_dataset,
+                is_mixture=spec.is_mixture,
+                guide_family=getattr(spec, "guide_family", None),
+            )
+            new_specs.append(horseshoe_spec)
         else:
             new_specs.append(spec)
     return new_specs

@@ -60,6 +60,14 @@ def build_config_from_preset(
     hierarchical_dataset_mu: bool = False,
     hierarchical_dataset_p: str = "none",
     hierarchical_dataset_gate: bool = False,
+    horseshoe_p: bool = False,
+    horseshoe_gate: bool = False,
+    horseshoe_dataset_mu: bool = False,
+    horseshoe_dataset_p: bool = False,
+    horseshoe_dataset_gate: bool = False,
+    horseshoe_tau0: float = 1.0,
+    horseshoe_slab_df: int = 4,
+    horseshoe_slab_scale: float = 2.0,
     guide_rank: Optional[int] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
@@ -311,6 +319,16 @@ def build_config_from_preset(
             or hierarchical_dataset_gate
         ):
             builder._unconstrained = True
+
+    # Horseshoe prior configuration
+    builder._horseshoe_p = horseshoe_p
+    builder._horseshoe_gate = horseshoe_gate
+    builder._horseshoe_dataset_mu = horseshoe_dataset_mu
+    builder._horseshoe_dataset_p = horseshoe_dataset_p
+    builder._horseshoe_dataset_gate = horseshoe_dataset_gate
+    builder._horseshoe_tau0 = horseshoe_tau0
+    builder._horseshoe_slab_df = horseshoe_slab_df
+    builder._horseshoe_slab_scale = horseshoe_slab_scale
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)
