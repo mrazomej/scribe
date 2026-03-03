@@ -256,9 +256,11 @@ def build_capture_spec(
     For mean_odds parameterization, the parameter is transformed from p_capture
     to phi_capture (odds ratio parameterization).
 
-    When ``model_config.capture_prior`` is ``"biology_informed"`` or
-    ``"data_driven"``, returns a ``BiologyInformedCaptureSpec`` that anchors
-    the capture probability to library size via total mRNA per cell.
+    When ``model_config.capture_prior`` is ``"biology_informed"``, returns a
+    ``BiologyInformedCaptureSpec`` that anchors the capture probability to
+    library size via total mRNA per cell.  If ``shared_capture_scaling`` is
+    True, the spec's ``data_driven`` flag is set so that ``mu_eta`` is learned
+    as a shared latent parameter.
 
     If amortization is enabled in guide_families.capture_amortization, the
     guide will use a neural network to predict variational parameters from
@@ -296,17 +298,20 @@ def build_capture_spec(
     capture_param_name = param_strategy.transform_model_param("p_capture")
     use_phi_capture = capture_param_name == "phi_capture"
 
-    # ---- Biology-informed / data-driven capture prior path ----
+    # ---- Biology-informed capture prior path ----
     capture_prior = (
         getattr(model_config, "capture_prior", "default")
         if model_config
         else "default"
     )
-    if capture_prior in ("biology_informed", "data_driven"):
+    if capture_prior == "biology_informed":
         total_mrna_mean = model_config.total_mrna_mean
         sigma_M = model_config.total_mrna_log_sigma
         log_M0 = math.log(total_mrna_mean)
-        data_driven = capture_prior == "data_driven"
+        # shared_capture_scaling enables learning mu_eta as a shared latent
+        data_driven = getattr(
+            model_config, "shared_capture_scaling", False
+        )
 
         capture_family = guide_families.get(capture_param_name)
         return BiologyInformedCaptureSpec(

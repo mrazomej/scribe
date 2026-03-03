@@ -102,6 +102,7 @@ class ModelConfig(BaseModel):
         d.setdefault("hierarchical_dataset_p", "none")
         d.setdefault("hierarchical_dataset_gate", False)
         d.setdefault("capture_prior", "default")
+        d.setdefault("shared_capture_scaling", False)
         d.setdefault("organism", None)
         d.setdefault("total_mrna_mean", None)
         d.setdefault("total_mrna_log_sigma", None)
@@ -246,9 +247,18 @@ class ModelConfig(BaseModel):
             "Capture probability prior mode. "
             "'default': standard parametric prior (Beta, BetaPrime, etc.). "
             "'biology_informed': prior anchored to library size via "
-            "known total mRNA per cell (M_0). "
-            "'data_driven': like biology_informed but M_0 is a learned "
-            "shared parameter (useful for multi-dataset consistency)."
+            "known total mRNA per cell (M_0)."
+        ),
+    )
+    shared_capture_scaling: bool = Field(
+        False,
+        description=(
+            "When True, learn a shared mu_eta parameter across "
+            "datasets/components instead of using a fixed M_0. "
+            "Can be combined with capture_prior='biology_informed' "
+            "(M_0 as informative prior on mu_eta) or "
+            "capture_prior='default' (auto-promotes to eta_c "
+            "framework with vague prior)."
         ),
     )
     organism: Optional[str] = Field(
@@ -531,29 +541,45 @@ class ModelConfig(BaseModel):
         Checks
         ------
         - capture_prior is one of the allowed modes.
-        - Non-flat modes require a VCP model.
+        - Non-default modes require a VCP model.
         - biology_informed mode requires organism or total_mrna_mean.
+        - shared_capture_scaling with capture_prior='default' auto-promotes
+          to 'biology_informed' with vague defaults.
         - Resolves organism defaults when explicit values are absent.
         """
-        valid_modes = {"default", "biology_informed", "data_driven"}
+        valid_modes = {"default", "biology_informed"}
         if self.capture_prior not in valid_modes:
             raise ValueError(
                 f"capture_prior must be one of {valid_modes}, "
                 f"got {self.capture_prior!r}."
             )
-        if self.capture_prior != "default":
+
+        # Auto-promote: shared_capture_scaling with default prior activates
+        # the eta_c framework using a vague prior on mu_eta.
+        if self.shared_capture_scaling and self.capture_prior == "default":
+            object.__setattr__(self, "capture_prior", "biology_informed")
+            # Use organism/total_mrna_mean as center if available,
+            # otherwise fall back to a broad mammalian default.
+            if self.organism is None and self.total_mrna_mean is None:
+                object.__setattr__(self, "total_mrna_mean", 200_000.0)
+                object.__setattr__(self, "total_mrna_log_sigma", 0.5)
+
+        # VCP model required for non-default capture priors or shared scaling
+        if self.capture_prior != "default" or self.shared_capture_scaling:
             if not self.uses_variable_capture:
                 raise ValueError(
-                    f"capture_prior={self.capture_prior!r} requires a VCP "
-                    "model (nbvcp or zinbvcp). Set variable_capture=True "
-                    "or choose an appropriate model."
+                    f"capture_prior={self.capture_prior!r} (or "
+                    "shared_capture_scaling=True) requires a VCP model "
+                    "(nbvcp or zinbvcp)."
                 )
+
         if self.capture_prior == "biology_informed":
             if self.organism is None and self.total_mrna_mean is None:
                 raise ValueError(
                     "capture_prior='biology_informed' requires either "
                     "'organism' or 'total_mrna_mean' to be set."
                 )
+
         # Resolve organism defaults when not explicitly overridden
         if self.organism is not None:
             from .organism_priors import resolve_organism_priors

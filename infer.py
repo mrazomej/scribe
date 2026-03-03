@@ -643,6 +643,7 @@ def main(cfg: DictConfig) -> None:
         "horseshoe_slab_df": cfg.get("horseshoe_slab_df", 4),
         "horseshoe_slab_scale": cfg.get("horseshoe_slab_scale", 2.0),
         "capture_prior": cfg.get("capture_prior", "default"),
+        "shared_capture_scaling": cfg.get("shared_capture_scaling", False),
         "organism": cfg.get("organism", None),
         "total_mrna_mean": cfg.get("total_mrna_mean", None),
         "total_mrna_log_sigma": cfg.get("total_mrna_log_sigma", None),

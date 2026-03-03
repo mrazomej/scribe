@@ -84,8 +84,11 @@ structure:
 For VCP models (`nbvcp`, `zinbvcp`), the capture probability can be anchored to
 biological knowledge about total cellular mRNA content:
 
-- `capture_prior: str` — `"default"`, `"biology_informed"`, or
-  `"data_driven"`
+- `capture_prior: str` — `"default"` or `"biology_informed"`
+- `shared_capture_scaling: bool` — When True, learn a shared `mu_eta`
+  across datasets instead of using fixed `M_0`. Can be combined with
+  either `capture_prior` mode (auto-promotes `"default"` to
+  `"biology_informed"` with vague defaults).
 - `organism: Optional[str]` — Sets default `M_0` for the organism:
   `"human"`, `"mouse"`, `"yeast"`, `"ecoli"` (and aliases like
   `"homo_sapiens"`)

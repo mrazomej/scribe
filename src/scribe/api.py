@@ -225,6 +225,7 @@ def fit(
     horseshoe_slab_scale: float = 2.0,
     # Biology-informed capture prior options
     capture_prior: str = "default",
+    shared_capture_scaling: bool = False,
     organism: Optional[str] = None,
     total_mrna_mean: Optional[float] = None,
     total_mrna_log_sigma: Optional[float] = None,
@@ -734,6 +735,7 @@ def fit(
             horseshoe_slab_df=horseshoe_slab_df,
             horseshoe_slab_scale=horseshoe_slab_scale,
             capture_prior=capture_prior,
+            shared_capture_scaling=shared_capture_scaling,
             organism=organism,
             total_mrna_mean=total_mrna_mean,
             total_mrna_log_sigma=total_mrna_log_sigma,

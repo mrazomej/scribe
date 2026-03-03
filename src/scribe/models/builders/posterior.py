@@ -389,7 +389,7 @@ def get_posterior_distributions(
     # -------------------------------------------------------------------------
     capture_prior = getattr(model_config, "capture_prior", "default")
     if uses_vcp:
-        if capture_prior in ("biology_informed", "data_driven"):
+        if capture_prior == "biology_informed":
             # Biology-informed capture: posterior is on eta_capture
             distributions.update(
                 _build_biology_informed_capture_posterior(

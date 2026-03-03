@@ -77,8 +77,9 @@ The capture parameter is then derived via exact transformations.
 
 Fields: `log_M0` (log expected total mRNA), `sigma_M` (log-scale std-dev),
 `data_driven` (if True, `log_M0` is replaced by a learned shared parameter
-`mu_eta`), `sigma_mu` (prior std-dev for `mu_eta`), `use_phi_capture` (selects
-transformation: `phi_capture = exp(eta) - 1` vs `p_capture = exp(-eta)`).
+`mu_eta`; set by `shared_capture_scaling` config flag), `sigma_mu` (prior
+std-dev for `mu_eta`), `use_phi_capture` (selects transformation:
+`phi_capture = exp(eta) - 1` vs `p_capture = exp(-eta)`).
 
 The guide dispatch for this spec samples per-cell `eta_capture` variational
 parameters and (for data-driven mode) the shared `mu_eta` before the cell plate.

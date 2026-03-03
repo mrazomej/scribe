@@ -381,12 +381,20 @@ results = scribe.fit(
     total_mrna_log_sigma=0.3, # Tighter prior
 )
 
-# Data-driven shared scaling (learns M_0 across datasets)
+# Shared capture scaling (learns M_0 across datasets)
 results = scribe.fit(
     adata,
     model="nbvcp",
-    capture_prior="data_driven",
+    capture_prior="biology_informed",
+    shared_capture_scaling=True,
     organism="mouse",
+)
+
+# Pure data-driven (no biological anchor needed)
+results = scribe.fit(
+    adata,
+    model="nbvcp",
+    shared_capture_scaling=True,  # auto-promotes to biology_informed
 )
 ```
 
@@ -398,7 +406,11 @@ from scribe.models.config import ModelConfigBuilder
 config = (ModelConfigBuilder()
     .for_model("nbvcp")
     .with_parameterization("mean_odds")
-    .with_capture_prior(mode="biology_informed", organism="human")
+    .with_capture_prior(
+        mode="biology_informed",
+        organism="human",
+        shared_capture_scaling=True,
+    )
     .build())
 ```
 
