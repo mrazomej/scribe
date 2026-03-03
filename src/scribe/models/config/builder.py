@@ -89,6 +89,7 @@ class ModelConfigBuilder:
         self._dataset_params: Optional[List[str]] = None
         self._hierarchical_dataset_mu: bool = False
         self._hierarchical_dataset_p: str = "none"
+        self._hierarchical_dataset_gate: bool = False
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._guide_families: Optional[GuideFamilyConfig] = None
@@ -548,6 +549,7 @@ class ModelConfigBuilder:
             dataset_params=self._dataset_params,
             hierarchical_dataset_mu=self._hierarchical_dataset_mu,
             hierarchical_dataset_p=self._hierarchical_dataset_p,
+            hierarchical_dataset_gate=self._hierarchical_dataset_gate,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             guide_families=self._guide_families,

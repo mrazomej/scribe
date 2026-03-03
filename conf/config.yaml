@@ -52,6 +52,7 @@ dataset_key: null         # Column in adata.obs identifying dataset membership
 dataset_params: null      # Which params are per-dataset (null = default based on hierarchy flags)
 hierarchical_dataset_mu: false  # Hierarchical mu/r across datasets with learned tau
 hierarchical_dataset_p: "none"  # none | scalar | gene_specific | two_level
+hierarchical_dataset_gate: false  # Hierarchical gate across datasets with learned shrinkage
 
 # Mixture model configuration
 # Set to integer >= 2 for mixture models, null for single component.
@@ -100,6 +101,9 @@ priors:
   logit_p_dataset_scale: null # SoftplusNormal(loc, scale) for p dataset shrinkage
   log_phi_dataset_loc: null   # Normal(loc, scale) for population phi mean (mean_odds)
   log_phi_dataset_scale: null # SoftplusNormal(loc, scale) for phi dataset shrinkage
+  # Dataset-level hierarchical gate (hierarchical_dataset_gate=true)
+  logit_gate_dataset_loc: null    # Normal(loc, scale) for population gate mean
+  logit_gate_dataset_scale: null  # SoftplusNormal(loc, scale) for gate dataset shrinkage
 
 # --- Amortization Configuration (for VCP models) ---
 # Amortized inference uses a neural network to predict variational parameters

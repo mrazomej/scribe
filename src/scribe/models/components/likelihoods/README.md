@@ -133,6 +133,16 @@ heuristic (`shape[0] == n_datasets`).
 is 2-D `(batch, G)` and `r` is 3-D `(batch, K, G)`, it inserts a component
 singleton to produce `(batch, 1, G)` for correct broadcasting.
 
+### Dataset-Level Hierarchical Gate
+
+When `hierarchical_dataset_gate=True`, the gate parameter (zero-inflation
+probability) becomes per-dataset and gene-specific via a
+`DatasetHierarchicalSigmoidNormalSpec`. The gate follows the same indexing
+convention as `p`/`phi`: `index_dataset_params()` detects `is_dataset=True`
+on the gate's `ParamSpec` and indexes it per cell. No changes to the
+likelihood code are needed — the existing `_build_dist` methods receive
+already-indexed gate values.
+
 ## VCP Likelihoods
 
 The Variable Capture Probability (VCP) likelihoods model cell-specific technical
