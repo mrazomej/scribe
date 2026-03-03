@@ -535,8 +535,11 @@ def create_model(
 
     # ==========================================================================
     # Step 4.5: Apply hierarchical_p flag (replace flat p/phi with triplet)
+    # horseshoe_p also implies this step (horseshoe upgrades the hierarchy)
     # ==========================================================================
-    if model_config.hierarchical_p:
+    if model_config.hierarchical_p or getattr(
+        model_config, "horseshoe_p", False
+    ):
         param_specs = _hierarchicalize_p(
             param_specs=param_specs,
             param_key=param_key,
@@ -547,12 +550,15 @@ def create_model(
 
     # ==========================================================================
     # Step 4.6: Apply dataset-level hierarchy flags
+    # horseshoe_dataset_* flags also trigger the corresponding hierarchy
     # ==========================================================================
     if model_config.n_datasets is not None:
         n_ds = model_config.n_datasets
 
         # Hierarchical mu/r across datasets
-        if model_config.hierarchical_dataset_mu:
+        if model_config.hierarchical_dataset_mu or getattr(
+            model_config, "horseshoe_dataset_mu", False
+        ):
             param_specs = _datasetify_mu(
                 param_specs=param_specs,
                 param_key=param_key,
@@ -561,21 +567,27 @@ def create_model(
             )
 
         # Dataset-level p/phi
-        if model_config.hierarchical_dataset_p in (
-            "scalar",
-            "gene_specific",
+        dataset_p_mode = model_config.hierarchical_dataset_p
+        if dataset_p_mode == "none" and getattr(
+            model_config, "horseshoe_dataset_p", False
         ):
+            dataset_p_mode = "gene_specific"
+        if dataset_p_mode in ("scalar", "gene_specific"):
             param_specs = _datasetify_p(
                 param_specs=param_specs,
                 param_key=param_key,
                 guide_families=guide_families,
                 n_datasets=n_ds,
-                mode=model_config.hierarchical_dataset_p,
+                mode=dataset_p_mode,
             )
 
     # ==========================================================================
     # Step 5: Add model-specific extra parameters
     # ==========================================================================
+    # horseshoe_gate also implies hierarchical_gate for building the gate spec
+    effective_hierarchical_gate = model_config.hierarchical_gate or getattr(
+        model_config, "horseshoe_gate", False
+    )
     extra_param_names = MODEL_EXTRA_PARAMS[base_model]
     for param_name in extra_param_names:
         extra_specs = build_extra_param_spec(
@@ -585,16 +597,17 @@ def create_model(
             param_strategy=param_strategy,
             n_components=model_config.n_components,
             mixture_params=effective_mixture_params,
-            hierarchical_gate=model_config.hierarchical_gate,
+            hierarchical_gate=effective_hierarchical_gate,
         )
         param_specs.extend(extra_specs)
 
     # ==========================================================================
     # Step 5.5: Apply dataset-level gate hierarchy (after gate spec exists)
+    # horseshoe_dataset_gate also triggers this step
     # ==========================================================================
-    if (
-        model_config.n_datasets is not None
-        and model_config.hierarchical_dataset_gate
+    if model_config.n_datasets is not None and (
+        model_config.hierarchical_dataset_gate
+        or getattr(model_config, "horseshoe_dataset_gate", False)
     ):
         param_specs = _datasetify_gate(
             param_specs=param_specs,

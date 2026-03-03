@@ -1532,89 +1532,117 @@ class TestCellSpecificSubsetting:
 
 
 class TestHorseshoeConfigValidation:
-    """Validate that horseshoe flags require their corresponding hierarchies."""
+    """Validate horseshoe flags are mutually exclusive with normal hierarchy."""
 
-    def test_horseshoe_p_requires_hierarchical_p(self):
+    def test_horseshoe_p_excludes_hierarchical_p(self):
+        """Setting both horseshoe_p and hierarchical_p should fail."""
         with pytest.raises(
-            ValueError, match="horseshoe_p.*requires.*hierarchical_p"
+            ValueError, match="horseshoe_p.*hierarchical_p.*mutually exclusive"
         ):
             ModelConfig(
                 base_model="nbdm",
                 unconstrained=True,
                 horseshoe_p=True,
-                hierarchical_p=False,
+                hierarchical_p=True,
             )
 
-    def test_horseshoe_gate_requires_hierarchical_gate(self):
+    def test_horseshoe_gate_excludes_hierarchical_gate(self):
         with pytest.raises(
-            ValueError, match="horseshoe_gate.*requires.*hierarchical_gate"
+            ValueError,
+            match="horseshoe_gate.*hierarchical_gate.*mutually exclusive",
         ):
             ModelConfig(
                 base_model="zinb",
                 unconstrained=True,
                 horseshoe_gate=True,
-                hierarchical_gate=False,
+                hierarchical_gate=True,
             )
 
-    def test_horseshoe_dataset_mu_requires_hierarchical(self):
+    def test_horseshoe_dataset_mu_excludes_hierarchical(self):
         with pytest.raises(
             ValueError,
-            match="horseshoe_dataset_mu.*requires.*hierarchical_dataset_mu",
+            match="horseshoe_dataset_mu.*hierarchical_dataset_mu.*mutually exclusive",
         ):
             ModelConfig(
                 base_model="nbdm",
                 n_datasets=2,
                 unconstrained=True,
                 horseshoe_dataset_mu=True,
-                hierarchical_dataset_mu=False,
+                hierarchical_dataset_mu=True,
             )
 
-    def test_horseshoe_dataset_p_requires_hierarchical(self):
+    def test_horseshoe_dataset_p_excludes_hierarchical(self):
         with pytest.raises(
             ValueError,
-            match="horseshoe_dataset_p.*requires.*hierarchical_dataset_p",
+            match="horseshoe_dataset_p.*hierarchical_dataset_p.*mutually exclusive",
         ):
             ModelConfig(
                 base_model="nbdm",
                 n_datasets=2,
                 unconstrained=True,
                 horseshoe_dataset_p=True,
-                hierarchical_dataset_p="none",
+                hierarchical_dataset_p="gene_specific",
             )
 
-    def test_horseshoe_dataset_gate_requires_hierarchical(self):
+    def test_horseshoe_dataset_gate_excludes_hierarchical(self):
         with pytest.raises(
             ValueError,
-            match="horseshoe_dataset_gate.*requires.*hierarchical_dataset_gate",
+            match="horseshoe_dataset_gate.*hierarchical_dataset_gate.*mutually exclusive",
         ):
             ModelConfig(
                 base_model="zinb",
                 n_datasets=2,
                 unconstrained=True,
                 horseshoe_dataset_gate=True,
-                hierarchical_dataset_gate=False,
+                hierarchical_dataset_gate=True,
             )
 
-    def test_valid_horseshoe_p_config(self):
-        """horseshoe_p=True with hierarchical_p=True should succeed."""
+    def test_valid_horseshoe_p_standalone(self):
+        """horseshoe_p=True alone (no hierarchical_p) should succeed."""
         cfg = ModelConfig(
             base_model="nbdm",
             unconstrained=True,
-            hierarchical_p=True,
             horseshoe_p=True,
         )
         assert cfg.horseshoe_p is True
 
-    def test_valid_horseshoe_dataset_mu_config(self):
-        """horseshoe_dataset_mu=True with hierarchical_dataset_mu=True."""
+    def test_valid_horseshoe_dataset_mu_standalone(self):
+        """horseshoe_dataset_mu=True alone (no hierarchical_dataset_mu)."""
         cfg = ModelConfig(
             base_model="nbdm",
             n_datasets=2,
             unconstrained=True,
-            hierarchical_dataset_mu=True,
             horseshoe_dataset_mu=True,
         )
         assert cfg.horseshoe_dataset_mu is True
+
+    def test_horseshoe_p_requires_unconstrained(self):
+        """horseshoe_p=True without unconstrained should fail."""
+        with pytest.raises(ValueError, match="horseshoe_p.*unconstrained"):
+            ModelConfig(
+                base_model="nbdm",
+                horseshoe_p=True,
+            )
+
+    def test_horseshoe_gate_requires_zero_inflated(self):
+        """horseshoe_gate=True on non-ZI model should fail."""
+        with pytest.raises(ValueError, match="horseshoe_gate.*zero-inflated"):
+            ModelConfig(
+                base_model="nbdm",
+                unconstrained=True,
+                horseshoe_gate=True,
+            )
+
+    def test_horseshoe_dataset_mu_requires_n_datasets(self):
+        """horseshoe_dataset_mu=True without n_datasets should fail."""
+        with pytest.raises(
+            ValueError, match="horseshoe_dataset_mu.*n_datasets"
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                unconstrained=True,
+                horseshoe_dataset_mu=True,
+            )
 
 
 class TestHorseshoeCreateModel:
@@ -1640,7 +1668,6 @@ class TestHorseshoeCreateModel:
         )
 
         b = self._builder()
-        b._hierarchical_dataset_mu = True
         b._horseshoe_dataset_mu = True
         config = b.build()
         model, guide, specs = create_model(config)
@@ -1677,7 +1704,6 @@ class TestHorseshoeCreateModel:
         )
 
         b = self._builder(parameterization="mean_prob")
-        b._hierarchical_dataset_p = "gene_specific"
         b._horseshoe_dataset_p = True
         config = b.build()
         model, guide, specs = create_model(config)
@@ -1701,7 +1727,6 @@ class TestHorseshoeCreateModel:
         )
 
         b = self._builder(model_type="zinbvcp")
-        b._hierarchical_dataset_gate = True
         b._horseshoe_dataset_gate = True
         config = b.build()
         model, guide, specs = create_model(config)
@@ -1725,7 +1750,6 @@ class TestHorseshoeCreateModel:
             .with_parameterization("mean_prob")
             .unconstrained()
         )
-        b._hierarchical_p = True
         b._horseshoe_p = True
         config = b.build()
         model, guide, specs = create_model(config)
@@ -1753,7 +1777,6 @@ class TestHorseshoeCreateModel:
             .with_parameterization("mean_prob")
             .unconstrained()
         )
-        b._hierarchical_gate = True
         b._horseshoe_gate = True
         config = b.build()
         model, guide, specs = create_model(config)
@@ -1766,11 +1789,8 @@ class TestHorseshoeCreateModel:
         assert gate_spec.raw_name == "gate_raw"
 
     def test_combined_dataset_horseshoe_mu_p_gate(self):
-        """Multiple horseshoe flags enabled simultaneously."""
+        """Multiple horseshoe flags enabled simultaneously (standalone)."""
         b = self._builder(model_type="zinbvcp")
-        b._hierarchical_dataset_mu = True
-        b._hierarchical_dataset_p = "gene_specific"
-        b._hierarchical_dataset_gate = True
         b._horseshoe_dataset_mu = True
         b._horseshoe_dataset_p = True
         b._horseshoe_dataset_gate = True

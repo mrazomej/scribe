@@ -79,9 +79,11 @@ structure:
 
 #### Horseshoe Prior Configuration
 
-Five flags enable regularized horseshoe shrinkage (each requires its hierarchy
-flag): `horseshoe_p`, `horseshoe_gate`, `horseshoe_dataset_mu`,
-`horseshoe_dataset_p`, `horseshoe_dataset_gate`. Shared hyperparameters:
+Five flags enable regularized horseshoe shrinkage, each **mutually exclusive**
+with its corresponding normal-hierarchy flag: `horseshoe_p`, `horseshoe_gate`,
+`horseshoe_dataset_mu`, `horseshoe_dataset_p`, `horseshoe_dataset_gate`.
+Setting a horseshoe flag implicitly creates the hierarchy — no need to also set
+the corresponding `hierarchical_*` flag. Shared hyperparameters:
 `horseshoe_tau0`, `horseshoe_slab_df`, `horseshoe_slab_scale`.
 
 ### PriorConfig / UnconstrainedPriorConfig
