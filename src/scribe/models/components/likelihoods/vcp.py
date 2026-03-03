@@ -564,13 +564,17 @@ class ZINBWithVCPLikelihood(Likelihood):
                 # Mean-odds parameterization
                 phi = param_values["phi"]
 
+                # Scalar-per-dataset phi becomes (n_cells,) after indexing;
+                # expand to (n_cells, 1) so it broadcasts with capture and r
+                if phi.ndim == 1 and not is_mixture:
+                    phi = phi[:, None]
+
                 # Reshape capture for broadcasting
                 if is_mixture:
                     capture_reshaped = capture_value[:, None, None]
                 else:
                     capture_reshaped = capture_value[:, None]
 
-                # Broadcast phi if needed
                 # Broadcast phi for mixture models
                 if is_mixture:
                     phi = broadcast_p_for_mixture(phi, r)
@@ -607,6 +611,12 @@ class ZINBWithVCPLikelihood(Likelihood):
                     numpyro.sample("counts", zinb_dist.to_event(1), obs=obs)
             else:
                 # Canonical/mean-prob parameterization
+
+                # Scalar-per-dataset p becomes (n_cells,) after indexing;
+                # expand to (n_cells, 1) so it broadcasts with capture and r
+                if p.ndim == 1 and not is_mixture:
+                    p = p[:, None]
+
                 if is_mixture:
                     capture_reshaped = capture_value[:, None, None]
                 else:

@@ -64,6 +64,11 @@ class NegativeBinomialLikelihood(Likelihood):
         # r shape (n_components, n_genes) → mixture; (n_genes,) → regular NB.
         is_mixture = "mixing_weights" in param_values
 
+        # Scalar-per-dataset p becomes (n_cells,) after indexing;
+        # expand to (n_cells, 1) so it broadcasts with (n_cells, n_genes) r
+        if not is_mixture and p.ndim == 1 and r.ndim == 2:
+            p = p[:, None]
+
         if is_mixture:
             # Mixture model: expect mixing_weights giving Categorical mixture
             # probabilities.
@@ -207,7 +212,9 @@ class NegativeBinomialLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets,
+                            param_values,
+                            dataset_indices,
+                            n_datasets,
                             param_specs=model_config.param_specs,
                         )
                         numpyro.sample("counts", self._build_dist(cell_pv))
@@ -216,7 +223,9 @@ class NegativeBinomialLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices, n_datasets,
+                            param_values,
+                            dataset_indices,
+                            n_datasets,
                             param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
@@ -229,7 +238,9 @@ class NegativeBinomialLikelihood(Likelihood):
                         for spec in cell_specs:
                             sample_prior(spec, dims, model_config)
                         cell_pv = index_dataset_params(
-                            param_values, dataset_indices[idx], n_datasets,
+                            param_values,
+                            dataset_indices[idx],
+                            n_datasets,
                             param_specs=model_config.param_specs,
                         )
                         numpyro.sample(
