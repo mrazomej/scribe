@@ -190,6 +190,11 @@ results = ScribeSVIResults.from_anndata(
 - **`loss_history`**: ELBO loss trajectory during optimization
 - **`model_config`**: Model configuration used for inference
 - **`n_cells`**, **`n_genes`**: Dataset dimensions
+- **`_n_cells_per_dataset`**: Optional 1-D array of per-dataset cell counts
+  (set automatically during inference for multi-dataset hierarchical models).
+  When present, `get_dataset(d)` uses this to set the correct `n_cells` on the
+  returned single-dataset view so that downstream PPC generation works with
+  the right number of cells.
 - **`obs`**, **`var`**, **`uns`**: Metadata from AnnData objects
 
 #### Key Analysis Methods

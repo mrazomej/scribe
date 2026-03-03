@@ -19,6 +19,7 @@ from ..core.serialization import make_model_config_pickle_safe
 from ._parameter_extraction import ParameterExtractionMixin
 from ._gene_subsetting import GeneSubsettingMixin
 from ._component import ComponentMixin
+from ._dataset import DatasetMixin
 from ._model_helpers import ModelHelpersMixin
 from ._sampling import SamplingMixin
 from ._likelihood import LikelihoodMixin
@@ -36,6 +37,7 @@ class ScribeMCMCResults(
     ParameterExtractionMixin,
     GeneSubsettingMixin,
     ComponentMixin,
+    DatasetMixin,
     ModelHelpersMixin,
     SamplingMixin,
     LikelihoodMixin,
@@ -103,6 +105,17 @@ class ScribeMCMCResults(
     predictive_samples: Optional[jnp.ndarray] = None
     n_components: Optional[int] = None
     denoised_counts: Optional[jnp.ndarray] = None
+
+    # Per-dataset cell counts for multi-dataset models.  Set during
+    # inference when ``dataset_indices`` is available.  Used by
+    # ``get_dataset(d)`` to set the correct ``n_cells`` on the returned
+    # single-dataset view.
+    _n_cells_per_dataset: Optional[jnp.ndarray] = None
+
+    # Per-cell dataset assignment array, shape ``(n_cells,)`` with values
+    # in ``{0, ..., n_datasets-1}``.  Stored so that ``get_dataset(d)``
+    # can subset cell-specific parameters.
+    _dataset_indices: Optional[jnp.ndarray] = None
 
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)

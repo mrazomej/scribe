@@ -30,6 +30,7 @@ def _run_mcmc_inference(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Execute MCMC inference.
 
@@ -114,6 +115,7 @@ def _run_mcmc_inference(
         seed=seed,
         mcmc_kwargs=mcmc_kwargs,
         annotation_prior_logits=annotation_prior_logits,
+        dataset_indices=dataset_indices,
     )
 
     # Compute model_type: add _mix suffix for mixture models
@@ -122,7 +124,7 @@ def _run_mcmc_inference(
         model_type = f"{model_config.base_model}_mix"
 
     # Package results using the factory
-    return MCMCResultsFactory.create_results(
+    results = MCMCResultsFactory.create_results(
         mcmc_results=mcmc,
         adata=adata,
         model_config=model_config,
@@ -133,3 +135,14 @@ def _run_mcmc_inference(
         n_components=model_config.n_components,
         prior_params=model_config.get_active_priors(),
     )
+
+    # Record per-dataset metadata so get_dataset() can subset both
+    # per-dataset and cell-specific parameters correctly.
+    if dataset_indices is not None and model_config.n_datasets is not None:
+        n_ds = model_config.n_datasets
+        results._n_cells_per_dataset = jnp.array(
+            [int(jnp.sum(dataset_indices == d)) for d in range(n_ds)]
+        )
+        results._dataset_indices = dataset_indices
+
+    return results

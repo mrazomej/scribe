@@ -146,6 +146,21 @@ print(f"Pathway effect: {pathway_result['delta_mean']:.3f}")
 print(de.summary(sort_by='lfsr', top_n=30))
 ```
 
+### compare_datasets()
+
+For multi-dataset models, `compare_datasets()` is a convenience wrapper that:
+- Takes a multi-dataset results object and two dataset indices
+- Slices per-dataset views using `get_dataset()`
+- Calls `compare()` with `paired=True` to preserve within-posterior correlation
+- Supports optional component selection via the `component` parameter
+
+```python
+from scribe.de import compare_datasets
+
+de = compare_datasets(results, dataset_A=0, dataset_B=1)
+de = compare_datasets(results, 0, 1, component=0, method="shrinkage")
+```
+
 ### Standalone Functions
 
 For users who prefer functional style over the results class:

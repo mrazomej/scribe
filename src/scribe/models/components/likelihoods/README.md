@@ -95,6 +95,54 @@ the shape against `r` and reshaping accordingly:
 All four likelihood classes use this helper for correct broadcasting when
 building mixture distributions.
 
+## Per-Dataset Parameter Indexing
+
+For multi-dataset models, per-dataset parameters (e.g. `r`, `p` with shape
+`(n_datasets, ...)`) must be indexed to per-cell values. The helper
+`index_dataset_params()` in `base.py` maps these parameters using
+`dataset_indices` (shape `(batch,)`), mapping each cell to its dataset.
+
+All likelihood `sample()` methods now accept an optional `dataset_indices`
+parameter. When provided, per-dataset parameters are automatically indexed
+to per-cell values inside the NumPyro plate context before building the
+observation distribution.
+
+### Mixture + Dataset Axis Convention
+
+When a parameter is **both** mixture-specific and dataset-specific, its shape
+follows the layout produced by `resolve_shape`:
+
+```
+(n_components, n_datasets, base_dims...)
+```
+
+For example, `r` with `is_mixture=True, is_dataset=True` has shape
+`(K, D, G)`. `index_dataset_params()` uses `ParamSpec` metadata
+(`is_dataset`, `is_mixture`) to identify the correct axis:
+
+- **Dataset-only** `(D, ...)`: index axis 0 -> `(batch, ...)`
+- **Mixture + dataset** `(K, D, ...)`: index axis 1 -> transpose to
+  `(batch, K, ...)` so that `MixtureSameFamily` sees the component
+  dimension as the rightmost batch dimension.
+
+The `param_specs` argument (passed from `model_config.param_specs`) enables
+this spec-aware indexing. Without it, the function falls back to the legacy
+heuristic (`shape[0] == n_datasets`).
+
+`broadcast_p_for_mixture()` also handles the extra batch dimension: when `p`
+is 2-D `(batch, G)` and `r` is 3-D `(batch, K, G)`, it inserts a component
+singleton to produce `(batch, 1, G)` for correct broadcasting.
+
+### Dataset-Level Hierarchical Gate
+
+When `hierarchical_dataset_gate=True`, the gate parameter (zero-inflation
+probability) becomes per-dataset and gene-specific via a
+`DatasetHierarchicalSigmoidNormalSpec`. The gate follows the same indexing
+convention as `p`/`phi`: `index_dataset_params()` detects `is_dataset=True`
+on the gate's `ParamSpec` and indexes it per cell. No changes to the
+likelihood code are needed — the existing `_build_dist` methods receive
+already-indexed gate values.
+
 ## VCP Likelihoods
 
 The Variable Capture Probability (VCP) likelihoods model cell-specific technical

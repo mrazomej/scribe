@@ -78,6 +78,7 @@ def _svi_handler(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Handler for SVI inference."""
     from .svi import _run_svi_inference
@@ -95,6 +96,7 @@ def _svi_handler(
         data_config=data_config,
         seed=seed,
         annotation_prior_logits=annotation_prior_logits,
+        dataset_indices=dataset_indices,
     )
 
 
@@ -111,6 +113,7 @@ def _mcmc_handler(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Handler for MCMC inference."""
     from .mcmc import _run_mcmc_inference
@@ -128,6 +131,7 @@ def _mcmc_handler(
         data_config=data_config,
         seed=seed,
         annotation_prior_logits=annotation_prior_logits,
+        dataset_indices=dataset_indices,
     )
 
 
@@ -144,6 +148,7 @@ def _vae_handler(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Handler for VAE inference."""
     from .vae import _run_vae_inference
@@ -187,6 +192,7 @@ def _run_inference(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
     enable_x64: bool = False,
 ) -> Any:
     """Route inference execution to the appropriate handler.
@@ -291,6 +297,7 @@ def _run_inference(
         data_config=data_config,
         seed=seed,
         annotation_prior_logits=annotation_prior_logits,
+        dataset_indices=dataset_indices,
     )
 
     if enable_x64:

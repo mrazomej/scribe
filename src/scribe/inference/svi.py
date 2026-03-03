@@ -30,6 +30,7 @@ def _run_svi_inference(
     data_config: DataConfig,
     seed: int,
     annotation_prior_logits: Optional[jnp.ndarray] = None,
+    dataset_indices: Optional[jnp.ndarray] = None,
 ) -> Any:
     """Execute SVI inference with optional early stopping.
 
@@ -128,6 +129,7 @@ def _run_svi_inference(
         "log_progress_lines": log_progress_lines,
         "early_stopping": early_stopping,
         "annotation_prior_logits": annotation_prior_logits,
+        "dataset_indices": dataset_indices,
     }
 
     # Add optional optimizer and loss if provided
@@ -154,7 +156,7 @@ def _run_svi_inference(
         model_type = f"{config_for_results.base_model}_mix"
 
     # Package results using the factory
-    return SVIResultsFactory.create_results(
+    results = SVIResultsFactory.create_results(
         svi_results=svi_results,
         adata=adata,
         model_config=config_for_results,
@@ -165,3 +167,14 @@ def _run_svi_inference(
         n_components=model_config.n_components,
         prior_params=model_config.get_active_priors(),
     )
+
+    # Record per-dataset metadata so get_dataset() can subset both
+    # per-dataset and cell-specific parameters correctly.
+    if dataset_indices is not None and model_config.n_datasets is not None:
+        n_ds = model_config.n_datasets
+        results._n_cells_per_dataset = jnp.array(
+            [int(jnp.sum(dataset_indices == d)) for d in range(n_ds)]
+        )
+        results._dataset_indices = dataset_indices
+
+    return results
