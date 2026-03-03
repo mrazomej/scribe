@@ -68,9 +68,17 @@ class DatasetMixin:
             update={"n_datasets": None}
         )
 
+        # Resolve per-dataset cell count if available
+        per_ds = getattr(self, "_n_cells_per_dataset", None)
+        ds_n_cells = (
+            int(per_ds[dataset_index])
+            if per_ds is not None
+            else self.n_cells
+        )
+
         return ScribeMCMCResults(
             samples=new_samples,
-            n_cells=self.n_cells,
+            n_cells=ds_n_cells,
             n_genes=self.n_genes,
             model_type=self.model_type,
             model_config=new_model_config,

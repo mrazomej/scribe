@@ -106,6 +106,12 @@ class ScribeMCMCResults(
     n_components: Optional[int] = None
     denoised_counts: Optional[jnp.ndarray] = None
 
+    # Per-dataset cell counts for multi-dataset models.  Set during
+    # inference when ``dataset_indices`` is available.  Used by
+    # ``get_dataset(d)`` to set the correct ``n_cells`` on the returned
+    # single-dataset view.
+    _n_cells_per_dataset: Optional[jnp.ndarray] = None
+
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)
 
