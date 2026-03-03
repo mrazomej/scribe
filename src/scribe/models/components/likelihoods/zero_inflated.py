@@ -66,10 +66,14 @@ class ZeroInflatedNBLikelihood(Likelihood):
         r = param_values["r"]
         gate = param_values["gate"]
 
-        # ====================================================================
-        # Check if this is a mixture model
-        # ====================================================================
+        # Scalar-per-dataset p/gate become (n_cells,) after indexing;
+        # expand to (n_cells, 1) so they broadcast with (n_cells, n_genes)
         is_mixture = "mixing_weights" in param_values
+        if not is_mixture:
+            if p.ndim == 1 and r.ndim == 2:
+                p = p[:, None]
+            if gate.ndim == 1 and r.ndim == 2:
+                gate = gate[:, None]
 
         if is_mixture:
             # ================================================================
