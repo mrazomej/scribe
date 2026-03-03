@@ -301,6 +301,245 @@ mean-odds parameterization in the remainder of this section, but all results
 apply mutatis mutandis to the canonical parameterization by replacing
 $\mu_g \leftrightarrow r_g$ and $\tau_\mu \leftrightarrow \tau_r$.
 
+## Regularized horseshoe prior {#sec-hdata-horseshoe}
+
+The Normal hierarchy from the previous sections uses a **single global scale**
+$\tau_\mu$ shared across all genes. This creates a vulnerability: if even a
+small fraction of genes have genuinely different expression across datasets
+(due to biology or residual technical artefacts), the posterior for $\tau_\mu$
+inflates. The wider prior then loosens the constraint on *every* gene,
+including those that truly are identical across datasets. We call this the
+**scale contamination problem**.
+
+### The contamination problem {#sec-hdata-contamination}
+
+Consider a concrete scenario. Suppose 95% of genes have
+$\log\mu_g^{(d)} \approx \log\mu_g$ (no true difference), but 5% of genes have
+$|\log\mu_g^{(d)} - \log\mu_g| \approx 1$ (genuine or artefactual differences).
+The MLE for $\tau_\mu$ under the Normal hierarchy is driven by *all* genes,
+so the 5% outliers push $\hat{\tau}_\mu$ upward. Once $\tau_\mu$ is large,
+the remaining 95% of genes can deviate freely from $\mu_g$---precisely the
+opposite of what we want.
+
+The root cause is that the Normal hierarchy has a single degree of freedom
+($\tau_\mu$) to describe the cross-dataset variability of all genes. A
+solution is to give each gene its own local scale $\lambda_g$, with a global
+structure that encourages most $\lambda_g$ to be small.
+
+### The standard horseshoe prior {#sec-hdata-horseshoe-standard}
+
+The horseshoe prior [@carvalho2010horseshoe] achieves adaptive shrinkage by
+replacing the single global scale with a product of a global shrinkage
+parameter and per-gene local scales:
+
+$$
+\tau \sim \text{Half-Cauchy}(\tau_0), \qquad
+\lambda_g \sim \text{Half-Cauchy}(1),
+$${#eq-hdata-horseshoe-scales}
+
+$$
+\log(\mu_g^{(d)}) \sim \mathcal{N}\!\bigl(\log(\mu_g), \;
+\tau \cdot \lambda_g\bigr).
+$${#eq-hdata-horseshoe-sampling}
+
+The key insight is the **marginal prior** on each gene's effective scale
+$\tau \cdot \lambda_g$. Since $\lambda_g$ follows a Half-Cauchy:
+
+- Most $\lambda_g$ values cluster near zero, producing strong shrinkage
+  ($\tau \cdot \lambda_g \approx 0$).
+- A few $\lambda_g$ values can be very large (Heavy-Cauchy tails), allowing
+  those genes to escape shrinkage entirely.
+
+The global $\tau$ controls the *overall fraction* of genes that are shrunk:
+when $\tau$ is small, even genes with moderate $\lambda_g$ are constrained;
+when $\tau$ is large, more genes can deviate. The data determine $\tau$
+adaptively. Crucially, a gene with a small $\lambda_g$ is protected from
+the contamination problem because $\tau \cdot \lambda_g$ remains small
+regardless of how large $\tau$ grows.
+
+### The regularized horseshoe (Finnish horseshoe) {#sec-hdata-horseshoe-regularized}
+
+The standard horseshoe has infinitely heavy tails: a gene with
+$\lambda_g \to \infty$ faces no penalty at all. This causes two practical
+issues: (1) the posterior for extreme $\lambda_g$ can be difficult to explore,
+and (2) the effective prior on "escaping" genes is improper. The *regularized*
+horseshoe [@piironen2017sparsity] introduces a slab parameter $c^2$ that
+bounds the maximum effective scale:
+
+$$
+c^2 \sim \text{Inv-Gamma}\!\left(\tfrac{\nu}{2},\;
+\tfrac{\nu \, s^2}{2}\right),
+$${#eq-hdata-slab-prior}
+
+$$
+\tilde{\lambda}_g = \frac{c \, \lambda_g}{\sqrt{c^2 + \tau^2 \lambda_g^2}}.
+$${#eq-hdata-regularized-lambda}
+
+The dataset-specific parameter is then sampled as
+
+$$
+\log(\mu_g^{(d)}) \sim \mathcal{N}\!\bigl(\log(\mu_g), \;
+\tau \cdot \tilde{\lambda}_g\bigr).
+$${#eq-hdata-horseshoe-regularized-sampling}
+
+The regularized local scale $\tilde{\lambda}_g$ has two limiting behaviours:
+
+- **When $\tau \, \lambda_g \ll c$**: $\tilde{\lambda}_g \approx \lambda_g$,
+  recovering the standard horseshoe. Shrunk genes are unaffected by the slab.
+- **When $\tau \, \lambda_g \gg c$**: $\tilde{\lambda}_g \to c / \tau$, and
+  the effective scale is $\tau \cdot \tilde{\lambda}_g \to c$. The slab bounds
+  the maximum deviation. In the language of ridge regression, "escaping" genes
+  are regularized with a Gaussian prior of scale $c$---a soft rather than hard
+  cap.
+
+The hyperparameter $\nu$ (slab degrees of freedom) controls the tail weight of
+the slab distribution; $s$ (slab scale) controls its location. In practice,
+$\nu = 4$ and $s = 2$ provide a weakly informative slab that admits moderate
+deviations while preventing extreme values.
+
+### Effective shrinkage profile {#sec-hdata-shrinkage-profile}
+
+The horseshoe induces a per-gene *shrinkage factor*. Define
+
+$$
+\kappa_g = \frac{1}{1 + \tau^2 \tilde{\lambda}_g^2},
+$${#eq-hdata-kappa}
+
+so that the posterior mean of $\log(\mu_g^{(d)})$ is approximately
+
+$$
+\mathbb{E}[\log(\mu_g^{(d)}) \mid \text{data}]
+\;\approx\; (1 - \kappa_g)\,\log(\hat{\mu}_g^{(d)})
+\;+\; \kappa_g \, \log(\mu_g),
+$${#eq-hdata-horseshoe-posterior-mean}
+
+where $\hat{\mu}_g^{(d)}$ is the dataset-specific ML estimate and $\mu_g$ is
+the population mean. When $\kappa_g \approx 1$ (small local scale), the gene
+is pulled toward the population mean. When $\kappa_g \approx 0$ (large local
+scale), the gene retains its dataset-specific estimate. This is analogous to
+the James--Stein estimator, but with an adaptive, per-gene shrinkage factor
+learned from the data.
+
+Contrast this with the Normal hierarchy, where all genes share
+$\kappa = 1/(1 + \tau_\mu^2 / \sigma^2)$: a single shrinkage factor that
+cannot distinguish between genes that should be shrunk and genes that should
+not.
+
+### Non-centered parameterization {#sec-hdata-horseshoe-ncp}
+
+The horseshoe creates extreme heterogeneity in prior widths across genes.
+A gene with $\tilde{\lambda}_g \approx 0.001$ has an effective prior scale
+of $\tau \cdot 0.001$, while a gene with $\tilde{\lambda}_g \approx c/\tau$
+has an effective scale of $c$. In the **centered** parameterization, the
+variational guide must simultaneously approximate these vastly different
+scales, leading to high ELBO gradient variance and unstable optimization.
+
+The **non-centered parameterization** (NCP) decouples the scale parameters
+from the coefficients by introducing a standardized latent variable:
+
+$$
+z_{g,d} \sim \mathcal{N}(0, 1), \qquad
+\log(\mu_g^{(d)}) = \log(\mu_g) + \tau \cdot \tilde{\lambda}_g \cdot z_{g,d}.
+$${#eq-hdata-horseshoe-ncp}
+
+The prior on $z_{g,d}$ is always $\mathcal{N}(0,1)$ regardless of $\tau$ and
+$\lambda_g$, so the variational guide for $z$ always targets a unit-normal---a
+well-scaled problem. The effective scale heterogeneity is pushed into the
+**deterministic** transform $\log(\mu_g) + \tau \tilde{\lambda}_g z_{g,d}$,
+where it does not contribute to the ELBO gradient with respect to the guide
+parameters for $z$.
+
+Concretely, the ELBO gradient for the guide parameters of $z_{g,d}$ in the
+centered form involves $\nabla_\theta \log q(\mu_g^{(d)}; \theta)$, which
+depends on the effective prior scale. In the non-centered form, it involves
+$\nabla_\theta \log q(z_{g,d}; \theta)$, which is scale-free. This makes
+SVI optimization dramatically more stable.
+
+### Application to other parameters {#sec-hdata-horseshoe-other}
+
+The horseshoe prior applies identically to any hierarchical parameter in
+logit or log space. In this work, it is available for:
+
+- **Dataset-level $\mu$ (or $r$)**: in log space, as described above.
+- **Dataset-level $p$ (or $\phi$)**: in logit space, $\text{logit}(p_g^{(d)})
+  = \text{logit}(p_g^{\text{pop}}) + \tau \tilde{\lambda}_g z_{g,d}$ and
+  $p_g^{(d)} = \sigma(\cdot)$.
+- **Dataset-level gate**: in logit space, same structure as $p$.
+- **Gene-level $p$ (or $\phi$)**: $\text{logit}(p_g) = \mu_p +
+  \tau \tilde{\lambda}_g z_g$, where $z_g \sim \mathcal{N}(0,1)$.
+- **Gene-level gate**: $\text{logit}(\pi_g) = \mu_\pi +
+  \tau \tilde{\lambda}_g z_g$, same structure.
+
+In each case, the horseshoe replaces the single global scale
+($\tau_\mu$, $\sigma_p$, $\sigma_\pi$) with the trio $(\tau, \lambda_g,
+c^2)$, and uses NCP with a standardized $z$.
+
+### Graphical model {#sec-hdata-horseshoe-graphical}
+
+The horseshoe augments the population-level parameters with the local
+scales $\lambda_g$ and slab $c^2$, while the dataset and cell levels
+remain unchanged.
+
+```{.tikz caption="Graphical model for the regularized horseshoe prior on dataset-level $\\mu$. Compared to the standard hierarchy, the global scale $\\tau_\\mu$ is replaced by the horseshoe trio $(\\tau, \\lambda_g, c^2)$ and per-gene local shrinkage. The $z_{g,d}$ variables are the NCP standardized coefficients." label="fig-horseshoe-graphical-model" additionalPackages="\\usetikzlibrary{positioning,fit,backgrounds}"}
+\begin{tikzpicture}[
+  >=stealth,
+  node distance=10mm and 14mm,
+  latent/.style={circle, draw, minimum size=8mm, inner sep=1pt},
+  obs/.style={circle, draw, fill=gray!20, minimum size=8mm, inner sep=1pt},
+  det/.style={circle, draw, double, minimum size=8mm, inner sep=1pt},
+  plate/.style={draw, rounded corners, inner sep=4mm}
+]
+  % Population-level parameters
+  \node[latent] (mu_g) {$\mu_g$};
+  \node[latent, left=14mm of mu_g] (tau) {$\tau$};
+  \node[latent, left=10mm of tau] (c2) {$c^2$};
+  \node[latent, below=8mm of tau] (lambda_g) {$\lambda_g$};
+
+  % NCP raw variable and deterministic mu_gd
+  \node[latent, below=14mm of mu_g] (z_gd) {$z_{g,d}$};
+  \node[det, right=10mm of z_gd] (mu_gd) {$\mu_g^{(d)}$};
+
+  % Cell-level
+  \node[obs, below=12mm of mu_gd] (u) {$u_{gc}$};
+  \node[latent, right=12mm of u] (nu_c) {$\nu_c$};
+
+  % Edges: horseshoe -> deterministic mu_gd
+  \draw[->] (mu_g) -- (mu_gd);
+  \draw[->] (tau) -- (mu_gd);
+  \draw[->] (c2) -- (mu_gd);
+  \draw[->] (lambda_g) -- (mu_gd);
+  \draw[->] (z_gd) -- (mu_gd);
+
+  % Dataset -> cell edges
+  \draw[->] (mu_gd) -- (u);
+  \draw[->] (nu_c) -- (u);
+
+  % Gene plate (around mu_g, lambda_g, z_gd, mu_gd, u)
+  \begin{scope}[on background layer]
+    \node[plate, fit=(mu_g)(lambda_g)(z_gd)(mu_gd)(u),
+          label={[yshift=1mm]north east:$g=1,\ldots,G$}] (geneplate) {};
+  \end{scope}
+
+  % Dataset plate (around z_gd, mu_gd, nu_c, u)
+  \begin{scope}[on background layer]
+    \node[plate, fit=(z_gd)(mu_gd)(nu_c)(u),
+          label={[yshift=1mm]south east:$d=1,\ldots,D$}] (datasetplate) {};
+  \end{scope}
+
+  % Cell plate (around nu_c and u)
+  \begin{scope}[on background layer]
+    \node[plate, fit=(nu_c)(u),
+          label={[yshift=1mm]south east:$c \in \mathcal{C}_d$}] (cellplate) {};
+  \end{scope}
+\end{tikzpicture}
+```
+
+In the graphical model, the double-circled node $\mu_g^{(d)}$ denotes a
+**deterministic** node: it is a function of its parents, not a random
+variable. The variational guide approximates $z_{g,d}$, $\tau$, $\lambda_g$,
+and $c^2$; the constrained parameter $\mu_g^{(d)}$ is computed by applying
+the transform to the guide's samples.
+
 ## Dataset-specific scalar $p$ {#sec-hdata-scalar-p}
 
 In the standard model, the success probability $p$ (or equivalently the odds
@@ -955,6 +1194,27 @@ $$
 }
 $${#eq-hdata-summary-composition-gene}
 
+**Regularized horseshoe variant (optional, NCP form).** When
+`horseshoe_dataset_mu=True`, the dataset-level $\mu$ hierarchy becomes:
+
+$$
+\boxed{
+\begin{aligned}
+&\tau \sim \text{Half-Cauchy}(\tau_0), \quad
+\lambda_g \sim \text{Half-Cauchy}(1), \quad
+c^2 \sim \text{Inv-Gamma}\!\left(\tfrac{\nu}{2},
+\tfrac{\nu s^2}{2}\right), \\
+&\tilde{\lambda}_g = \frac{c \, \lambda_g}{\sqrt{c^2 + \tau^2 \lambda_g^2}},
+\quad z_{g,d} \sim \mathcal{N}(0, 1), \\
+&\log(\mu_g^{(d)}) = \log(\mu_g) +
+\tau \cdot \tilde{\lambda}_g \cdot z_{g,d}.
+\end{aligned}
+}
+$${#eq-hdata-summary-horseshoe}
+
+The same structure applies to dataset-level $p$, dataset-level gate,
+gene-level $p$, and gene-level gate (see @sec-hdata-horseshoe).
+
 **Shrinkage diagnostics:**
 
 $$
@@ -963,7 +1223,9 @@ $$
 &\tau_\mu \approx 0 \implies \text{identical biology across datasets}, \\
 &\sigma_p \approx 0 \implies \text{identical technical characteristics}, \\
 &\sigma_\pi^{\text{pop}} \approx 0 \implies \text{identical dropout/zero-inflation}, \\
-&\tau_\mu \gg 0 \implies \text{genuine biological differences}.
+&\tau_\mu \gg 0 \implies \text{genuine biological differences}, \\
+&\kappa_g \approx 1 \implies \text{gene $g$ shrunk to population (horseshoe)}, \\
+&\kappa_g \approx 0 \implies \text{gene $g$ escapes shrinkage (horseshoe)}.
 \end{aligned}
 }
 $${#eq-hdata-summary-diagnostics}
