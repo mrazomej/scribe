@@ -8,7 +8,7 @@ components.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 import jax.numpy as jnp
 
@@ -66,6 +66,51 @@ def _build_dataset_keys(
                 break
 
     return dataset_keys
+
+
+def _build_cell_specific_keys(
+    param_specs: list, params: Dict[str, jnp.ndarray],
+) -> Set[str]:
+    """Identify variational-parameter keys that are cell-specific.
+
+    A key is cell-specific if its ``ParamSpec`` has
+    ``is_cell_specific=True``.  Uses the same longest-name-wins
+    matching as ``_build_dataset_keys``.
+
+    Parameters
+    ----------
+    param_specs : list
+        Full parameter specifications from ``model_config.param_specs``.
+    params : Dict[str, jnp.ndarray]
+        Flat variational-parameter dictionary.
+
+    Returns
+    -------
+    Set[str]
+        Keys in ``params`` that are cell-specific.
+    """
+    if not param_specs:
+        return set()
+
+    sorted_specs = sorted(param_specs, key=lambda s: len(s.name), reverse=True)
+    cell_keys: Set[str] = set()
+
+    for key in params:
+        if "$" in key:
+            continue
+        for spec in sorted_specs:
+            name = spec.name
+            if (
+                key == name
+                or key.startswith(name + "_")
+                or key.startswith("log_" + name + "_")
+                or key.startswith("logit_" + name + "_")
+            ):
+                if getattr(spec, "is_cell_specific", False):
+                    cell_keys.add(key)
+                break
+
+    return cell_keys
 
 
 def _match_spec_for_key(key: str, param_specs: list) -> Optional[object]:
@@ -244,8 +289,16 @@ class DatasetMixin:
                 f"n_datasets={n_datasets}."
             )
 
-        # Subset variational params
+        # Subset per-dataset variational params (is_dataset=True)
         new_params = self._subset_params_by_dataset(dataset_index, n_datasets)
+
+        # Subset cell-specific variational params using the cell mask
+        # derived from _dataset_indices (e.g. phi_capture_loc/scale).
+        ds_indices = getattr(self, "_dataset_indices", None)
+        if ds_indices is not None:
+            new_params = self._subset_cell_specific_params(
+                new_params, ds_indices, dataset_index
+            )
 
         # Subset posterior samples
         new_posterior_samples = None
@@ -333,6 +386,50 @@ class DatasetMixin:
                     new_params[key] = value[tuple(slicer)]
                     continue
             new_params[key] = value
+        return new_params
+
+    def _subset_cell_specific_params(
+        self,
+        params: Dict[str, jnp.ndarray],
+        dataset_indices: jnp.ndarray,
+        dataset_index: int,
+    ) -> Dict[str, jnp.ndarray]:
+        """Subset cell-specific variational params for a single dataset.
+
+        Cell-specific params (e.g. ``phi_capture_loc``) have shape
+        ``(n_cells, ...)`` where ``n_cells`` is the *total* cell count
+        across all datasets.  This method applies a boolean mask derived
+        from ``dataset_indices`` to keep only the cells belonging to
+        ``dataset_index``.
+
+        Parameters
+        ----------
+        params : Dict[str, jnp.ndarray]
+            Variational parameter dict (already dataset-subsetted).
+        dataset_indices : jnp.ndarray
+            Per-cell dataset assignment, shape ``(n_cells,)``.
+        dataset_index : int
+            Which dataset to keep.
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Params with cell-specific entries sliced to only the cells
+            belonging to ``dataset_index``.
+        """
+        cell_keys = _build_cell_specific_keys(
+            self.model_config.param_specs or [], params
+        )
+        if not cell_keys:
+            return params
+
+        mask = dataset_indices == dataset_index
+        new_params: Dict[str, jnp.ndarray] = {}
+        for key, value in params.items():
+            if key in cell_keys and hasattr(value, "ndim") and value.ndim >= 1:
+                new_params[key] = value[mask]
+            else:
+                new_params[key] = value
         return new_params
 
     def _subset_posterior_by_dataset(

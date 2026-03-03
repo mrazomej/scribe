@@ -109,6 +109,9 @@ class ComponentMixin:
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         if per_ds is not None:
             subset._n_cells_per_dataset = per_ds
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            subset._dataset_indices = ds_idx
         return subset
 
     # --------------------------------------------------------------------------
@@ -148,6 +151,9 @@ class ComponentMixin:
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         if per_ds is not None:
             subset._n_cells_per_dataset = per_ds
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            subset._dataset_indices = ds_idx
         return subset
 
     def _subset_samples_by_components(

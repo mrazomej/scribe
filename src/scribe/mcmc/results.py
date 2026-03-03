@@ -112,6 +112,11 @@ class ScribeMCMCResults(
     # single-dataset view.
     _n_cells_per_dataset: Optional[jnp.ndarray] = None
 
+    # Per-cell dataset assignment array, shape ``(n_cells,)`` with values
+    # in ``{0, ..., n_datasets-1}``.  Stored so that ``get_dataset(d)``
+    # can subset cell-specific parameters.
+    _dataset_indices: Optional[jnp.ndarray] = None
+
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)
 
