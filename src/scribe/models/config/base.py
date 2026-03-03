@@ -100,6 +100,7 @@ class ModelConfig(BaseModel):
         d.setdefault("dataset_params", None)
         d.setdefault("hierarchical_dataset_mu", False)
         d.setdefault("hierarchical_dataset_p", "none")
+        d.setdefault("hierarchical_dataset_gate", False)
         super().__setstate__(state)
 
     # Core configuration
@@ -172,6 +173,15 @@ class ModelConfig(BaseModel):
             "'scalar' (one p per dataset, shared across genes), "
             "'gene_specific' (single-level: p_g per dataset-gene pair), "
             "'two_level' (two-level hierarchy with dataset hyperparameters)."
+        ),
+    )
+    hierarchical_dataset_gate: bool = Field(
+        False,
+        description=(
+            "Hierarchical gate across datasets with learned shrinkage. "
+            "Per-dataset, gene-specific gate values are drawn from a shared "
+            "population distribution. Requires n_datasets >= 2, "
+            "unconstrained=True, and a zero-inflated model."
         ),
     )
 
@@ -291,6 +301,30 @@ class ModelConfig(BaseModel):
                 "hierarchical_p=True and hierarchical_dataset_p != 'none' "
                 "cannot be set simultaneously. The dataset-level hierarchy "
                 "subsumes gene-level hierarchical p."
+            )
+        # Dataset-level gate hierarchy validation
+        if self.hierarchical_dataset_gate:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "hierarchical_dataset_gate=True requires n_datasets >= 2."
+                )
+            if not self.unconstrained:
+                raise ValueError(
+                    "hierarchical_dataset_gate=True requires "
+                    "unconstrained=True."
+                )
+            if not self.is_zero_inflated:
+                raise ValueError(
+                    "hierarchical_dataset_gate=True requires a zero-inflated "
+                    "model (zinb or zinbvcp), but base_model="
+                    f"{self.base_model!r}."
+                )
+        # Prevent conflicting gene-level and dataset-level gate hierarchies
+        if self.hierarchical_gate and self.hierarchical_dataset_gate:
+            raise ValueError(
+                "hierarchical_gate=True and hierarchical_dataset_gate=True "
+                "cannot be set simultaneously. The dataset-level hierarchy "
+                "subsumes gene-level hierarchical gate."
             )
         return self
 

@@ -195,6 +195,51 @@ class TestModelConfigDataset:
                 unconstrained=False,
             )
 
+    def test_hierarchical_dataset_gate_defaults_false(self):
+        """hierarchical_dataset_gate defaults to False."""
+        config = ModelConfig(base_model="zinb")
+        assert config.hierarchical_dataset_gate is False
+
+    def test_hierarchical_dataset_gate_requires_n_datasets(self):
+        """hierarchical_dataset_gate without n_datasets should raise."""
+        with pytest.raises(ValueError, match="n_datasets"):
+            ModelConfig(
+                base_model="zinb",
+                hierarchical_dataset_gate=True,
+                unconstrained=True,
+            )
+
+    def test_hierarchical_dataset_gate_requires_unconstrained(self):
+        """hierarchical_dataset_gate without unconstrained should raise."""
+        with pytest.raises(ValueError, match="unconstrained"):
+            ModelConfig(
+                base_model="zinb",
+                n_datasets=2,
+                hierarchical_dataset_gate=True,
+                unconstrained=False,
+            )
+
+    def test_hierarchical_dataset_gate_requires_zero_inflated(self):
+        """hierarchical_dataset_gate on a non-ZI model should raise."""
+        with pytest.raises(ValueError, match="zero-inflated"):
+            ModelConfig(
+                base_model="nbdm",
+                n_datasets=2,
+                hierarchical_dataset_gate=True,
+                unconstrained=True,
+            )
+
+    def test_hierarchical_gate_and_dataset_gate_conflict(self):
+        """Cannot set both hierarchical_gate and hierarchical_dataset_gate."""
+        with pytest.raises(ValueError, match="cannot be set simultaneously"):
+            ModelConfig(
+                base_model="zinb",
+                n_datasets=2,
+                hierarchical_gate=True,
+                hierarchical_dataset_gate=True,
+                unconstrained=True,
+            )
+
 
 # ==============================================================================
 # index_dataset_params
@@ -1015,6 +1060,56 @@ class TestCreateModelMultiDataset:
             "Expected at least mu/r and p/phi dataset specs, "
             f"got {[s.name for s in dataset_specs]}"
         )
+
+    # --- hierarchical_dataset_gate tests ---
+
+    def test_hierarchical_dataset_gate_creates_model(self):
+        """Dataset-level hierarchical gate produces a callable model/guide."""
+        b = self._builder()
+        b._hierarchical_dataset_gate = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+        # Verify that the gate spec has is_dataset=True
+        gate_specs = [s for s in specs if s.name == "gate"]
+        assert len(gate_specs) == 1
+        assert getattr(gate_specs[0], "is_dataset", False) is True
+
+    def test_hierarchical_dataset_gate_adds_hyperparameters(self):
+        """Dataset-level gate hierarchy includes population hyperparameters."""
+        b = self._builder()
+        b._hierarchical_dataset_gate = True
+        config = b.build()
+        _, _, specs = create_model(config)
+        spec_names = {s.name for s in specs}
+        assert "logit_gate_dataset_loc" in spec_names
+        assert "logit_gate_dataset_scale" in spec_names
+
+    def test_hierarchical_dataset_gate_combined_with_mu_and_p(self):
+        """All three dataset-level hierarchies together produce a valid model."""
+        b = self._builder()
+        b._hierarchical_dataset_mu = True
+        b._hierarchical_dataset_p = "gene_specific"
+        b._hierarchical_dataset_gate = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
+        # All three should be dataset-flagged
+        dataset_specs = [s for s in specs if getattr(s, "is_dataset", False)]
+        dataset_names = {s.name for s in dataset_specs}
+        assert "gate" in dataset_names
+
+    @pytest.mark.parametrize("model_type", ["zinb", "zinbvcp"])
+    def test_hierarchical_dataset_gate_zi_models(self, model_type):
+        """hierarchical_dataset_gate works across ZI model types."""
+        b = self._builder(model_type=model_type)
+        b._hierarchical_dataset_gate = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+        assert callable(model)
+        assert callable(guide)
 
 
 # ==============================================================================

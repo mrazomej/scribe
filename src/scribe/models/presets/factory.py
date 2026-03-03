@@ -585,6 +585,19 @@ def create_model(
         param_specs.extend(extra_specs)
 
     # ==========================================================================
+    # Step 5.5: Apply dataset-level gate hierarchy (after gate spec exists)
+    # ==========================================================================
+    if (
+        model_config.n_datasets is not None
+        and model_config.hierarchical_dataset_gate
+    ):
+        param_specs = _datasetify_gate(
+            param_specs=param_specs,
+            guide_families=guide_families,
+            n_datasets=model_config.n_datasets,
+        )
+
+    # ==========================================================================
     # Step 6: Apply user-provided prior/guide overrides
     # ==========================================================================
     # Merge priors from model_config.param_specs with explicit priors argument
@@ -1014,6 +1027,82 @@ def _datasetify_p(
                     is_mixture=orig_is_mixture,
                     guide_family=target_family,
                 )
+            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+
+
+def _datasetify_gate(
+    param_specs: List,
+    guide_families,
+    n_datasets: int,
+) -> List:
+    """Replace gate with a dataset-hierarchical triplet.
+
+    Adds population-level hyperparameters (loc, scale) and replaces the
+    flat or gene-level hierarchical gate spec with a
+    ``DatasetHierarchicalSigmoidNormalSpec`` that produces per-dataset,
+    gene-specific gate values.
+
+    Unlike ``_datasetify_mu``/``_datasetify_p``, the gate is always on
+    the logit scale regardless of parameterization, so no ``param_key``
+    dispatch is needed.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current list of parameter specs (must already contain a gate spec,
+        i.e. this should be called after Step 5 adds extra params).
+    guide_families : GuideFamilyConfig
+        Per-parameter guide family configuration.
+    n_datasets : int
+        Number of datasets.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated parameter specs with the gate replaced by a
+        dataset-hierarchical triplet.
+    """
+    hyper_loc_name = "logit_gate_dataset_loc"
+    hyper_scale_name = "logit_gate_dataset_scale"
+
+    gate_family = guide_families.get("gate")
+
+    # Population-level hyperparameters
+    hyper_loc = NormalWithTransformSpec(
+        name=hyper_loc_name,
+        shape_dims=("n_genes",),
+        default_params=(-5.0, 1.0),
+        is_gene_specific=True,
+    )
+    hyper_scale = SoftplusNormalSpec(
+        name=hyper_scale_name,
+        shape_dims=(),
+        default_params=(-2.0, 0.5),
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == "gate":
+            # Preserve is_mixture from the original spec so the dataset-
+            # hierarchical parameter keeps its component dimension.
+            orig_is_mixture = getattr(spec, "is_mixture", False)
+            hier_spec = DatasetHierarchicalSigmoidNormalSpec(
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name=hyper_loc_name,
+                hyper_scale_name=hyper_scale_name,
+                is_gene_specific=True,
+                is_dataset=True,
+                is_mixture=orig_is_mixture,
+                guide_family=gate_family,
+            )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
             new_specs.append(spec)
