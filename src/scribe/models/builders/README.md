@@ -27,6 +27,7 @@ Parameter specs define the distribution and metadata for each parameter:
 | `SigmoidNormalSpec` | Normal → sigmoid | (0, 1) | p_unconstrained |
 | `ExpNormalSpec` | Normal → exp | (0, ∞) | r_unconstrained |
 | `SoftplusNormalSpec` | Normal → softplus | (0, ∞) | r (smooth) |
+| `BiologyInformedCaptureSpec` | Normal(η) → exp/exp-1 | cell-specific | p_capture, phi_capture |
 | `LatentSpec` | Base for VAE latent z | — | abstract |
 | `GaussianLatentSpec` | Normal(loc, scale).to_event(1) from encoder output | — | z (guide only) |
 
@@ -65,6 +66,22 @@ Regularized horseshoe shrinkage uses **`HalfCauchySpec`** (τ, λ scales) and
 **`HorseshoeDatasetExpNormalSpec`** (mu; exp),
 **`HorseshoeDatasetSigmoidNormalSpec`** (p, gate; sigmoid). All use NCP
 (non-centered parameterization) with z ~ Normal(0,1).
+
+#### Biology-Informed Capture Spec
+
+**`BiologyInformedCaptureSpec`** represents the biology-informed capture
+probability prior for VCP models. Instead of using a flat prior on `p_capture`
+or `phi_capture`, it samples a latent variable `eta_c` from a Normal prior
+anchored to observed library sizes and the expected total mRNA count (`M_0`).
+The capture parameter is then derived via exact transformations.
+
+Fields: `log_M0` (log expected total mRNA), `sigma_M` (log-scale std-dev),
+`data_driven` (if True, `log_M0` is replaced by a learned shared parameter
+`mu_eta`), `sigma_mu` (prior std-dev for `mu_eta`), `use_phi_capture` (selects
+transformation: `phi_capture = exp(eta) - 1` vs `p_capture = exp(-eta)`).
+
+The guide dispatch for this spec samples per-cell `eta_capture` variational
+parameters and (for data-driven mode) the shared `mu_eta` before the cell plate.
 
 ### ParamSpec Attributes
 
@@ -303,7 +320,7 @@ they have no guide counterpart.
 
 | File | Purpose |
 |------|---------|
-| `parameter_specs.py` | ParamSpec, LatentSpec, GaussianLatentSpec, Hierarchical*Spec; `sample_prior` dispatch |
+| `parameter_specs.py` | ParamSpec, LatentSpec, GaussianLatentSpec, Hierarchical*Spec, BiologyInformedCaptureSpec; `sample_prior` dispatch |
 | `model_builder.py` | ModelBuilder class |
 | `guide_builder.py` | GuideBuilder and `setup_guide` dispatch |
 | `__init__.py` | Public API exports |

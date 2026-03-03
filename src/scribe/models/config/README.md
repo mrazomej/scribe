@@ -50,6 +50,8 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.unconstrained()`: Use unconstrained parameterization
 - `.with_hierarchical_p()`: Enable gene-specific p/phi hierarchical prior (requires unconstrained)
 - `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI models only, requires unconstrained)
+- `.with_capture_prior(mode, organism, total_mrna_mean, total_mrna_log_sigma)`: Configure biology-informed capture prior (VCP models)
+- `.with_organism(organism)`: Set organism for biology-informed capture defaults
 - `.as_mixture(n_components, mixture_params)`: Configure as mixture
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
 - `.with_priors(**priors)`: Set prior parameters
@@ -76,6 +78,35 @@ structure:
   `unconstrained`) - `hierarchical_dataset_p: str` — Mode for dataset-specific
   p: `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
+
+#### Biology-Informed Capture Prior
+
+For VCP models (`nbvcp`, `zinbvcp`), the capture probability can be anchored to
+biological knowledge about total cellular mRNA content:
+
+- `capture_prior: str` — `"default"`, `"biology_informed"`, or
+  `"data_driven"`
+- `organism: Optional[str]` — Sets default `M_0` for the organism:
+  `"human"`, `"mouse"`, `"yeast"`, `"ecoli"` (and aliases like
+  `"homo_sapiens"`)
+- `total_mrna_mean: Optional[float]` — Override `M_0` directly (takes
+  precedence over organism)
+- `total_mrna_log_sigma: Optional[float]` — Log-scale std-dev of cell-to-cell
+  mRNA variation (default: 0.5)
+
+The biology-informed prior samples a latent variable
+`eta_c ~ N(log M_0 - log L_c, sigma_M^2)` and derives capture parameters via
+exact transformations (`p_capture = exp(-eta)`, `phi_capture = exp(eta) - 1`).
+The data-driven variant learns a shared `mu_eta` parameter across datasets. See
+`paper/_capture_prior.qmd` for full derivations.
+
+```python
+config = (ModelConfigBuilder()
+    .for_model("nbvcp")
+    .with_parameterization("mean_odds")
+    .with_capture_prior(mode="biology_informed", organism="human")
+    .build())
+```
 
 #### Horseshoe Prior Configuration
 
