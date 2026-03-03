@@ -57,6 +57,15 @@ shape. The model builder calls **`sample_hierarchical()`** on these specs, which
 draws per-dataset parameters from the population-level loc/scale hyperparameters
 already in `param_values`.
 
+#### Horseshoe Prior Specs
+
+Regularized horseshoe shrinkage uses **`HalfCauchySpec`** (τ, λ scales) and
+**`InverseGammaSpec`** (slab c²). Gene-level:
+**`HorseshoeHierarchicalSigmoidNormalSpec`** (p, gate; sigmoid). Dataset-level:
+**`HorseshoeDatasetExpNormalSpec`** (mu; exp),
+**`HorseshoeDatasetSigmoidNormalSpec`** (p, gate; sigmoid). All use NCP
+(non-centered parameterization) with z ~ Normal(0,1).
+
 ### ParamSpec Attributes
 
 Each spec has the following attributes:

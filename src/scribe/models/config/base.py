@@ -185,6 +185,55 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    # Horseshoe prior configuration
+    horseshoe_p: bool = Field(
+        False,
+        description=(
+            "Use regularized horseshoe prior for gene-level hierarchical p. "
+            "Requires hierarchical_p=True."
+        ),
+    )
+    horseshoe_gate: bool = Field(
+        False,
+        description=(
+            "Use regularized horseshoe prior for gene-level hierarchical gate. "
+            "Requires hierarchical_gate=True."
+        ),
+    )
+    horseshoe_dataset_mu: bool = Field(
+        False,
+        description=(
+            "Use regularized horseshoe prior for dataset-level hierarchical mu. "
+            "Requires hierarchical_dataset_mu=True."
+        ),
+    )
+    horseshoe_dataset_p: bool = Field(
+        False,
+        description=(
+            "Use regularized horseshoe prior for dataset-level hierarchical p. "
+            "Requires hierarchical_dataset_p != 'none'."
+        ),
+    )
+    horseshoe_dataset_gate: bool = Field(
+        False,
+        description=(
+            "Use regularized horseshoe prior for dataset-level hierarchical gate. "
+            "Requires hierarchical_dataset_gate=True."
+        ),
+    )
+    horseshoe_tau0: float = Field(
+        1.0,
+        description="Global shrinkage scale for horseshoe Half-Cauchy prior.",
+    )
+    horseshoe_slab_df: int = Field(
+        4,
+        description="Degrees of freedom for horseshoe slab Inverse-Gamma.",
+    )
+    horseshoe_slab_scale: float = Field(
+        2.0,
+        description="Scale for horseshoe slab Inverse-Gamma.",
+    )
+
     # Guide configuration
     guide_families: Optional[GuideFamilyConfig] = Field(
         None,
@@ -325,6 +374,37 @@ class ModelConfig(BaseModel):
                 "hierarchical_gate=True and hierarchical_dataset_gate=True "
                 "cannot be set simultaneously. The dataset-level hierarchy "
                 "subsumes gene-level hierarchical gate."
+            )
+
+        # Horseshoe prior validation: each flag requires its hierarchy enabled
+        if self.horseshoe_p and not self.hierarchical_p:
+            raise ValueError(
+                "horseshoe_p=True requires hierarchical_p=True."
+            )
+        if self.horseshoe_gate and not self.hierarchical_gate:
+            raise ValueError(
+                "horseshoe_gate=True requires hierarchical_gate=True."
+            )
+        if self.horseshoe_dataset_mu and not self.hierarchical_dataset_mu:
+            raise ValueError(
+                "horseshoe_dataset_mu=True requires "
+                "hierarchical_dataset_mu=True."
+            )
+        if (
+            self.horseshoe_dataset_p
+            and self.hierarchical_dataset_p == "none"
+        ):
+            raise ValueError(
+                "horseshoe_dataset_p=True requires "
+                "hierarchical_dataset_p != 'none'."
+            )
+        if (
+            self.horseshoe_dataset_gate
+            and not self.hierarchical_dataset_gate
+        ):
+            raise ValueError(
+                "horseshoe_dataset_gate=True requires "
+                "hierarchical_dataset_gate=True."
             )
         return self
 

@@ -315,6 +315,13 @@ LIKELIHOOD_REGISTRY = {
 }
 ```
 
+## Horseshoe Factory Functions
+
+Gene-level: `_horseshoe_p`, `_horseshoe_gate`. Dataset-level:
+`_horseshoe_dataset_mu`, `_horseshoe_dataset_p`, `_horseshoe_dataset_gate`.
+Helper `_make_horseshoe_hypers` creates HalfCauchy/InverseGamma specs;
+`_horseshoe_kwargs_from_config` extracts horseshoe config from ModelConfig.
+
 ## Adding New Models
 
 1. Add entry to `MODEL_EXTRA_PARAMS` in `registry.py`

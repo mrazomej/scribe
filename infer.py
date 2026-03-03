@@ -633,6 +633,15 @@ def main(cfg: DictConfig) -> None:
         "hierarchical_dataset_gate": cfg.get(
             "hierarchical_dataset_gate", False
         ),
+        # Horseshoe prior
+        "horseshoe_p": cfg.get("horseshoe_p", False),
+        "horseshoe_gate": cfg.get("horseshoe_gate", False),
+        "horseshoe_dataset_mu": cfg.get("horseshoe_dataset_mu", False),
+        "horseshoe_dataset_p": cfg.get("horseshoe_dataset_p", False),
+        "horseshoe_dataset_gate": cfg.get("horseshoe_dataset_gate", False),
+        "horseshoe_tau0": cfg.get("horseshoe_tau0", 1.0),
+        "horseshoe_slab_df": cfg.get("horseshoe_slab_df", 4),
+        "horseshoe_slab_scale": cfg.get("horseshoe_slab_scale", 2.0),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,

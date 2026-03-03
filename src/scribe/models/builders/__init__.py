@@ -64,6 +64,17 @@ from .parameter_specs import (
     HierarchicalNormalWithTransformSpec,
     HierarchicalSigmoidNormalSpec,
     HierarchicalExpNormalSpec,
+    # Dataset-level hierarchical specs
+    DatasetHierarchicalNormalWithTransformSpec,
+    DatasetHierarchicalExpNormalSpec,
+    DatasetHierarchicalSigmoidNormalSpec,
+    # Horseshoe hierarchical specs (gene-level and dataset-level)
+    HorseshoeHierarchicalSigmoidNormalSpec,
+    HorseshoeDatasetExpNormalSpec,
+    HorseshoeDatasetSigmoidNormalSpec,
+    # Horseshoe hyperparameter specs
+    HalfCauchySpec,
+    InverseGammaSpec,
     # Latent specs (VAE z)
     LatentSpec,
     GaussianLatentSpec,
@@ -98,6 +109,15 @@ __all__ = [
     "HierarchicalNormalWithTransformSpec",
     "HierarchicalSigmoidNormalSpec",
     "HierarchicalExpNormalSpec",
+    "DatasetHierarchicalNormalWithTransformSpec",
+    "DatasetHierarchicalExpNormalSpec",
+    "DatasetHierarchicalSigmoidNormalSpec",
+    # Horseshoe specs
+    "HorseshoeHierarchicalSigmoidNormalSpec",
+    "HorseshoeDatasetExpNormalSpec",
+    "HorseshoeDatasetSigmoidNormalSpec",
+    "HalfCauchySpec",
+    "InverseGammaSpec",
     "LatentSpec",
     "GaussianLatentSpec",
     # Spec functions

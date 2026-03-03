@@ -267,21 +267,13 @@ class TestIndexDatasetParams:
         # Cell assignments: cells 0,1 → ds 0; cells 2,3 → ds 1; cell 4 → ds 2
         dataset_indices = jnp.array([0, 0, 1, 1, 2])
 
-        result = index_dataset_params(
-            param_values, dataset_indices, n_datasets
-        )
+        result = index_dataset_params(param_values, dataset_indices, n_datasets)
 
         # mu should be indexed: result["mu"][c] == param_values["mu"][ds[c]]
         assert result["mu"].shape == (n_cells, n_genes)
-        np.testing.assert_array_equal(
-            result["mu"][0], param_values["mu"][0]
-        )
-        np.testing.assert_array_equal(
-            result["mu"][2], param_values["mu"][1]
-        )
-        np.testing.assert_array_equal(
-            result["mu"][4], param_values["mu"][2]
-        )
+        np.testing.assert_array_equal(result["mu"][0], param_values["mu"][0])
+        np.testing.assert_array_equal(result["mu"][2], param_values["mu"][1])
+        np.testing.assert_array_equal(result["mu"][4], param_values["mu"][2])
 
         # gate should be unchanged (not per-dataset)
         np.testing.assert_array_equal(result["gate"], param_values["gate"])
@@ -294,9 +286,7 @@ class TestIndexDatasetParams:
         }
         dataset_indices = jnp.array([0, 0, 1, 0, 1])
 
-        result = index_dataset_params(
-            param_values, dataset_indices, n_datasets
-        )
+        result = index_dataset_params(param_values, dataset_indices, n_datasets)
         expected = jnp.array([0.3, 0.3, 0.7, 0.3, 0.7])
         np.testing.assert_allclose(result["p"], expected)
 
@@ -548,7 +538,10 @@ class TestMixtureDatasetComposition:
         dataset_indices = jnp.array([0, 1, 0, 1])
 
         result = index_dataset_params(
-            param_values, dataset_indices, D, param_specs=[r_spec],
+            param_values,
+            dataset_indices,
+            D,
+            param_specs=[r_spec],
         )
 
         # r should be (batch, K, G) — batch-first for MixtureSameFamily
@@ -580,13 +573,14 @@ class TestMixtureDatasetComposition:
         dataset_indices = jnp.array([1, 0, 0, 1])
 
         result = index_dataset_params(
-            param_values, dataset_indices, D, param_specs=[p_spec],
+            param_values,
+            dataset_indices,
+            D,
+            param_specs=[p_spec],
         )
 
         assert result["p"].shape == (batch, G)
-        np.testing.assert_array_equal(
-            result["p"][0], param_values["p"][1]
-        )
+        np.testing.assert_array_equal(result["p"][0], param_values["p"][1])
         # r should be unchanged (not in param_specs as dataset)
         np.testing.assert_array_equal(result["r"], param_values["r"])
 
@@ -599,7 +593,10 @@ class TestMixtureDatasetComposition:
         dataset_indices = jnp.array([0, 1, 0])
 
         result = index_dataset_params(
-            param_values, dataset_indices, D, param_specs=None,
+            param_values,
+            dataset_indices,
+            D,
+            param_specs=None,
         )
         assert result["mu"].shape == (3, G)
 
@@ -862,9 +859,7 @@ class TestMixtureDatasetComposition:
             n_components=K,
         )
 
-    def test_mcmc_get_dataset_with_mixture(
-        self, mixture_dataset_mcmc_results
-    ):
+    def test_mcmc_get_dataset_with_mixture(self, mixture_dataset_mcmc_results):
         """MCMC get_dataset slices axis 2 for mixture+dataset params."""
         results = mixture_dataset_mcmc_results
         K, D, G, S = 3, 2, 8, 30
@@ -1454,9 +1449,9 @@ class TestCellSpecificSubsetting:
         )
 
         # p_capture samples: (n_samples, n_cells)
-        p_capture_samples = jnp.arange(n_samples * n_cells, dtype=jnp.float32).reshape(
-            n_samples, n_cells
-        )
+        p_capture_samples = jnp.arange(
+            n_samples * n_cells, dtype=jnp.float32
+        ).reshape(n_samples, n_cells)
 
         samples = {
             "r": jnp.ones((n_samples, n_datasets, n_genes)),
@@ -1526,4 +1521,270 @@ class TestCellSpecificSubsetting:
         # Gene subset preserves _dataset_indices
         gene_view = results[:2]
         assert gene_view._dataset_indices is not None
-        np.testing.assert_array_equal(gene_view._dataset_indices, dataset_indices)
+        np.testing.assert_array_equal(
+            gene_view._dataset_indices, dataset_indices
+        )
+
+
+# ==============================================================================
+# Horseshoe Prior Tests
+# ==============================================================================
+
+
+class TestHorseshoeConfigValidation:
+    """Validate that horseshoe flags require their corresponding hierarchies."""
+
+    def test_horseshoe_p_requires_hierarchical_p(self):
+        with pytest.raises(
+            ValueError, match="horseshoe_p.*requires.*hierarchical_p"
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                unconstrained=True,
+                horseshoe_p=True,
+                hierarchical_p=False,
+            )
+
+    def test_horseshoe_gate_requires_hierarchical_gate(self):
+        with pytest.raises(
+            ValueError, match="horseshoe_gate.*requires.*hierarchical_gate"
+        ):
+            ModelConfig(
+                base_model="zinb",
+                unconstrained=True,
+                horseshoe_gate=True,
+                hierarchical_gate=False,
+            )
+
+    def test_horseshoe_dataset_mu_requires_hierarchical(self):
+        with pytest.raises(
+            ValueError,
+            match="horseshoe_dataset_mu.*requires.*hierarchical_dataset_mu",
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                n_datasets=2,
+                unconstrained=True,
+                horseshoe_dataset_mu=True,
+                hierarchical_dataset_mu=False,
+            )
+
+    def test_horseshoe_dataset_p_requires_hierarchical(self):
+        with pytest.raises(
+            ValueError,
+            match="horseshoe_dataset_p.*requires.*hierarchical_dataset_p",
+        ):
+            ModelConfig(
+                base_model="nbdm",
+                n_datasets=2,
+                unconstrained=True,
+                horseshoe_dataset_p=True,
+                hierarchical_dataset_p="none",
+            )
+
+    def test_horseshoe_dataset_gate_requires_hierarchical(self):
+        with pytest.raises(
+            ValueError,
+            match="horseshoe_dataset_gate.*requires.*hierarchical_dataset_gate",
+        ):
+            ModelConfig(
+                base_model="zinb",
+                n_datasets=2,
+                unconstrained=True,
+                horseshoe_dataset_gate=True,
+                hierarchical_dataset_gate=False,
+            )
+
+    def test_valid_horseshoe_p_config(self):
+        """horseshoe_p=True with hierarchical_p=True should succeed."""
+        cfg = ModelConfig(
+            base_model="nbdm",
+            unconstrained=True,
+            hierarchical_p=True,
+            horseshoe_p=True,
+        )
+        assert cfg.horseshoe_p is True
+
+    def test_valid_horseshoe_dataset_mu_config(self):
+        """horseshoe_dataset_mu=True with hierarchical_dataset_mu=True."""
+        cfg = ModelConfig(
+            base_model="nbdm",
+            n_datasets=2,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            horseshoe_dataset_mu=True,
+        )
+        assert cfg.horseshoe_dataset_mu is True
+
+
+class TestHorseshoeCreateModel:
+    """Test create_model with horseshoe flags."""
+
+    @staticmethod
+    def _builder(model_type="zinbvcp", parameterization="mean_odds"):
+        b = (
+            ModelConfigBuilder()
+            .for_model(model_type)
+            .with_parameterization(parameterization)
+            .unconstrained()
+        )
+        b._n_datasets = 2
+        return b
+
+    def test_horseshoe_dataset_mu(self):
+        """create_model with horseshoe_dataset_mu produces horseshoe specs."""
+        from scribe.models.builders.parameter_specs import (
+            HalfCauchySpec,
+            HorseshoeDatasetExpNormalSpec,
+            InverseGammaSpec,
+        )
+
+        b = self._builder()
+        b._hierarchical_dataset_mu = True
+        b._horseshoe_dataset_mu = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+
+        assert callable(model)
+        assert callable(guide)
+
+        spec_names = [s.name for s in specs]
+        assert "tau_mu_dataset" in spec_names
+        assert "lambda_mu_dataset" in spec_names
+        assert "c_sq_mu_dataset" in spec_names
+
+        tau_spec = next(s for s in specs if s.name == "tau_mu_dataset")
+        lambda_spec = next(s for s in specs if s.name == "lambda_mu_dataset")
+        c_sq_spec = next(s for s in specs if s.name == "c_sq_mu_dataset")
+        assert isinstance(tau_spec, HalfCauchySpec)
+        assert isinstance(lambda_spec, HalfCauchySpec)
+        assert isinstance(c_sq_spec, InverseGammaSpec)
+
+        # tau is scalar, lambda is gene-specific
+        assert tau_spec.shape_dims == ()
+        assert lambda_spec.shape_dims == ("n_genes",)
+
+        mu_spec = next(s for s in specs if s.name == "mu")
+        assert isinstance(mu_spec, HorseshoeDatasetExpNormalSpec)
+        assert mu_spec.raw_name == "mu_raw"
+        assert mu_spec.uses_ncp is True
+
+    def test_horseshoe_dataset_p(self):
+        """create_model with horseshoe_dataset_p produces horseshoe specs."""
+        from scribe.models.builders.parameter_specs import (
+            HalfCauchySpec,
+            HorseshoeDatasetSigmoidNormalSpec,
+        )
+
+        b = self._builder(parameterization="mean_prob")
+        b._hierarchical_dataset_p = "gene_specific"
+        b._horseshoe_dataset_p = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+
+        assert callable(model)
+        assert callable(guide)
+
+        spec_names = [s.name for s in specs]
+        assert "tau_p_dataset" in spec_names
+        assert "lambda_p_dataset" in spec_names
+        assert "c_sq_p_dataset" in spec_names
+
+        p_spec = next(s for s in specs if s.name == "p")
+        assert isinstance(p_spec, HorseshoeDatasetSigmoidNormalSpec)
+        assert p_spec.raw_name == "p_raw_dataset"
+
+    def test_horseshoe_dataset_gate(self):
+        """create_model with horseshoe_dataset_gate."""
+        from scribe.models.builders.parameter_specs import (
+            HorseshoeDatasetSigmoidNormalSpec,
+        )
+
+        b = self._builder(model_type="zinbvcp")
+        b._hierarchical_dataset_gate = True
+        b._horseshoe_dataset_gate = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+
+        assert callable(model)
+        assert callable(guide)
+
+        gate_spec = next(s for s in specs if s.name == "gate")
+        assert isinstance(gate_spec, HorseshoeDatasetSigmoidNormalSpec)
+        assert gate_spec.raw_name == "gate_raw_dataset"
+
+    def test_horseshoe_gene_level_p(self):
+        """create_model with horseshoe_p (gene-level)."""
+        from scribe.models.builders.parameter_specs import (
+            HorseshoeHierarchicalSigmoidNormalSpec,
+        )
+
+        b = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_prob")
+            .unconstrained()
+        )
+        b._hierarchical_p = True
+        b._horseshoe_p = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+
+        assert callable(model)
+        assert callable(guide)
+
+        spec_names = [s.name for s in specs]
+        assert "tau_p" in spec_names
+        assert "lambda_p" in spec_names
+
+        p_spec = next(s for s in specs if s.name == "p")
+        assert isinstance(p_spec, HorseshoeHierarchicalSigmoidNormalSpec)
+        assert p_spec.raw_name == "p_raw"
+
+    def test_horseshoe_gene_level_gate(self):
+        """create_model with horseshoe_gate (gene-level)."""
+        from scribe.models.builders.parameter_specs import (
+            HorseshoeHierarchicalSigmoidNormalSpec,
+        )
+
+        b = (
+            ModelConfigBuilder()
+            .for_model("zinb")
+            .with_parameterization("mean_prob")
+            .unconstrained()
+        )
+        b._hierarchical_gate = True
+        b._horseshoe_gate = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+
+        assert callable(model)
+        assert callable(guide)
+
+        gate_spec = next(s for s in specs if s.name == "gate")
+        assert isinstance(gate_spec, HorseshoeHierarchicalSigmoidNormalSpec)
+        assert gate_spec.raw_name == "gate_raw"
+
+    def test_combined_dataset_horseshoe_mu_p_gate(self):
+        """Multiple horseshoe flags enabled simultaneously."""
+        b = self._builder(model_type="zinbvcp")
+        b._hierarchical_dataset_mu = True
+        b._hierarchical_dataset_p = "gene_specific"
+        b._hierarchical_dataset_gate = True
+        b._horseshoe_dataset_mu = True
+        b._horseshoe_dataset_p = True
+        b._horseshoe_dataset_gate = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+
+        assert callable(model)
+        assert callable(guide)
+
+        spec_names = [s.name for s in specs]
+        # All three horseshoe trios present (mean_odds => phi, not p)
+        for prefix in ("mu_dataset", "phi_dataset", "gate_dataset"):
+            assert (
+                f"tau_{prefix}" in spec_names
+            ), f"Expected tau_{prefix} in {spec_names}"
+            assert f"lambda_{prefix}" in spec_names
+            assert f"c_sq_{prefix}" in spec_names
