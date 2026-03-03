@@ -103,8 +103,33 @@ def get_posterior_distributions(
     hierarchical_gate = model_config.hierarchical_gate
 
     # -------------------------------------------------------------------------
-    # Build distributions based on base parameterization
+    # Build distributions based on base parameterization.
+    # Horseshoe NCP replaces guide params (e.g. phi_loc -> phi_raw_dataset_loc)
+    # so the base builders must skip those parameters to avoid KeyErrors.
     # -------------------------------------------------------------------------
+    horseshoe_p = getattr(model_config, "horseshoe_p", False)
+    horseshoe_dataset_p = getattr(model_config, "horseshoe_dataset_p", False)
+    horseshoe_dataset_mu = getattr(
+        model_config, "horseshoe_dataset_mu", False
+    )
+
+    skip = set()
+    if horseshoe_p or horseshoe_dataset_p:
+        if parameterization in (
+            Parameterization.MEAN_ODDS,
+            Parameterization.ODDS_RATIO,
+        ):
+            skip.add("phi")
+        else:
+            skip.add("p")
+    if horseshoe_dataset_mu:
+        if parameterization in (
+            Parameterization.CANONICAL,
+            Parameterization.STANDARD,
+        ):
+            skip.add("r")
+        else:
+            skip.add("mu")
 
     if parameterization in (
         Parameterization.CANONICAL,
@@ -112,7 +137,7 @@ def get_posterior_distributions(
     ):
         distributions.update(
             _build_canonical_posteriors(
-                params, unconstrained, is_mixture, low_rank, split
+                params, unconstrained, is_mixture, low_rank, split, skip
             )
         )
     elif parameterization in (
@@ -121,7 +146,7 @@ def get_posterior_distributions(
     ):
         distributions.update(
             _build_mean_prob_posteriors(
-                params, unconstrained, is_mixture, low_rank, split
+                params, unconstrained, is_mixture, low_rank, split, skip
             )
         )
     elif parameterization in (
@@ -130,7 +155,7 @@ def get_posterior_distributions(
     ):
         distributions.update(
             _build_mean_odds_posteriors(
-                params, unconstrained, is_mixture, low_rank, split
+                params, unconstrained, is_mixture, low_rank, split, skip
             )
         )
     else:
@@ -166,7 +191,7 @@ def get_posterior_distributions(
                 _build_horseshoe_hyperparameter_posteriors(params, prefix)
             )
             distributions[f"{target_name}_raw"] = _build_normal_posterior(
-                params, f"{target_name}_raw"
+                params, f"{target_name}_raw", low_rank=low_rank
             )
         else:
             distributions.update(
@@ -220,7 +245,7 @@ def get_posterior_distributions(
                 _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
             )
             distributions[f"{target}_raw"] = _build_normal_posterior(
-                params, f"{target}_raw"
+                params, f"{target}_raw", low_rank=low_rank
             )
         else:
             distributions.update(
@@ -266,7 +291,7 @@ def get_posterior_distributions(
                 _build_horseshoe_hyperparameter_posteriors(params, hs_prefix)
             )
             distributions[raw_name] = _build_normal_posterior(
-                params, raw_name
+                params, raw_name, low_rank=low_rank
             )
         else:
             distributions.update(
@@ -307,7 +332,7 @@ def get_posterior_distributions(
                 )
             )
             distributions["gate_raw_dataset"] = _build_normal_posterior(
-                params, "gate_raw_dataset"
+                params, "gate_raw_dataset", low_rank=low_rank
             )
         else:
             distributions.update(
@@ -339,7 +364,7 @@ def get_posterior_distributions(
                 _build_horseshoe_hyperparameter_posteriors(params, "gate")
             )
             distributions["gate_raw"] = _build_normal_posterior(
-                params, "gate_raw"
+                params, "gate_raw", low_rank=low_rank
             )
         elif hierarchical_gate:
             distributions.update(
@@ -396,36 +421,40 @@ def _build_canonical_posteriors(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    skip: Optional[set] = None,
 ) -> Dict[str, Any]:
     """Build posteriors for canonical (standard) parameterization."""
     distributions = {}
+    skip = skip or set()
 
     if unconstrained:
-        # Unconstrained: Normal + transform
-        distributions["p"] = _build_sigmoid_normal_posterior(
-            params, "p", is_scalar=True, split=split
-        )
-        if low_rank:
-            distributions["r"] = _build_low_rank_exp_normal_posterior(
-                params, "r", is_mixture, split
+        if "p" not in skip:
+            distributions["p"] = _build_sigmoid_normal_posterior(
+                params, "p", is_scalar=True, split=split
             )
-        else:
-            distributions["r"] = _build_exp_normal_posterior(
-                params, "r", is_mixture, split
-            )
+        if "r" not in skip:
+            if low_rank:
+                distributions["r"] = _build_low_rank_exp_normal_posterior(
+                    params, "r", is_mixture, split
+                )
+            else:
+                distributions["r"] = _build_exp_normal_posterior(
+                    params, "r", is_mixture, split
+                )
     else:
-        # Constrained: Beta and LogNormal
-        distributions["p"] = _build_beta_posterior(
-            params, "p", is_scalar=True, is_mixture=False, split=split
-        )
-        if low_rank:
-            distributions["r"] = _build_low_rank_lognormal_posterior(
-                params, "r", is_mixture, split
+        if "p" not in skip:
+            distributions["p"] = _build_beta_posterior(
+                params, "p", is_scalar=True, is_mixture=False, split=split
             )
-        else:
-            distributions["r"] = _build_lognormal_posterior(
-                params, "r", is_mixture, split
-            )
+        if "r" not in skip:
+            if low_rank:
+                distributions["r"] = _build_low_rank_lognormal_posterior(
+                    params, "r", is_mixture, split
+                )
+            else:
+                distributions["r"] = _build_lognormal_posterior(
+                    params, "r", is_mixture, split
+                )
 
     return distributions
 
@@ -436,34 +465,40 @@ def _build_mean_prob_posteriors(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    skip: Optional[set] = None,
 ) -> Dict[str, Any]:
     """Build posteriors for mean_prob (linked) parameterization."""
     distributions = {}
+    skip = skip or set()
 
     if unconstrained:
-        distributions["p"] = _build_sigmoid_normal_posterior(
-            params, "p", is_scalar=True, split=split
-        )
-        if low_rank:
-            distributions["mu"] = _build_low_rank_exp_normal_posterior(
-                params, "mu", is_mixture, split
+        if "p" not in skip:
+            distributions["p"] = _build_sigmoid_normal_posterior(
+                params, "p", is_scalar=True, split=split
             )
-        else:
-            distributions["mu"] = _build_exp_normal_posterior(
-                params, "mu", is_mixture, split
-            )
+        if "mu" not in skip:
+            if low_rank:
+                distributions["mu"] = _build_low_rank_exp_normal_posterior(
+                    params, "mu", is_mixture, split
+                )
+            else:
+                distributions["mu"] = _build_exp_normal_posterior(
+                    params, "mu", is_mixture, split
+                )
     else:
-        distributions["p"] = _build_beta_posterior(
-            params, "p", is_scalar=True, is_mixture=False, split=split
-        )
-        if low_rank:
-            distributions["mu"] = _build_low_rank_lognormal_posterior(
-                params, "mu", is_mixture, split
+        if "p" not in skip:
+            distributions["p"] = _build_beta_posterior(
+                params, "p", is_scalar=True, is_mixture=False, split=split
             )
-        else:
-            distributions["mu"] = _build_lognormal_posterior(
-                params, "mu", is_mixture, split
-            )
+        if "mu" not in skip:
+            if low_rank:
+                distributions["mu"] = _build_low_rank_lognormal_posterior(
+                    params, "mu", is_mixture, split
+                )
+            else:
+                distributions["mu"] = _build_lognormal_posterior(
+                    params, "mu", is_mixture, split
+                )
 
     return distributions
 
@@ -474,34 +509,40 @@ def _build_mean_odds_posteriors(
     is_mixture: bool,
     low_rank: bool,
     split: bool,
+    skip: Optional[set] = None,
 ) -> Dict[str, Any]:
     """Build posteriors for mean_odds (odds_ratio) parameterization."""
     distributions = {}
+    skip = skip or set()
 
     if unconstrained:
-        distributions["phi"] = _build_exp_normal_posterior(
-            params, "phi", is_mixture=False, split=split, is_scalar=True
-        )
-        if low_rank:
-            distributions["mu"] = _build_low_rank_exp_normal_posterior(
-                params, "mu", is_mixture, split
+        if "phi" not in skip:
+            distributions["phi"] = _build_exp_normal_posterior(
+                params, "phi", is_mixture=False, split=split, is_scalar=True
             )
-        else:
-            distributions["mu"] = _build_exp_normal_posterior(
-                params, "mu", is_mixture, split
-            )
+        if "mu" not in skip:
+            if low_rank:
+                distributions["mu"] = _build_low_rank_exp_normal_posterior(
+                    params, "mu", is_mixture, split
+                )
+            else:
+                distributions["mu"] = _build_exp_normal_posterior(
+                    params, "mu", is_mixture, split
+                )
     else:
-        distributions["phi"] = _build_betaprime_posterior(
-            params, "phi", is_scalar=True, is_mixture=False, split=split
-        )
-        if low_rank:
-            distributions["mu"] = _build_low_rank_lognormal_posterior(
-                params, "mu", is_mixture, split
+        if "phi" not in skip:
+            distributions["phi"] = _build_betaprime_posterior(
+                params, "phi", is_scalar=True, is_mixture=False, split=split
             )
-        else:
-            distributions["mu"] = _build_lognormal_posterior(
-                params, "mu", is_mixture, split
-            )
+        if "mu" not in skip:
+            if low_rank:
+                distributions["mu"] = _build_low_rank_lognormal_posterior(
+                    params, "mu", is_mixture, split
+                )
+            else:
+                distributions["mu"] = _build_lognormal_posterior(
+                    params, "mu", is_mixture, split
+                )
 
     return distributions
 
@@ -587,8 +628,12 @@ def _build_horseshoe_hyperparameter_posteriors(
 def _build_normal_posterior(
     params: Dict[str, jnp.ndarray],
     name: str,
-) -> dist.Distribution:
-    """Build a plain Normal posterior for NCP raw z variables.
+    low_rank: bool = False,
+) -> Union[dist.Distribution, Dict]:
+    """Build a Normal posterior for NCP raw z variables.
+
+    Handles both mean-field (Normal with loc/scale) and low-rank
+    (LowRankMultivariateNormal with loc/W/raw_diag) guide formats.
 
     Parameters
     ----------
@@ -596,13 +641,29 @@ def _build_normal_posterior(
         Guide parameters.
     name : str
         Parameter name (e.g. ``"p_raw"``, ``"mu_raw"``).
+    low_rank : bool
+        If True, build a LowRankMultivariateNormal from ``{name}_W``
+        and ``{name}_raw_diag`` params.
 
     Returns
     -------
-    dist.Normal
-        Normal posterior for the z variable.
+    Union[dist.Normal, Dict]
+        Normal posterior (mean-field) or dict with ``base``/``transform``
+        keys (low-rank, no transform applied since z is unconstrained).
     """
     loc = params[f"{name}_loc"]
+
+    if low_rank and f"{name}_W" in params:
+        import jax
+
+        W = params[f"{name}_W"]
+        raw_diag = params[f"{name}_raw_diag"]
+        D = jax.nn.softplus(raw_diag) + 1e-4
+        base = dist.LowRankMultivariateNormal(
+            loc=loc, cov_factor=W, cov_diag=D
+        )
+        return {"base": base, "transform": dist.transforms.IdentityTransform()}
+
     scale = params[f"{name}_scale"]
     return dist.Normal(loc, scale)
 
