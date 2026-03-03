@@ -265,23 +265,29 @@ def _run_with_early_stopping(
 
         eps = 1e-8  # Small constant to avoid division by zero
 
-        # JIT compile the update function (critical for GPU performance!)
-        # This matches how NumPyro's svi.run() works internally
-        # 1. Define the update function (distinguishing between stable and
-        #    unstable updates)
-        def body_fn(svi_state):
-            if stable_update:
-                return svi.stable_update(svi_state, **model_args)
-            else:
-                return svi.update(svi_state, **model_args)
+        # Separate large JAX arrays from lightweight metadata so that
+        # the JIT-compiled update function receives them as dynamic
+        # inputs rather than baking them into the compiled program as
+        # traced constants (which would duplicate gigabytes of data).
+        _dynamic_keys = ("counts", "dataset_indices", "annotation_prior_logits")
+        dynamic_arrays = {
+            k: model_args.pop(k)
+            for k in _dynamic_keys
+            if model_args.get(k) is not None
+        }
 
-        # 2. JIT compile the update function
+        def body_fn(svi_state, dynamic):
+            all_args = {**model_args, **dynamic}
+            if stable_update:
+                return svi.stable_update(svi_state, **all_args)
+            else:
+                return svi.update(svi_state, **all_args)
+
         jit_body_fn = jit(body_fn)
 
-        # 3. Run the update loop
+        # Run the update loop
         for step in range(start_step, n_steps):
-            # Perform update step (JIT compiled)
-            svi_state, loss = jit_body_fn(svi_state)
+            svi_state, loss = jit_body_fn(svi_state, dynamic_arrays)
 
             # Store loss every step (like NumPyro's svi.run)
             loss_val = float(loss)
