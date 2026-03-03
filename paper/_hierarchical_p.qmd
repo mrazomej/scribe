@@ -287,7 +287,7 @@ hierarchical model lets the data decide.
 
 Having introduced the hierarchical model, we now turn to the question of how to
 generate compositional samples $\underline{\rho}$ when the $p_g$ are
-gene-specific. Recall from @sec-diffexp-nonparametric that the empirical
+gene-specific. As explained in @sec-diffexp-nonparametric, the empirical
 differential expression pipeline requires drawing compositions from the
 posterior predictive distribution. Under the standard model with shared $p$,
 these compositions are drawn as
@@ -358,13 +358,13 @@ parameters. Given the Poisson-Gamma representation, the conditional expected
 count is
 
 $$
-\mathbb{E}[u_g \mid \lambda_g] = \lambda_g.
+\langle u_g \mid \lambda_g \rangle = \lambda_g.
 $${#eq-hier-conditional-mean}
 
 The marginal expected count (averaging over the Gamma prior) is
 
 $$
-\mu_g = \mathbb{E}[u_g] = \mathbb{E}[\lambda_g] =
+\mu_g = \langle u_g \rangle = \langle \lambda_g \rangle =
 \frac{r_g}{\theta_g} = r_g \cdot \frac{1 - p_g}{p_g},
 $${#eq-hier-marginal-mean}
 

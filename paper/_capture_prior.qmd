@@ -39,7 +39,7 @@ To see why the flat prior is problematic, consider the expected observed count
 for gene $g$ in cell $c$. From the generative model,
 
 $$
-\mathbb{E}[u_{gc}] = \nu_c \cdot \mathbb{E}[m_{gc}] = \nu_c \cdot \mu_g,
+\langle u_{gc} \rangle = \nu_c \cdot \langle m_{gc} \rangle = \nu_c \cdot \mu_g,
 $${#eq-cap-expected-count}
 
 where $\mu_g = r_g(1-p_g)/p_g$ is the expected biological expression of gene $g$
@@ -53,7 +53,7 @@ $${#eq-cap-library-size}
 with expectation
 
 $$
-\mathbb{E}[L_c] = \nu_c \sum_{g=1}^G \mu_g = \nu_c \cdot \mu_T,
+\langle L_c \rangle = \nu_c \sum_{g=1}^G \mu_g = \nu_c \cdot \mu_T,
 $${#eq-cap-expected-lib}
 
 where $\mu_T = \sum_g \mu_g$ is the total expected biological expression across
@@ -73,7 +73,7 @@ biological parameters.
 From @eq-cap-expected-lib, we have the exact relationship
 
 $$
-\nu_c = \frac{\mathbb{E}[L_c]}{\mu_T}.
+\nu_c = \frac{\langle L_c \rangle}{\mu_T}.
 $${#eq-cap-nu-exact}
 
 The true total mRNA count in cell $c$ is
@@ -82,11 +82,11 @@ $$
 M_c = \sum_{g=1}^G m_{gc},
 $${#eq-cap-total-mrna}
 
-with $\mathbb{E}[M_c] = \mu_T$. Since $L_c$ is the result of binomially
+with $\langle M_c \rangle = \mu_T$. Since $L_c$ is the result of binomially
 thinning $M_c$ molecules with probability $\nu_c$, we have
 
 $$
-\mathbb{E}[L_c \mid M_c, \nu_c] = \nu_c \cdot M_c.
+\langle L_c \mid M_c, \nu_c \rangle = \nu_c \cdot M_c.
 $${#eq-cap-conditional-lib}
 
 By the law of large numbers---summing over many genes ($G$ is typically in the

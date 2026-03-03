@@ -32,7 +32,7 @@ widely-used error measure [@benjamini1995]. The FDR is the expected proportion
 of false discoveries among all discoveries:
 
 $$
-\text{FDR} = \mathbb{E}\left[\frac{V}{R}\right],
+\text{FDR} = \langle \frac{V}{R} \rangle,
 $${#eq-diffexp-fdr-definition}
 
 where $V$ is the number of false discoveries and $R$ is the total number of
@@ -67,9 +67,9 @@ In a Bayesian framework, we do not have access to the true values $V_g$, but we
 can compute their posterior expectations. The PEFP is defined as
 
 $$
-\text{PEFP}(S) = \mathbb{E}[\text{FDP}(S) \mid \text{data}] = 
+\text{PEFP}(S) = \langle \text{FDP}(S) \mid \text{data} \rangle = 
 \begin{cases}
-\frac{1}{|S|} \sum_{g \in S} \mathbb{E}[V_g \mid \text{data}] & 
+\frac{1}{|S|} \sum_{g \in S} \langle V_g \mid \text{data} \rangle & 
 \text{if } |S| > 0, \\
 0 & \text{if } |S| = 0.
 \end{cases}
@@ -77,7 +77,7 @@ $${#eq-diffexp-pefp-definition}
 
 #### Approximating PEFP with lfsr
 
-To compute $\mathbb{E}[V_g \mid \text{data}]$, we need to define what
+To compute $\langle V_g \mid \text{data} \rangle$, we need to define what
 constitutes a "false discovery." The most natural definition in the context of
 sign testing is:
 
@@ -87,7 +87,7 @@ differential expression.**
 Under this definition,
 
 $$
-\mathbb{E}[V_g \mid \text{data}] = P(\text{wrong sign for gene } g \mid \text{data}) = 
+\langle V_g \mid \text{data} \rangle = P(\text{wrong sign for gene } g \mid \text{data}) = 
 \text{lfsr}_g.
 $${#eq-diffexp-ev-lfsr}
 
@@ -125,7 +125,7 @@ the PEFP: it is just the average lfsr over the set $S$ of discoveries.
 The PEFP has a direct Bayesian interpretation:
 
 $$
-\text{PEFP}(S) = \mathbb{E}\left[\frac{\text{number of wrong-sign genes in } S}{|S|} \;\Big|\; \text{data}\right].
+\text{PEFP}(S) = \left\langle \frac{\text{number of wrong-sign genes in } S}{|S|} \;\Big|\; \text{data} \right\rangle.
 $${#eq-diffexp-pefp-interpretation}
 
 Unlike the frequentist FDR, which involves expectations over repeated sampling

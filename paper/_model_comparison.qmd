@@ -26,7 +26,7 @@ density** (elpd), which measures how well a fitted model predicts new,
 unseen data drawn from the true data-generating distribution $p_t$,
 
 $$
-\text{elpd} = \mathbb{E}_{\tilde{y} \sim p_t}\!\left[\log p(\tilde{y} \mid y)\right]
+\text{elpd} = \langle \log p(\tilde{y} \mid y) \rangle_{\tilde{y} \sim p_t}
 = \int \log p(\tilde{y} \mid y)\, p_t(\tilde{y})\, d\tilde{y},
 $${#eq-mc-elpd-def}
 

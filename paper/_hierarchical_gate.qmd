@@ -300,7 +300,7 @@ average between the gene-specific maximum likelihood estimate and the
 population mean:
 
 $$
-\mathbb{E}[\text{logit}(\pi_g) \mid \text{data}] \approx
+\langle \text{logit}(\pi_g) \mid \text{data} \rangle \approx
 \kappa_g \, \hat{\ell}_g + (1 - \kappa_g) \, \mu_\pi,
 $${#eq-hgate-partial-pooling}
 
@@ -357,7 +357,7 @@ being expressed. Formally, the expected count under the zero-inflated model
 is
 
 $$
-\mathbb{E}[u_g \mid r_g, p_g, \pi_g] =
+\langle u_g \mid r_g, p_g, \pi_g \rangle =
 (1 - \pi_g) \cdot \frac{r_g (1 - p_g)}{p_g},
 $${#eq-hgate-expected-count}
 

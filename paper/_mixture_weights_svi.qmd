@@ -273,11 +273,11 @@ Evidence Lower Bound (ELBO). For the mixture model, the ELBO takes the form
 
 $$
 \text{ELBO}(\phi) = 
-\mathbb{E}_{q_\phi(\underline{\theta}, \underline{\pi})}
-\left[
+\langle 
     \sum_{c=1}^{C} \log \pi(\underline{u}_c \mid \underline{\theta}, 
     \underline{\pi})
-\right] - 
+\right \rangle_{q_\phi(\underline{\theta}, \underline{\pi})}
+\left - 
 \text{KL}\left(
     q_\phi(\underline{\theta}, \underline{\pi}) \,\|\, 
     \pi(\underline{\theta}, \underline{\pi})
@@ -303,11 +303,11 @@ and a KL term,
 $$
 \frac{\partial \text{ELBO}}{\partial \alpha_k} = 
 \underbrace{
-    \frac{\partial}{\partial \alpha_k} \mathbb{E}_{q}
-    \left[
+    \frac{\partial}{\partial \alpha_k} \langle 
         \sum_{c=1}^{C} \log \pi(\underline{u}_c \mid \underline{\theta}, 
         \underline{\pi})
-    \right]
+    \right \rangle_{q}
+    \left
 }_{\text{likelihood gradient}} - 
 \underbrace{
     \frac{\partial}{\partial \alpha_k} 
@@ -508,7 +508,7 @@ counts.
 The mean of this conditional posterior is
 
 $$
-\mathbb{E}[\pi_k \mid \underline{\underline{U}}, \underline{\theta}] = 
+\langle \pi_k \mid \underline{\underline{U}}, \underline{\theta} \rangle = 
 \frac{\alpha_{0k} + N_k}{\sum_{j=1}^{K} \alpha_{0j} + C},
 $${#eq-mix-conditional-mean}
 
@@ -517,7 +517,7 @@ prior with $\alpha_{0k} = \alpha_0$ and a dataset with $C \gg K\alpha_0$, the
 posterior mean approaches the empirical proportion,
 
 $$
-\mathbb{E}[\pi_k] \approx \frac{N_k}{C}.
+\langle \pi_k \rangle \approx \frac{N_k}{C}.
 $${#eq-mix-conditional-mean-approx}
 
 This shows that HMC, by sampling from the correct posterior, naturally recovers
