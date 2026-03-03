@@ -387,8 +387,16 @@ def get_posterior_distributions(
     # -------------------------------------------------------------------------
     # Add capture probability if applicable
     # -------------------------------------------------------------------------
+    capture_prior = getattr(model_config, "capture_prior", "default")
     if uses_vcp:
-        if parameterization in (
+        if capture_prior in ("biology_informed", "data_driven"):
+            # Biology-informed capture: posterior is on eta_capture
+            distributions.update(
+                _build_biology_informed_capture_posterior(
+                    params, model_config, split
+                )
+            )
+        elif parameterization in (
             Parameterization.MEAN_ODDS,
             Parameterization.ODDS_RATIO,
         ):
@@ -733,6 +741,57 @@ def _build_phi_capture_posterior(
             is_mixture=False,
             split=split,
         )
+
+    return distributions
+
+
+def _build_biology_informed_capture_posterior(
+    params: Dict[str, jnp.ndarray],
+    model_config: "ModelConfig",
+    split: bool,
+) -> Dict[str, Any]:
+    """Build posterior for biology-informed capture parameter.
+
+    The variational posterior is on ``eta_capture`` (the unconstrained
+    log-ratio log(M_c / L_c)).  The capture parameter is a deterministic
+    transformation of eta.
+
+    Parameters
+    ----------
+    params : Dict[str, jnp.ndarray]
+        Optimized variational parameters. Expected keys:
+        ``eta_capture_loc``, ``eta_capture_scale``, and optionally
+        ``mu_eta_loc``, ``mu_eta_scale`` (data-driven mode).
+    model_config : ModelConfig
+        Model configuration.
+    split : bool
+        If True, split per-cell distributions.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Posterior distributions for ``eta_capture`` (and ``mu_eta`` if
+        data-driven).
+    """
+    distributions: Dict[str, Any] = {}
+
+    # Shared mu_eta for data-driven mode
+    if "mu_eta_loc" in params:
+        distributions["mu_eta"] = dist.Normal(
+            params["mu_eta_loc"], params["mu_eta_scale"]
+        )
+
+    # Per-cell eta_capture posterior
+    if "eta_capture_loc" in params:
+        loc = params["eta_capture_loc"]
+        scale = params["eta_capture_scale"]
+        eta_dist = dist.Normal(loc, scale)
+        if split:
+            distributions["eta_capture"] = [
+                dist.Normal(loc[i], scale[i]) for i in range(loc.shape[0])
+            ]
+        else:
+            distributions["eta_capture"] = eta_dist
 
     return distributions
 

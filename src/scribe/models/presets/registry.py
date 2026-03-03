@@ -33,7 +33,10 @@ if TYPE_CHECKING:
     from ..components.amortizers import Amortizer
     from ..config.groups import AmortizationConfig
 
+import math
+
 from ..builders.parameter_specs import (
+    BiologyInformedCaptureSpec,
     BetaPrimeSpec,
     BetaSpec,
     ExpNormalSpec,
@@ -243,6 +246,7 @@ def build_capture_spec(
     unconstrained: bool,
     guide_families: GuideFamilyConfig,
     param_strategy: Parameterization,
+    model_config: Optional[Any] = None,
 ) -> ParamSpec:
     """Build capture probability parameter spec for VCP models (NBVCP, ZINBVCP).
 
@@ -251,6 +255,10 @@ def build_capture_spec(
 
     For mean_odds parameterization, the parameter is transformed from p_capture
     to phi_capture (odds ratio parameterization).
+
+    When ``model_config.capture_prior`` is ``"biology_informed"`` or
+    ``"data_driven"``, returns a ``BiologyInformedCaptureSpec`` that anchors
+    the capture probability to library size via total mRNA per cell.
 
     If amortization is enabled in guide_families.capture_amortization, the
     guide will use a neural network to predict variational parameters from
@@ -268,6 +276,9 @@ def build_capture_spec(
     param_strategy : Parameterization
         Parameterization strategy to determine parameter name transformation
         (p_capture vs phi_capture for mean_odds).
+    model_config : ModelConfig, optional
+        Full model configuration. Used to check ``capture_prior`` mode
+        and organism/M_0 settings.
 
     Returns
     -------
@@ -283,11 +294,39 @@ def build_capture_spec(
     # Get the appropriate capture parameter name based on parameterization
     # mean_odds uses phi_capture, others use p_capture
     capture_param_name = param_strategy.transform_model_param("p_capture")
+    use_phi_capture = capture_param_name == "phi_capture"
 
+    # ---- Biology-informed / data-driven capture prior path ----
+    capture_prior = (
+        getattr(model_config, "capture_prior", "default")
+        if model_config
+        else "default"
+    )
+    if capture_prior in ("biology_informed", "data_driven"):
+        total_mrna_mean = model_config.total_mrna_mean
+        sigma_M = model_config.total_mrna_log_sigma
+        log_M0 = math.log(total_mrna_mean)
+        data_driven = capture_prior == "data_driven"
+
+        capture_family = guide_families.get(capture_param_name)
+        return BiologyInformedCaptureSpec(
+            name=capture_param_name,
+            shape_dims=("n_cells",),
+            default_params=(log_M0, sigma_M),
+            is_cell_specific=True,
+            guide_family=capture_family,
+            log_M0=log_M0,
+            sigma_M=sigma_M,
+            data_driven=data_driven,
+            use_phi_capture=use_phi_capture,
+        )
+
+    # ---- Standard (flat) capture prior path ----
     # Check if amortization is enabled for capture probability
     amort_config = guide_families.capture_amortization
     if amort_config is not None and amort_config.enabled:
-        # Create amortizer from config object (single place unpacks into create_capture_amortizer)
+        # Create amortizer from config object (single place unpacks into
+        # create_capture_amortizer)
         param_name = (
             param_strategy.name
             if hasattr(param_strategy, "name")
@@ -304,9 +343,7 @@ def build_capture_spec(
         capture_family = guide_families.get(capture_param_name)
 
     if unconstrained:
-        # Use ExpNormalSpec for phi_capture (BetaPrime -> [0, +inf))
-        # Use SigmoidNormalSpec for p_capture (Beta -> [0, 1])
-        if capture_param_name == "phi_capture":
+        if use_phi_capture:
             return ExpNormalSpec(
                 name=capture_param_name,
                 shape_dims=("n_cells",),
@@ -323,15 +360,11 @@ def build_capture_spec(
                 guide_family=capture_family,
             )
     else:
-        # Use BetaPrime for phi_capture (mean_odds), Beta for p_capture (others)
-        if capture_param_name == "phi_capture":
+        if use_phi_capture:
             return BetaPrimeSpec(
                 name=capture_param_name,
                 shape_dims=("n_cells",),
-                default_params=(
-                    1.0,
-                    1.0,
-                ),  # Uniform prior on capture odds ratio
+                default_params=(1.0, 1.0),
                 is_cell_specific=True,
                 guide_family=capture_family,
             )
@@ -339,10 +372,7 @@ def build_capture_spec(
             return BetaSpec(
                 name=capture_param_name,
                 shape_dims=("n_cells",),
-                default_params=(
-                    1.0,
-                    1.0,
-                ),  # Uniform prior on capture probability
+                default_params=(1.0, 1.0),
                 is_cell_specific=True,
                 guide_family=capture_family,
             )
@@ -359,6 +389,7 @@ def build_extra_param_spec(
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     hierarchical_gate: bool = False,
+    model_config: Optional[Any] = None,
 ) -> List[ParamSpec]:
     """Build model-specific extra parameter spec(s).
 
@@ -381,6 +412,8 @@ def build_extra_param_spec(
         List of mixture-specific parameters.
     hierarchical_gate : bool, default=False
         If True and param_name is "gate", build hierarchical gate specs.
+    model_config : ModelConfig, optional
+        Full model configuration (passed to ``build_capture_spec``).
 
     Returns
     -------
@@ -406,6 +439,7 @@ def build_extra_param_spec(
                 unconstrained=unconstrained,
                 guide_families=guide_families,
                 param_strategy=param_strategy,
+                model_config=model_config,
             )
         ]
     else:

@@ -44,6 +44,7 @@ from numpyro.contrib.module import flax_module
 from numpyro.distributions import constraints
 
 from .parameter_specs import (
+    BiologyInformedCaptureSpec,
     BetaPrimeSpec,
     BetaSpec,
     DirichletSpec,
@@ -1587,6 +1588,84 @@ def setup_cell_specific_guide(
 
 
 # ------------------------------------------------------------------------------
+# Biology-Informed Capture MeanField Guide
+# ------------------------------------------------------------------------------
+
+
+@dispatch(BiologyInformedCaptureSpec, MeanFieldGuide, dict, object)
+def setup_cell_specific_guide(
+    spec: BiologyInformedCaptureSpec,
+    guide: MeanFieldGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+    batch_idx: Optional[jnp.ndarray] = None,
+    **kwargs,
+) -> jnp.ndarray:
+    """MeanField guide for biology-informed capture parameter.
+
+    Provides per-cell variational parameters for eta_capture (the
+    unconstrained latent log(M_c / L_c)). The model then applies the
+    exact transformation to phi_capture or p_capture inside the
+    likelihood.
+
+    For data-driven mode, also provides variational parameters for the
+    shared mu_eta parameter.
+
+    Parameters
+    ----------
+    spec : BiologyInformedCaptureSpec
+        The biology-informed capture specification.
+    guide : MeanFieldGuide
+        Mean-field guide marker.
+    dims : Dict[str, int]
+        Dimensions including n_cells.
+    model_config : ModelConfig
+        Model configuration.
+    batch_idx : Optional[jnp.ndarray]
+        Indices for mini-batch. None for full sampling.
+
+    Returns
+    -------
+    jnp.ndarray
+        Sampled eta_capture values and deterministic capture parameter.
+    """
+    n_cells = dims["n_cells"]
+
+    # Per-cell eta_capture variational parameters
+    # (mu_eta for data-driven mode is sampled before the plate in the
+    # GuideBuilder.build() method)
+    # Initialize loc near the prior mean: log_M0 (will be offset by
+    # -log_lib in the likelihood, but the guide learns the full eta)
+    eta_loc = numpyro.param(
+        "eta_capture_loc", jnp.full(n_cells, spec.log_M0)
+    )
+    eta_scale = numpyro.param(
+        "eta_capture_scale",
+        jnp.full(n_cells, spec.sigma_M),
+        constraint=constraints.positive,
+    )
+
+    if batch_idx is None:
+        base_dist = dist.Normal(eta_loc, eta_scale)
+    else:
+        base_dist = dist.Normal(
+            eta_loc[batch_idx], eta_scale[batch_idx]
+        )
+
+    eta = numpyro.sample("eta_capture", base_dist)
+
+    # Deterministic transform to capture parameter
+    if spec.use_phi_capture:
+        capture_value = jnp.exp(eta) - 1.0
+        numpyro.deterministic("phi_capture", capture_value)
+    else:
+        capture_value = jnp.exp(-eta)
+        numpyro.deterministic("p_capture", capture_value)
+
+    return capture_value
+
+
+# ------------------------------------------------------------------------------
 # Dirichlet Distribution MeanField Guide
 # ------------------------------------------------------------------------------
 
@@ -1848,13 +1927,33 @@ class GuideBuilder:
                 setup_guide(spec, guide_family, dims, model_config)
 
             # ================================================================
+            # 2.5. Pre-plate: data-driven biology-informed capture mu_eta
+            # ================================================================
+            cell_specs = [s for s in specs if s.is_cell_specific]
+            for spec in cell_specs:
+                if (
+                    isinstance(spec, BiologyInformedCaptureSpec)
+                    and spec.data_driven
+                ):
+                    mu_eta_loc = numpyro.param(
+                        "mu_eta_loc", jnp.array(spec.log_M0)
+                    )
+                    mu_eta_scale = numpyro.param(
+                        "mu_eta_scale",
+                        jnp.array(0.1),
+                        constraint=constraints.positive,
+                    )
+                    numpyro.sample(
+                        "mu_eta", dist.Normal(mu_eta_loc, mu_eta_scale)
+                    )
+
+            # ================================================================
             # 3. Setup guides for CELL-SPECIFIC parameters (inside cell plate)
             #    Handle batch indexing for non-amortized guides
             #    Register amortizer modules ONCE before the plate loop
             #    If any spec uses VAELatentGuide with encoder+latent_spec,
             #    run the VAE latent block once (encoder -> latent_spec -> sample z)
             # ================================================================
-            cell_specs = [s for s in specs if s.is_cell_specific]
             grouped_guide = None
             for s in cell_specs:
                 gf = s.guide_family

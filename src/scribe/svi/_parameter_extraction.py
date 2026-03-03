@@ -770,6 +770,19 @@ class ParameterExtractionMixin:
                     estimates["mixing_logits_unconstrained"], axis=-1
                 )
 
+        # Convert eta_capture to capture parameter (biology-informed prior)
+        if "eta_capture" in estimates:
+            eta = estimates["eta_capture"]
+            if "phi_capture" not in estimates:
+                estimates["phi_capture"] = jnp.exp(eta) - 1.0
+            if "p_capture" not in estimates:
+                estimates["p_capture"] = jnp.exp(-eta)
+            if verbose:
+                print(
+                    "Computing p_capture and phi_capture from eta_capture "
+                    "(biology-informed prior)"
+                )
+
         # Compute p_hat for NBVCP and ZINBVCP models if needed (applies to all
         # parameterizations)
         if (

@@ -26,6 +26,7 @@ from .base import (
     _sample_phi_capture_unconstrained,
     _sample_p_capture_constrained,
     _sample_p_capture_unconstrained,
+    _sample_capture_biology_informed,
 )
 
 if TYPE_CHECKING:
@@ -89,6 +90,7 @@ class NBWithVCPLikelihood(Likelihood):
         is_unconstrained: bool = False,
         transform: Optional[dist.transforms.Transform] = None,
         constrained_name: Optional[str] = None,
+        biology_informed_spec: Optional[object] = None,
     ):
         """Initialize likelihood with optional capture parameter name.
 
@@ -104,11 +106,15 @@ class NBWithVCPLikelihood(Likelihood):
             Transform for unconstrained sampling.
         constrained_name : str, optional
             Name for constrained parameter in unconstrained mode.
+        biology_informed_spec : BiologyInformedCaptureSpec, optional
+            If provided, uses the biology-informed capture prior instead
+            of the standard flat prior.
         """
         self.capture_param_name = capture_param_name
         self.is_unconstrained = is_unconstrained
         self.transform = transform
         self.constrained_name = constrained_name or capture_param_name
+        self.biology_informed_spec = biology_informed_spec
 
     # --------------------------------------------------------------------------
 
@@ -193,6 +199,29 @@ class NBWithVCPLikelihood(Likelihood):
                 capture_prior_params = pspec.prior
                 break
 
+        # Biology-informed capture: pre-compute log library sizes and sample
+        # the shared mu_eta parameter (data-driven) before the cell plate.
+        bio_spec = self.biology_informed_spec
+        bio_log_lib_sizes = None
+        bio_log_M0 = None
+        if bio_spec is not None:
+            if counts is not None:
+                bio_log_lib_sizes = jnp.log(
+                    jnp.maximum(counts.sum(axis=-1), 1.0).astype(jnp.float32)
+                )
+            else:
+                # Prior predictive / dry-run: use synthetic library sizes so
+                # eta_capture is still registered as a sample site.
+                bio_log_lib_sizes = jnp.full(n_cells, bio_spec.log_M0 - 1.0)
+            if bio_spec.data_driven:
+                # Shared latent: mu_eta ~ N(log_M0, sigma_mu^2)
+                bio_log_M0 = numpyro.sample(
+                    "mu_eta",
+                    dist.Normal(bio_spec.log_M0, bio_spec.sigma_mu),
+                )
+            else:
+                bio_log_M0 = bio_spec.log_M0
+
         # Create plate context based on mode
         if counts is None:
             # MODE 1: Prior predictive
@@ -227,11 +256,12 @@ class NBWithVCPLikelihood(Likelihood):
             # Multi-dataset: index per-dataset parameters to per-cell
             if use_dataset_indexing:
                 ds_idx = (
-                    dataset_indices[idx] if idx is not None
-                    else dataset_indices
+                    dataset_indices[idx] if idx is not None else dataset_indices
                 )
                 param_values = index_dataset_params(
-                    param_values, ds_idx, n_datasets,
+                    param_values,
+                    ds_idx,
+                    n_datasets,
                     param_specs=model_config.param_specs,
                 )
                 p = param_values["p"]
@@ -246,6 +276,20 @@ class NBWithVCPLikelihood(Likelihood):
                 # Handle batch indexing if needed
                 if batch_size is not None and idx is not None:
                     capture_value = capture_value[idx]
+            elif bio_log_lib_sizes is not None and bio_log_M0 is not None:
+                # Biology-informed capture: sample eta_c from library-size
+                # anchored Normal prior and transform to capture parameter
+                log_lib_batch = (
+                    bio_log_lib_sizes[idx]
+                    if idx is not None
+                    else bio_log_lib_sizes
+                )
+                capture_value = _sample_capture_biology_informed(
+                    log_lib_batch,
+                    bio_log_M0,
+                    bio_spec.sigma_M,
+                    use_phi_capture,
+                )
             else:
                 # Sample from prior (for prior predictive checks or when not in
                 # param_values)
@@ -254,9 +298,7 @@ class NBWithVCPLikelihood(Likelihood):
                 )
 
             # Determine whether to use cell-specific mixing
-            use_annotation = (
-                annotation_prior_logits is not None and is_mixture
-            )
+            use_annotation = annotation_prior_logits is not None and is_mixture
 
             if use_phi_capture:
                 # Mean-odds parameterization
@@ -309,9 +351,7 @@ class NBWithVCPLikelihood(Likelihood):
                     capture_reshaped = capture_value[:, None]
 
                 # Broadcast p for mixture models (handles gene-specific p)
-                p_for_hat = (
-                    broadcast_p_for_mixture(p, r) if is_mixture else p
-                )
+                p_for_hat = broadcast_p_for_mixture(p, r) if is_mixture else p
 
                 p_hat = (
                     p_for_hat
@@ -393,6 +433,7 @@ class ZINBWithVCPLikelihood(Likelihood):
         is_unconstrained: bool = False,
         transform: Optional[dist.transforms.Transform] = None,
         constrained_name: Optional[str] = None,
+        biology_informed_spec: Optional[object] = None,
     ):
         """Initialize likelihood with optional capture parameter name.
 
@@ -408,11 +449,14 @@ class ZINBWithVCPLikelihood(Likelihood):
             Transform for unconstrained sampling.
         constrained_name : str, optional
             Name for constrained parameter in unconstrained mode.
+        biology_informed_spec : BiologyInformedCaptureSpec, optional
+            If provided, uses the biology-informed capture prior.
         """
         self.capture_param_name = capture_param_name
         self.is_unconstrained = is_unconstrained
         self.transform = transform
         self.constrained_name = constrained_name or capture_param_name
+        self.biology_informed_spec = biology_informed_spec
 
     # --------------------------------------------------------------------------
 
@@ -500,6 +544,28 @@ class ZINBWithVCPLikelihood(Likelihood):
             elif gate.ndim == 0:
                 gate = gate[None, None]
 
+        # Biology-informed capture: pre-compute log library sizes and sample
+        # shared mu_eta (data-driven) before the cell plate.
+        bio_spec = self.biology_informed_spec
+        bio_log_lib_sizes = None
+        bio_log_M0 = None
+        if bio_spec is not None:
+            if counts is not None:
+                bio_log_lib_sizes = jnp.log(
+                    jnp.maximum(counts.sum(axis=-1), 1.0).astype(jnp.float32)
+                )
+            else:
+                # Prior predictive / dry-run: use synthetic library sizes so
+                # eta_capture is still registered as a sample site.
+                bio_log_lib_sizes = jnp.full(n_cells, bio_spec.log_M0 - 1.0)
+            if bio_spec.data_driven:
+                bio_log_M0 = numpyro.sample(
+                    "mu_eta",
+                    dist.Normal(bio_spec.log_M0, bio_spec.sigma_mu),
+                )
+            else:
+                bio_log_M0 = bio_spec.log_M0
+
         # Create plate context based on mode
         if counts is None:
             plate_context = numpyro.plate("cells", n_cells)
@@ -530,35 +596,47 @@ class ZINBWithVCPLikelihood(Likelihood):
             # Multi-dataset: index per-dataset parameters to per-cell
             if use_dataset_indexing:
                 ds_idx = (
-                    dataset_indices[idx] if idx is not None
-                    else dataset_indices
+                    dataset_indices[idx] if idx is not None else dataset_indices
                 )
                 param_values = index_dataset_params(
-                    param_values, ds_idx, n_datasets,
+                    param_values,
+                    ds_idx,
+                    n_datasets,
                     param_specs=model_config.param_specs,
                 )
                 p = param_values["p"]
                 r = param_values["r"]
                 gate = param_values["gate"]
 
-            # Check if capture parameter is already in param_values (from posterior_samples)
-            # This happens when generating PPC samples with Predictive
+            # Check if capture parameter is already in param_values
             if target_name in param_values:
                 # Use value from posterior_samples (for PPC)
                 capture_value = param_values[target_name]
                 # Handle batch indexing if needed
                 if batch_size is not None and idx is not None:
                     capture_value = capture_value[idx]
+            elif bio_log_lib_sizes is not None and bio_log_M0 is not None:
+                # Biology-informed capture sampling
+                log_lib_batch = (
+                    bio_log_lib_sizes[idx]
+                    if idx is not None
+                    else bio_log_lib_sizes
+                )
+                capture_value = _sample_capture_biology_informed(
+                    log_lib_batch,
+                    bio_log_M0,
+                    bio_spec.sigma_M,
+                    use_phi_capture,
+                )
             else:
-                # Sample from prior (for prior predictive checks or when not in param_values)
+                # Sample from prior (for prior predictive checks or when not in
+                # param_values)
                 capture_value = self._sample_capture_param(
                     use_phi_capture, capture_prior_params
                 )
 
             # Determine whether to use cell-specific mixing
-            use_annotation = (
-                annotation_prior_logits is not None and is_mixture
-            )
+            use_annotation = annotation_prior_logits is not None and is_mixture
 
             if use_phi_capture:
                 # Mean-odds parameterization
@@ -623,9 +701,7 @@ class ZINBWithVCPLikelihood(Likelihood):
                     capture_reshaped = capture_value[:, None]
 
                 # Broadcast p for mixture models (handles gene-specific p)
-                p_for_hat = (
-                    broadcast_p_for_mixture(p, r) if is_mixture else p
-                )
+                p_for_hat = broadcast_p_for_mixture(p, r) if is_mixture else p
 
                 p_hat = (
                     p_for_hat

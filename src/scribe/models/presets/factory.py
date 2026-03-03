@@ -290,6 +290,7 @@ def _create_vae_model(
                 guide_families=guide_families,
                 param_strategy=param_strategy,
                 hierarchical_gate=model_config.hierarchical_gate,
+                model_config=model_config,
             )
             extra_specs.extend(specs)
 
@@ -520,9 +521,7 @@ def create_model(
     effective_mixture_params = model_config.mixture_params
     if model_config.param_specs and model_config.n_components is not None:
         stored_mixture_params = [
-            spec.name
-            for spec in model_config.param_specs
-            if spec.is_mixture
+            spec.name for spec in model_config.param_specs if spec.is_mixture
         ]
         if stored_mixture_params:
             effective_mixture_params = stored_mixture_params
@@ -599,6 +598,7 @@ def create_model(
             n_components=model_config.n_components,
             mixture_params=effective_mixture_params,
             hierarchical_gate=effective_hierarchical_gate,
+            model_config=model_config,
         )
         param_specs.extend(extra_specs)
 
@@ -623,9 +623,7 @@ def create_model(
 
     # Gene-level horseshoe p
     if getattr(model_config, "horseshoe_p", False):
-        param_specs = _horseshoe_p(
-            param_specs, param_key, **horseshoe_kwargs
-        )
+        param_specs = _horseshoe_p(param_specs, param_key, **horseshoe_kwargs)
 
     # Gene-level horseshoe gate
     if getattr(model_config, "horseshoe_gate", False):
@@ -686,8 +684,22 @@ def create_model(
     if base_model in ("nbvcp", "zinbvcp"):
         # Get the transformed capture param name (p_capture or phi_capture)
         capture_param_name = param_strategy.transform_model_param("p_capture")
+        # Detect biology-informed capture spec to pass to likelihood
+        from ..builders.parameter_specs import BiologyInformedCaptureSpec
+
+        capture_spec = next(
+            (
+                s
+                for s in param_specs
+                if isinstance(s, BiologyInformedCaptureSpec)
+            ),
+            None,
+        )
         model_builder.with_likelihood(
-            likelihood_class(capture_param_name=capture_param_name)
+            likelihood_class(
+                capture_param_name=capture_param_name,
+                biology_informed_spec=capture_spec,
+            )
         )
     else:
         model_builder.with_likelihood(likelihood_class())
