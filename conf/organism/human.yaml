@@ -1,0 +1,5 @@
+# Biology-informed capture prior defaults for human cells.
+# M_0: expected total mRNA molecules per cell (BioNumbers BNID 109916).
+# sigma_M: log-scale std-dev capturing cell-to-cell variation (~1.5-2x fold).
+total_mrna_mean: 200000
+total_mrna_log_sigma: 0.5
