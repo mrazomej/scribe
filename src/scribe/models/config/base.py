@@ -101,6 +101,10 @@ class ModelConfig(BaseModel):
         d.setdefault("hierarchical_dataset_mu", False)
         d.setdefault("hierarchical_dataset_p", "none")
         d.setdefault("hierarchical_dataset_gate", False)
+        d.setdefault("capture_prior", "default")
+        d.setdefault("organism", None)
+        d.setdefault("total_mrna_mean", None)
+        d.setdefault("total_mrna_log_sigma", None)
         super().__setstate__(state)
 
     # Core configuration
@@ -233,6 +237,43 @@ class ModelConfig(BaseModel):
     horseshoe_slab_scale: float = Field(
         2.0,
         description="Scale for horseshoe slab Inverse-Gamma.",
+    )
+
+    # Biology-informed capture prior configuration
+    capture_prior: str = Field(
+        "default",
+        description=(
+            "Capture probability prior mode. "
+            "'default': standard parametric prior (Beta, BetaPrime, etc.). "
+            "'biology_informed': prior anchored to library size via "
+            "known total mRNA per cell (M_0). "
+            "'data_driven': like biology_informed but M_0 is a learned "
+            "shared parameter (useful for multi-dataset consistency)."
+        ),
+    )
+    organism: Optional[str] = Field(
+        None,
+        description=(
+            "Organism name for biology-informed capture prior "
+            "(e.g. 'human', 'mouse', 'yeast', 'ecoli'). "
+            "Sets default total_mrna_mean and total_mrna_log_sigma."
+        ),
+    )
+    total_mrna_mean: Optional[float] = Field(
+        None,
+        gt=0,
+        description=(
+            "Expected total mRNA molecules per cell (M_0). "
+            "Overrides organism default when both are set."
+        ),
+    )
+    total_mrna_log_sigma: Optional[float] = Field(
+        None,
+        gt=0,
+        description=(
+            "Log-scale standard deviation for cell-to-cell variation "
+            "in total mRNA (sigma_M). Default: 0.5 (~1.5-2x fold)."
+        ),
     )
 
     # Guide configuration
@@ -479,6 +520,62 @@ class ModelConfig(BaseModel):
                 "exclusive. The dataset-level horseshoe subsumes "
                 "gene-level."
             )
+        return self
+
+    # --------------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_capture_prior(self) -> "ModelConfig":
+        """Validate biology-informed capture prior configuration.
+
+        Checks
+        ------
+        - capture_prior is one of the allowed modes.
+        - Non-flat modes require a VCP model.
+        - biology_informed mode requires organism or total_mrna_mean.
+        - Resolves organism defaults when explicit values are absent.
+        """
+        valid_modes = {"default", "biology_informed", "data_driven"}
+        if self.capture_prior not in valid_modes:
+            raise ValueError(
+                f"capture_prior must be one of {valid_modes}, "
+                f"got {self.capture_prior!r}."
+            )
+        if self.capture_prior != "default":
+            if not self.uses_variable_capture:
+                raise ValueError(
+                    f"capture_prior={self.capture_prior!r} requires a VCP "
+                    "model (nbvcp or zinbvcp). Set variable_capture=True "
+                    "or choose an appropriate model."
+                )
+        if self.capture_prior == "biology_informed":
+            if self.organism is None and self.total_mrna_mean is None:
+                raise ValueError(
+                    "capture_prior='biology_informed' requires either "
+                    "'organism' or 'total_mrna_mean' to be set."
+                )
+        # Resolve organism defaults when not explicitly overridden
+        if self.organism is not None:
+            from .organism_priors import resolve_organism_priors
+
+            priors = resolve_organism_priors(self.organism)
+            # Pydantic frozen model: use object.__setattr__
+            if self.total_mrna_mean is None:
+                object.__setattr__(
+                    self, "total_mrna_mean", priors["total_mrna_mean"]
+                )
+            if self.total_mrna_log_sigma is None:
+                object.__setattr__(
+                    self,
+                    "total_mrna_log_sigma",
+                    priors["total_mrna_log_sigma"],
+                )
+        # Default sigma when M_0 is provided but sigma is not
+        if (
+            self.total_mrna_mean is not None
+            and self.total_mrna_log_sigma is None
+        ):
+            object.__setattr__(self, "total_mrna_log_sigma", 0.5)
         return self
 
     # --------------------------------------------------------------------------
