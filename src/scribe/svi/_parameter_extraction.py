@@ -634,8 +634,19 @@ class ParameterExtractionMixin:
                     # p has shape (n_components,). Reshape for broadcasting.
                     p_reshaped = p[:, None]
                 else:
-                    # Non-mixture or shared p: p is scalar, broadcasts.
                     p_reshaped = p
+
+                # Scalar-per-dataset p has shape (n_datasets,) while mu
+                # is (n_datasets, n_genes).  Reshape to (n_datasets, 1)
+                # so the trailing dimension broadcasts against n_genes.
+                _n_ds = getattr(self.model_config, "n_datasets", None)
+                if (
+                    _n_ds is not None
+                    and p_reshaped.ndim == 1
+                    and p_reshaped.shape[0] == _n_ds
+                    and estimates["mu"].ndim >= 2
+                ):
+                    p_reshaped = p_reshaped[:, None]
 
                 estimates["r"] = estimates["mu"] * (1 - p_reshaped) / p_reshaped
 
@@ -681,8 +692,20 @@ class ParameterExtractionMixin:
                     # Mixture model: mu has shape (n_components, n_genes)
                     phi_reshaped = estimates["phi"][:, None]
                 else:
-                    # Non-mixture model: mu has shape (n_genes,)
                     phi_reshaped = estimates["phi"]
+
+                # Scalar-per-dataset phi has shape (n_datasets,) while mu
+                # is (n_datasets, n_genes).  Reshape to (n_datasets, 1)
+                # so the trailing dimension broadcasts against n_genes.
+                _n_ds = getattr(self.model_config, "n_datasets", None)
+                if (
+                    _n_ds is not None
+                    and phi_reshaped.ndim == 1
+                    and phi_reshaped.shape[0] == _n_ds
+                    and estimates["mu"].ndim >= 2
+                ):
+                    phi_reshaped = phi_reshaped[:, None]
+
                 estimates["r"] = estimates["mu"] * phi_reshaped
 
             # Handle VCP capture probability conversion

@@ -21,10 +21,15 @@ def _slice_param_for_dataset(
     ``param[dataset_idx]``; otherwise returns the parameter unchanged
     (it is shared across datasets).
 
+    Handles both gene-specific per-dataset params with shape
+    ``(n_datasets, n_genes)`` and scalar per-dataset params with
+    shape ``(n_datasets,)``.
+
     Parameters
     ----------
     param : jnp.ndarray or None
-        Parameter array, e.g. ``(n_datasets, n_genes)`` or ``(n_genes,)``.
+        Parameter array, e.g. ``(n_datasets, n_genes)``, ``(n_datasets,)``,
+        or ``(n_genes,)``.
     dataset_idx : int
         Which dataset to select.
     n_datasets : int
@@ -37,7 +42,10 @@ def _slice_param_for_dataset(
     """
     if param is None:
         return None
-    if param.ndim >= 2 and param.shape[0] == n_datasets:
+    # Matches both 2D gene-specific per-dataset params (n_datasets, n_genes)
+    # and 1D scalar per-dataset params (n_datasets,).  Safe because
+    # n_datasets << n_genes in any realistic single-cell dataset.
+    if param.ndim >= 1 and param.shape[0] == n_datasets:
         return param[dataset_idx]
     return param
 

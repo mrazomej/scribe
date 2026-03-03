@@ -400,6 +400,146 @@ class TestSVIDatasetMixin:
 
 
 # ==============================================================================
+# _slice_param_for_dataset broadcasting
+# ==============================================================================
+
+
+class TestSliceParamForDataset:
+    """Verify _slice_param_for_dataset handles 1D scalar-per-dataset params."""
+
+    def test_2d_per_dataset_sliced(self):
+        """Standard 2D (n_datasets, n_genes) is sliced to (n_genes,)."""
+        from scribe.svi._sampling_denoising import _slice_param_for_dataset
+
+        param = jnp.ones((3, 10))
+        result = _slice_param_for_dataset(param, dataset_idx=1, n_datasets=3)
+        assert result.shape == (10,)
+
+    def test_1d_per_dataset_scalar_sliced(self):
+        """1D (n_datasets,) scalar-per-dataset param is sliced to scalar."""
+        from scribe.svi._sampling_denoising import _slice_param_for_dataset
+
+        param = jnp.array([0.1, 0.2, 0.3])
+        result = _slice_param_for_dataset(param, dataset_idx=2, n_datasets=3)
+        assert result.shape == ()
+        assert jnp.isclose(result, 0.3)
+
+    def test_1d_per_gene_not_sliced(self):
+        """1D (n_genes,) per-gene param is NOT sliced when n_genes != n_datasets."""
+        from scribe.svi._sampling_denoising import _slice_param_for_dataset
+
+        param = jnp.ones(500)
+        result = _slice_param_for_dataset(param, dataset_idx=0, n_datasets=3)
+        # shape[0]=500 != n_datasets=3, so returned unchanged
+        assert result.shape == (500,)
+
+    def test_none_returns_none(self):
+        """None input returns None."""
+        from scribe.svi._sampling_denoising import _slice_param_for_dataset
+
+        assert _slice_param_for_dataset(None, dataset_idx=0, n_datasets=2) is None
+
+    def test_scalar_returned_unchanged(self):
+        """0D scalar params pass through unchanged."""
+        from scribe.svi._sampling_denoising import _slice_param_for_dataset
+
+        param = jnp.array(0.5)
+        result = _slice_param_for_dataset(param, dataset_idx=0, n_datasets=2)
+        assert result.shape == ()
+        assert jnp.isclose(result, 0.5)
+
+
+# ==============================================================================
+# _compute_canonical_parameters broadcasting with scalar-per-dataset phi/p
+# ==============================================================================
+
+
+class TestCanonicalParamsScalarDataset:
+    """Verify _compute_canonical_parameters reshapes scalar-per-dataset phi/p
+    for correct broadcasting with (n_datasets, n_genes) mu.
+    """
+
+    def _make_results(self, *, parameterization, n_datasets, n_genes):
+        """Create a minimal ScribeSVIResults for canonical param testing."""
+        from scribe.svi.results import ScribeSVIResults
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            parameterization=parameterization,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            hierarchical_dataset_p="scalar",
+        )
+        # Dummy variational params (not used directly by
+        # _compute_canonical_parameters but needed to construct the object)
+        params = {
+            "dummy_loc": jnp.zeros(n_genes),
+        }
+        return ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=50,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+
+    def test_mean_odds_scalar_phi_broadcast(self):
+        """r = mu * phi with phi (n_datasets,) and mu (n_datasets, n_genes)."""
+        n_ds, n_genes = 3, 20
+        results = self._make_results(
+            parameterization="mean_odds", n_datasets=n_ds, n_genes=n_genes
+        )
+        estimates = {
+            "phi": jnp.array([0.5, 1.0, 2.0]),
+            "mu": jnp.ones((n_ds, n_genes)) * 10.0,
+        }
+        out = results._compute_canonical_parameters(estimates, verbose=False)
+        # r should be (n_datasets, n_genes) after broadcasting
+        assert out["r"].shape == (n_ds, n_genes)
+        # First dataset: r = 10 * 0.5 = 5
+        assert jnp.allclose(out["r"][0], 5.0)
+        # Third dataset: r = 10 * 2.0 = 20
+        assert jnp.allclose(out["r"][2], 20.0)
+
+    def test_mean_odds_scalar_phi_derives_p(self):
+        """p = 1/(1+phi) with scalar-per-dataset phi."""
+        n_ds, n_genes = 2, 15
+        results = self._make_results(
+            parameterization="mean_odds", n_datasets=n_ds, n_genes=n_genes
+        )
+        estimates = {
+            "phi": jnp.array([1.0, 3.0]),
+            "mu": jnp.ones((n_ds, n_genes)),
+        }
+        out = results._compute_canonical_parameters(estimates, verbose=False)
+        assert "p" in out
+        # p = 1/(1+phi): dataset 0 -> 0.5, dataset 1 -> 0.25
+        assert jnp.isclose(out["p"][0], 0.5)
+        assert jnp.isclose(out["p"][1], 0.25)
+
+    def test_mean_prob_scalar_p_broadcast(self):
+        """r = mu*(1-p)/p with p (n_datasets,) and mu (n_datasets, n_genes)."""
+        n_ds, n_genes = 2, 30
+        results = self._make_results(
+            parameterization="mean_prob", n_datasets=n_ds, n_genes=n_genes
+        )
+        estimates = {
+            "p": jnp.array([0.5, 0.25]),
+            "mu": jnp.ones((n_ds, n_genes)) * 10.0,
+        }
+        out = results._compute_canonical_parameters(estimates, verbose=False)
+        # r = mu * (1-p)/p
+        # Dataset 0: 10 * (1-0.5)/0.5 = 10
+        # Dataset 1: 10 * (1-0.25)/0.25 = 30
+        assert out["r"].shape == (n_ds, n_genes)
+        assert jnp.allclose(out["r"][0], 10.0)
+        assert jnp.allclose(out["r"][1], 30.0)
+
+
+# ==============================================================================
 # MCMC DatasetMixin
 # ==============================================================================
 
