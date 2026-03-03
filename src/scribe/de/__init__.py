@@ -56,6 +56,7 @@ from .results import (
     ScribeEmpiricalDEResults,
     ScribeShrinkageDEResults,
     compare,
+    compare_datasets,
 )
 
 # Parameter extraction
@@ -122,6 +123,7 @@ __all__ = [
     "ScribeEmpiricalDEResults",
     "ScribeShrinkageDEResults",
     "compare",
+    "compare_datasets",
     # Extraction
     "extract_alr_params",
     # Transformations

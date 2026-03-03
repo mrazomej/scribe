@@ -31,39 +31,58 @@ class GeneSubsettingMixin:
     # --------------------------------------------------------------------------
 
     def __getitem__(self, index) -> "ScribeMCMCResults":
-        """Index by genes (and optionally components).
+        """Index by genes, components, and/or datasets.
 
-        Supports int, slice, boolean mask, integer array, and two-element
-        tuple ``(gene_indexer, component_indexer)`` for joint subsetting.
+        Supports int, slice, boolean mask, integer array, and tuples of
+        up to three elements:
+
+        * ``(gene_indexer, component_indexer)``
+        * ``(gene_indexer, component_indexer, dataset_indexer)``
 
         Parameters
         ----------
         index : int, slice, array-like, or tuple
-            Gene selector (or ``(genes, components)`` tuple).
+            Gene selector (or multi-axis tuple).
 
         Returns
         -------
         ScribeMCMCResults
-            New results restricted to the selected genes.
+            New results restricted to the selected subset.
         """
         from .results import ScribeMCMCResults
 
-        # Two-axis indexing: (genes, components)
+        # Multi-axis indexing: (genes, components) or (genes, components, dataset)
         if isinstance(index, tuple):
-            if len(index) != 2:
+            if len(index) not in (2, 3):
                 raise ValueError(
-                    "Tuple indexing must be (gene_indexer, component_indexer)."
+                    "Tuple indexing must be "
+                    "(gene_indexer, component_indexer) or "
+                    "(gene_indexer, component_indexer, dataset_indexer)."
                 )
-            gene_indexer, component_indexer = index
+            gene_indexer = index[0]
+            component_indexer = index[1]
+            dataset_indexer = index[2] if len(index) == 3 else None
+
             gene_subset = self[gene_indexer]
-            return gene_subset.get_component(component_indexer)
+
+            # Apply component selection (skip if slice(None))
+            if isinstance(component_indexer, slice) and component_indexer == slice(None):
+                result = gene_subset
+            else:
+                result = gene_subset.get_component(component_indexer)
+
+            # Apply dataset selection if requested
+            if dataset_indexer is not None:
+                result = result.get_dataset(dataset_indexer)
+
+            return result
 
         bool_index = _to_bool_index(index, self.n_genes)
 
         new_var = self.var.iloc[bool_index] if self.var is not None else None
         new_samples = self._subset_posterior_samples(self.samples, bool_index)
 
-        return ScribeMCMCResults(
+        subset = ScribeMCMCResults(
             samples=new_samples,
             n_cells=self.n_cells,
             n_genes=int(
@@ -81,6 +100,16 @@ class GeneSubsettingMixin:
             n_vars=new_var.shape[0] if new_var is not None else None,
             n_components=self.n_components,
         )
+
+        # Carry over per-dataset metadata for downstream get_dataset()
+        per_ds = getattr(self, "_n_cells_per_dataset", None)
+        if per_ds is not None:
+            subset._n_cells_per_dataset = per_ds
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            subset._dataset_indices = ds_idx
+
+        return subset
 
     # --------------------------------------------------------------------------
     # Internal: metadata-aware sample subsetting

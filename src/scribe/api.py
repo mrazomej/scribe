@@ -207,6 +207,13 @@ def fit(
     unconstrained: bool = False,
     hierarchical_p: bool = False,
     hierarchical_gate: bool = False,
+    # Multi-dataset hierarchy options
+    n_datasets: Optional[int] = None,
+    dataset_key: Optional[str] = None,
+    dataset_params: Optional[List[str]] = None,
+    hierarchical_dataset_mu: bool = False,
+    hierarchical_dataset_p: str = "none",
+    hierarchical_dataset_gate: bool = False,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     guide_rank: Optional[int] = None,
@@ -611,7 +618,33 @@ def fit(
     )
 
     # ==========================================================================
-    # Step 2b: Build annotation prior logits (if requested)
+    # Step 2b: Build dataset indices (if multi-dataset model)
+    # ==========================================================================
+    dataset_indices = None
+    if dataset_key is not None:
+        if adata is None:
+            raise ValueError(
+                "dataset_key requires counts to be an AnnData object "
+                "(not a raw array), so that adata.obs can be read."
+            )
+        import numpy as np
+
+        ds_col = adata.obs[dataset_key]
+        # Convert to categorical integer codes
+        ds_cat = ds_col.astype("category")
+        ds_codes = ds_cat.cat.codes.values
+        _inferred_n_datasets = len(ds_cat.cat.categories)
+        if n_datasets is not None and n_datasets != _inferred_n_datasets:
+            raise ValueError(
+                f"n_datasets={n_datasets} but dataset_key "
+                f"'{dataset_key}' has {_inferred_n_datasets} unique "
+                f"values: {list(ds_cat.cat.categories)}"
+            )
+        n_datasets = _inferred_n_datasets
+        dataset_indices = jnp.asarray(np.asarray(ds_codes, dtype=np.int32))
+
+    # ==========================================================================
+    # Step 2c: Build annotation prior logits (if requested)
     # ==========================================================================
     annotation_prior_logits = None
     if annotation_key is not None:
@@ -673,6 +706,11 @@ def fit(
             unconstrained=unconstrained,
             hierarchical_p=hierarchical_p,
             hierarchical_gate=hierarchical_gate,
+            n_datasets=n_datasets,
+            dataset_params=dataset_params,
+            hierarchical_dataset_mu=hierarchical_dataset_mu,
+            hierarchical_dataset_p=hierarchical_dataset_p,
+            hierarchical_dataset_gate=hierarchical_dataset_gate,
             guide_rank=guide_rank,
             n_components=n_components,
             mixture_params=mixture_params,
@@ -846,5 +884,6 @@ def fit(
         data_config=data_config,
         seed=seed,
         annotation_prior_logits=annotation_prior_logits,
+        dataset_indices=dataset_indices,
         enable_x64=effective_x64,
     )

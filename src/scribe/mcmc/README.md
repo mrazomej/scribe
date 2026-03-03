@@ -135,6 +135,11 @@ results = ScribeMCMCResults.from_anndata(
 - **`_mcmc`**: Wrapped NumPyro MCMC object (for diagnostics; `None` on subsets)
 - **`model_config`**: Model configuration used for inference
 - **`n_cells`**, **`n_genes`**: Dataset dimensions
+- **`_n_cells_per_dataset`**: Optional 1-D array of per-dataset cell counts
+  (set automatically during inference for multi-dataset hierarchical models).
+  When present, `get_dataset(d)` uses this to set the correct `n_cells` on the
+  returned single-dataset view so that downstream PPC generation works with
+  the right number of cells.
 - **`obs`**, **`var`**, **`uns`**: Metadata from AnnData objects
 
 #### Key Analysis Methods
@@ -264,6 +269,15 @@ gene_subset = results[:100]
 # Two-axis indexing: results[genes, components]
 gene_component_subset = results[1:4, [1, 2]]
 ```
+
+**Multi-Dataset Support:**
+
+For hierarchical multi-dataset models, `DatasetMixin` (`_dataset.py`) provides
+`get_dataset(d)` to extract single-dataset views from multi-dataset MCMC
+results. Results support 3-axis indexing: `results[:, :, d]` for dataset
+selection (alongside `results[g]` for genes and `results[:, k]` for components).
+The `dataset_indices` parameter in `MCMCInferenceEngine.run_inference()`
+restricts inference to specified datasets.
 
 **MCMC Diagnostics:**
 ```python

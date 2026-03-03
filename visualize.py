@@ -672,6 +672,29 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
         )
 
     # ======================================================================
+    # Multi-dataset detection
+    # ======================================================================
+    dataset_key = (
+        orig_cfg.data.get("dataset_key") or orig_cfg.get("dataset_key")
+    )
+    n_datasets = getattr(results.model_config, "n_datasets", None)
+    is_multi_dataset = dataset_key is not None and n_datasets is not None
+
+    if is_multi_dataset:
+        ds_col = adata.obs[dataset_key].astype("category")
+        dataset_names = list(ds_col.cat.categories)
+        dataset_codes = np.array(ds_col.cat.codes.values)
+        console.print(
+            f"[dim]Multi-dataset model detected "
+            f"({n_datasets} datasets via '{dataset_key}'):[/dim] "
+            f"[cyan]{dataset_names}[/cyan]"
+        )
+    else:
+        # Single-pass: one iteration with no subsetting
+        dataset_names = [None]
+        dataset_codes = None
+
+    # ======================================================================
     # Generate Plots
     # ======================================================================
     fmt = viz_cfg.format
@@ -683,6 +706,9 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     plots_generated = []
     plots_skipped = []
 
+    # ------------------------------------------------------------------
+    # Loss plot is global (joint optimisation) -- never per-dataset
+    # ------------------------------------------------------------------
     if viz_cfg.loss:
         if not overwrite and _plot_exists(figs_dir, "_loss", fmt):
             plots_skipped.append("loss")
@@ -706,254 +732,290 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
             finally:
                 _cleanup_after_plot()
 
-    if viz_cfg.ecdf:
-        if not overwrite and _plot_exists(figs_dir, "_ecdf", fmt):
-            plots_skipped.append("ECDF")
+    # ------------------------------------------------------------------
+    # Per-dataset loop for all remaining plots.
+    # For single-dataset models this iterates once with the full data.
+    # ------------------------------------------------------------------
+    for ds_idx, ds_name in enumerate(dataset_names):
+        if ds_name is not None:
+            ds_results = results.get_dataset(ds_idx)
+            ds_counts = counts[dataset_codes == ds_idx]
+            ds_cell_labels = (
+                cell_labels[dataset_codes == ds_idx]
+                if cell_labels is not None
+                else None
+            )
+            ds_figs_dir = os.path.join(figs_dir, f"dataset_{ds_name}")
+            os.makedirs(ds_figs_dir, exist_ok=True)
+            ds_label = f" [dataset={ds_name}]"
             console.print(
-                "[yellow]  Skipping ECDF (already exists)[/yellow]"
+                f"\n[bold]--- Dataset {ds_idx}: "
+                f"{ds_name} ({ds_counts.shape[0]} cells) ---[/bold]"
             )
         else:
-            console.print("[dim]Generating ECDF plot...[/dim]")
-            try:
-                plot_ecdf(counts, figs_dir, orig_cfg, viz_cfg)
-                plots_generated.append("ECDF")
-                console.print("[green]  ECDF plot saved[/green]")
-            except Exception as e:
-                console.print(
-                    f"[red]  Failed to generate ECDF plot: {e}[/red]"
-                )
-            finally:
-                _cleanup_after_plot()
+            ds_results = results
+            ds_counts = counts
+            ds_cell_labels = cell_labels
+            ds_figs_dir = figs_dir
+            ds_label = ""
 
-    if viz_cfg.ppc:
-        # "steps_ppc" matches the regular PPC file (e.g.
-        # "...50000steps_ppc.png") but not per-component or mixture
-        # variants whose suffixes differ.
-        if not overwrite and _plot_exists(figs_dir, "steps_ppc", fmt):
-            plots_skipped.append("PPC")
-            console.print(
-                "[yellow]  Skipping PPC (already exists)[/yellow]"
-            )
-        else:
-            console.print(
-                "[dim]Generating posterior predictive check "
-                "plots...[/dim]"
-            )
-            try:
-                plot_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
-                plots_generated.append("PPC")
-                console.print("[green]  PPC plots saved[/green]")
-            except Exception as e:
+        if viz_cfg.ecdf:
+            if not overwrite and _plot_exists(ds_figs_dir, "_ecdf", fmt):
+                plots_skipped.append(f"ECDF{ds_label}")
                 console.print(
-                    f"[red]  Failed to generate PPC plots: {e}[/red]"
+                    "[yellow]  Skipping ECDF (already exists)[/yellow]"
                 )
-            finally:
-                _cleanup_after_plot()
+            else:
+                console.print("[dim]Generating ECDF plot...[/dim]")
+                try:
+                    plot_ecdf(ds_counts, ds_figs_dir, orig_cfg, viz_cfg)
+                    plots_generated.append(f"ECDF{ds_label}")
+                    console.print("[green]  ECDF plot saved[/green]")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate ECDF plot: {e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
 
-    if viz_cfg.bio_ppc:
-        if not overwrite and _plot_exists(figs_dir, "_bio_ppc", fmt):
-            plots_skipped.append("bio-PPC")
-            console.print(
-                "[yellow]  Skipping bio-PPC (already exists)[/yellow]"
-            )
-        else:
-            console.print(
-                "[dim]Generating biological PPC (denoised) "
-                "plots...[/dim]"
-            )
-            try:
-                plot_bio_ppc(results, counts, figs_dir, orig_cfg, viz_cfg)
-                plots_generated.append("bio-PPC")
-                console.print("[green]  Bio-PPC plots saved[/green]")
-            except Exception as e:
+        if viz_cfg.ppc:
+            if not overwrite and _plot_exists(ds_figs_dir, "steps_ppc", fmt):
+                plots_skipped.append(f"PPC{ds_label}")
                 console.print(
-                    f"[red]  Failed to generate bio-PPC plots: {e}[/red]"
+                    "[yellow]  Skipping PPC (already exists)[/yellow]"
                 )
-            finally:
-                _cleanup_after_plot()
-
-    if viz_cfg.umap:
-        if not overwrite and _plot_exists(figs_dir, "_umap", fmt):
-            plots_skipped.append("UMAP")
-            console.print(
-                "[yellow]  Skipping UMAP (already exists)[/yellow]"
-            )
-        else:
-            console.print(
-                "[dim]Generating UMAP projection plot...[/dim]"
-            )
-            try:
-                plot_umap(
-                    results,
-                    counts,
-                    figs_dir,
-                    orig_cfg,
-                    viz_cfg,
-                    force_refit=overwrite,
-                )
-                plots_generated.append("UMAP")
-                console.print("[green]  UMAP plot saved[/green]")
-            except Exception as e:
+            else:
                 console.print(
-                    f"[red]  Failed to generate UMAP plot: {e}[/red]"
+                    "[dim]Generating posterior predictive check "
+                    "plots...[/dim]"
                 )
-            finally:
-                _cleanup_after_plot()
+                try:
+                    plot_ppc(
+                        ds_results, ds_counts, ds_figs_dir,
+                        orig_cfg, viz_cfg,
+                    )
+                    plots_generated.append(f"PPC{ds_label}")
+                    console.print("[green]  PPC plots saved[/green]")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate PPC plots: {e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
 
-    if viz_cfg.heatmap:
-        # Match both single heatmap files
-        # ("..._correlation_heatmap.<fmt>") and per-component heatmaps
-        # ("..._correlation_heatmap_component{k}.<fmt>").
-        if not overwrite and _plot_exists(
-            figs_dir, "_correlation_heatmap*", fmt
-        ):
-            plots_skipped.append("heatmap")
-            console.print(
-                "[yellow]  Skipping heatmap (already exists)[/yellow]"
-            )
-        else:
-            console.print(
-                "[dim]Generating correlation heatmap...[/dim]"
-            )
-            try:
-                plot_correlation_heatmap(
-                    results, counts, figs_dir, orig_cfg, viz_cfg
-                )
-                plots_generated.append("heatmap")
-                console.print("[green]  Heatmap saved[/green]")
-            except Exception as e:
+        if viz_cfg.bio_ppc:
+            if not overwrite and _plot_exists(ds_figs_dir, "_bio_ppc", fmt):
+                plots_skipped.append(f"bio-PPC{ds_label}")
                 console.print(
-                    f"[red]  Failed to generate heatmap: {e}[/red]"
+                    "[yellow]  Skipping bio-PPC (already exists)[/yellow]"
                 )
-            finally:
-                _cleanup_after_plot()
+            else:
+                console.print(
+                    "[dim]Generating biological PPC (denoised) "
+                    "plots...[/dim]"
+                )
+                try:
+                    plot_bio_ppc(
+                        ds_results, ds_counts, ds_figs_dir,
+                        orig_cfg, viz_cfg,
+                    )
+                    plots_generated.append(f"bio-PPC{ds_label}")
+                    console.print("[green]  Bio-PPC plots saved[/green]")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate bio-PPC plots: "
+                        f"{e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
 
-    # Check for mixture model before generating mixture PPC.
-    # Prefer results.n_components (handles auto-inferred from annotations)
-    # over the config value (which may be null when inferred at runtime).
-    _res_nc = getattr(results, "n_components", None)
-    _cfg_nc = orig_cfg.get("n_components")
-    _nc = _res_nc if _res_nc is not None else _cfg_nc
-    is_mixture = _nc is not None and _nc > 1
-    if viz_cfg.mixture_ppc:
-        if is_mixture:
+        if viz_cfg.umap:
+            if not overwrite and _plot_exists(ds_figs_dir, "_umap", fmt):
+                plots_skipped.append(f"UMAP{ds_label}")
+                console.print(
+                    "[yellow]  Skipping UMAP (already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating UMAP projection plot...[/dim]"
+                )
+                try:
+                    plot_umap(
+                        ds_results,
+                        ds_counts,
+                        ds_figs_dir,
+                        orig_cfg,
+                        viz_cfg,
+                        force_refit=overwrite,
+                    )
+                    plots_generated.append(f"UMAP{ds_label}")
+                    console.print("[green]  UMAP plot saved[/green]")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate UMAP plot: {e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
+
+        if viz_cfg.heatmap:
             if not overwrite and _plot_exists(
-                figs_dir, "_mixture_ppc", fmt
+                ds_figs_dir, "_correlation_heatmap*", fmt
             ):
-                plots_skipped.append("mixture PPC")
+                plots_skipped.append(f"heatmap{ds_label}")
+                console.print(
+                    "[yellow]  Skipping heatmap (already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating correlation heatmap...[/dim]"
+                )
+                try:
+                    plot_correlation_heatmap(
+                        ds_results, ds_counts, ds_figs_dir,
+                        orig_cfg, viz_cfg,
+                    )
+                    plots_generated.append(f"heatmap{ds_label}")
+                    console.print("[green]  Heatmap saved[/green]")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate heatmap: {e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
+
+        # Mixture model detection (use per-dataset view's n_components)
+        _res_nc = getattr(ds_results, "n_components", None)
+        _cfg_nc = orig_cfg.get("n_components")
+        _nc = _res_nc if _res_nc is not None else _cfg_nc
+        is_mixture = _nc is not None and _nc > 1
+
+        if viz_cfg.mixture_ppc:
+            if is_mixture:
+                if not overwrite and _plot_exists(
+                    ds_figs_dir, "_mixture_ppc", fmt
+                ):
+                    plots_skipped.append(f"mixture PPC{ds_label}")
+                    console.print(
+                        "[yellow]  Skipping mixture PPC "
+                        "(already exists)[/yellow]"
+                    )
+                else:
+                    console.print(
+                        "[dim]Generating mixture model PPC...[/dim]"
+                    )
+                    try:
+                        plot_mixture_ppc(
+                            ds_results, ds_counts, ds_figs_dir,
+                            orig_cfg, viz_cfg,
+                        )
+                        plots_generated.append(f"mixture PPC{ds_label}")
+                        console.print(
+                            "[green]  Mixture PPC saved[/green]"
+                        )
+                    except Exception as e:
+                        console.print(
+                            f"[red]  Failed to generate mixture "
+                            f"PPC: {e}[/red]"
+                        )
+                    finally:
+                        _cleanup_after_plot()
+            else:
                 console.print(
                     "[yellow]  Skipping mixture PPC "
-                    "(already exists)[/yellow]"
+                    "(not a mixture model)[/yellow]"
                 )
-            else:
-                console.print(
-                    "[dim]Generating mixture model PPC...[/dim]"
-                )
-                try:
-                    plot_mixture_ppc(
-                        results, counts, figs_dir, orig_cfg, viz_cfg
-                    )
-                    plots_generated.append("mixture PPC")
-                    console.print(
-                        "[green]  Mixture PPC saved[/green]"
-                    )
-                except Exception as e:
-                    console.print(
-                        f"[red]  Failed to generate mixture "
-                        f"PPC: {e}[/red]"
-                    )
-                finally:
-                    _cleanup_after_plot()
-        else:
-            console.print(
-                "[yellow]  Skipping mixture PPC "
-                "(not a mixture model)[/yellow]"
-            )
 
-    if viz_cfg.mixture_composition:
-        if is_mixture:
-            if not overwrite and _plot_exists(
-                figs_dir, "_mixture_composition", fmt
-            ):
-                plots_skipped.append("mixture composition")
+        if viz_cfg.mixture_composition:
+            if is_mixture:
+                if not overwrite and _plot_exists(
+                    ds_figs_dir, "_mixture_composition", fmt
+                ):
+                    plots_skipped.append(
+                        f"mixture composition{ds_label}"
+                    )
+                    console.print(
+                        "[yellow]  Skipping mixture composition "
+                        "(already exists)[/yellow]"
+                    )
+                else:
+                    console.print(
+                        "[dim]Generating mixture composition "
+                        "plot...[/dim]"
+                    )
+                    try:
+                        plot_mixture_composition(
+                            ds_results,
+                            ds_counts,
+                            ds_figs_dir,
+                            orig_cfg,
+                            viz_cfg,
+                            cell_labels=ds_cell_labels,
+                        )
+                        plots_generated.append(
+                            f"mixture composition{ds_label}"
+                        )
+                        console.print(
+                            "[green]  Mixture composition saved[/green]"
+                        )
+                    except Exception as e:
+                        console.print(
+                            f"[red]  Failed to generate mixture "
+                            f"composition: {e}[/red]"
+                        )
+                    finally:
+                        _cleanup_after_plot()
+            else:
                 console.print(
                     "[yellow]  Skipping mixture composition "
-                    "(already exists)[/yellow]"
+                    "(not a mixture model)[/yellow]"
                 )
-            else:
-                console.print(
-                    "[dim]Generating mixture composition plot...[/dim]"
-                )
-                try:
-                    plot_mixture_composition(
-                        results,
-                        counts,
-                        figs_dir,
-                        orig_cfg,
-                        viz_cfg,
-                        cell_labels=cell_labels,
-                    )
-                    plots_generated.append("mixture composition")
-                    console.print(
-                        "[green]  Mixture composition saved[/green]"
-                    )
-                except Exception as e:
-                    console.print(
-                        f"[red]  Failed to generate mixture "
-                        f"composition: {e}[/red]"
-                    )
-                finally:
-                    _cleanup_after_plot()
-        else:
-            console.print(
-                "[yellow]  Skipping mixture composition "
-                "(not a mixture model)[/yellow]"
-            )
 
-    if viz_cfg.annotation_ppc:
-        if is_mixture and cell_labels is not None:
-            if not overwrite and _plot_exists(
-                figs_dir, "_annotation_ppc_", fmt
-            ):
-                plots_skipped.append("annotation PPC")
+        if viz_cfg.annotation_ppc:
+            if is_mixture and ds_cell_labels is not None:
+                if not overwrite and _plot_exists(
+                    ds_figs_dir, "_annotation_ppc_", fmt
+                ):
+                    plots_skipped.append(f"annotation PPC{ds_label}")
+                    console.print(
+                        "[yellow]  Skipping annotation PPC "
+                        "(already exists)[/yellow]"
+                    )
+                else:
+                    console.print(
+                        "[dim]Generating annotation PPC...[/dim]"
+                    )
+                    try:
+                        plot_annotation_ppc(
+                            ds_results,
+                            ds_counts,
+                            ds_cell_labels,
+                            ds_figs_dir,
+                            orig_cfg,
+                            viz_cfg,
+                        )
+                        plots_generated.append(
+                            f"annotation PPC{ds_label}"
+                        )
+                        console.print(
+                            "[green]  Annotation PPC saved[/green]"
+                        )
+                    except Exception as e:
+                        console.print(
+                            f"[red]  Failed to generate annotation "
+                            f"PPC: {e}[/red]"
+                        )
+                    finally:
+                        _cleanup_after_plot()
+            elif not is_mixture:
                 console.print(
                     "[yellow]  Skipping annotation PPC "
-                    "(already exists)[/yellow]"
+                    "(not a mixture model)[/yellow]"
                 )
             else:
                 console.print(
-                    "[dim]Generating annotation PPC...[/dim]"
+                    "[yellow]  Skipping annotation PPC "
+                    "(no annotation_key in config)[/yellow]"
                 )
-                try:
-                    plot_annotation_ppc(
-                        results,
-                        counts,
-                        cell_labels,
-                        figs_dir,
-                        orig_cfg,
-                        viz_cfg,
-                    )
-                    plots_generated.append("annotation PPC")
-                    console.print(
-                        "[green]  Annotation PPC saved[/green]"
-                    )
-                except Exception as e:
-                    console.print(
-                        f"[red]  Failed to generate annotation "
-                        f"PPC: {e}[/red]"
-                    )
-                finally:
-                    _cleanup_after_plot()
-        elif not is_mixture:
-            console.print(
-                "[yellow]  Skipping annotation PPC "
-                "(not a mixture model)[/yellow]"
-            )
-        else:
-            console.print(
-                "[yellow]  Skipping annotation PPC "
-                "(no annotation_key in config)[/yellow]"
-            )
 
     # ======================================================================
     # Completion Summary

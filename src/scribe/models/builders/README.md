@@ -44,6 +44,19 @@ param_values)` instead of the standard `sample_prior` dispatch. Because they
 inherit from `NormalWithTransformSpec`, all existing guide dispatch (mean-field,
 low-rank) works without modification.
 
+#### Dataset-Level Hierarchical Specs
+
+For multi-dataset models, **`DatasetHierarchicalNormalWithTransformSpec`** is
+the base class for per-dataset parameters drawn from population-level
+hyperparameters. Subclasses: **`DatasetHierarchicalExpNormalSpec`** (positive
+params: mu, r, phi; exp transform) and
+**`DatasetHierarchicalSigmoidNormalSpec`** ((0,1) params: p, gate; sigmoid
+transform). The **`ParamSpec`** base class adds an **`is_dataset`** flag; when
+True, `resolve_shape` prepends the `n_datasets` dimension to the parameter
+shape. The model builder calls **`sample_hierarchical()`** on these specs, which
+draws per-dataset parameters from the population-level loc/scale hyperparameters
+already in `param_values`.
+
 ### ParamSpec Attributes
 
 Each spec has the following attributes:
@@ -53,6 +66,7 @@ Each spec has the following attributes:
 - `default_params`: Default distribution parameters
 - `is_gene_specific`: If True, shape is (n_genes,)
 - `is_cell_specific`: If True, sampled inside cell plate
+- `is_dataset`: If True, shape expands to include n_datasets dimension
 - `guide_family`: Variational family for this parameter
 - `support`: Derived from distribution/transform (property)
 - `arg_constraints`: Constraints on the distribution's parameters

@@ -14,6 +14,7 @@ from .base import (
     Likelihood,
     broadcast_p_for_mixture,
     compute_cell_specific_mixing,
+    index_dataset_params,
 )
 from ...builders.parameter_specs import sample_prior
 
@@ -134,6 +135,7 @@ class NegativeBinomialLikelihood(Likelihood):
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
     ) -> None:
         """Sample from Negative Binomial likelihood.
 
@@ -150,6 +152,12 @@ class NegativeBinomialLikelihood(Likelihood):
         # Determine whether we need cell-specific mixing (annotation path)
         is_mixture = "mixing_weights" in param_values
         use_annotation = annotation_prior_logits is not None and is_mixture
+
+        # Multi-dataset: determine n_datasets for indexing
+        n_datasets = getattr(model_config, "n_datasets", None)
+        use_dataset_indexing = (
+            n_datasets is not None and dataset_indices is not None
+        )
 
         # ====================================================================
         # Non-VAE fast path: If vae_cell_fn is None, this is not a VAE model.
@@ -187,6 +195,48 @@ class NegativeBinomialLikelihood(Likelihood):
                             param_values, annotation_prior_logits[idx]
                         )
                         numpyro.sample("counts", cell_dist, obs=counts[idx])
+                return
+
+            # ----------------------------------------------------------------
+            # Multi-dataset path: per-dataset params must be indexed inside
+            # the cell plate so that each cell uses its dataset's parameters.
+            # ----------------------------------------------------------------
+            if use_dataset_indexing:
+                if counts is None:
+                    with numpyro.plate("cells", n_cells):
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_pv = index_dataset_params(
+                            param_values, dataset_indices, n_datasets,
+                            param_specs=model_config.param_specs,
+                        )
+                        numpyro.sample("counts", self._build_dist(cell_pv))
+                elif batch_size is None:
+                    with numpyro.plate("cells", n_cells):
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_pv = index_dataset_params(
+                            param_values, dataset_indices, n_datasets,
+                            param_specs=model_config.param_specs,
+                        )
+                        numpyro.sample(
+                            "counts", self._build_dist(cell_pv), obs=counts
+                        )
+                else:
+                    with numpyro.plate(
+                        "cells", n_cells, subsample_size=batch_size
+                    ) as idx:
+                        for spec in cell_specs:
+                            sample_prior(spec, dims, model_config)
+                        cell_pv = index_dataset_params(
+                            param_values, dataset_indices[idx], n_datasets,
+                            param_specs=model_config.param_specs,
+                        )
+                        numpyro.sample(
+                            "counts",
+                            self._build_dist(cell_pv),
+                            obs=counts[idx],
+                        )
                 return
 
             # ----------------------------------------------------------------

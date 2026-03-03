@@ -96,6 +96,11 @@ class ModelConfig(BaseModel):
         d = state.get("__dict__", {})
         d.setdefault("hierarchical_p", False)
         d.setdefault("hierarchical_gate", False)
+        d.setdefault("n_datasets", None)
+        d.setdefault("dataset_params", None)
+        d.setdefault("hierarchical_dataset_mu", False)
+        d.setdefault("hierarchical_dataset_p", "none")
+        d.setdefault("hierarchical_dataset_gate", False)
         super().__setstate__(state)
 
     # Core configuration
@@ -135,6 +140,49 @@ class ModelConfig(BaseModel):
     mixture_params: Optional[List[str]] = Field(
         None,
         description="List of parameter names that should be mixture-specific",
+    )
+
+    # Multi-dataset configuration
+    n_datasets: Optional[int] = Field(
+        None,
+        gt=1,
+        description=(
+            "Number of datasets for joint multi-dataset modeling. "
+            "Dataset assignments are fixed (observed), not inferred."
+        ),
+    )
+    dataset_params: Optional[List[str]] = Field(
+        None,
+        description=(
+            "List of parameter names that should be per-dataset. "
+            "Analogous to mixture_params but for the dataset axis."
+        ),
+    )
+    hierarchical_dataset_mu: bool = Field(
+        False,
+        description=(
+            "Hierarchical mu (or r) across datasets with learned "
+            "shrinkage parameter tau_mu. Requires n_datasets >= 2."
+        ),
+    )
+    hierarchical_dataset_p: str = Field(
+        "none",
+        description=(
+            "Dataset-level hierarchy for p/phi. Options: "
+            "'none' (shared p across datasets), "
+            "'scalar' (one p per dataset, shared across genes), "
+            "'gene_specific' (single-level: p_g per dataset-gene pair), "
+            "'two_level' (two-level hierarchy with dataset hyperparameters)."
+        ),
+    )
+    hierarchical_dataset_gate: bool = Field(
+        False,
+        description=(
+            "Hierarchical gate across datasets with learned shrinkage. "
+            "Per-dataset, gene-specific gate values are drawn from a shared "
+            "population distribution. Requires n_datasets >= 2, "
+            "unconstrained=True, and a zero-inflated model."
+        ),
     )
 
     # Guide configuration
@@ -203,6 +251,7 @@ class ModelConfig(BaseModel):
 
         - hierarchical_gate requires a zero-inflated model.
         - Both hierarchical flags require unconstrained=True.
+        - Dataset-level hierarchical flags require n_datasets >= 2.
         """
         if self.hierarchical_gate and not self.is_zero_inflated:
             raise ValueError(
@@ -217,6 +266,65 @@ class ModelConfig(BaseModel):
         if self.hierarchical_gate and not self.unconstrained:
             raise ValueError(
                 "hierarchical_gate=True requires unconstrained=True."
+            )
+        # Dataset hierarchy validation
+        valid_dataset_p = {"none", "scalar", "gene_specific", "two_level"}
+        if self.hierarchical_dataset_p not in valid_dataset_p:
+            raise ValueError(
+                f"hierarchical_dataset_p must be one of {valid_dataset_p}, "
+                f"got {self.hierarchical_dataset_p!r}."
+            )
+        if self.hierarchical_dataset_mu and self.n_datasets is None:
+            raise ValueError(
+                "hierarchical_dataset_mu=True requires n_datasets >= 2."
+            )
+        if self.hierarchical_dataset_p != "none" and self.n_datasets is None:
+            raise ValueError(
+                f"hierarchical_dataset_p={self.hierarchical_dataset_p!r} "
+                "requires n_datasets >= 2."
+            )
+        if self.hierarchical_dataset_mu and not self.unconstrained:
+            raise ValueError(
+                "hierarchical_dataset_mu=True requires unconstrained=True."
+            )
+        if (
+            self.hierarchical_dataset_p != "none"
+            and not self.unconstrained
+        ):
+            raise ValueError(
+                "hierarchical_dataset_p != 'none' requires "
+                "unconstrained=True."
+            )
+        # Prevent conflicting gene-level and dataset-level p hierarchies
+        if self.hierarchical_p and self.hierarchical_dataset_p != "none":
+            raise ValueError(
+                "hierarchical_p=True and hierarchical_dataset_p != 'none' "
+                "cannot be set simultaneously. The dataset-level hierarchy "
+                "subsumes gene-level hierarchical p."
+            )
+        # Dataset-level gate hierarchy validation
+        if self.hierarchical_dataset_gate:
+            if self.n_datasets is None:
+                raise ValueError(
+                    "hierarchical_dataset_gate=True requires n_datasets >= 2."
+                )
+            if not self.unconstrained:
+                raise ValueError(
+                    "hierarchical_dataset_gate=True requires "
+                    "unconstrained=True."
+                )
+            if not self.is_zero_inflated:
+                raise ValueError(
+                    "hierarchical_dataset_gate=True requires a zero-inflated "
+                    "model (zinb or zinbvcp), but base_model="
+                    f"{self.base_model!r}."
+                )
+        # Prevent conflicting gene-level and dataset-level gate hierarchies
+        if self.hierarchical_gate and self.hierarchical_dataset_gate:
+            raise ValueError(
+                "hierarchical_gate=True and hierarchical_dataset_gate=True "
+                "cannot be set simultaneously. The dataset-level hierarchy "
+                "subsumes gene-level hierarchical gate."
             )
         return self
 
@@ -306,6 +414,14 @@ class ModelConfig(BaseModel):
     def is_hierarchical(self) -> bool:
         """Check if this model uses any hierarchical prior (p/phi or gate)."""
         return self.hierarchical_p or self.hierarchical_gate
+
+    # --------------------------------------------------------------------------
+
+    @computed_field
+    @property
+    def is_multi_dataset(self) -> bool:
+        """Check if this is a multi-dataset joint model."""
+        return self.n_datasets is not None and self.n_datasets > 1
 
     # --------------------------------------------------------------------------
 
@@ -462,6 +578,7 @@ class ModelConfig(BaseModel):
                 "is_zero_inflated",
                 "uses_variable_capture",
                 "is_hierarchical",
+                "is_multi_dataset",
                 "active_parameters",
             },
         )

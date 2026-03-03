@@ -87,6 +87,11 @@ def broadcast_p_for_mixture(
     (shape ``(n_genes,)``), which must be expanded to ``(1, n_genes)`` for
     broadcasting with mixture ``r`` of shape ``(n_components, n_genes)``.
 
+    After dataset indexing, ``p`` may carry a leading batch dimension
+    (e.g., ``(batch, n_genes)``).  When ``r`` is 3-D
+    (``(batch, n_components, n_genes)``), ``p`` is reshaped to
+    ``(batch, 1, n_genes)`` so it broadcasts across components.
+
     Parameters
     ----------
     p : jnp.ndarray
@@ -96,10 +101,13 @@ def broadcast_p_for_mixture(
         - ``(n_components,)`` — mixture-specific scalar
         - ``(n_genes,)`` — gene-specific (shared across components)
         - ``(n_components, n_genes)`` — both mixture- and gene-specific
+        - ``(batch, n_genes)`` — per-cell gene-specific (after dataset
+          indexing)
+        - ``(batch, n_components, n_genes)`` — per-cell mixture+gene
 
     r : jnp.ndarray
-        Dispersion parameter.  Shape ``(n_components, n_genes)`` in mixture
-        models.
+        Dispersion parameter.  Shape ``(n_components, n_genes)`` or
+        ``(batch, n_components, n_genes)`` in mixture models.
 
     Returns
     -------
@@ -107,16 +115,28 @@ def broadcast_p_for_mixture(
         ``p`` reshaped for broadcasting with ``r``.
     """
     if p.ndim == 0:
+        # Scalar — add two singleton dims for (K, G)
+        if r.ndim == 3:
+            return p[None, None, None]
         return p[None, None]
     elif p.ndim == 1:
         # Distinguish (n_genes,) from (n_components,) by comparing with r
-        if r.ndim == 2 and p.shape[0] == r.shape[-1]:
-            # Gene-specific: (n_genes,) → (1, n_genes)
+        if r.ndim >= 2 and p.shape[0] == r.shape[-1]:
+            # Gene-specific: (G,) → (1, G) or (1, 1, G) for 3-D r
+            if r.ndim == 3:
+                return p[None, None, :]
             return p[None, :]
         else:
-            # Mixture-specific scalar: (n_components,) → (n_components, 1)
+            # Mixture-specific scalar: (K,) → (K, 1)
             return p[:, None]
-    # Already (n_components, n_genes) or compatible shape
+    elif p.ndim == 2:
+        if r.ndim == 3:
+            # p is (batch, G) after dataset indexing, r is (batch, K, G).
+            # Insert component singleton: (batch, 1, G)
+            return p[:, None, :]
+        # Already (K, G) or compatible 2-D shape
+        return p
+    # Already 3-D (batch, K, G) or compatible
     return p
 
 
@@ -171,6 +191,80 @@ def compute_cell_specific_mixing(
     return jax.nn.softmax(cell_logits, axis=-1)  # (batch, K)
 
 
+# ==============================================================================
+# Helper: index per-dataset parameters by cell dataset assignment
+# ==============================================================================
+
+
+def index_dataset_params(
+    param_values: Dict[str, jnp.ndarray],
+    dataset_indices: jnp.ndarray,
+    n_datasets: int,
+    param_specs: Optional[List] = None,
+) -> Dict[str, jnp.ndarray]:
+    """Index per-dataset parameters using per-cell dataset assignments.
+
+    For each parameter whose spec has ``is_dataset=True``, slice out the
+    dataset axis using ``dataset_indices`` to produce per-cell values.
+
+    When a parameter is **both** mixture and dataset (shape
+    ``(K, D, ...)``) the dataset axis is 1.  After indexing, the result
+    is transposed to **batch-first** layout ``(batch, K, ...)`` so that
+    ``MixtureSameFamily`` sees the component dim as the rightmost batch
+    dimension.
+
+    When ``param_specs`` is ``None``, falls back to the legacy heuristic
+    (leading dim equals ``n_datasets``).
+
+    Parameters
+    ----------
+    param_values : Dict[str, jnp.ndarray]
+        All sampled parameter values.
+    dataset_indices : jnp.ndarray, shape ``(batch,)``
+        Integer array mapping each cell in the current batch to a
+        dataset index in ``{0, ..., n_datasets - 1}``.
+    n_datasets : int
+        Number of datasets.
+    param_specs : List[ParamSpec], optional
+        Parameter specifications.  Used to determine which parameters
+        carry a dataset axis and whether they also carry a mixture axis.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Copy with per-dataset arrays replaced by per-cell arrays.
+    """
+    # Build spec lookup when available
+    specs_by_name: Dict[str, object] = {}
+    if param_specs is not None:
+        for spec in param_specs:
+            specs_by_name[spec.name] = spec
+
+    indexed = {}
+    for name, val in param_values.items():
+        spec = specs_by_name.get(name)
+        is_ds = spec is not None and getattr(spec, "is_dataset", False)
+        is_mix = spec is not None and getattr(spec, "is_mixture", False)
+
+        if is_ds:
+            if is_mix and val.ndim >= 2:
+                # Shape (K, D, ...) — dataset axis is 1.
+                # Index axis 1 then move component axis after batch so the
+                # result is (batch, K, ...) for MixtureSameFamily compat.
+                result = jnp.take(val, dataset_indices, axis=1)  # (K, batch, ...)
+                result = jnp.moveaxis(result, 0, 1)  # (batch, K, ...)
+                indexed[name] = result
+            else:
+                # Shape (D, ...) — dataset axis is 0
+                indexed[name] = val[dataset_indices]
+        elif spec is None and val.ndim >= 1 and val.shape[0] == n_datasets:
+            # Legacy fallback for params without specs
+            indexed[name] = val[dataset_indices]
+        else:
+            indexed[name] = val
+    return indexed
+
+
 # ------------------------------------------------------------------------------
 # Likelihood Base Class
 # ------------------------------------------------------------------------------
@@ -214,6 +308,7 @@ class Likelihood(ABC):
             Callable[[Optional[jnp.ndarray]], Dict[str, jnp.ndarray]]
         ] = None,
         annotation_prior_logits: Optional[jnp.ndarray] = None,
+        dataset_indices: Optional[jnp.ndarray] = None,
     ) -> None:
         """
         Sample observations given parameters.

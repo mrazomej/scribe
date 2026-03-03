@@ -453,9 +453,15 @@ def main(cfg: DictConfig) -> None:
 
     data_path = hydra.utils.to_absolute_path(cfg.data.path)
     console.print(f"[dim]Loading data from:[/dim] [cyan]{data_path}[/cyan]")
-    # When annotation_key is set we need the full AnnData (for adata.obs);
-    # otherwise a plain JAX array is sufficient and lighter weight.
-    needs_adata = cfg.get("annotation_key") is not None
+    # Resolve dataset_key: data-level setting takes precedence over global
+    # (mirrors the layer resolution pattern).
+    dataset_key = cfg.data.get("dataset_key") or cfg.get("dataset_key")
+
+    # When annotation_key or dataset_key is set we need the full AnnData
+    # (for adata.obs); otherwise a plain JAX array is sufficient.
+    needs_adata = (
+        cfg.get("annotation_key") is not None or dataset_key is not None
+    )
     counts = load_and_preprocess_anndata(
         data_path,
         cfg.data.get("preprocessing"),
@@ -618,6 +624,15 @@ def main(cfg: DictConfig) -> None:
         "unconstrained": cfg.unconstrained,
         "hierarchical_p": cfg.get("hierarchical_p", False),
         "hierarchical_gate": cfg.get("hierarchical_gate", False),
+        # Multi-dataset hierarchy
+        "n_datasets": cfg.get("n_datasets"),
+        "dataset_key": dataset_key,
+        "dataset_params": cfg.get("dataset_params"),
+        "hierarchical_dataset_mu": cfg.get("hierarchical_dataset_mu", False),
+        "hierarchical_dataset_p": cfg.get("hierarchical_dataset_p", "none"),
+        "hierarchical_dataset_gate": cfg.get(
+            "hierarchical_dataset_gate", False
+        ),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,
@@ -710,10 +725,7 @@ def main(cfg: DictConfig) -> None:
     _do_empirical = (
         empirical_mixing
         and inference_method == "svi"
-        and (
-            effective_n_components is not None
-            and effective_n_components > 1
-        )
+        and (effective_n_components is not None and effective_n_components > 1)
     )
     if _do_empirical:
         import jax.numpy as jnp

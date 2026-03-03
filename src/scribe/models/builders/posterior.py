@@ -165,9 +165,88 @@ def get_posterior_distributions(
             )
 
     # -------------------------------------------------------------------------
+    # Dataset-level hierarchical mu/r: hyperparameters + per-dataset override
+    # -------------------------------------------------------------------------
+    hierarchical_dataset_mu = getattr(
+        model_config, "hierarchical_dataset_mu", False
+    )
+    hierarchical_dataset_p = getattr(
+        model_config, "hierarchical_dataset_p", "none"
+    )
+
+    if hierarchical_dataset_mu:
+        if parameterization in (
+            Parameterization.CANONICAL,
+            Parameterization.STANDARD,
+        ):
+            hyper_loc, hyper_scale = "log_r_dataset_loc", "log_r_dataset_scale"
+            target = "r"
+        else:
+            hyper_loc, hyper_scale = (
+                "log_mu_dataset_loc",
+                "log_mu_dataset_scale",
+            )
+            target = "mu"
+
+        distributions.update(
+            _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
+        )
+        # Override the base mu/r with the per-dataset version
+        if low_rank:
+            distributions[target] = _build_low_rank_exp_normal_posterior(
+                params, target, is_mixture, split
+            )
+        else:
+            distributions[target] = _build_exp_normal_posterior(
+                params, target, is_mixture, split
+            )
+
+    # -------------------------------------------------------------------------
+    # Dataset-level hierarchical p/phi: hyperparameters + per-dataset override
+    # -------------------------------------------------------------------------
+    if hierarchical_dataset_p != "none":
+        if parameterization in (
+            Parameterization.MEAN_ODDS,
+            Parameterization.ODDS_RATIO,
+        ):
+            hyper_loc = "log_phi_dataset_loc"
+            hyper_scale = "log_phi_dataset_scale"
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
+            )
+            distributions["phi"] = _build_exp_normal_posterior(
+                params, "phi", is_mixture, split, is_scalar=False
+            )
+        else:
+            hyper_loc = "logit_p_dataset_loc"
+            hyper_scale = "logit_p_dataset_scale"
+            distributions.update(
+                _build_hyperparameter_posteriors(params, hyper_loc, hyper_scale)
+            )
+            distributions["p"] = _build_sigmoid_normal_posterior(
+                params, "p", is_scalar=False, split=split
+            )
+
+    # -------------------------------------------------------------------------
+    # Dataset-level hierarchical gate
+    # -------------------------------------------------------------------------
+    hierarchical_dataset_gate = getattr(
+        model_config, "hierarchical_dataset_gate", False
+    )
+    if hierarchical_dataset_gate:
+        distributions.update(
+            _build_hyperparameter_posteriors(
+                params, "logit_gate_dataset_loc", "logit_gate_dataset_scale"
+            )
+        )
+        distributions["gate"] = _build_sigmoid_normal_posterior(
+            params, "gate", is_scalar=False, split=split
+        )
+
+    # -------------------------------------------------------------------------
     # Add zero-inflation gate if applicable
     # -------------------------------------------------------------------------
-    if is_zero_inflated:
+    if is_zero_inflated and not hierarchical_dataset_gate:
         if hierarchical_gate:
             distributions.update(
                 _build_hyperparameter_posteriors(

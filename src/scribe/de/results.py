@@ -1861,3 +1861,112 @@ def _compare_shrinkage(
         shrinkage_max_iter=shrinkage_max_iter,
         shrinkage_tol=shrinkage_tol,
     )
+
+
+# ==============================================================================
+# Multi-dataset comparison
+# ==============================================================================
+
+
+def compare_datasets(
+    results,
+    dataset_A: int,
+    dataset_B: int,
+    label_A: Optional[str] = None,
+    label_B: Optional[str] = None,
+    method: str = "shrinkage",
+    component: Optional[int] = None,
+    **kwargs,
+) -> ScribeDEResults:
+    """Compare two datasets from a jointly fitted multi-dataset model.
+
+    This convenience wrapper slices dataset-specific views from a
+    multi-dataset hierarchical results object, then calls :func:`compare`
+    with ``paired=True`` so that the within-posterior sample correlation
+    is preserved.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults or ScribeMCMCResults
+        Fitted multi-dataset model results
+        (``results.model_config.n_datasets`` must be set).
+    dataset_A : int
+        Index of the first dataset (condition A).
+    dataset_B : int
+        Index of the second dataset (condition B).
+    label_A : str, optional
+        Human-readable label for dataset A.  Defaults to
+        ``"dataset_{dataset_A}"``.
+    label_B : str, optional
+        Human-readable label for dataset B.  Defaults to
+        ``"dataset_{dataset_B}"``.
+    method : str, default="shrinkage"
+        DE method passed to :func:`compare`.  ``"shrinkage"`` is the
+        recommended default for multi-dataset models because it
+        combines the model-level hierarchical shrinkage with an
+        additional empirical Bayes layer.
+    component : int, optional
+        Mixture component to select **before** dataset slicing.  When
+        provided, the same component index is used for both datasets.
+    **kwargs
+        Additional keyword arguments forwarded to :func:`compare`
+        (e.g., ``n_samples_dirichlet``, ``sigma_grid``, ``batch_size``).
+
+    Returns
+    -------
+    ScribeDEResults
+        Differential expression results (same type as returned by
+        :func:`compare`).
+
+    Raises
+    ------
+    ValueError
+        If ``results`` is not from a multi-dataset model.
+
+    Examples
+    --------
+    >>> # Fit a multi-dataset model then compare
+    >>> de = compare_datasets(results, dataset_A=0, dataset_B=1)
+    >>> de.summary()
+
+    >>> # With mixture: compare component 0 across two datasets
+    >>> de = compare_datasets(
+    ...     results, 0, 1, component=0, method="shrinkage"
+    ... )
+
+    See Also
+    --------
+    compare : General-purpose DE factory.
+    """
+    n_datasets = getattr(
+        getattr(results, "model_config", None), "n_datasets", None
+    )
+    if n_datasets is None:
+        raise ValueError(
+            "compare_datasets() requires a multi-dataset model "
+            "(model_config.n_datasets must be set)."
+        )
+
+    if label_A is None:
+        label_A = f"dataset_{dataset_A}"
+    if label_B is None:
+        label_B = f"dataset_{dataset_B}"
+
+    # Optionally slice a mixture component first
+    working = results
+    if component is not None:
+        working = working.get_component(component)
+
+    # Slice per-dataset views; these share the same posterior draw ordering
+    view_A = working.get_dataset(dataset_A)
+    view_B = working.get_dataset(dataset_B)
+
+    return compare(
+        model_A=view_A,
+        model_B=view_B,
+        label_A=label_A,
+        label_B=label_B,
+        method=method,
+        paired=True,
+        **kwargs,
+    )

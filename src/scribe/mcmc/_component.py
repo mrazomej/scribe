@@ -92,7 +92,7 @@ class ComponentMixin:
         new_model_config = self.model_config.model_copy(
             update={"n_components": new_n_components}
         )
-        return ScribeMCMCResults(
+        subset = ScribeMCMCResults(
             samples=new_samples,
             n_cells=self.n_cells,
             n_genes=self.n_genes,
@@ -106,6 +106,13 @@ class ComponentMixin:
             n_vars=self.n_vars,
             n_components=new_n_components,
         )
+        per_ds = getattr(self, "_n_cells_per_dataset", None)
+        if per_ds is not None:
+            subset._n_cells_per_dataset = per_ds
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            subset._dataset_indices = ds_idx
+        return subset
 
     # --------------------------------------------------------------------------
     # Internal helpers
@@ -127,7 +134,7 @@ class ComponentMixin:
         new_model_config = self.model_config.model_copy(
             update={"base_model": base_model, "n_components": None}
         )
-        return ScribeMCMCResults(
+        subset = ScribeMCMCResults(
             samples=new_samples,
             n_cells=self.n_cells,
             n_genes=self.n_genes,
@@ -141,6 +148,13 @@ class ComponentMixin:
             n_vars=self.n_vars,
             n_components=None,
         )
+        per_ds = getattr(self, "_n_cells_per_dataset", None)
+        if per_ds is not None:
+            subset._n_cells_per_dataset = per_ds
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            subset._dataset_indices = ds_idx
+        return subset
 
     def _subset_samples_by_components(
         self,

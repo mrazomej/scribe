@@ -21,6 +21,7 @@ from ._core import CoreResultsMixin
 from ._parameter_extraction import ParameterExtractionMixin
 from ._gene_subsetting import GeneSubsettingMixin
 from ._component import ComponentMixin
+from ._dataset import DatasetMixin
 from ._model_helpers import ModelHelpersMixin
 from ._sampling import SamplingMixin
 from ._likelihood import LikelihoodMixin
@@ -38,6 +39,7 @@ class ScribeSVIResults(
     ParameterExtractionMixin,
     GeneSubsettingMixin,
     ComponentMixin,
+    DatasetMixin,
     ModelHelpersMixin,
     SamplingMixin,
     LikelihoodMixin,
@@ -107,6 +109,20 @@ class ScribeSVIResults(
     predictive_samples: Optional[Dict] = None
     n_components: Optional[int] = None
     denoised_counts: Optional[jnp.ndarray] = None
+
+    # Per-dataset cell counts for multi-dataset models.  Set during
+    # inference when ``dataset_indices`` is available.  Used by
+    # ``get_dataset(d)`` to set the correct ``n_cells`` on the returned
+    # single-dataset view so that downstream PPC generation works with
+    # the right number of cells.
+    _n_cells_per_dataset: Optional[jnp.ndarray] = None
+
+    # Per-cell dataset assignment array, shape ``(n_cells,)`` with values
+    # in ``{0, ..., n_datasets-1}``.  Stored so that ``get_dataset(d)``
+    # can subset **cell-specific** variational parameters (e.g.
+    # ``phi_capture_loc``) whose shape is ``(n_cells,)`` rather than
+    # ``(n_datasets, ...)``.
+    _dataset_indices: Optional[jnp.ndarray] = None
 
     # Internal: tracks original gene count before subsetting (for amortizer
     # validation) When using amortized capture probability, counts must have

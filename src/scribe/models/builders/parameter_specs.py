@@ -138,6 +138,7 @@ def resolve_shape(
     shape_dims: Tuple[str, ...],
     dims: Dict[str, int],
     is_mixture: bool = False,
+    is_dataset: bool = False,
 ) -> Tuple[int, ...]:
     """
     Resolve symbolic shape dimensions to concrete integer shapes.
@@ -153,12 +154,18 @@ def resolve_shape(
     is_mixture : bool, default=False
         If True, prepend n_components dimension to the resolved shape.
         Requires "n_components" to be present in dims.
+    is_dataset : bool, default=False
+        If True, prepend n_datasets dimension to the resolved shape.
+        Requires "n_datasets" to be present in dims.  The dataset
+        dimension is prepended **after** the mixture dimension when
+        both are True: ``(n_components, n_datasets, ...)``.
 
     Returns
     -------
     Tuple[int, ...]
         Concrete shape. Empty tuple for scalars.
         If is_mixture=True, shape is (n_components, ...).
+        If is_dataset=True, shape is (n_datasets, ...).
 
     Examples
     --------
@@ -172,22 +179,35 @@ def resolve_shape(
     (3, 50)
     >>> resolve_shape((), dims_mix, is_mixture=True)
     (3,)
+    >>> dims_ds = {"n_cells": 100, "n_genes": 50, "n_datasets": 2}
+    >>> resolve_shape(("n_genes",), dims_ds, is_dataset=True)
+    (2, 50)
+    >>> resolve_shape((), dims_ds, is_dataset=True)
+    (2,)
 
     Raises
     ------
     KeyError
         If a dimension name is not found in dims.
         If is_mixture=True and "n_components" not in dims.
+        If is_dataset=True and "n_datasets" not in dims.
     """
     if not shape_dims:
         base_shape = ()
     else:
         base_shape = tuple(dims[dim] for dim in shape_dims)
 
+    # Prepend dataset dimension first (innermost batch axis)
+    if is_dataset:
+        if "n_datasets" not in dims:
+            raise KeyError("n_datasets must be in dims when is_dataset=True")
+        base_shape = (dims["n_datasets"],) + base_shape
+
+    # Prepend mixture dimension (outermost batch axis)
     if is_mixture:
         if "n_components" not in dims:
             raise KeyError("n_components must be in dims when is_mixture=True")
-        return (dims["n_components"],) + base_shape
+        base_shape = (dims["n_components"],) + base_shape
 
     return base_shape
 
@@ -294,6 +314,15 @@ class ParamSpec(BaseModel):
     is_mixture: bool = Field(
         False, description="If True, parameter is mixture-specific"
     )
+    is_dataset: bool = Field(
+        False,
+        description=(
+            "If True, parameter is per-dataset in a multi-dataset model. "
+            "Shape expands to include n_datasets dimension: "
+            "scalar () -> (n_datasets,), gene-specific (n_genes,) -> "
+            "(n_datasets, n_genes)."
+        ),
+    )
     guide_family: Optional[GuideFamily] = Field(
         None, description="Variational family for this parameter"
     )
@@ -310,6 +339,13 @@ class ParamSpec(BaseModel):
                 f"Parameter '{self.name}': is_mixture and is_cell_specific "
                 "cannot both be True. Cell-specific parameters are already "
                 "per-cell and cannot be per-component."
+            )
+        if self.is_dataset and self.is_cell_specific:
+            raise ValueError(
+                f"Parameter '{self.name}': is_dataset and is_cell_specific "
+                "cannot both be True. Cell-specific parameters are sampled "
+                "per-cell and are indexed into per-dataset params at the "
+                "likelihood level."
             )
         return self
 
@@ -1139,7 +1175,12 @@ class HierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
         """
         loc = param_values[self.hyper_loc_name]
         scale = param_values[self.hyper_scale_name]
-        shape = resolve_shape(self.shape_dims, dims, is_mixture=self.is_mixture)
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
 
         # Build hierarchical prior: Normal(learned_loc, learned_scale)
         if shape == ():
@@ -1261,6 +1302,187 @@ class HierarchicalExpNormalSpec(HierarchicalNormalWithTransformSpec):
 
     transform: Transform = Field(
         default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+
+# ==============================================================================
+# Dataset-Level Hierarchical Specification
+# ==============================================================================
+
+
+class DatasetHierarchicalNormalWithTransformSpec(NormalWithTransformSpec):
+    """
+    Dataset-level hierarchical Normal + Transform.
+
+    Extends the gene-level hierarchical spec to the multi-dataset setting.
+    Each dataset gets its own value for this parameter, drawn from a shared
+    (population-level) Normal distribution whose loc and scale are themselves
+    sampled hyperparameters.
+
+    The generative model is::
+
+        hyper_loc   ~ some prior        (population hyperparameter)
+        hyper_scale ~ some prior > 0    (population hyperparameter)
+        param^(d)   = transform(Normal(hyper_loc, hyper_scale))  per dataset
+
+    For gene-specific dataset parameters the shape is ``(n_datasets, n_genes)``
+    and the hierarchy is over the leading dataset axis.
+
+    Parameters
+    ----------
+    name : str
+        Parameter name (e.g., ``"mu"``).
+    shape_dims : Tuple[str, ...]
+        Base shape dims **excluding** the dataset axis.  The dataset
+        dimension is prepended automatically because ``is_dataset=True``.
+    default_params : Tuple[float, float]
+        Fallback (loc, scale) for the base Normal.
+    hyper_loc_name : str
+        Name of the sampled population-level location hyperparameter.
+    hyper_scale_name : str
+        Name of the sampled population-level scale hyperparameter.
+    is_dataset : bool
+        Must be ``True``.
+    transform : Transform
+        NumPyro transform applied to the base Normal sample.
+
+    See Also
+    --------
+    DatasetHierarchicalExpNormalSpec : Exp-transformed variant for (0, inf).
+    DatasetHierarchicalSigmoidNormalSpec : Sigmoid-transformed variant for (0, 1).
+    """
+
+    hyper_loc_name: str = Field(
+        ...,
+        description="Name of the population-level location hyperparameter",
+    )
+    hyper_scale_name: str = Field(
+        ...,
+        description="Name of the population-level scale hyperparameter",
+    )
+
+    # --------------------------------------------------------------------------
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample per-dataset parameters from the population prior.
+
+        Constructs ``TransformedDistribution(Normal(loc, scale), transform)``
+        where loc and scale come from already-sampled population-level
+        hyperparameters.  The resulting sample has a leading ``n_datasets``
+        dimension.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes (must contain ``"n_datasets"`` and optionally
+            ``"n_genes"``, ``"n_components"``).
+        param_values : Dict[str, jnp.ndarray]
+            Already-sampled parameter values.  Must contain
+            ``self.hyper_loc_name`` and ``self.hyper_scale_name``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Sampled parameter in constrained space with shape
+            ``(n_datasets, ...)`` (e.g., ``(D,)`` for scalar-per-dataset
+            or ``(D, G)`` for gene-specific-per-dataset).
+        """
+        loc = param_values[self.hyper_loc_name]
+        scale = param_values[self.hyper_scale_name]
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        if shape == ():
+            base_dist = dist.Normal(loc, scale)
+        else:
+            base_dist = (
+                dist.Normal(loc, scale).expand(shape).to_event(len(shape))
+            )
+
+        transformed_dist = dist.TransformedDistribution(
+            base_dist, self.transform
+        )
+        return numpyro.sample(self.constrained_name, transformed_dist)
+
+
+# ------------------------------------------------------------------------------
+# Dataset Hierarchical Exp Normal (for mu, r, phi — positive params)
+# ------------------------------------------------------------------------------
+
+
+class DatasetHierarchicalExpNormalSpec(
+    DatasetHierarchicalNormalWithTransformSpec
+):
+    """
+    Dataset-level hierarchical Normal + Exp for per-dataset parameters in (0,
+    inf).
+
+    Generative model::
+
+        log_mu_loc   ~ Normal(0, 1)             [population hyperparameter]
+        log_mu_scale ~ Softplus(Normal(0, 0.5))  [population hyperparameter]
+        mu^(d) = exp(Normal(log_mu_loc, log_mu_scale))  [per dataset]
+
+    For gene-specific variants, the shape is ``(n_datasets, n_genes)``.
+
+    Examples
+    --------
+    >>> spec = DatasetHierarchicalExpNormalSpec(
+    ...     name="mu",
+    ...     shape_dims=("n_genes",),
+    ...     default_params=(0.0, 1.0),
+    ...     hyper_loc_name="log_mu_dataset_loc",
+    ...     hyper_scale_name="log_mu_dataset_scale",
+    ...     is_gene_specific=True,
+    ...     is_dataset=True,
+    ... )
+    """
+
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+
+# ------------------------------------------------------------------------------
+# Dataset Hierarchical Sigmoid Normal (for p, gate — (0,1) params)
+# ------------------------------------------------------------------------------
+
+
+class DatasetHierarchicalSigmoidNormalSpec(
+    DatasetHierarchicalNormalWithTransformSpec
+):
+    """
+    Dataset-level hierarchical Normal + Sigmoid for per-dataset parameters in
+    (0, 1).
+
+    Generative model::
+
+        logit_p_loc   ~ Normal(0, 1)             [population hyperparameter]
+        logit_p_scale ~ Softplus(Normal(0, 0.5))  [population hyperparameter]
+        p^(d) = sigmoid(Normal(logit_p_loc, logit_p_scale))  [per dataset]
+
+    Examples
+    --------
+    >>> spec = DatasetHierarchicalSigmoidNormalSpec(
+    ...     name="p",
+    ...     shape_dims=(),
+    ...     default_params=(0.0, 1.0),
+    ...     hyper_loc_name="logit_p_dataset_loc",
+    ...     hyper_scale_name="logit_p_dataset_scale",
+    ...     is_dataset=True,
+    ... )
+    """
+
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.SigmoidTransform()
     )
 
 
@@ -1428,7 +1650,12 @@ def sample_prior(
     """
     # Get prior params from spec or use defaults
     params = spec.prior if spec.prior is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
 
     if shape == ():
         # Scalar parameter
@@ -1466,7 +1693,12 @@ def sample_prior(
         Sampled parameter value.
     """
     params = spec.prior if spec.prior is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
 
     return numpyro.sample(
         spec.name, dist.LogNormal(*params).expand(shape).to_event(len(shape))
@@ -1499,7 +1731,12 @@ def sample_prior(
         Sampled parameter value.
     """
     params = spec.prior if spec.prior is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
 
     if shape == ():
         return numpyro.sample(spec.name, BetaPrime(*params))
@@ -1535,7 +1772,12 @@ def sample_prior(
         Sampled parameter value on the simplex.
     """
     params = spec.prior if spec.prior is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
 
     # For Dirichlet, concentration is a vector
     concentration = (
@@ -1582,7 +1824,12 @@ def sample_prior(
         TransformedDistribution).
     """
     params = spec.prior if spec.prior is not None else spec.default_params
-    shape = resolve_shape(spec.shape_dims, dims, is_mixture=spec.is_mixture)
+    shape = resolve_shape(
+        spec.shape_dims,
+        dims,
+        is_mixture=spec.is_mixture,
+        is_dataset=spec.is_dataset,
+    )
 
     # Create base Normal distribution
     if shape == ():
