@@ -356,6 +356,57 @@ print("SVI log-likelihood:", svi_results.log_likelihood_map())
 print("MCMC log-likelihood:", mcmc_results.log_likelihood())
 ```
 
+### Biology-Informed Capture Prior
+
+For VCP models, anchor capture probability to biological knowledge about total
+cellular mRNA content. This resolves `p_capture` degeneracy by relating capture
+efficiency to observed library size and expected total mRNA (`M_0`):
+
+```python
+# Biology-informed prior with organism defaults
+results = scribe.fit(
+    adata,
+    model="nbvcp",
+    parameterization="mean_odds",
+    capture_prior="biology_informed",
+    organism="human",         # Sets M_0 = 200,000 for human cells
+)
+
+# Manual M_0 override
+results = scribe.fit(
+    adata,
+    model="zinbvcp",
+    capture_prior="biology_informed",
+    total_mrna_mean=150_000,  # Custom M_0
+    total_mrna_log_sigma=0.3, # Tighter prior
+)
+
+# Data-driven shared scaling (learns M_0 across datasets)
+results = scribe.fit(
+    adata,
+    model="nbvcp",
+    capture_prior="data_driven",
+    organism="mouse",
+)
+```
+
+Using the builder API:
+
+```python
+from scribe.models.config import ModelConfigBuilder
+
+config = (ModelConfigBuilder()
+    .for_model("nbvcp")
+    .with_parameterization("mean_odds")
+    .with_capture_prior(mode="biology_informed", organism="human")
+    .build())
+```
+
+Supported organisms: `human`, `mouse`, `yeast`, `ecoli` (plus aliases like
+`homo_sapiens`, `mus_musculus`, `saccharomyces_cerevisiae`,
+`escherichia_coli`). See `paper/_capture_prior.qmd` for the full mathematical
+derivation.
+
 ### Advanced VAE Configuration
 
 ```python
