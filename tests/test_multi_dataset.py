@@ -1195,3 +1195,240 @@ class TestNCellsPerDataset:
         # 3-axis indexing: results[:, :, d] calls get_dataset(d)
         ds_view = results[:, :, 1]
         assert ds_view.n_cells == 45
+
+
+# ==============================================================================
+# Cell-specific param subsetting via _dataset_indices
+# ==============================================================================
+
+
+class TestCellSpecificSubsetting:
+    """Test that get_dataset() subsets cell-specific params using _dataset_indices."""
+
+    def test_svi_cell_specific_params_subsetted(self):
+        """SVI get_dataset() subsets cell-specific variational params."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+        from scribe.svi.results import ScribeSVIResults
+
+        n_datasets = 2
+        n_genes = 5
+        n_cells = 10
+
+        # 6 cells in dataset 0, 4 in dataset 1
+        dataset_indices = jnp.array([0, 0, 1, 0, 1, 0, 1, 0, 0, 1])
+        per_ds_counts = jnp.array([6, 4])
+
+        # Cell-specific BetaSpec — use nbvcp so p_capture is active
+        cell_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        ds_spec = _make_ds_exp_spec("r")
+
+        config = ModelConfig(
+            base_model="nbvcp",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[ds_spec, cell_spec],
+        )
+
+        # Cell-specific params: shape (n_cells,)
+        phi_capture_loc = jnp.arange(n_cells, dtype=jnp.float32)
+        phi_capture_scale = jnp.ones(n_cells)
+
+        params = {
+            "log_r_loc": jnp.zeros((n_datasets, n_genes)),
+            "log_r_scale": jnp.ones((n_datasets, n_genes)),
+            "log_r_dataset_loc_loc": jnp.zeros(n_genes),
+            "log_r_dataset_loc_scale": jnp.ones(n_genes),
+            "p_capture_loc": phi_capture_loc,
+            "p_capture_scale": phi_capture_scale,
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        results._n_cells_per_dataset = per_ds_counts
+        results._dataset_indices = dataset_indices
+
+        # Dataset 0: cells at indices [0, 1, 3, 5, 7, 8]
+        ds0 = results.get_dataset(0)
+        assert ds0.n_cells == 6
+        assert ds0.params["p_capture_loc"].shape == (6,)
+        np.testing.assert_allclose(
+            ds0.params["p_capture_loc"],
+            phi_capture_loc[dataset_indices == 0],
+        )
+
+        # Dataset 1: cells at indices [2, 4, 6, 9]
+        ds1 = results.get_dataset(1)
+        assert ds1.n_cells == 4
+        assert ds1.params["p_capture_loc"].shape == (4,)
+        np.testing.assert_allclose(
+            ds1.params["p_capture_loc"],
+            phi_capture_loc[dataset_indices == 1],
+        )
+
+        # Per-dataset params (log_r_loc) should still be sliced correctly
+        assert ds0.params["log_r_loc"].shape == (n_genes,)
+        assert ds1.params["log_r_loc"].shape == (n_genes,)
+
+    def test_svi_no_dataset_indices_skips_cell_subsetting(self):
+        """Without _dataset_indices, cell-specific params are left untouched."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+        from scribe.svi.results import ScribeSVIResults
+
+        n_datasets = 2
+        n_genes = 5
+        n_cells = 10
+
+        cell_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        ds_spec = _make_ds_exp_spec("r")
+
+        config = ModelConfig(
+            base_model="nbvcp",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[ds_spec, cell_spec],
+        )
+        params = {
+            "log_r_loc": jnp.zeros((n_datasets, n_genes)),
+            "log_r_scale": jnp.ones((n_datasets, n_genes)),
+            "log_r_dataset_loc_loc": jnp.zeros(n_genes),
+            "log_r_dataset_loc_scale": jnp.ones(n_genes),
+            "p_capture_loc": jnp.ones(n_cells),
+            "p_capture_scale": jnp.ones(n_cells),
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        # No _dataset_indices set — cell-specific params stay full size
+        ds0 = results.get_dataset(0)
+        assert ds0.params["p_capture_loc"].shape == (n_cells,)
+
+    def test_mcmc_cell_specific_samples_subsetted(self):
+        """MCMC get_dataset() subsets cell-specific samples on axis 1."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+        from scribe.mcmc.results import ScribeMCMCResults
+
+        n_datasets = 2
+        n_genes = 5
+        n_cells = 10
+        n_samples = 8
+
+        dataset_indices = jnp.array([0, 0, 1, 0, 1, 0, 1, 0, 0, 1])
+        per_ds_counts = jnp.array([6, 4])
+
+        cell_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        ds_spec = _make_ds_exp_spec("r")
+
+        config = ModelConfig(
+            base_model="nbvcp",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[ds_spec, cell_spec],
+        )
+
+        # p_capture samples: (n_samples, n_cells)
+        p_capture_samples = jnp.arange(n_samples * n_cells, dtype=jnp.float32).reshape(
+            n_samples, n_cells
+        )
+
+        samples = {
+            "r": jnp.ones((n_samples, n_datasets, n_genes)),
+            "log_r_dataset_loc": jnp.zeros((n_samples, n_genes)),
+            "p_capture": p_capture_samples,
+        }
+        results = ScribeMCMCResults(
+            samples=samples,
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        results._n_cells_per_dataset = per_ds_counts
+        results._dataset_indices = dataset_indices
+
+        # Dataset 0: 6 cells
+        ds0 = results.get_dataset(0)
+        assert ds0.n_cells == 6
+        assert ds0.samples["p_capture"].shape == (n_samples, 6)
+        np.testing.assert_allclose(
+            ds0.samples["p_capture"],
+            p_capture_samples[:, dataset_indices == 0],
+        )
+
+        # Dataset 1: 4 cells
+        ds1 = results.get_dataset(1)
+        assert ds1.n_cells == 4
+        assert ds1.samples["p_capture"].shape == (n_samples, 4)
+
+    def test_dataset_indices_propagated_through_gene_subsetting(self):
+        """_dataset_indices survives gene subsetting ([:, :, d] pattern)."""
+        from scribe.svi.results import ScribeSVIResults
+
+        n_datasets = 2
+        n_genes = 5
+        n_cells = 10
+
+        dataset_indices = jnp.array([0, 0, 1, 0, 1, 0, 1, 0, 0, 1])
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[_make_ds_exp_spec("r")],
+        )
+        params = {
+            "log_r_loc": jnp.zeros((n_datasets, n_genes)),
+            "log_r_scale": jnp.ones((n_datasets, n_genes)),
+            "log_r_dataset_loc_loc": jnp.zeros(n_genes),
+            "log_r_dataset_loc_scale": jnp.ones(n_genes),
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+        results._dataset_indices = dataset_indices
+        results._n_cells_per_dataset = jnp.array([6, 4])
+
+        # Gene subset preserves _dataset_indices
+        gene_view = results[:2]
+        assert gene_view._dataset_indices is not None
+        np.testing.assert_array_equal(gene_view._dataset_indices, dataset_indices)

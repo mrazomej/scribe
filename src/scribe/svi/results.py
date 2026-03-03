@@ -117,6 +117,13 @@ class ScribeSVIResults(
     # the right number of cells.
     _n_cells_per_dataset: Optional[jnp.ndarray] = None
 
+    # Per-cell dataset assignment array, shape ``(n_cells,)`` with values
+    # in ``{0, ..., n_datasets-1}``.  Stored so that ``get_dataset(d)``
+    # can subset **cell-specific** variational parameters (e.g.
+    # ``phi_capture_loc``) whose shape is ``(n_cells,)`` rather than
+    # ``(n_datasets, ...)``.
+    _dataset_indices: Optional[jnp.ndarray] = None
+
     # Internal: tracks original gene count before subsetting (for amortizer
     # validation) When using amortized capture probability, counts must have
     # shape (n_cells, _original_n_genes) because the amortizer computes

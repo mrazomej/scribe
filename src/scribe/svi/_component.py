@@ -583,10 +583,13 @@ class ComponentMixin:
             n_components=None,
         )
 
-        # Carry over per-dataset cell counts for downstream get_dataset()
+        # Carry over per-dataset metadata for downstream get_dataset()
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         if per_ds is not None:
             subset._n_cells_per_dataset = per_ds
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            subset._dataset_indices = ds_idx
 
         return subset
 
@@ -643,9 +646,12 @@ class ComponentMixin:
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
         )
 
-        # Carry over per-dataset cell counts for downstream get_dataset()
+        # Carry over per-dataset metadata for downstream get_dataset()
         per_ds = getattr(self, "_n_cells_per_dataset", None)
         if per_ds is not None:
             subset._n_cells_per_dataset = per_ds
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if ds_idx is not None:
+            subset._dataset_indices = ds_idx
 
         return subset

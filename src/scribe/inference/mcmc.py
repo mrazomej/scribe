@@ -136,11 +136,13 @@ def _run_mcmc_inference(
         prior_params=model_config.get_active_priors(),
     )
 
-    # Record per-dataset cell counts so get_dataset() can set correct n_cells
+    # Record per-dataset metadata so get_dataset() can subset both
+    # per-dataset and cell-specific parameters correctly.
     if dataset_indices is not None and model_config.n_datasets is not None:
         n_ds = model_config.n_datasets
         results._n_cells_per_dataset = jnp.array(
             [int(jnp.sum(dataset_indices == d)) for d in range(n_ds)]
         )
+        results._dataset_indices = dataset_indices
 
     return results

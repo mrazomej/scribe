@@ -8,12 +8,58 @@ components.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional, Set
 
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
     from .results import ScribeMCMCResults
+
+
+# ==============================================================================
+# Metadata helpers
+# ==============================================================================
+
+
+def _build_cell_specific_keys(
+    param_specs: list, samples: Dict[str, jnp.ndarray],
+) -> Set[str]:
+    """Identify sample keys that correspond to cell-specific parameters.
+
+    Uses longest-name-wins matching against ``ParamSpec.is_cell_specific``.
+
+    Parameters
+    ----------
+    param_specs : list
+        Full parameter specifications from ``model_config.param_specs``.
+    samples : Dict[str, jnp.ndarray]
+        MCMC sample dictionary.
+
+    Returns
+    -------
+    Set[str]
+        Keys in ``samples`` that are cell-specific.
+    """
+    if not param_specs:
+        return set()
+
+    sorted_specs = sorted(param_specs, key=lambda s: len(s.name), reverse=True)
+    cell_keys: Set[str] = set()
+
+    for key in samples:
+        for spec in sorted_specs:
+            name = spec.name
+            if (
+                key == name
+                or key.startswith(name + "_")
+                or key.startswith("log_" + name + "_")
+                or key.startswith("logit_" + name + "_")
+            ):
+                if getattr(spec, "is_cell_specific", False):
+                    cell_keys.add(key)
+                break
+
+    return cell_keys
 
 
 # ==============================================================================
@@ -60,9 +106,18 @@ class DatasetMixin:
                 f"n_datasets={n_datasets}."
             )
 
+        # Subset per-dataset samples (is_dataset=True)
         new_samples = self._subset_samples_by_dataset(
             self.samples, dataset_index, n_datasets
         )
+
+        # Subset cell-specific MCMC samples using the cell mask
+        # derived from _dataset_indices (e.g. phi_capture).
+        ds_indices = getattr(self, "_dataset_indices", None)
+        if ds_indices is not None:
+            new_samples = self._subset_cell_specific_samples(
+                new_samples, ds_indices, dataset_index
+            )
 
         new_model_config = self.model_config.model_copy(
             update={"n_datasets": None}
@@ -152,6 +207,49 @@ class DatasetMixin:
 
             new_samples[key] = values
 
+        return new_samples
+
+    def _subset_cell_specific_samples(
+        self,
+        samples: Dict[str, jnp.ndarray],
+        dataset_indices: jnp.ndarray,
+        dataset_index: int,
+    ) -> Dict[str, jnp.ndarray]:
+        """Subset cell-specific MCMC samples for a single dataset.
+
+        Cell-specific params (e.g. ``phi_capture``) have shape
+        ``(n_samples, n_cells, ...)`` where ``n_cells`` is the *total*
+        count.  This applies a boolean mask on axis 1 to keep only
+        cells belonging to ``dataset_index``.
+
+        Parameters
+        ----------
+        samples : Dict[str, jnp.ndarray]
+            MCMC sample dict (already dataset-subsetted).
+        dataset_indices : jnp.ndarray
+            Per-cell dataset assignment, shape ``(n_cells,)``.
+        dataset_index : int
+            Which dataset to keep.
+
+        Returns
+        -------
+        Dict[str, jnp.ndarray]
+            Samples with cell-specific entries sliced.
+        """
+        cell_keys = _build_cell_specific_keys(
+            self.model_config.param_specs or [], samples
+        )
+        if not cell_keys:
+            return samples
+
+        mask = dataset_indices == dataset_index
+        new_samples: Dict[str, jnp.ndarray] = {}
+        for key, values in samples.items():
+            if key in cell_keys and hasattr(values, "ndim") and values.ndim >= 2:
+                # Shape (n_samples, n_cells, ...) → mask axis 1
+                new_samples[key] = values[:, mask]
+            else:
+                new_samples[key] = values
         return new_samples
 
     @staticmethod
