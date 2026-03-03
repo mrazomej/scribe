@@ -34,6 +34,152 @@ try:
 except ImportError:
     AnnData = None
 
+
+# ==============================================================================
+# Multi-dataset denoising helpers
+# ==============================================================================
+
+
+def _slice_param_for_dataset(
+    param: Optional[jnp.ndarray],
+    dataset_idx: int,
+    n_datasets: int,
+) -> Optional[jnp.ndarray]:
+    """Extract a single dataset's slice from a per-dataset parameter.
+
+    If the parameter's leading axis matches ``n_datasets``, returns
+    ``param[dataset_idx]``; otherwise returns the parameter unchanged
+    (it is shared across datasets).
+
+    Parameters
+    ----------
+    param : jnp.ndarray or None
+        Parameter array, e.g. ``(n_datasets, n_genes)`` or ``(n_genes,)``.
+    dataset_idx : int
+        Which dataset to select.
+    n_datasets : int
+        Total number of datasets (used to detect the dataset axis).
+
+    Returns
+    -------
+    jnp.ndarray or None
+        The single-dataset slice, or ``None`` if input was ``None``.
+    """
+    if param is None:
+        return None
+    if param.ndim >= 2 and param.shape[0] == n_datasets:
+        return param[dataset_idx]
+    return param
+
+
+def _denoise_per_dataset(
+    counts: jnp.ndarray,
+    r: jnp.ndarray,
+    p: jnp.ndarray,
+    gate: Optional[jnp.ndarray],
+    p_capture: Optional[jnp.ndarray],
+    dataset_indices: jnp.ndarray,
+    n_datasets: int,
+    method,
+    rng_key,
+    return_variance: bool,
+    mixing_weights: Optional[jnp.ndarray],
+    cell_batch_size: Optional[int],
+) -> "Union[jnp.ndarray, Dict[str, jnp.ndarray]]":
+    """Denoise a multi-dataset model by processing each dataset separately.
+
+    For each dataset ``d``, extracts the cells belonging to it (via
+    ``dataset_indices``) and the corresponding single-dataset parameters,
+    calls :func:`~scribe.sampling.denoise_counts`, and reassembles the
+    results into the original cell order.
+
+    This avoids the shape ambiguity in ``denoise_counts`` where
+    ``(n_cells, n_genes)`` per-cell parameters would be misinterpreted
+    as a multi-sample leading dimension.
+
+    Parameters
+    ----------
+    counts : jnp.ndarray
+        Observed UMI counts ``(n_cells, n_genes)``.
+    r : jnp.ndarray
+        Dispersion — ``(n_datasets, n_genes)`` or ``(n_genes,)``.
+    p : jnp.ndarray
+        Success probability — ``(n_datasets, n_genes)``, ``(n_genes,)``,
+        or scalar.
+    gate : jnp.ndarray or None
+        Gate — ``(n_datasets, n_genes)``, ``(n_genes,)``, or ``None``.
+    p_capture : jnp.ndarray or None
+        Per-cell capture probability ``(n_cells,)`` or ``None``.
+    dataset_indices : jnp.ndarray
+        Per-cell dataset assignment ``(n_cells,)``.
+    n_datasets : int
+        Number of datasets.
+    method : str or tuple
+        Denoising method forwarded to ``denoise_counts``.
+    rng_key : random.PRNGKey or None
+        PRNG key.
+    return_variance : bool
+        Whether to return variance alongside denoised counts.
+    mixing_weights : jnp.ndarray or None
+        Mixture weights (forwarded unchanged to ``denoise_counts``).
+    cell_batch_size : int or None
+        Cell batching for memory control.
+
+    Returns
+    -------
+    jnp.ndarray or Dict[str, jnp.ndarray]
+        Denoised counts ``(n_cells, n_genes)`` in original cell order.
+    """
+    n_cells, n_genes = counts.shape
+    denoised_out = jnp.empty((n_cells, n_genes), dtype=counts.dtype)
+    variance_out = (
+        jnp.empty((n_cells, n_genes), dtype=jnp.float32)
+        if return_variance else None
+    )
+
+    for d in range(n_datasets):
+        mask = dataset_indices == d
+        idx = jnp.where(mask)[0]
+        if idx.shape[0] == 0:
+            continue
+
+        counts_d = counts[idx]
+        r_d = _slice_param_for_dataset(r, d, n_datasets)
+        p_d = _slice_param_for_dataset(p, d, n_datasets)
+        gate_d = _slice_param_for_dataset(gate, d, n_datasets)
+        pc_d = p_capture[idx] if p_capture is not None else None
+
+        if rng_key is not None:
+            rng_key, d_key = random.split(rng_key)
+        else:
+            d_key = None
+
+        result_d = denoise_counts(
+            counts=counts_d,
+            r=r_d,
+            p=p_d,
+            p_capture=pc_d,
+            gate=gate_d,
+            method=method,
+            rng_key=d_key,
+            return_variance=return_variance,
+            mixing_weights=mixing_weights,
+            cell_batch_size=cell_batch_size,
+        )
+
+        if return_variance:
+            denoised_out = denoised_out.at[idx].set(
+                result_d["denoised_counts"]
+            )
+            variance_out = variance_out.at[idx].set(result_d["variance"])
+        else:
+            denoised_out = denoised_out.at[idx].set(result_d)
+
+    if return_variance:
+        return {"denoised_counts": denoised_out, "variance": variance_out}
+    return denoised_out
+
+
 # ==============================================================================
 # Sampling Mixin
 # ==============================================================================
@@ -1125,18 +1271,40 @@ class SamplingMixin:
                 f"({self.model_type}){extra_str}, method='{method}'..."
             )
 
-        result = denoise_counts(
-            counts=counts,
-            r=r,
-            p=p,
-            p_capture=p_capture,
-            gate=gate,
-            method=method,
-            rng_key=rng_key,
-            return_variance=return_variance,
-            mixing_weights=mixing_weights,
-            cell_batch_size=cell_batch_size,
-        )
+        # Multi-dataset models: per-dataset parameters have shape
+        # (n_datasets, n_genes).  We denoise each dataset's cells
+        # separately to avoid shape ambiguity in denoise_counts, which
+        # would misinterpret (n_cells, n_genes) as a sample dimension.
+        n_ds = getattr(self.model_config, "n_datasets", None)
+        ds_idx = getattr(self, "_dataset_indices", None)
+        if n_ds is not None and ds_idx is not None:
+            result = _denoise_per_dataset(
+                counts=counts,
+                r=r,
+                p=p,
+                gate=gate,
+                p_capture=p_capture,
+                dataset_indices=ds_idx,
+                n_datasets=n_ds,
+                method=method,
+                rng_key=rng_key,
+                return_variance=return_variance,
+                mixing_weights=mixing_weights,
+                cell_batch_size=cell_batch_size,
+            )
+        else:
+            result = denoise_counts(
+                counts=counts,
+                r=r,
+                p=p,
+                p_capture=p_capture,
+                gate=gate,
+                method=method,
+                rng_key=rng_key,
+                return_variance=return_variance,
+                mixing_weights=mixing_weights,
+                cell_batch_size=cell_batch_size,
+            )
 
         if verbose:
             shape = (
@@ -1380,6 +1548,10 @@ class SamplingMixin:
 
         results: List["AnnData"] = []
 
+        # Multi-dataset bookkeeping for expanding per-dataset params
+        n_ds = getattr(self.model_config, "n_datasets", None)
+        ds_idx = getattr(self, "_dataset_indices", None)
+
         # --- Dataset 1: MAP-based denoising ---
         if verbose:
             print(f"Generating denoised dataset 1/{n_datasets} (MAP)...")
@@ -1479,17 +1651,37 @@ class SamplingMixin:
                 )
 
                 rng_key, sample_key = random.split(rng_key)
-                denoised_s = denoise_counts(
-                    counts=counts,
-                    r=r_s,
-                    p=p_s,
-                    p_capture=pc_s,
-                    gate=g_s,
-                    method=method,
-                    rng_key=sample_key,
-                    mixing_weights=mw_s,
-                    cell_batch_size=cell_batch_size,
-                )
+
+                # Multi-dataset: after slicing the sample dimension,
+                # per-dataset params still have shape (n_datasets, ...).
+                # Denoise each dataset's cells separately.
+                if n_ds is not None and ds_idx is not None:
+                    denoised_s = _denoise_per_dataset(
+                        counts=counts,
+                        r=r_s,
+                        p=p_s,
+                        gate=g_s,
+                        p_capture=pc_s,
+                        dataset_indices=ds_idx,
+                        n_datasets=n_ds,
+                        method=method,
+                        rng_key=sample_key,
+                        return_variance=False,
+                        mixing_weights=mw_s,
+                        cell_batch_size=cell_batch_size,
+                    )
+                else:
+                    denoised_s = denoise_counts(
+                        counts=counts,
+                        r=r_s,
+                        p=p_s,
+                        p_capture=pc_s,
+                        gate=g_s,
+                        method=method,
+                        rng_key=sample_key,
+                        mixing_weights=mw_s,
+                        cell_batch_size=cell_batch_size,
+                    )
 
                 results.append(
                     self._build_denoised_adata(
