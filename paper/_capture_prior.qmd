@@ -1,0 +1,391 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Biology-informed prior for the capture probability {#sec-capture-prior}
+
+In @sec-denoising, we introduced the variable capture probability (VCP) model, in
+which each cell $c$ has its own capture probability $\nu_c \in (0,1)$, and the
+observed UMI count for gene $g$ follows
+
+$$
+u_{gc} \mid m_{gc}, \nu_c \sim \text{Binomial}(m_{gc}, \nu_c),
+$${#eq-cap-umi-model}
+
+where $m_{gc}$ is the true (unobserved) transcript count. We showed in
+@sec-dirichlet-multinomial that marginalizing over the true counts yields an
+effective negative binomial distribution with a modified success probability
+$\hat{p}$ that absorbs the capture efficiency. When performing inference, one
+must assign a prior to $\nu_c$. A common default is the uninformative
+$\nu_c \sim \text{Beta}(1, 1)$, which treats all capture efficiencies as equally
+likely a priori.
+
+In this section, we show that this flat prior is a source of **practical
+non-identifiability** in the VCP model, and we develop a principled
+biology-informed prior that resolves it. The key idea is to exploit the
+relationship between the capture probability, the observed library size, and the
+total mRNA content of the cell---a quantity for which reliable prior information
+exists.
+
+## The identifiability problem {#sec-cap-identifiability}
+
+To see why the flat prior is problematic, consider the expected observed count
+for gene $g$ in cell $c$. From the generative model,
+
+$$
+\mathbb{E}[u_{gc}] = \nu_c \cdot \mathbb{E}[m_{gc}] = \nu_c \cdot \mu_g,
+$${#eq-cap-expected-count}
+
+where $\mu_g = r_g(1-p_g)/p_g$ is the expected biological expression of gene $g$
+(see @eq-hier-marginal-mean). The library size---the total observed UMI count for
+cell $c$---is
+
+$$
+L_c = \sum_{g=1}^G u_{gc},
+$${#eq-cap-library-size}
+
+with expectation
+
+$$
+\mathbb{E}[L_c] = \nu_c \sum_{g=1}^G \mu_g = \nu_c \cdot \mu_T,
+$${#eq-cap-expected-lib}
+
+where $\mu_T = \sum_g \mu_g$ is the total expected biological expression across
+all genes.
+
+The problem is immediate: the observed library size $L_c$ constrains only the
+**product** $\nu_c \cdot \mu_T$, not each factor individually. With a flat prior
+on $\nu_c$, the model is free to trade off between "high capture, low total
+expression" and "low capture, high total expression." This degeneracy manifests
+as systematic biases when fitting multiple datasets: even when the underlying
+biology is identical, the optimizer can assign different capture efficiencies to
+each dataset, absorbing expression differences into $\nu_c$ rather than into the
+biological parameters.
+
+## The fundamental relationship {#sec-cap-fundamental}
+
+From @eq-cap-expected-lib, we have the exact relationship
+
+$$
+\nu_c = \frac{\mathbb{E}[L_c]}{\mu_T}.
+$${#eq-cap-nu-exact}
+
+The true total mRNA count in cell $c$ is
+
+$$
+M_c = \sum_{g=1}^G m_{gc},
+$${#eq-cap-total-mrna}
+
+with $\mathbb{E}[M_c] = \mu_T$. Since $L_c$ is the result of binomially
+thinning $M_c$ molecules with probability $\nu_c$, we have
+
+$$
+\mathbb{E}[L_c \mid M_c, \nu_c] = \nu_c \cdot M_c.
+$${#eq-cap-conditional-lib}
+
+By the law of large numbers---summing over many genes ($G$ is typically in the
+tens of thousands)---the observed library size concentrates around its
+expectation, giving the approximation
+
+$$
+L_c \approx \nu_c \cdot M_c.
+$${#eq-cap-lln-approx}
+
+Inverting,
+
+$$
+\nu_c \approx \frac{L_c}{M_c}.
+$${#eq-cap-nu-from-lib}
+
+This is the anchor we seek: **the capture probability is approximately the ratio
+of the observed library size to the total mRNA content of the cell**. The
+observed library size $L_c$ is a known quantity from the data. If we can
+constrain $M_c$, we can constrain $\nu_c$.
+
+## A working variable for exact transformations {#sec-cap-eta}
+
+To develop a prior that works correctly across all capture efficiency regimes
+---including high-capture experiments where $\nu_c$ approaches $0.5$ or
+beyond---we avoid the logit approximation $\text{logit}(\nu_c) \approx
+\log \nu_c$ and instead work with the exact variable
+
+$$
+\eta_c = \log \frac{M_c}{L_c}.
+$${#eq-cap-eta-def}
+
+This variable is always well-defined and positive (since $M_c \geq L_c$ in the
+generative model). From $\eta_c$, both parameterizations of the capture
+probability can be recovered exactly.
+
+### Recovery of $\nu_c$ (the $p_\text{capture}$ parameterization)
+
+Since $\nu_c = L_c / M_c$, we have
+
+$$
+\nu_c = \frac{L_c}{M_c} = \exp(-\eta_c).
+$${#eq-cap-nu-from-eta}
+
+This is exact for all $\nu_c \in (0, 1)$, with no approximation.
+
+### Recovery of $\phi_c$ (the $\phi_\text{capture}$ parameterization)
+
+The capture odds ratio $\phi_c = (1 - \nu_c)/\nu_c = M_c / L_c - 1$ satisfies
+
+$$
+1 + \phi_c = \frac{M_c}{L_c} = \exp(\eta_c),
+$${#eq-cap-one-plus-phi}
+
+so
+
+$$
+\phi_c = \exp(\eta_c) - 1.
+$${#eq-cap-phi-from-eta}
+
+Again, this is exact. For small capture efficiency ($\nu_c \ll 1$, i.e.,
+$\eta_c \gg 1$), we have $\phi_c \approx \exp(\eta_c)$, but the full expression
+@eq-cap-phi-from-eta is used in practice.
+
+### Consistency check
+
+From @eq-cap-nu-from-eta and @eq-cap-phi-from-eta,
+
+$$
+\nu_c = \frac{1}{1 + \phi_c} = \frac{1}{1 + \exp(\eta_c) - 1} =
+\frac{1}{\exp(\eta_c)} = \exp(-\eta_c),
+$${#eq-cap-consistency}
+
+confirming that both parameterizations yield the same capture probability.
+
+## The biology-informed prior {#sec-cap-biology-prior}
+
+### Prior on total mRNA
+
+A typical mammalian cell contains approximately $M_0 \approx 200{,}000$ mRNA
+molecules. This estimate comes from both biochemical measurements and
+computational analyses of single-cell data. The exact number varies from cell to
+cell due to differences in cell size, cell-cycle stage, and transcriptional
+activity, but the order of magnitude is well established.
+
+We model this cell-to-cell variation with a log-normal prior on the total mRNA
+content:
+
+$$
+\log M_c \sim \mathcal{N}(\log M_0, \sigma_M^2),
+$${#eq-cap-mrna-prior}
+
+where $M_0$ is the expected total mRNA per cell (set from biological knowledge)
+and $\sigma_M > 0$ controls the allowed cell-to-cell variation. The log-normal
+distribution is a natural choice: total mRNA is strictly positive, and the
+multiplicative sources of variation (cell size, cell cycle) lead to log-normal
+marginals.
+
+### Implied prior on $\eta_c$
+
+From the definition @eq-cap-eta-def and the prior @eq-cap-mrna-prior,
+
+$$
+\eta_c = \log M_c - \log L_c,
+$${#eq-cap-eta-decompose}
+
+where $\log L_c$ is a known constant for each cell (computed from the observed
+data). Since $\log M_c$ is normally distributed, so is $\eta_c$:
+
+$$
+\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2).
+$${#eq-cap-eta-prior}
+
+This is the **biology-informed prior on the capture efficiency**. Its key
+properties are:
+
+1. **Cell-specific centering.** The prior mean $\log M_0 - \log L_c$ differs for
+   each cell. Cells with larger library sizes get a prior centered at lower
+   $\eta_c$ (higher capture efficiency), and cells with smaller library sizes get
+   a prior centered at higher $\eta_c$ (lower capture efficiency). This is
+   exactly the expected behavior: cells with more observed UMIs should have
+   captured a larger fraction of their transcriptome.
+
+2. **Biologically grounded scale.** The prior width $\sigma_M$ reflects our
+   uncertainty about the total mRNA content. A value of $\sigma_M \approx 0.5$
+   corresponds to roughly $1.5$--$2$ fold variation in total mRNA (since
+   $\exp(0.5) \approx 1.65$), which is consistent with known biological
+   variation in cell size and transcriptional output.
+
+3. **No approximation.** The transformations @eq-cap-nu-from-eta and
+   @eq-cap-phi-from-eta are exact. Unlike approaches that use
+   $\text{logit}(\nu_c) \approx \log \nu_c$ (valid only when $\nu_c \ll 1$),
+   this prior works correctly even when capture efficiency is high. For instance,
+   with $M_0 = 200{,}000$ and $L_c = 100{,}000$, we have
+   $\nu_c \approx 0.5$, well outside the regime where the logit approximation
+   holds.
+
+### Implied prior on $\nu_c$ and $\phi_c$
+
+Combining @eq-cap-eta-prior with the exact transformations, the implied priors on
+the capture probability and capture odds are:
+
+$$
+\nu_c = \exp\!\left(-\eta_c\right), \quad
+\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2),
+$${#eq-cap-nu-prior}
+
+$$
+\phi_c = \exp(\eta_c) - 1, \quad
+\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2).
+$${#eq-cap-phi-prior}
+
+These are proper distributions on $(0, 1)$ and $(0, \infty)$, respectively.
+
+### Interpretation of $\sigma_M$
+
+The hyperparameter $\sigma_M$ controls how tightly the prior anchors $\nu_c$ to
+the value implied by the library size and organism-specific $M_0$:
+
+- **Small $\sigma_M$ (e.g., $0.3$):** Strong anchor. The prior tightly
+  constrains $\nu_c$ around $L_c / M_0$. This is appropriate when the total mRNA
+  is well known and the cell population is relatively homogeneous (e.g., a cell
+  line).
+
+- **Moderate $\sigma_M$ (e.g., $0.5$):** The default. Allows for $\sim
+  1.5$--$2\times$ fold variation in total mRNA, accommodating cell-size and
+  cell-cycle heterogeneity in typical experimental settings.
+
+- **Large $\sigma_M$ (e.g., $> 1$):** Weak anchor. The prior allows wide
+  variation in $\nu_c$, approaching the behavior of an uninformative prior. In
+  the limit $\sigma_M \to \infty$, the biology-informed prior degenerates to a
+  flat prior on $\eta_c$, recovering the uninformative case.
+
+### Gene subsetting
+
+The value $M_0$ corresponds to the total mRNA content of the **entire**
+transcriptome. If the model is fit on a subset of genes (e.g., the 2,000 most
+variable genes), the effective total mRNA should be adjusted:
+
+$$
+M_0^{\text{subset}} = M_0 \cdot f_{\text{genes}},
+$${#eq-cap-gene-subset}
+
+where $f_{\text{genes}} = \sum_{g \in \text{subset}} u_g / \sum_{g \in
+\text{all}} u_g$ is the fraction of total UMIs accounted for by the gene subset,
+averaged across cells. When fitting the full transcriptome---as is recommended
+for this model---$f_{\text{genes}} = 1$ and no adjustment is needed.
+
+## Data-driven shared scaling {#sec-cap-data-driven}
+
+In the biology-informed prior (@sec-cap-biology-prior), the total mRNA $M_0$ is
+fixed from external knowledge. An alternative approach is to **learn** the
+effective total mRNA from the data, while forcing this learned quantity to be
+shared across all datasets. This is particularly useful in multi-dataset settings
+(see @sec-hierarchical-datasets) where we want to ensure that all datasets share
+the same capture-probability-versus-library-size relationship.
+
+### Model specification
+
+We replace the fixed $\log M_0$ with a latent variable $\mu_\eta$ that is
+shared across all cells and datasets:
+
+$$
+\mu_\eta \sim \mathcal{N}(\log M_0, \sigma_\mu^2),
+$${#eq-cap-dd-mu-prior}
+
+$$
+\eta_c \sim \mathcal{N}(\mu_\eta - \log L_c, \; \sigma_\eta^2),
+$${#eq-cap-dd-eta-prior}
+
+where $\sigma_\mu$ is the prior uncertainty on the effective total mRNA (set
+wide, e.g., $\sigma_\mu = 1.0$, when the organism is unknown) and $\sigma_\eta$
+plays the same role as $\sigma_M$ in the biology-informed prior.
+
+The key constraint is that $\mu_\eta$ is a **single scalar parameter shared
+across all datasets**. This forces all datasets to share the same relationship
+between library size and capture efficiency, preventing the degeneracy seen in
+@sec-cap-identifiability.
+
+### Why this prevents two branches
+
+In the multi-dataset setting, consider two datasets (e.g., two kits) with the
+same underlying biology but different library size distributions. Without the
+shared scaling, the model can assign each dataset its own effective total mRNA,
+leading to two separate capture-probability-versus-library-size curves. With the
+shared $\mu_\eta$, both datasets are forced onto the same curve:
+
+$$
+\eta_c^{(d)} \sim \mathcal{N}(\mu_\eta - \log L_c^{(d)}, \; \sigma_\eta^2),
+\quad d = 1, 2, \ldots, D,
+$${#eq-cap-dd-shared}
+
+where $D$ is the number of datasets. Any difference in library size between kits
+is correctly attributed to different capture efficiencies along a shared curve,
+rather than to different biological expression levels.
+
+## Connection between the two approaches {#sec-cap-connection}
+
+The biology-informed prior and the data-driven shared scaling are closely
+related. The biology-informed prior is a special case of the data-driven approach
+with $\mu_\eta = \log M_0$ fixed (equivalently, $\sigma_\mu = 0$). Conversely,
+the data-driven approach generalizes the biology-informed prior by allowing the
+data to refine the estimate of total mRNA.
+
+Both approaches nest the flat (uninformative) prior as a limiting case. As
+$\sigma_M \to \infty$ (or $\sigma_\eta \to \infty$), the prior on $\eta_c$
+becomes flat, and the model reverts to the behavior of the original VCP model
+with $\nu_c \sim \text{Beta}(1, 1)$.
+
+### Organism-specific values for $M_0$
+
+The following table provides starting values for $M_0$ based on the literature.
+These values correspond to the expected total mRNA content of a typical single
+cell in the respective organism:
+
+| Organism | $M_0$ (mRNA/cell) | Notes |
+|---|---|---|
+| Human | $200{,}000$ | Mammalian typical |
+| Mouse | $200{,}000$ | Mammalian typical |
+| Yeast (*S. cerevisiae*) | $60{,}000$ | Smaller transcriptome |
+| *E. coli* | $3{,}000$ | Prokaryotic |
+
+For all organisms, $\sigma_M = 0.5$ is a reasonable default, corresponding to
+$\sim 1.5$--$2 \times$ fold variation in total mRNA content.
+
+## Mathematical summary {#sec-cap-summary}
+
+We collect the key results of this section.
+
+**Working variable.** The log-ratio of total mRNA to library size:
+
+$$
+\eta_c = \log \frac{M_c}{L_c}.
+$${#eq-cap-summary-eta}
+
+**Biology-informed prior.** Given organism-specific $M_0$ and cell-to-cell
+variation $\sigma_M$:
+
+$$
+\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2).
+$${#eq-cap-summary-bio-prior}
+
+**Data-driven shared scaling.** With a learned total mRNA $\mu_\eta$ shared
+across datasets:
+
+$$
+\mu_\eta \sim \mathcal{N}(\log M_0, \sigma_\mu^2), \qquad
+\eta_c \sim \mathcal{N}(\mu_\eta - \log L_c, \; \sigma_\eta^2).
+$${#eq-cap-summary-dd-prior}
+
+**Exact transformations** (valid for any capture regime):
+
+$$
+\nu_c = \exp(-\eta_c), \qquad
+\phi_c = \exp(\eta_c) - 1.
+$${#eq-cap-summary-transforms}
+
+**Consistency:**
+
+$$
+\nu_c = \frac{1}{1 + \phi_c}.
+$${#eq-cap-summary-consistency}
