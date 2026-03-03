@@ -476,6 +476,22 @@ def main(cfg: DictConfig) -> None:
     # (mirrors the layer resolution pattern).
     dataset_key = cfg.data.get("dataset_key") or cfg.get("dataset_key")
 
+    # Validate dataset-level hierarchical/structured priors before data
+    # loading so users fail fast when dataset splitting is not configured.
+    uses_dataset_level_hierarchy = (
+        cfg.get("hierarchical_dataset_mu", False)
+        or cfg.get("hierarchical_dataset_p", "none") != "none"
+        or cfg.get("hierarchical_dataset_gate", False)
+    )
+    if uses_dataset_level_hierarchy and dataset_key is None:
+        raise ValueError(
+            "Dataset-level hierarchical priors "
+            "(hierarchical_dataset_mu, hierarchical_dataset_p, "
+            "hierarchical_dataset_gate) require dataset_key so cells can "
+            "be mapped to datasets. Set dataset_key to an adata.obs column "
+            "when using dataset-level hierarchical priors."
+        )
+
     # When annotation_key or dataset_key is set we need the full AnnData
     # (for adata.obs); otherwise a plain JAX array is sufficient.
     needs_adata = (

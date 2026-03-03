@@ -79,6 +79,14 @@ structure:
   p: `"none"`, `"scalar"`, `"gene_specific"`, or `"two_level"`
 - `is_multi_dataset` (computed property) — `True` when `n_datasets >= 2`
 
+Dataset-level hierarchical flags (`hierarchical_dataset_mu`,
+`hierarchical_dataset_p`, `hierarchical_dataset_gate`) are only valid when
+cells can be mapped to datasets. In practice, that means passing
+`dataset_key` to `scribe.fit(...)` (so `n_datasets` is inferred from
+`adata.obs[dataset_key]`) or otherwise configuring explicit multi-dataset
+mode. Single-dataset fits should use `hierarchical_p` and/or
+`hierarchical_gate` instead.
+
 #### Biology-Informed Capture Prior
 
 For VCP models (`nbvcp`, `zinbvcp`), the capture probability can be anchored to

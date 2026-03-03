@@ -102,6 +102,13 @@ For multi-dataset models, per-dataset parameters (e.g. `r`, `p` with shape
 `index_dataset_params()` in `base.py` maps these parameters using
 `dataset_indices` (shape `(batch,)`), mapping each cell to its dataset.
 
+Because dataset-level indexing requires `dataset_indices`, dataset-level
+hierarchical priors (`hierarchical_dataset_mu`, `hierarchical_dataset_p`,
+`hierarchical_dataset_gate`) require running `scribe.fit(...)` with
+`dataset_key` so each cell is assigned to a dataset. Without `dataset_key`,
+SCRIBE now raises an early configuration error instead of silently treating
+the model as single-dataset.
+
 All likelihood `sample()` methods now accept an optional `dataset_indices`
 parameter. When provided, per-dataset parameters are automatically indexed
 to per-cell values inside the NumPyro plate context before building the

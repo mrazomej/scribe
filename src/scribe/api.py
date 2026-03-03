@@ -658,6 +658,22 @@ def fit(
         n_datasets = _inferred_n_datasets
         dataset_indices = jnp.asarray(np.asarray(ds_codes, dtype=np.int32))
 
+    # Enforce that dataset-level hierarchical options are only used when
+    # explicit cell-to-dataset mapping is available for indexing.
+    uses_dataset_level_hierarchy = (
+        hierarchical_dataset_mu
+        or hierarchical_dataset_p != "none"
+        or hierarchical_dataset_gate
+    )
+    if uses_dataset_level_hierarchy and dataset_indices is None:
+        raise ValueError(
+            "Dataset-level hierarchical priors "
+            "(hierarchical_dataset_mu, hierarchical_dataset_p, "
+            "hierarchical_dataset_gate) require dataset_key so cells can "
+            "be mapped to datasets. Provide dataset_key as an adata.obs "
+            "column when using dataset-level hierarchical priors."
+        )
+
     # ==========================================================================
     # Step 2c: Build annotation prior logits (if requested)
     # ==========================================================================

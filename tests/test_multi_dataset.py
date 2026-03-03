@@ -1975,3 +1975,107 @@ class TestHorseshoeCreateModel:
             ), f"Expected tau_{prefix} in {spec_names}"
             assert f"lambda_{prefix}" in spec_names
             assert f"c_sq_{prefix}" in spec_names
+
+
+# ==============================================================================
+# API validation: dataset-only hierarchical priors
+# ==============================================================================
+
+
+class TestFitApiDatasetHierarchyValidation:
+    """Validate dataset-only hierarchical flags in the public fit API.
+
+    Notes
+    -----
+    These tests verify the user-facing behavior introduced for early
+    configuration validation:
+
+    - Dataset-level hierarchical flags require `dataset_key` so cells can be
+      mapped to datasets.
+    - Gene-level hierarchical flags remain valid for single-dataset fits.
+    """
+
+    @staticmethod
+    def _make_adata(*, include_dataset_column: bool):
+        """Create a tiny AnnData object for fit API validation tests.
+
+        Parameters
+        ----------
+        include_dataset_column : bool
+            Whether to include an `obs["dataset"]` column used by
+            `dataset_key` for multi-dataset indexing.
+
+        Returns
+        -------
+        anndata.AnnData
+            Synthetic count data with optional dataset labels.
+        """
+        import anndata
+        import pandas as pd
+
+        # Build a tiny synthetic count matrix to keep fit tests lightweight.
+        n_cells, n_genes = 6, 4
+        rng = np.random.default_rng(123)
+        x = rng.poisson(3, (n_cells, n_genes)).astype(np.float32)
+
+        # Optionally expose two datasets through adata.obs["dataset"].
+        obs = {"cell_type": ["A", "A", "A", "B", "B", "B"]}
+        if include_dataset_column:
+            obs["dataset"] = ["d0", "d0", "d0", "d1", "d1", "d1"]
+        return anndata.AnnData(X=x, obs=pd.DataFrame(obs))
+
+    def test_dataset_hierarchy_requires_dataset_key(self):
+        """Dataset-level hierarchy on single-dataset input raises early."""
+        import scribe
+
+        adata = self._make_adata(include_dataset_column=False)
+
+        # Dataset-level priors need dataset_key for per-cell dataset indexing.
+        with pytest.raises(ValueError, match="require dataset_key"):
+            scribe.fit(
+                adata,
+                model="nbdm",
+                n_steps=1,
+                batch_size=3,
+                seed=0,
+                unconstrained=True,
+                hierarchical_dataset_mu=True,
+            )
+
+    def test_single_dataset_allows_gene_level_hierarchy(self):
+        """Gene-level hierarchy remains valid without dataset splitting."""
+        import scribe
+
+        adata = self._make_adata(include_dataset_column=False)
+
+        # hierarchical_p is a gene-level option and should still be valid.
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=1,
+            batch_size=3,
+            seed=0,
+            unconstrained=True,
+            hierarchical_p=True,
+        )
+        assert result.n_cells == adata.n_obs
+
+    def test_dataset_hierarchy_allowed_with_dataset_key(self):
+        """Dataset-level hierarchy is allowed when dataset_key is provided."""
+        import scribe
+
+        adata = self._make_adata(include_dataset_column=True)
+
+        # Providing dataset_key enables multi-dataset indexing and unblocks
+        # dataset-level hierarchical priors.
+        result = scribe.fit(
+            adata,
+            model="nbdm",
+            n_steps=1,
+            batch_size=3,
+            seed=0,
+            unconstrained=True,
+            dataset_key="dataset",
+            hierarchical_dataset_mu=True,
+        )
+        assert result.n_cells == adata.n_obs
