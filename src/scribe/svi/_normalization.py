@@ -9,7 +9,10 @@ from typing import Dict, Optional, Union
 import jax.numpy as jnp
 from jax import random
 
-from ..core.normalization import normalize_counts_from_posterior
+from ..core.normalization import (
+    normalize_counts_from_posterior,
+    normalize_counts_from_map,
+)
 
 # ==============================================================================
 # Normalization Mixin
@@ -102,6 +105,84 @@ class NormalizationMixin:
             return_concentrations=return_concentrations,
             backend=backend,
             batch_size=batch_size,
+            verbose=verbose,
+        )
+
+    # --------------------------------------------------------------------------
+
+    def normalize_counts_map(
+        self,
+        estimator: str = "mean",
+        use_mean: bool = True,
+        return_concentrations: bool = False,
+        counts: Optional[jnp.ndarray] = None,
+        verbose: bool = True,
+    ) -> Dict[str, Union[jnp.ndarray, object]]:
+        """
+        Normalize counts using MAP parameter estimates.
+
+        This method computes deterministic transcriptome fractions from MAP
+        estimates returned by :meth:`get_map`. It automatically handles
+        parameterization-specific details by relying on canonical MAP outputs
+        (``r``, and when available ``mu``, ``p``, ``phi``).
+
+        Parameters
+        ----------
+        estimator : {'mean', 'mode'}, default='mean'
+            Point estimator on the simplex.
+
+            - ``'mean'`` uses parameterization-aware deterministic normalization:
+              ``mu/sum(mu)`` when ``mu`` is available, gene-specific
+              reweighting when ``p_g``/``phi_g`` is detected, otherwise
+              ``r/sum(r)``.
+            - ``'mode'`` uses the Dirichlet mode
+              ``(r - 1) / (sum(r) - G)`` in shared-p settings where valid.
+        use_mean : bool, default=True
+            Passed to :meth:`get_map`. If ``True``, replaces undefined MAP
+            values (NaN) with posterior means.
+        return_concentrations : bool, default=False
+            If ``True``, include MAP ``r`` under ``'concentrations'``.
+        counts : Optional[jnp.ndarray], optional
+            Observed count matrix of shape ``(n_cells, n_genes)``. Required
+            when amortized capture probability is enabled.
+        verbose : bool, default=True
+            If ``True``, prints progress and branch-selection messages.
+
+        Returns
+        -------
+        Dict[str, Union[jnp.ndarray, object]]
+            Dictionary containing deterministic normalized expression:
+
+            - ``'mean_probabilities'``:
+              - non-mixture: shape ``(n_genes,)``
+              - mixture: shape ``(n_components, n_genes)``
+            - ``'concentrations'`` (optional): MAP ``r``.
+
+        Raises
+        ------
+        ValueError
+            If required MAP parameters are unavailable or if ``estimator='mode'``
+            is not applicable (for example, invalid Dirichlet mode conditions or
+            gene-specific ``p_g``/``phi_g`` setting).
+
+        Examples
+        --------
+        >>> normalized = results.normalize_counts_map(estimator="mean")
+        >>> normalized["mean_probabilities"].shape
+        (results.n_genes,)
+        """
+        # Extract canonical MAP estimates so parameterization-specific
+        # conversions happen in one centralized place.
+        map_estimates = self.get_map(
+            use_mean=use_mean, canonical=True, verbose=False, counts=counts
+        )
+
+        # Delegate deterministic normalization logic to shared core helper.
+        return normalize_counts_from_map(
+            map_estimates=map_estimates,
+            n_components=self.n_components,
+            estimator=estimator,
+            return_concentrations=return_concentrations,
             verbose=verbose,
         )
 

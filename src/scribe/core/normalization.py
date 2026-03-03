@@ -11,7 +11,7 @@ Dirichlet sampling is performed in batches of ``batch_size`` posterior samples
 ``core.normalization_logistic`` for the batched sampling helpers.
 """
 
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Literal
 import jax.numpy as jnp
 from jax import random
 import warnings
@@ -26,6 +26,193 @@ from .normalization_logistic import (
     _batched_dirichlet_sample_raw,
     _DEFAULT_BATCH_SIZE,
 )
+
+
+def _is_gene_specific_param(
+    param: jnp.ndarray, n_components: Optional[int]
+) -> bool:
+    """Return True when a MAP parameter is gene-specific by shape."""
+    # Gene-specific non-mixture parameters are 1D (D,).
+    if param.ndim == 1:
+        return True
+    # Gene-specific mixture parameters are 2D (K, D).
+    if (
+        param.ndim == 2
+        and n_components is not None
+        and n_components > 1
+        and param.shape[0] == n_components
+    ):
+        return True
+    return False
+
+
+def normalize_counts_from_map(
+    map_estimates: Dict[str, jnp.ndarray],
+    n_components: Optional[int] = None,
+    estimator: Literal["mean", "mode"] = "mean",
+    return_concentrations: bool = False,
+    verbose: bool = True,
+) -> Dict[str, jnp.ndarray]:
+    """
+    Normalize counts using MAP parameter estimates.
+
+    This helper computes deterministic transcriptome fractions from MAP
+    estimates returned by ``get_map(canonical=True)``. The function is
+    parameterization-aware: it can use ``mu`` directly when present, detect
+    gene-specific ``p_g``/``phi_g`` by shape, and fall back to the shared-p
+    Dirichlet mean in standard settings.
+
+    Parameters
+    ----------
+    map_estimates : Dict[str, jnp.ndarray]
+        Dictionary with MAP estimates. Must include ``"r"`` for all paths.
+        Optionally includes ``"mu"``, ``"p"``, and/or ``"phi"``.
+    n_components : Optional[int], default=None
+        Number of mixture components. If ``None`` or ``<=1``, a non-mixture
+        model is assumed.
+    estimator : {'mean', 'mode'}, default='mean'
+        Point estimator on the simplex.
+
+        - ``'mean'``:
+          - uses ``mu / sum(mu)`` when ``mu`` is available,
+          - otherwise uses gene-specific reweighting when gene-specific
+            ``p_g`` or ``phi_g`` is detected,
+          - otherwise uses ``r / sum(r)`` (Dirichlet mean).
+        - ``'mode'``: Dirichlet mode ``(r - 1) / (sum(r) - G)`` for shared-p
+          Dirichlet settings only.
+    return_concentrations : bool, default=False
+        If ``True``, include the MAP ``r`` parameter under
+        ``'concentrations'``.
+    verbose : bool, default=True
+        If ``True``, prints branch information for transparency.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Dictionary containing ``'mean_probabilities'`` and, optionally,
+        ``'concentrations'``.
+
+    Raises
+    ------
+    ValueError
+        If required MAP parameters are missing, if shapes are incompatible, or
+        if ``estimator='mode'`` is requested in settings where the Dirichlet
+        mode is not mathematically applicable.
+    """
+    if estimator not in ("mean", "mode"):
+        raise ValueError(
+            f"Invalid estimator: {estimator}. Must be 'mean' or 'mode'."
+        )
+
+    if "r" not in map_estimates:
+        raise ValueError(
+            "'r' not found in map_estimates. MAP normalization requires "
+            "canonical r."
+        )
+
+    r_map = map_estimates["r"]
+    is_mixture = n_components is not None and n_components > 1
+
+    # Validate r shape so downstream reductions are unambiguous.
+    if is_mixture:
+        if r_map.ndim != 2:
+            raise ValueError(
+                f"For mixture models, expected r shape (K, D), got {r_map.shape}."
+            )
+    else:
+        if r_map.ndim != 1:
+            raise ValueError(
+                f"For non-mixture models, expected r shape (D,), got {r_map.shape}."
+            )
+
+    # Collect optional parameters used for automatic path selection.
+    mu_map = map_estimates.get("mu")
+    p_map = map_estimates.get("p")
+    phi_map = map_estimates.get("phi")
+
+    # Identify gene-specific p/phi by shape, as required by hierarchical math.
+    has_gene_specific_p = (
+        p_map is not None and _is_gene_specific_param(p_map, n_components)
+    )
+    has_gene_specific_phi = (
+        phi_map is not None
+        and _is_gene_specific_param(phi_map, n_components)
+    )
+    has_gene_specific_scaling = has_gene_specific_p or has_gene_specific_phi
+
+    if estimator == "mode" and has_gene_specific_scaling:
+        raise ValueError(
+            "estimator='mode' is not supported when gene-specific p_g/phi_g "
+            "is detected. Use estimator='mean', which applies the hierarchical "
+            "gene-specific normalization."
+        )
+
+    # Always use mu directly when available for mean estimates.
+    if estimator == "mean" and mu_map is not None:
+        if verbose:
+            print("normalize_counts_from_map: using mu-based normalization.")
+        mu_effective = mu_map
+    # If no mu but gene-specific p/phi exists, reconstruct mu from r.
+    elif estimator == "mean" and has_gene_specific_scaling:
+        if has_gene_specific_p:
+            if verbose:
+                print(
+                    "normalize_counts_from_map: using gene-specific p-based "
+                    "mu = r * (1 - p) / p normalization."
+                )
+            mu_effective = r_map * (1.0 - p_map) / p_map
+        else:
+            if verbose:
+                print(
+                    "normalize_counts_from_map: using gene-specific phi-based "
+                    "mu = r / phi normalization."
+                )
+            mu_effective = r_map / phi_map
+    else:
+        mu_effective = None
+
+    # Compute simplex point estimate for the selected branch.
+    if estimator == "mean":
+        if mu_effective is not None:
+            if is_mixture:
+                denom = jnp.sum(mu_effective, axis=-1, keepdims=True)
+            else:
+                denom = jnp.sum(mu_effective)
+            mean_probabilities = mu_effective / denom
+        else:
+            if verbose:
+                print(
+                    "normalize_counts_from_map: using Dirichlet mean "
+                    "rho = r / sum(r)."
+                )
+            if is_mixture:
+                denom = jnp.sum(r_map, axis=-1, keepdims=True)
+            else:
+                denom = jnp.sum(r_map)
+            mean_probabilities = r_map / denom
+    else:
+        # Dirichlet mode is only defined in the interior when all r_g > 1.
+        n_genes = r_map.shape[-1]
+        if jnp.any(r_map <= 1.0):
+            raise ValueError(
+                "Dirichlet mode requires all r_g > 1. Found r_g <= 1. "
+                "Use estimator='mean' instead."
+            )
+        if is_mixture:
+            denom = jnp.sum(r_map, axis=-1, keepdims=True) - n_genes
+        else:
+            denom = jnp.sum(r_map) - n_genes
+        if jnp.any(denom <= 0):
+            raise ValueError(
+                "Dirichlet mode denominator sum(r) - G must be > 0. "
+                "Use estimator='mean' instead."
+            )
+        mean_probabilities = (r_map - 1.0) / denom
+
+    results = {"mean_probabilities": mean_probabilities}
+    if return_concentrations:
+        results["concentrations"] = r_map
+    return results
 
 
 def normalize_counts_from_posterior(
