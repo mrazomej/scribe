@@ -348,7 +348,7 @@ class GeneSubsettingMixin:
             getattr(self, "_original_n_genes", None) or self.n_genes
         )
 
-        return type(self)(
+        subset = type(self)(
             params=new_params,
             loss_history=self.loss_history,
             n_cells=self.n_cells,
@@ -367,3 +367,10 @@ class GeneSubsettingMixin:
             _original_n_genes=original_n_genes,
             _gene_axis_by_key=getattr(self, "_gene_axis_by_key", None),
         )
+
+        # Carry over per-dataset cell counts for downstream get_dataset()
+        per_ds = getattr(self, "_n_cells_per_dataset", None)
+        if per_ds is not None:
+            subset._n_cells_per_dataset = per_ds
+
+        return subset

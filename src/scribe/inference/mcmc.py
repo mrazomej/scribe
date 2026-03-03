@@ -124,7 +124,7 @@ def _run_mcmc_inference(
         model_type = f"{model_config.base_model}_mix"
 
     # Package results using the factory
-    return MCMCResultsFactory.create_results(
+    results = MCMCResultsFactory.create_results(
         mcmc_results=mcmc,
         adata=adata,
         model_config=model_config,
@@ -135,3 +135,12 @@ def _run_mcmc_inference(
         n_components=model_config.n_components,
         prior_params=model_config.get_active_priors(),
     )
+
+    # Record per-dataset cell counts so get_dataset() can set correct n_cells
+    if dataset_indices is not None and model_config.n_datasets is not None:
+        n_ds = model_config.n_datasets
+        results._n_cells_per_dataset = jnp.array(
+            [int(jnp.sum(dataset_indices == d)) for d in range(n_ds)]
+        )
+
+    return results

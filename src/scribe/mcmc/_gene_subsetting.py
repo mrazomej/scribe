@@ -82,7 +82,7 @@ class GeneSubsettingMixin:
         new_var = self.var.iloc[bool_index] if self.var is not None else None
         new_samples = self._subset_posterior_samples(self.samples, bool_index)
 
-        return ScribeMCMCResults(
+        subset = ScribeMCMCResults(
             samples=new_samples,
             n_cells=self.n_cells,
             n_genes=int(
@@ -100,6 +100,13 @@ class GeneSubsettingMixin:
             n_vars=new_var.shape[0] if new_var is not None else None,
             n_components=self.n_components,
         )
+
+        # Carry over per-dataset cell counts for downstream get_dataset()
+        per_ds = getattr(self, "_n_cells_per_dataset", None)
+        if per_ds is not None:
+            subset._n_cells_per_dataset = per_ds
+
+        return subset
 
     # --------------------------------------------------------------------------
     # Internal: metadata-aware sample subsetting

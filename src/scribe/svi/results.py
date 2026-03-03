@@ -110,6 +110,13 @@ class ScribeSVIResults(
     n_components: Optional[int] = None
     denoised_counts: Optional[jnp.ndarray] = None
 
+    # Per-dataset cell counts for multi-dataset models.  Set during
+    # inference when ``dataset_indices`` is available.  Used by
+    # ``get_dataset(d)`` to set the correct ``n_cells`` on the returned
+    # single-dataset view so that downstream PPC generation works with
+    # the right number of cells.
+    _n_cells_per_dataset: Optional[jnp.ndarray] = None
+
     # Internal: tracks original gene count before subsetting (for amortizer
     # validation) When using amortized capture probability, counts must have
     # shape (n_cells, _original_n_genes) because the amortizer computes

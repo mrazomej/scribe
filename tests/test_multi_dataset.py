@@ -1015,3 +1015,183 @@ class TestCreateModelMultiDataset:
             "Expected at least mu/r and p/phi dataset specs, "
             f"got {[s.name for s in dataset_specs]}"
         )
+
+
+# ==============================================================================
+# _n_cells_per_dataset propagation through get_dataset
+# ==============================================================================
+
+
+class TestNCellsPerDataset:
+    """Test that _n_cells_per_dataset is correctly used by get_dataset()."""
+
+    def test_svi_get_dataset_uses_per_dataset_n_cells(self):
+        """SVI get_dataset() sets n_cells from _n_cells_per_dataset."""
+        from scribe.svi.results import ScribeSVIResults
+
+        n_datasets = 3
+        n_genes = 5
+        per_ds_counts = jnp.array([40, 30, 30])
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[_make_ds_exp_spec("r")],
+        )
+        params = {
+            "log_r_loc": jnp.zeros((n_datasets, n_genes)),
+            "log_r_scale": jnp.ones((n_datasets, n_genes)),
+            "log_r_dataset_loc_loc": jnp.zeros(n_genes),
+            "log_r_dataset_loc_scale": jnp.ones(n_genes),
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=100,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+        results._n_cells_per_dataset = per_ds_counts
+
+        for d in range(n_datasets):
+            ds_view = results.get_dataset(d)
+            assert ds_view.n_cells == int(per_ds_counts[d])
+
+    def test_svi_get_dataset_falls_back_to_total_without_field(self):
+        """Without _n_cells_per_dataset, get_dataset() keeps total n_cells."""
+        from scribe.svi.results import ScribeSVIResults
+
+        n_datasets = 2
+        n_genes = 5
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[_make_ds_exp_spec("r")],
+        )
+        params = {
+            "log_r_loc": jnp.zeros((n_datasets, n_genes)),
+            "log_r_scale": jnp.ones((n_datasets, n_genes)),
+            "log_r_dataset_loc_loc": jnp.zeros(n_genes),
+            "log_r_dataset_loc_scale": jnp.ones(n_genes),
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=100,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+        # _n_cells_per_dataset defaults to None
+
+        ds_view = results.get_dataset(0)
+        assert ds_view.n_cells == 100
+
+    def test_mcmc_get_dataset_uses_per_dataset_n_cells(self):
+        """MCMC get_dataset() sets n_cells from _n_cells_per_dataset."""
+        from scribe.mcmc.results import ScribeMCMCResults
+
+        n_datasets = 2
+        n_genes = 5
+        n_samples = 10
+        per_ds_counts = jnp.array([60, 40])
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[_make_ds_exp_spec("r")],
+        )
+        samples = {
+            "r": jnp.ones((n_samples, n_datasets, n_genes)),
+            "log_r_dataset_loc": jnp.zeros((n_samples, n_genes)),
+        }
+        results = ScribeMCMCResults(
+            samples=samples,
+            n_cells=100,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+        results._n_cells_per_dataset = per_ds_counts
+
+        for d in range(n_datasets):
+            ds_view = results.get_dataset(d)
+            assert ds_view.n_cells == int(per_ds_counts[d])
+
+    def test_mcmc_get_dataset_falls_back_to_total_without_field(self):
+        """Without _n_cells_per_dataset, MCMC keeps total n_cells."""
+        from scribe.mcmc.results import ScribeMCMCResults
+
+        n_datasets = 2
+        n_genes = 5
+        n_samples = 10
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[_make_ds_exp_spec("r")],
+        )
+        samples = {
+            "r": jnp.ones((n_samples, n_datasets, n_genes)),
+            "log_r_dataset_loc": jnp.zeros((n_samples, n_genes)),
+        }
+        results = ScribeMCMCResults(
+            samples=samples,
+            n_cells=100,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+
+        ds_view = results.get_dataset(0)
+        assert ds_view.n_cells == 100
+
+    def test_three_axis_indexing_preserves_per_dataset_n_cells(self):
+        """results[:, :, d] also gets the correct per-dataset n_cells."""
+        from scribe.svi.results import ScribeSVIResults
+
+        n_datasets = 2
+        n_genes = 5
+        per_ds_counts = jnp.array([55, 45])
+
+        config = ModelConfig(
+            base_model="nbdm",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[_make_ds_exp_spec("r")],
+        )
+        params = {
+            "log_r_loc": jnp.zeros((n_datasets, n_genes)),
+            "log_r_scale": jnp.ones((n_datasets, n_genes)),
+            "log_r_dataset_loc_loc": jnp.zeros(n_genes),
+            "log_r_dataset_loc_scale": jnp.ones(n_genes),
+        }
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0]),
+            n_cells=100,
+            n_genes=n_genes,
+            model_type="nbdm",
+            model_config=config,
+            prior_params={},
+        )
+        results._n_cells_per_dataset = per_ds_counts
+
+        # 3-axis indexing: results[:, :, d] calls get_dataset(d)
+        ds_view = results[:, :, 1]
+        assert ds_view.n_cells == 45
