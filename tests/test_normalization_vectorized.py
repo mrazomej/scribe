@@ -21,7 +21,10 @@ from scribe.core.normalization_logistic import (
     fit_logistic_normal_from_posterior,
     _DEFAULT_BATCH_SIZE,
 )
-from scribe.core.normalization import normalize_counts_from_posterior
+from scribe.core.normalization import (
+    normalize_counts_from_posterior,
+    normalize_counts_from_map,
+)
 from scribe.de._gaussianity import gaussianity_diagnostics
 
 
@@ -662,6 +665,141 @@ class TestNormalizeCountsFromPosterior:
         )
         row_sums = jnp.sum(result["samples"], axis=-1)
         assert jnp.allclose(row_sums, 1.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# normalize_counts_from_map  (deterministic, parameterization-aware)
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeCountsFromMap:
+    """Integration tests for parameterization-aware MAP normalization."""
+
+    def test_non_mixture_mu_direct_path(self):
+        """When mu is present, mean normalization should use mu directly."""
+        map_estimates = {
+            "r": jnp.array([2.0, 4.0, 8.0]),
+            "mu": jnp.array([1.0, 2.0, 7.0]),
+        }
+        result = normalize_counts_from_map(
+            map_estimates=map_estimates,
+            n_components=None,
+            estimator="mean",
+            verbose=False,
+        )
+        expected = jnp.array([0.1, 0.2, 0.7])
+        assert jnp.allclose(result["mean_probabilities"], expected, atol=1e-6)
+
+    def test_non_mixture_gene_specific_p_path(self):
+        """Gene-specific p_g should induce hierarchical mu = r*(1-p)/p scaling."""
+        map_estimates = {
+            "r": jnp.array([2.0, 2.0]),
+            "p": jnp.array([0.5, 0.2]),
+        }
+        result = normalize_counts_from_map(
+            map_estimates=map_estimates, estimator="mean", verbose=False
+        )
+        # mu = [2*(0.5/0.5), 2*(0.8/0.2)] = [2, 8] -> rho = [0.2, 0.8]
+        expected = jnp.array([0.2, 0.8])
+        assert jnp.allclose(result["mean_probabilities"], expected, atol=1e-6)
+
+    def test_non_mixture_gene_specific_phi_path(self):
+        """Gene-specific phi_g should induce hierarchical mu = r/phi scaling."""
+        map_estimates = {
+            "r": jnp.array([2.0, 8.0]),
+            "phi": jnp.array([1.0, 4.0]),
+        }
+        result = normalize_counts_from_map(
+            map_estimates=map_estimates, estimator="mean", verbose=False
+        )
+        # mu = [2/1, 8/4] = [2, 2] -> rho = [0.5, 0.5]
+        expected = jnp.array([0.5, 0.5])
+        assert jnp.allclose(result["mean_probabilities"], expected, atol=1e-6)
+
+    def test_non_mixture_shared_p_fallback(self):
+        """Shared scalar p should fall back to Dirichlet mean r/sum(r)."""
+        map_estimates = {
+            "r": jnp.array([2.0, 4.0]),
+            "p": jnp.array(0.3),
+        }
+        result = normalize_counts_from_map(
+            map_estimates=map_estimates, estimator="mean", verbose=False
+        )
+        expected = jnp.array([1.0 / 3.0, 2.0 / 3.0])
+        assert jnp.allclose(result["mean_probabilities"], expected, atol=1e-6)
+
+    def test_mixture_shape_and_simplex(self):
+        """Mixture mean normalization should return (K, D) and sum to one."""
+        map_estimates = {
+            "r": jnp.array([[2.0, 3.0, 5.0], [1.0, 4.0, 5.0]]),
+            "mu": jnp.array([[2.0, 3.0, 5.0], [1.0, 4.0, 5.0]]),
+        }
+        result = normalize_counts_from_map(
+            map_estimates=map_estimates,
+            n_components=2,
+            estimator="mean",
+            verbose=False,
+        )
+        assert result["mean_probabilities"].shape == (2, 3)
+        assert jnp.allclose(
+            jnp.sum(result["mean_probabilities"], axis=-1),
+            jnp.ones((2,)),
+            atol=1e-6,
+        )
+
+    def test_mode_invalid_when_r_le_one(self):
+        """Dirichlet mode should raise when any r_g <= 1."""
+        map_estimates = {"r": jnp.array([0.9, 2.0, 3.0])}
+        with pytest.raises(ValueError, match="all r_g > 1"):
+            normalize_counts_from_map(
+                map_estimates=map_estimates, estimator="mode", verbose=False
+            )
+
+    def test_mode_rejects_gene_specific_p(self):
+        """Dirichlet mode should raise in gene-specific p_g settings."""
+        map_estimates = {
+            "r": jnp.array([2.0, 3.0, 4.0]),
+            "p": jnp.array([0.2, 0.3, 0.4]),
+        }
+        with pytest.raises(ValueError, match="not supported"):
+            normalize_counts_from_map(
+                map_estimates=map_estimates, estimator="mode", verbose=False
+            )
+
+    def test_mode_shared_p_formula(self):
+        """Shared-p mode should match the closed-form Dirichlet mode."""
+        map_estimates = {
+            "r": jnp.array([2.0, 3.0, 5.0]),
+            "p": jnp.array(0.2),
+        }
+        result = normalize_counts_from_map(
+            map_estimates=map_estimates, estimator="mode", verbose=False
+        )
+        # (r - 1) / (sum(r) - G) = [1,2,4] / (10-3) = [1/7, 2/7, 4/7]
+        expected = jnp.array([1.0 / 7.0, 2.0 / 7.0, 4.0 / 7.0])
+        assert jnp.allclose(result["mean_probabilities"], expected, atol=1e-6)
+
+    def test_mu_path_matches_rp_path_when_consistent(self):
+        """mu-direct and reconstructed-rp paths should agree when equivalent."""
+        r = jnp.array([2.0, 2.0])
+        p = jnp.array([0.5, 0.2])
+        mu = r * (1.0 - p) / p
+
+        result_mu = normalize_counts_from_map(
+            map_estimates={"r": r, "mu": mu},
+            estimator="mean",
+            verbose=False,
+        )
+        result_rp = normalize_counts_from_map(
+            map_estimates={"r": r, "p": p},
+            estimator="mean",
+            verbose=False,
+        )
+        assert jnp.allclose(
+            result_mu["mean_probabilities"],
+            result_rp["mean_probabilities"],
+            atol=1e-6,
+        )
 
 
 # ---------------------------------------------------------------------------

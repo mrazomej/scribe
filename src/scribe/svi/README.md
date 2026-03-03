@@ -453,6 +453,37 @@ gene_component_subset = results[1:4, [1, 2]]
 - Automatic count normalization using posterior estimates
 - Integration with SCRIBE's normalization framework
 
+```python
+# Deterministic MAP-based normalization (no posterior sampling)
+norm_map = results.normalize_counts_map(
+    estimator="mean",   # "mean" (recommended) or "mode" (shared-p only)
+    use_mean=True,      # replace undefined MAP values with posterior means
+    counts=observed_counts,  # required for amortized capture models
+)
+rho_hat = norm_map["mean_probabilities"]  # (n_genes,) or (n_components, n_genes)
+
+# Posterior-sampling normalization (captures parameter uncertainty)
+norm_post = results.normalize_counts(
+    n_samples_dirichlet=1,
+    batch_size=2048,
+)
+```
+
+`normalize_counts_map(estimator="mean")` is parameterization-aware:
+
+- If MAP includes `mu` (for example with `mean_prob` / `mean_odds` styles),
+  it uses `rho = mu / sum(mu)` directly.
+- If gene-specific `p_g` or `phi_g` is detected, it applies the hierarchical
+  scaling implied by the paper derivation:
+  - `mu = r * (1 - p) / p` or equivalently `mu = r / phi`,
+  - then `rho = mu / sum(mu)`.
+- Otherwise (shared-p Dirichlet case), it uses `rho = r / sum(r)`.
+
+`estimator="mode"` uses the Dirichlet mode
+`rho = (r - 1) / (sum(r) - G)` and is only valid in shared-p Dirichlet
+settings where all `r_g > 1`. For gene-specific `p_g`/`phi_g` cases, use
+`estimator="mean"`.
+
 **Statistical Analysis:**
 - Hellinger and Jensen-Shannon divergence calculations
 - KL divergence between distributions
@@ -582,6 +613,8 @@ ScribeSVIResults
    - Purpose: Count normalization methods
    - Methods:
      - `normalize_counts(batch_size=2048)`: Dirichlet-based normalization
+     - `normalize_counts_map(estimator="mean")`: Deterministic MAP-based
+       normalization with automatic parameterization-aware behavior
      - `fit_logistic_normal(batch_size=2048, svd_method="randomized")`:
        Logistic-Normal distribution fitting
    - Both methods use **batched Dirichlet sampling** to process posterior
