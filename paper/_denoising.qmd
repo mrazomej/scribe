@@ -392,13 +392,13 @@ The mean of a negative binomial random variable $X \sim \text{NB}(\alpha, q)$
 with PMF $\binom{x + \alpha - 1}{x} q^{\alpha} (1-q)^x$ is
 
 $$
-\mathbb{E}[X] = \alpha \cdot \frac{1-q}{q}.
+\langle X \rangle = \alpha \cdot \frac{1-q}{q}.
 $${#eq-denoising-nb-mean}
 
 Applying this to $d_g \mid u_g \sim \text{NB}(r_g + u_g, \, p')$:
 
 $$
-\mathbb{E}[d_g \mid u_g] = (r_g + u_g) \cdot \frac{1 - p'}{p'}.
+\langle d_g \mid u_g \rangle = (r_g + u_g) \cdot \frac{1 - p'}{p'}.
 $${#eq-denoising-expected-dropped}
 
 Computing $1 - p'$ from @eq-denoising-pprime-final:
@@ -410,14 +410,14 @@ $${#eq-denoising-one-minus-pprime-expanded}
 Substituting:
 
 $$
-\mathbb{E}[d_g \mid u_g] = (r_g + u_g) \cdot 
+\langle d_g \mid u_g \rangle = (r_g + u_g) \cdot 
 \frac{(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
 $${#eq-denoising-expected-dropped-explicit}
 
 The posterior mean of the denoised count is therefore
 
 $$
-\mathbb{E}[m_g \mid u_g] = u_g + \mathbb{E}[d_g \mid u_g] 
+\langle m_g \mid u_g \rangle = u_g + \langle d_g \mid u_g \rangle 
 = u_g + (r_g + u_g) \cdot 
 \frac{(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
 $${#eq-denoising-expected-true-intermediate}
@@ -426,7 +426,7 @@ To simplify this expression, we combine the two terms over a common denominator.
 Writing $u_g$ as $u_g \cdot \frac{p'}{p'}$:
 
 $$
-\mathbb{E}[m_g \mid u_g] = 
+\langle m_g \mid u_g \rangle = 
 \frac{u_g \, [\nu_c + p(1-\nu_c)] + (r_g + u_g)(1-\nu_c)(1-p)}
 {\nu_c + p(1-\nu_c)}.
 $${#eq-denoising-expected-true-common-denom}
@@ -456,7 +456,7 @@ Therefore, the posterior mean takes the compact form
 
 $$
 \boxed{
-\mathbb{E}[m_g \mid u_g] = 
+\langle m_g \mid u_g \rangle = 
 \frac{u_g + r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
 }
 $${#eq-denoising-posterior-mean}
@@ -475,7 +475,7 @@ The posterior mean exhibits sensible behavior in several limiting cases:
 denoising is needed. Substituting $\nu_c = 1$:
 
 $$
-\mathbb{E}[m_g \mid u_g, \nu_c = 1] = \frac{u_g + 0}{1 + 0} = u_g.
+\langle m_g \mid u_g, \nu_c = 1 \rangle = \frac{u_g + 0}{1 + 0} = u_g.
 $${#eq-denoising-limit-perfect-capture}
 
 The denoised count equals the observed count, as expected.
@@ -484,7 +484,7 @@ The denoised count equals the observed count, as expected.
 posterior mean is
 
 $$
-\mathbb{E}[m_g \mid u_g = 0] = \frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)},
+\langle m_g \mid u_g = 0 \rangle = \frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)},
 $${#eq-denoising-limit-zero-obs}
 
 which is strictly positive whenever $\nu_c < 1$ and $p < 1$. This reflects the
@@ -496,7 +496,7 @@ the capture probability.
 improper flat prior on the positive reals), the posterior mean becomes
 
 $$
-\mathbb{E}[m_g \mid u_g, r_g \to 0] \approx 
+\langle m_g \mid u_g, r_g \to 0 \rangle \approx 
 \frac{u_g}{\nu_c + p(1-\nu_c)},
 $${#eq-denoising-limit-weak-prior}
 
@@ -509,7 +509,7 @@ the prior dispersion, the data dominate and we similarly recover the rescaling
 result:
 
 $$
-\mathbb{E}[m_g \mid u_g \gg r_g] \approx 
+\langle m_g \mid u_g \gg r_g \rangle \approx 
 \frac{u_g}{\nu_c + p(1-\nu_c)}.
 $${#eq-denoising-limit-large-count}
 
@@ -652,21 +652,21 @@ gated) provides information that updates the prior.
 The posterior mean of the denoised count for $u_g = 0$ in the ZINB model is
 
 $$
-\mathbb{E}[m_g \mid u_g = 0] = w \cdot \mathbb{E}_{\text{gate}}[m_g] + 
-(1-w) \cdot \mathbb{E}_{\text{NB}}[m_g \mid u_g = 0].
+\langle m_g \mid u_g = 0 \rangle = w \cdot \langle m_g \rangle_{\text{gate}} + 
+(1-w) \cdot \langle m_g \mid u_g = 0 \rangle_{\text{NB}}.
 $${#eq-denoising-zinb-zero-mean}
 
 The mean under the gate pathway is the prior mean:
 
 $$
-\mathbb{E}_{\text{gate}}[m_g] = r_g \cdot \frac{1-p}{p}.
+\langle m_g \rangle_{\text{gate}} = r_g \cdot \frac{1-p}{p}.
 $${#eq-denoising-gate-mean}
 
 The mean under the NB pathway with $u_g = 0$ follows from
 @eq-denoising-posterior-mean:
 
 $$
-\mathbb{E}_{\text{NB}}[m_g \mid u_g = 0] = 
+\langle m_g \mid u_g = 0 \rangle_{\text{NB}} = 
 \frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
 $${#eq-denoising-nb-zero-mean}
 
@@ -674,7 +674,7 @@ Substituting:
 
 $$
 \boxed{
-\mathbb{E}[m_g \mid u_g = 0] = w \cdot \frac{r_g(1-p)}{p} + 
+\langle m_g \mid u_g = 0 \rangle = w \cdot \frac{r_g(1-p)}{p} + 
 (1-w) \cdot \frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
 }
 $${#eq-denoising-zinb-zero-mean-final}
@@ -703,7 +703,7 @@ $$
 m_g \mid u_g \sim u_g + \text{NB}\!\left(r_g + u_g, \; 
 \nu_c + p(1-\nu_c)\right),
 \qquad
-\mathbb{E}[m_g \mid u_g] = 
+\langle m_g \mid u_g \rangle = 
 \frac{u_g + r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
 $${#eq-denoising-summary-nb}
 
@@ -715,7 +715,7 @@ For $u_g = 0$: mixture of gate and NB pathways with weight $w = g / [g +
 (1-g)\hat{p}^{r_g}]$.
 
 $$
-\mathbb{E}[m_g \mid u_g = 0] = 
+\langle m_g \mid u_g = 0 \rangle = 
 w \cdot \frac{r_g(1-p)}{p} + (1-w) \cdot 
 \frac{r_g(1-\nu_c)(1-p)}{\nu_c + p(1-\nu_c)}.
 $${#eq-denoising-summary-zinb}
@@ -728,7 +728,7 @@ formulas. In this case $p' = 1$ and $d_g = 0$ almost surely, so $m_g = u_g$.
 The zero-inflation denoising still applies for $u_g = 0$:
 
 $$
-\mathbb{E}[m_g \mid u_g = 0] = w \cdot \frac{r_g(1-\hat{p})}{\hat{p}},
+\langle m_g \mid u_g = 0 \rangle = w \cdot \frac{r_g(1-\hat{p})}{\hat{p}},
 $${#eq-denoising-summary-zinb-only}
 
 where $w = g / [g + (1-g)\hat{p}^{r_g}]$ and the NB pathway contributes

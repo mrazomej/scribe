@@ -181,7 +181,7 @@ $${#eq-diffexp-bio-poisson-gamma}
 
 then marginally $m_g \sim \text{NB}(r_g, p_g)$. Here we parameterise the Gamma
 with shape $\alpha = r_g$ and rate $\beta = p_g / (1 - p_g)$, so that
-$\mathbb{E}[\lambda_g] = r_g (1 - p_g)/p_g = \mu_g$ and
+$\langle \lambda_g \rangle = r_g (1 - p_g)/p_g = \mu_g$ and
 $\text{Var}(\lambda_g) = r_g (1 - p_g)^2 / p_g^2$.
 
 The latent rate $\lambda_g$ is a continuous relaxation of the NB: it captures
@@ -226,17 +226,17 @@ The KL divergence is
 
 $$
 \text{KL}(P \| Q)
-= \mathbb{E}_P\!\left[\log f(x; \alpha_P, \beta_P) - \log f(x; \alpha_Q, \beta_Q)\right].
+= \langle \log f(x; \alpha_P, \beta_P) - \log f(x; \alpha_Q, \beta_Q) \rangle_P.
 $${#eq-diffexp-bio-kl-def}
 
 Substituting the log-densities,
 
 $$
 \text{KL}(P \| Q)
-= \mathbb{E}_P\bigl[
+= \langle 
   \alpha_P \log\beta_P - \log\Gamma(\alpha_P) + (\alpha_P - 1)\log x - \beta_P x
   - \alpha_Q \log\beta_Q + \log\Gamma(\alpha_Q) - (\alpha_Q - 1)\log x + \beta_Q x
-\bigr].
+\bigr \rangle_P\bigl.
 $$
 
 Grouping terms,
@@ -245,12 +245,12 @@ $$
 \text{KL}(P \| Q) =
   \alpha_P \log\beta_P - \alpha_Q \log\beta_Q
   - \log\Gamma(\alpha_P) + \log\Gamma(\alpha_Q)
-  + (\alpha_P - \alpha_Q)\,\mathbb{E}_P[\log x]
-  - (\beta_P - \beta_Q)\,\mathbb{E}_P[x].
+  + (\alpha_P - \alpha_Q)\,\langle \log x \rangle_P
+  - (\beta_P - \beta_Q)\,\langle x \rangle_P.
 $$
 
-Using the standard Gamma moment identities $\mathbb{E}_P[\log x] =
-\psi(\alpha_P) - \log\beta_P$ and $\mathbb{E}_P[x] = \alpha_P / \beta_P$,
+Using the standard Gamma moment identities $\langle \log x \rangle_P =
+\psi(\alpha_P) - \log\beta_P$ and $\langle x \rangle_P = \alpha_P / \beta_P$,
 
 $$
 \text{KL}(P \| Q) =

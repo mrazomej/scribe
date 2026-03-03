@@ -44,7 +44,7 @@ model from @sec-denoising. For a single cell $c$ belonging to dataset $d$, the
 expected UMI count for gene $g$ under the mean-odds parameterization is
 
 $$
-\mathbb{E}[u_{gc}] = (1 - \pi_g) \cdot \mu_g \cdot \frac{1}{1 + \phi} \cdot \nu_c,
+\langle u_{gc} \rangle = (1 - \pi_g) \cdot \mu_g \cdot \frac{1}{1 + \phi} \cdot \nu_c,
 $${#eq-hdata-expected-count}
 
 where $\mu_g$ is the biological mean expression, $\phi$ is the odds ratio
@@ -71,7 +71,7 @@ More precisely, let $\underline{\theta}^{(1)} = (\mu_g^{(1)}, \phi^{(1)},
 count for gene $g$ in cell $c$ of dataset $d$ is
 
 $$
-\mathbb{E}[u_{gc}^{(d)}] = \mu_g^{(d)} \cdot \frac{1}{1 + \phi^{(d)}} \cdot \nu_c^{(d)}.
+\langle u_{gc}^{(d)} \rangle = \mu_g^{(d)} \cdot \frac{1}{1 + \phi^{(d)}} \cdot \nu_c^{(d)}.
 $${#eq-hdata-degeneracy}
 
 When the models are fit independently, the data constrain only the **product**
@@ -269,7 +269,7 @@ Combining the dataset-specific mean expression with the VCP model, the expected
 UMI count for gene $g$ in cell $c$ belonging to dataset $d = \sigma(c)$ is
 
 $$
-\mathbb{E}[u_{gc}] = (1 - \pi_g^{(d)}) \cdot \mu_g^{(d)} \cdot
+\langle u_{gc} \rangle = (1 - \pi_g^{(d)}) \cdot \mu_g^{(d)} \cdot
 \frac{1}{1 + \phi^{(d)}} \cdot \nu_c,
 $${#eq-hdata-expected-count-full}
 
@@ -408,7 +408,7 @@ $${#eq-hdata-kappa}
 so that the posterior mean of $\log(\mu_g^{(d)})$ is approximately
 
 $$
-\mathbb{E}[\log(\mu_g^{(d)}) \mid \text{data}]
+\langle \log(\mu_g^{(d)}) \mid \text{data} \rangle
 \;\approx\; (1 - \kappa_g)\,\log(\hat{\mu}_g^{(d)})
 \;+\; \kappa_g \, \log(\mu_g),
 $${#eq-hdata-horseshoe-posterior-mean}
@@ -592,7 +592,7 @@ datasets 1 and 2 for the same gene $g$ and cells with similar capture
 efficiency:
 
 $$
-\frac{\mathbb{E}[u_{gc}^{(2)}]}{\mathbb{E}[u_{gc}^{(1)}]} =
+\frac{\langle u_{gc}^{(2)} \rangle}{\langle u_{gc}^{(1)} \rangle} =
 \frac{\mu_g^{(2)}}{\mu_g^{(1)}} \cdot
 \frac{1 + \phi^{(1)}}{1 + \phi^{(2)}} \cdot
 \frac{\nu_c^{(2)}}{\nu_c^{(1)}}.

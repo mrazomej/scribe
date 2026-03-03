@@ -69,8 +69,8 @@ Gaussian distributions.
 **Mean of the difference.** Using linearity of expectation:
 
 $$
-\mathbb{E}[\underline{\Delta}] = \mathbb{E}[\underline{z}_{A,\text{CLR}}] - 
-\mathbb{E}[\underline{z}_{B,\text{CLR}}] = 
+\langle \underline{\Delta} \rangle = \langle \underline{z}_{A,\text{CLR}} \rangle - 
+\langle \underline{z}_{B,\text{CLR}} \rangle = 
 \underline{\mu}_{A,\text{CLR}} - \underline{\mu}_{B,\text{CLR}}.
 $${#eq-diffexp-delta-mean}
 
@@ -88,31 +88,31 @@ $\underline{X}$ and $\underline{Y}$,
 
 $$
 \text{Cov}(\underline{X} - \underline{Y}) = 
-\mathbb{E}[(\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top}] - 
-\mathbb{E}[\underline{X} - \underline{Y}]\mathbb{E}[\underline{X} - \underline{Y}]^{\top}.
+\langle (\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top} \rangle - 
+\langle \underline{X} - \underline{Y} \rangle\langle \underline{X} - \underline{Y} \rangle^{\top}.
 $${#eq-diffexp-cov-expansion}
 
 Expanding the first term:
 
 $$
-\mathbb{E}[(\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top}] = 
-\mathbb{E}[\underline{X}\underline{X}^{\top}] - 
-\mathbb{E}[\underline{X}\underline{Y}^{\top}] - 
-\mathbb{E}[\underline{Y}\underline{X}^{\top}] + 
-\mathbb{E}[\underline{Y}\underline{Y}^{\top}].
+\langle (\underline{X} - \underline{Y})(\underline{X} - \underline{Y})^{\top} \rangle = 
+\langle \underline{X}\underline{X}^{\top} \rangle - 
+\langle \underline{X}\underline{Y}^{\top} \rangle - 
+\langle \underline{Y}\underline{X}^{\top} \rangle + 
+\langle \underline{Y}\underline{Y}^{\top} \rangle.
 $${#eq-diffexp-cov-expansion-step2}
 
-By independence, $\mathbb{E}[\underline{X}\underline{Y}^{\top}] =
-\mathbb{E}[\underline{X}]\mathbb{E}[\underline{Y}]^{\top}$ and
-$\mathbb{E}[\underline{Y}\underline{X}^{\top}] =
-\mathbb{E}[\underline{Y}]\mathbb{E}[\underline{X}]^{\top}$. Therefore,
+By independence, $\langle \underline{X}\underline{Y}^{\top} \rangle =
+\langle \underline{X} \rangle\langle \underline{Y} \rangle^{\top}$ and
+$\langle \underline{Y}\underline{X}^{\top} \rangle =
+\langle \underline{Y} \rangle\langle \underline{X} \rangle^{\top}$. Therefore,
 
 $$
 \text{Cov}(\underline{X} - \underline{Y}) = 
-\left(\mathbb{E}[\underline{X}\underline{X}^{\top}] - 
-\mathbb{E}[\underline{X}]\mathbb{E}[\underline{X}]^{\top}\right) + 
-\left(\mathbb{E}[\underline{Y}\underline{Y}^{\top}] - 
-\mathbb{E}[\underline{Y}]\mathbb{E}[\underline{Y}]^{\top}\right) = 
+\left(\langle \underline{X}\underline{X}^{\top} \rangle - 
+\langle \underline{X} \rangle\langle \underline{X} \rangle^{\top}\right) + 
+\left(\langle \underline{Y}\underline{Y}^{\top} \rangle - 
+\langle \underline{Y} \rangle\langle \underline{Y} \rangle^{\top}\right) = 
 \text{Cov}(\underline{X}) + \text{Cov}(\underline{Y}).
 $${#eq-diffexp-cov-sum}
 

@@ -659,7 +659,7 @@ between two extremes:
 The overall posterior mean is a weighted combination of these shrinkage levels:
 
 $$
-\mathbb{E}[\beta_g \mid \hat{\Delta}_g, \underline{w}^*] =
+\langle \beta_g \mid \hat{\Delta}_g, \underline{w}^* \rangle =
 \sum_{k=0}^{K} \gamma_{gk}^* \, m_{gk} =
 \hat{\Delta}_g \sum_{k=0}^{K} \gamma_{gk}^* \, \alpha_{gk}.
 $${#eq-diffexp-eb-shrunk-mean}
@@ -833,7 +833,7 @@ suggest that nearly all genes are DE---the prior places negligible mass on the
 null component. In this regime, $\gamma_{g0}^* \approx 0$ for all genes, so the
 dominant components are the large-scale ones with
 $\alpha_{gk} \approx 1$. The shrunk posterior mean
-$\mathbb{E}[\beta_g \mid \hat{\Delta}_g] \approx \hat{\Delta}_g$, and the
+$\langle \beta_g \mid \hat{\Delta}_g \rangle \approx \hat{\Delta}_g$, and the
 shrunk lfsr converges to the raw empirical lfsr. The shrinkage layer becomes
 a no-op, ensuring backward compatibility.
 
