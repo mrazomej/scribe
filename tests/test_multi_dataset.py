@@ -1765,6 +1765,33 @@ class TestHorseshoeCreateModel:
         assert isinstance(p_spec, HorseshoeHierarchicalSigmoidNormalSpec)
         assert p_spec.raw_name == "p_raw"
 
+    def test_horseshoe_gene_level_phi_mean_odds(self):
+        """horseshoe_p with mean_odds should use ExpNormalSpec for phi."""
+        from scribe.models.builders.parameter_specs import (
+            HorseshoeHierarchicalExpNormalSpec,
+        )
+
+        b = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+        )
+        b._horseshoe_p = True
+        config = b.build()
+        model, guide, specs = create_model(config)
+
+        assert callable(model)
+        assert callable(guide)
+
+        spec_names = [s.name for s in specs]
+        assert "tau_phi" in spec_names
+        assert "lambda_phi" in spec_names
+
+        phi_spec = next(s for s in specs if s.name == "phi")
+        assert isinstance(phi_spec, HorseshoeHierarchicalExpNormalSpec)
+        assert phi_spec.raw_name == "phi_raw"
+
     def test_horseshoe_gene_level_gate(self):
         """create_model with horseshoe_gate (gene-level)."""
         from scribe.models.builders.parameter_specs import (

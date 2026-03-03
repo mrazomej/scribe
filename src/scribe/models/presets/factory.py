@@ -44,6 +44,7 @@ from ..builders.parameter_specs import (
     HierarchicalSigmoidNormalSpec,
     HorseshoeDatasetExpNormalSpec,
     HorseshoeDatasetSigmoidNormalSpec,
+    HorseshoeHierarchicalExpNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
     InverseGammaSpec,
     NormalWithTransformSpec,
@@ -1291,8 +1292,13 @@ def _horseshoe_p(
         elif spec.name == target_name and isinstance(
             spec, (HierarchicalSigmoidNormalSpec, HierarchicalExpNormalSpec)
         ):
-            # Replace the hierarchical spec with horseshoe variant
-            horseshoe_spec = HorseshoeHierarchicalSigmoidNormalSpec(
+            # Select horseshoe spec matching the original transform:
+            # ExpNormal (phi, range (0,inf)) vs SigmoidNormal (p, range (0,1))
+            if isinstance(spec, HierarchicalExpNormalSpec):
+                HorseshoeSpec = HorseshoeHierarchicalExpNormalSpec
+            else:
+                HorseshoeSpec = HorseshoeHierarchicalSigmoidNormalSpec
+            horseshoe_spec = HorseshoeSpec(
                 name=target_name,
                 shape_dims=spec.shape_dims,
                 default_params=spec.default_params,

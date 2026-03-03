@@ -69,6 +69,7 @@ from .parameter_specs import (
     DatasetHierarchicalExpNormalSpec,
     DatasetHierarchicalSigmoidNormalSpec,
     # Horseshoe hierarchical specs (gene-level and dataset-level)
+    HorseshoeHierarchicalExpNormalSpec,
     HorseshoeHierarchicalSigmoidNormalSpec,
     HorseshoeDatasetExpNormalSpec,
     HorseshoeDatasetSigmoidNormalSpec,
@@ -113,6 +114,7 @@ __all__ = [
     "DatasetHierarchicalExpNormalSpec",
     "DatasetHierarchicalSigmoidNormalSpec",
     # Horseshoe specs
+    "HorseshoeHierarchicalExpNormalSpec",
     "HorseshoeHierarchicalSigmoidNormalSpec",
     "HorseshoeDatasetExpNormalSpec",
     "HorseshoeDatasetSigmoidNormalSpec",

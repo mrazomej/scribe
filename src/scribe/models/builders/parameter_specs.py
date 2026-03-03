@@ -1421,6 +1421,96 @@ class HorseshoeHierarchicalSigmoidNormalSpec(
         return constrained
 
 
+class HorseshoeHierarchicalExpNormalSpec(
+    HierarchicalNormalWithTransformSpec
+):
+    """Gene-level horseshoe prior with Exp transform and NCP.
+
+    Identical to ``HorseshoeHierarchicalSigmoidNormalSpec`` but applies
+    an Exp transform so the constrained parameter lives in ``(0, inf)``.
+    Used for ``phi`` (odds ratio) under ``mean_odds`` parameterization.
+
+    Generative model (NCP form)::
+
+        tau       ~ HalfCauchy(tau_0)
+        lambda_g  ~ HalfCauchy(1)
+        c^2       ~ InvGamma(slab_df/2, slab_df*s^2/2)
+        lt_g      = c * lambda_g / sqrt(c^2 + tau^2 * lambda_g^2)
+        z_g       ~ Normal(0, 1)
+        phi_g     = exp(hyper_loc + tau * lt_g * z_g)
+
+    See Also
+    --------
+    HorseshoeHierarchicalSigmoidNormalSpec : Sigmoid variant for p / gate.
+    HorseshoeDatasetExpNormalSpec : Dataset-level variant.
+    """
+
+    tau_name: str = Field(
+        ..., description="Name of the global shrinkage HalfCauchy site"
+    )
+    lambda_name: str = Field(
+        ..., description="Name of the per-gene local scale HalfCauchy site"
+    )
+    c_sq_name: str = Field(
+        ..., description="Name of the slab InverseGamma site"
+    )
+    raw_name: str = Field(
+        ..., description="Sample-site name for the NCP z variable"
+    )
+    uses_ncp: bool = Field(
+        True, description="Flag indicating NCP parameterization"
+    )
+    transform: Transform = Field(
+        default_factory=lambda: dist.transforms.ExpTransform()
+    )
+
+    def sample_hierarchical(
+        self,
+        dims: Dict[str, int],
+        param_values: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
+        """Sample via NCP: z ~ N(0,1), then deterministic Exp transform.
+
+        Parameters
+        ----------
+        dims : Dict[str, int]
+            Dimension sizes.
+        param_values : Dict[str, jnp.ndarray]
+            Must contain ``hyper_loc_name``, ``tau_name``,
+            ``lambda_name``, ``c_sq_name``.
+
+        Returns
+        -------
+        jnp.ndarray
+            Constrained parameter in (0, inf).
+        """
+        loc = param_values[self.hyper_loc_name]
+        tau = param_values[self.tau_name]
+        lam = param_values[self.lambda_name]
+        c_sq = param_values[self.c_sq_name]
+
+        shape = resolve_shape(
+            self.shape_dims,
+            dims,
+            is_mixture=self.is_mixture,
+            is_dataset=self.is_dataset,
+        )
+
+        c = jnp.sqrt(c_sq)
+        eff_scale = tau * c * lam / jnp.sqrt(c_sq + tau**2 * lam**2)
+
+        if shape == ():
+            z_dist = dist.Normal(0.0, 1.0)
+        else:
+            z_dist = dist.Normal(0.0, 1.0).expand(shape).to_event(len(shape))
+        z = numpyro.sample(self.raw_name, z_dist)
+
+        unconstrained = loc + eff_scale * z
+        constrained = self.transform(unconstrained)
+        numpyro.deterministic(self.constrained_name, constrained)
+        return constrained
+
+
 # ==============================================================================
 # Dataset-Level Hierarchical Specification
 # ==============================================================================
