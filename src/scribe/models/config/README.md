@@ -96,14 +96,15 @@ biological knowledge about total cellular mRNA content. The combination of
 | `capture_prior` | `shared_capture_scaling` | Behavior |
 |-----------------|--------------------------|----------|
 | `"default"` | `false` | Standard flat prior (no eta framework) |
-| `"default"` | `true` | Learn shared `mu_eta` with vague prior (data-driven only): log_M0=10.0, sigma_mu=5.0, sigma_M=1.0; no M_0 anchoring |
+| `"default"` | `true` | Learn shared `mu_eta` (data-driven). If `total_mrna_mean` / `total_mrna_log_sigma` are provided (or resolved via `organism`), they anchor `log_M0` / `sigma_M`; otherwise uses vague defaults: log_M0=10.0, sigma_mu=5.0, sigma_M=1.0 |
 | `"biology_informed"` | `false` | Fixed M_0 from organism/total_mrna_mean, no shared parameter |
 | `"biology_informed"` | `true` | Learn shared `mu_eta` centered on M_0 (biology + data) |
 
 - `capture_prior: str` — `"default"` or `"biology_informed"`
 - `shared_capture_scaling: bool` — When True, learn a shared `mu_eta`
-  across datasets. With `"default"`, uses a vague prior (no biological anchor);
-  with `"biology_informed"`, centers the prior on organism-specific M_0.
+  across datasets. With `"default"`, uses user-provided `M_0`/`sigma_M` if
+  available, otherwise a vague prior; with `"biology_informed"`, centers the
+  prior on organism-specific (or user-overridden) `M_0`.
 - `organism: Optional[str]` — Sets default `M_0` for the organism (only used
   when `capture_prior="biology_informed"`): `"human"`, `"mouse"`, `"yeast"`,
   `"ecoli"` (and aliases like `"homo_sapiens"`)
