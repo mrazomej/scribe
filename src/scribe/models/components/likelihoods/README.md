@@ -171,18 +171,32 @@ likelihood = NBWithVCPLikelihood(
 )
 ```
 
-### Biology-Informed Capture Prior
+### Biology-Informed and Data-Driven Capture Priors
 
 VCP likelihoods accept an optional `biology_informed_spec`
 (`BiologyInformedCaptureSpec`) that replaces the flat capture prior with a
-library-size-anchored Normal prior on the latent variable `eta_c`. When active:
+library-size-anchored Normal prior on the latent variable `eta_c`. The
+combination of `capture_prior` and `shared_capture_scaling` yields four modes:
+
+- **`capture_prior="default"` + `shared_capture_scaling=false`**: Standard flat
+  prior (no eta framework).
+- **`capture_prior="default"` + `shared_capture_scaling=true`**: Data-driven
+  only. Learn shared `mu_eta` with vague prior (log_M0=10.0, sigma_mu=5.0,
+  sigma_M=1.0); no M_0 anchoring. Lets the data determine the
+  capture-vs-library-size slope.
+- **`capture_prior="biology_informed"` + `shared_capture_scaling=false`**:
+  Fixed M_0, no shared parameter.
+- **`capture_prior="biology_informed"` + `shared_capture_scaling=true`**: Learn
+  shared `mu_eta` centered on M_0 (biology + data).
+
+When the eta framework is active:
 
 1. **Pre-plate**: Log library sizes are computed from `counts` (or synthetic
    values during dry runs). When `shared_capture_scaling` is enabled, the shared
    `mu_eta` is sampled.
-2. **Inside plate**: `eta_c ~ N(log_M0 - log_L_c, sigma_M^2)` is sampled via
-   `_sample_capture_biology_informed()`, then transformed to `p_capture` or
-   `phi_capture` via exact formulas.
+2. **Inside plate**: `eta_c ~ N(log_M0 - log_L_c, sigma_M^2)` (or centered on
+   `mu_eta` when shared) is sampled via `_sample_capture_biology_informed()`,
+   then transformed to `p_capture` or `phi_capture` via exact formulas.
 
 The helper `_sample_capture_biology_informed()` in `base.py` handles the
 sampling and deterministic transformation.
