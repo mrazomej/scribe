@@ -21,6 +21,40 @@ if TYPE_CHECKING:
 # ==============================================================================
 
 
+def _key_matches_spec(key: str, spec) -> bool:
+    """Check whether a variational-parameter key belongs to a ParamSpec.
+
+    Matches against both ``spec.name`` and any entries in
+    ``spec.alias_names`` (e.g. ``"eta_capture"`` for the biology-informed
+    capture spec whose canonical name is ``"phi_capture"``).
+
+    Parameters
+    ----------
+    key : str
+        Variational parameter name (e.g. ``"eta_capture_loc"``).
+    spec : ParamSpec
+        Specification to test against.
+
+    Returns
+    -------
+    bool
+        True if *key* matches the spec's name or any alias.
+    """
+    # Collect the canonical name plus any reparameterisation aliases
+    names_to_check = [spec.name] + list(
+        getattr(spec, "alias_names", [])
+    )
+    for name in names_to_check:
+        if (
+            key == name
+            or key.startswith(name + "_")
+            or key.startswith("log_" + name + "_")
+            or key.startswith("logit_" + name + "_")
+        ):
+            return True
+    return False
+
+
 def _build_dataset_keys(
     param_specs: list, params: Dict[str, jnp.ndarray], n_datasets: int
 ) -> Set[str]:
@@ -54,13 +88,7 @@ def _build_dataset_keys(
         if "$" in key:
             continue
         for spec in sorted_specs:
-            name = spec.name
-            if (
-                key == name
-                or key.startswith(name + "_")
-                or key.startswith("log_" + name + "_")
-                or key.startswith("logit_" + name + "_")
-            ):
+            if _key_matches_spec(key, spec):
                 if getattr(spec, "is_dataset", False):
                     dataset_keys.add(key)
                 break
@@ -99,13 +127,7 @@ def _build_cell_specific_keys(
         if "$" in key:
             continue
         for spec in sorted_specs:
-            name = spec.name
-            if (
-                key == name
-                or key.startswith(name + "_")
-                or key.startswith("log_" + name + "_")
-                or key.startswith("logit_" + name + "_")
-            ):
+            if _key_matches_spec(key, spec):
                 if getattr(spec, "is_cell_specific", False):
                     cell_keys.add(key)
                 break
@@ -135,13 +157,7 @@ def _match_spec_for_key(key: str, param_specs: list) -> Optional[object]:
         return None
     sorted_specs = sorted(param_specs, key=lambda s: len(s.name), reverse=True)
     for spec in sorted_specs:
-        name = spec.name
-        if (
-            key == name
-            or key.startswith(name + "_")
-            or key.startswith("log_" + name + "_")
-            or key.startswith("logit_" + name + "_")
-        ):
+        if _key_matches_spec(key, spec):
             return spec
     return None
 
