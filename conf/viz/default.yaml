@@ -15,6 +15,7 @@ viz:
   mixture_composition: false  # Only runs when mixture_model=true; barplot of MAP component composition
   annotation_ppc: false  # Only runs when annotation_key is set; per-annotation component PPC
   capture_anchor: false  # Only runs for biology-informed capture prior runs
+  p_capture_scaling: false  # Only runs for VCP models; independent of eta prior
   format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options
@@ -78,3 +79,9 @@ viz:
     n_bins: 50  # Number of bins for eta+log(L) histogram
     scatter_size: 6  # Marker size for eta vs log-library scatter
     scatter_alpha: 0.35  # Marker alpha for eta vs log-library scatter
+
+  # p_capture scaling options
+  p_capture_scaling_opts:
+    n_bins: 30  # Number of quantile bins for trend curves
+    min_cells_per_bin: 5  # Minimum cells required to keep a trend bin
+    assignment_batch_size: 512  # Batch size for mixture assignment probabilities
