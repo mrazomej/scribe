@@ -50,8 +50,7 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.unconstrained()`: Use unconstrained parameterization
 - `.with_hierarchical_p()`: Enable gene-specific p/phi hierarchical prior (requires unconstrained)
 - `.with_hierarchical_gate()`: Enable gene-specific gate hierarchical prior (ZI models only, requires unconstrained)
-- `.with_capture_prior(mode, organism, total_mrna_mean, total_mrna_log_sigma)`: Configure biology-informed capture prior (VCP models)
-- `.with_organism(organism)`: Set organism for biology-informed capture defaults
+- `.with_capture_priors(organism, eta_capture, mu_eta, shared_capture_scaling)`: Configure biology-informed capture prior (VCP models)
 - `.as_mixture(n_components, mixture_params)`: Configure as mixture
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
 - `.with_priors(**priors)`: Set prior parameters

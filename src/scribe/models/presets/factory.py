@@ -307,9 +307,14 @@ def _create_vae_model(
             pre_plate_derived.append(d)
 
     # 8. Apply prior/guide overrides
+    # Capture-prior keys (organism, eta_capture, mu_eta) are handled by
+    # ModelConfig and the registry; filter them out before applying overrides.
+    _CAPTURE_PRIOR_KEYS = {"organism", "eta_capture", "mu_eta"}
     merged_priors = _extract_priors_from_param_specs(model_config.param_specs)
     if priors:
-        merged_priors.update(priors)
+        merged_priors.update(
+            {k: v for k, v in priors.items() if k not in _CAPTURE_PRIOR_KEYS}
+        )
     merged_guides = _extract_guides_from_param_specs(model_config.param_specs)
     if guides:
         merged_guides.update(guides)
@@ -648,10 +653,13 @@ def create_model(
     # ==========================================================================
     # Step 6: Apply user-provided prior/guide overrides
     # ==========================================================================
-    # Merge priors from model_config.param_specs with explicit priors argument
+    # Capture-prior keys are handled by ModelConfig / registry; filter them.
+    _CAPTURE_PRIOR_KEYS = {"organism", "eta_capture", "mu_eta"}
     merged_priors = _extract_priors_from_param_specs(model_config.param_specs)
     if priors:
-        merged_priors.update(priors)
+        merged_priors.update(
+            {k: v for k, v in priors.items() if k not in _CAPTURE_PRIOR_KEYS}
+        )
 
     merged_guides = _extract_guides_from_param_specs(model_config.param_specs)
     if guides:

@@ -1,6 +1,7 @@
 """Base model configuration classes using Pydantic."""
 
-from typing import Optional, Set, Dict, Any, List
+import math
+from typing import Optional, Set, Dict, Any, List, Tuple
 from pydantic import (
     BaseModel,
     Field,
@@ -101,11 +102,38 @@ class ModelConfig(BaseModel):
         d.setdefault("hierarchical_dataset_mu", False)
         d.setdefault("hierarchical_dataset_p", "none")
         d.setdefault("hierarchical_dataset_gate", False)
-        d.setdefault("capture_prior", "default")
         d.setdefault("shared_capture_scaling", False)
-        d.setdefault("organism", None)
-        d.setdefault("total_mrna_mean", None)
-        d.setdefault("total_mrna_log_sigma", None)
+
+        # Migrate legacy top-level capture prior fields into priors dict.
+        # Old pickles may have capture_prior, organism, total_mrna_mean,
+        # total_mrna_log_sigma as top-level fields.
+        old_capture = d.pop("capture_prior", "default")
+        old_organism = d.pop("organism", None)
+        old_mrna_mean = d.pop("total_mrna_mean", None)
+        old_mrna_sigma = d.pop("total_mrna_log_sigma", None)
+        d.pop("total_mrna_mean_bounds", None)
+
+        priors_obj = d.get("priors")
+        if priors_obj is None:
+            priors_obj = PriorOverrides()
+            d["priors"] = priors_obj
+
+        # Only migrate if the old fields were actually set and priors
+        # don't already have the new keys.
+        extra = getattr(priors_obj, "__pydantic_extra__", None) or {}
+        if old_capture == "biology_informed" or old_mrna_mean is not None:
+            if "eta_capture" not in extra:
+                log_M0 = (
+                    math.log(old_mrna_mean) if old_mrna_mean else 12.2
+                )
+                sigma_M = old_mrna_sigma if old_mrna_sigma else 0.5
+                extra["eta_capture"] = (log_M0, sigma_M)
+        if old_organism is not None and "organism" not in extra:
+            extra["organism"] = old_organism
+        # Rebuild PriorOverrides with merged extras
+        if extra:
+            d["priors"] = PriorOverrides(**extra)
+
         super().__setstate__(state)
 
     # Core configuration
@@ -240,49 +268,20 @@ class ModelConfig(BaseModel):
         description="Scale for horseshoe slab Inverse-Gamma.",
     )
 
-    # Biology-informed capture prior configuration
-    capture_prior: str = Field(
-        "default",
-        description=(
-            "Capture probability prior mode. "
-            "'default': standard parametric prior (Beta, BetaPrime, etc.). "
-            "'biology_informed': prior anchored to library size via "
-            "known total mRNA per cell (M_0)."
-        ),
-    )
+    # Biology-informed capture prior configuration.
+    # The capture prior is configured via the priors section:
+    #   priors.organism    — shortcut to set defaults (e.g. "human")
+    #   priors.eta_capture — [log_M0, sigma_M] per-cell prior
+    #   priors.mu_eta      — [center, sigma_mu] shared mu_eta prior
+    # The biology-informed path activates automatically when any of
+    # these keys is present.
     shared_capture_scaling: bool = Field(
         False,
         description=(
             "When True, learn a shared mu_eta parameter across "
             "datasets/components instead of using a fixed M_0. "
-            "With capture_prior='biology_informed', M_0 serves as "
-            "an informative center for the mu_eta prior. "
-            "With capture_prior='default', a vague data-driven "
-            "prior is used (no M_0 anchoring)."
-        ),
-    )
-    organism: Optional[str] = Field(
-        None,
-        description=(
-            "Organism name for biology-informed capture prior "
-            "(e.g. 'human', 'mouse', 'yeast', 'ecoli'). "
-            "Sets default total_mrna_mean and total_mrna_log_sigma."
-        ),
-    )
-    total_mrna_mean: Optional[float] = Field(
-        None,
-        gt=0,
-        description=(
-            "Expected total mRNA molecules per cell (M_0). "
-            "Overrides organism default when both are set."
-        ),
-    )
-    total_mrna_log_sigma: Optional[float] = Field(
-        None,
-        gt=0,
-        description=(
-            "Log-scale standard deviation for cell-to-cell variation "
-            "in total mRNA (sigma_M). Default: 0.5 (~1.5-2x fold)."
+            "Requires priors.organism or priors.eta_capture to be set. "
+            "priors.mu_eta controls the prior on the shared parameter."
         ),
     )
 
@@ -536,63 +535,61 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_capture_prior(self) -> "ModelConfig":
-        """Validate biology-informed capture prior configuration.
+        """Resolve and validate biology-informed capture prior configuration.
 
-        Checks
-        ------
-        - capture_prior is one of the allowed modes.
-        - Non-default modes or shared_capture_scaling require a VCP model.
-        - biology_informed mode requires organism or total_mrna_mean.
-        - shared_capture_scaling with capture_prior='default' uses a vague
-          data-driven prior (no M_0 anchoring); the registry creates the
-          appropriate spec.
-        - Resolves organism defaults when explicit values are absent.
+        The capture prior is inferred from keys in the ``priors`` dict:
+
+        * ``priors.organism``    — resolves to default ``eta_capture``
+        * ``priors.eta_capture`` — explicit ``[log_M0, sigma_M]``
+        * ``priors.mu_eta``      — explicit ``[center, sigma_mu]``
+
+        When any of these is present the biology-informed path activates.
+        ``shared_capture_scaling`` additionally learns a shared ``mu_eta``.
         """
-        valid_modes = {"default", "biology_informed"}
-        if self.capture_prior not in valid_modes:
-            raise ValueError(
-                f"capture_prior must be one of {valid_modes}, "
-                f"got {self.capture_prior!r}."
-            )
+        extra = getattr(self.priors, "__pydantic_extra__", None) or {}
 
-        # VCP model required for non-default capture priors or shared scaling
-        if self.capture_prior != "default" or self.shared_capture_scaling:
+        organism: Optional[str] = extra.get("organism")
+        eta_capture: Optional[Tuple[float, float]] = extra.get("eta_capture")
+        mu_eta: Optional[Tuple[float, float]] = extra.get("mu_eta")
+
+        # Resolve organism → eta_capture defaults when eta_capture absent
+        if organism is not None and eta_capture is None:
+            from .organism_priors import resolve_organism_priors
+
+            org_priors = resolve_organism_priors(organism)
+            log_M0 = math.log(org_priors["total_mrna_mean"])
+            sigma_M = org_priors["total_mrna_log_sigma"]
+            eta_capture = (log_M0, sigma_M)
+
+        has_capture_priors = eta_capture is not None or mu_eta is not None
+
+        # VCP model required for capture priors or shared scaling
+        if has_capture_priors or self.shared_capture_scaling:
             if not self.uses_variable_capture:
                 raise ValueError(
-                    f"capture_prior={self.capture_prior!r} (or "
-                    "shared_capture_scaling=True) requires a VCP model "
+                    "Biology-informed capture priors (priors.organism, "
+                    "priors.eta_capture, priors.mu_eta) or "
+                    "shared_capture_scaling=True requires a VCP model "
                     "(nbvcp or zinbvcp)."
                 )
 
-        if self.capture_prior == "biology_informed":
-            if self.organism is None and self.total_mrna_mean is None:
-                raise ValueError(
-                    "capture_prior='biology_informed' requires either "
-                    "'organism' or 'total_mrna_mean' to be set."
-                )
+        # Default mu_eta prior when shared scaling is on and we have an
+        # anchor from eta_capture.  sigma_mu defaults to 1.0 (anchored)
+        # or 5.0 (vague, no anchor).
+        if self.shared_capture_scaling and eta_capture is not None:
+            if mu_eta is None:
+                mu_eta = (eta_capture[0], 1.0)
 
-        # Resolve organism defaults when not explicitly overridden
-        if self.organism is not None:
-            from .organism_priors import resolve_organism_priors
+        # Store resolved values back into priors (frozen model bypass)
+        updated = dict(extra)
+        if eta_capture is not None:
+            updated["eta_capture"] = tuple(eta_capture)
+        if mu_eta is not None:
+            updated["mu_eta"] = tuple(mu_eta)
+        if updated != extra:
+            new_priors = PriorOverrides(**updated)
+            object.__setattr__(self, "priors", new_priors)
 
-            priors = resolve_organism_priors(self.organism)
-            # Pydantic frozen model: use object.__setattr__
-            if self.total_mrna_mean is None:
-                object.__setattr__(
-                    self, "total_mrna_mean", priors["total_mrna_mean"]
-                )
-            if self.total_mrna_log_sigma is None:
-                object.__setattr__(
-                    self,
-                    "total_mrna_log_sigma",
-                    priors["total_mrna_log_sigma"],
-                )
-        # Default sigma when M_0 is provided but sigma is not
-        if (
-            self.total_mrna_mean is not None
-            and self.total_mrna_log_sigma is None
-        ):
-            object.__setattr__(self, "total_mrna_log_sigma", 0.5)
         return self
 
     # --------------------------------------------------------------------------
@@ -673,6 +670,25 @@ class ModelConfig(BaseModel):
     def uses_variable_capture(self) -> bool:
         """Check if this model uses variable capture."""
         return "vcp" in self.base_model
+
+    # --------------------------------------------------------------------------
+
+    @computed_field
+    @property
+    def uses_biology_informed_capture(self) -> bool:
+        """Whether the biology-informed capture prior path is active.
+
+        True when any of priors.organism, priors.eta_capture, or
+        priors.mu_eta is set, signalling that the model should use
+        the eta_c parameterization instead of a flat prior.
+        """
+        extra = (
+            getattr(self.priors, "__pydantic_extra__", None) or {}
+        )
+        return any(
+            extra.get(k) is not None
+            for k in ("organism", "eta_capture", "mu_eta")
+        )
 
     # --------------------------------------------------------------------------
 
@@ -844,6 +860,7 @@ class ModelConfig(BaseModel):
                 "is_mixture",
                 "is_zero_inflated",
                 "uses_variable_capture",
+                "uses_biology_informed_capture",
                 "is_hierarchical",
                 "is_multi_dataset",
                 "active_parameters",
