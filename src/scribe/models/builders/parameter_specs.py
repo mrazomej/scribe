@@ -328,6 +328,27 @@ class ParamSpec(BaseModel):
     )
 
     # --------------------------------------------------------------------------
+    # Alias support
+    # --------------------------------------------------------------------------
+
+    @property
+    def alias_names(self) -> list:
+        """Additional name prefixes used to match variational-parameter keys.
+
+        Subclasses override this when the guide creates parameters under a
+        different name than ``self.name``.  The matching helpers in
+        ``_dataset.py`` check both ``self.name`` and every alias returned
+        here so that cell-specific / dataset-specific subsetting works
+        correctly for reparameterised latent variables.
+
+        Returns
+        -------
+        list of str
+            Empty by default; subclasses may return e.g. ``["eta_capture"]``.
+        """
+        return []
+
+    # --------------------------------------------------------------------------
     # Validation Methods
     # --------------------------------------------------------------------------
 
@@ -1122,6 +1143,17 @@ class BiologyInformedCaptureSpec(ParamSpec):
             "False → p_capture = exp(-eta)."
         ),
     )
+
+    @property
+    def alias_names(self) -> list:
+        """``eta_capture`` is the latent variable sampled by the guide.
+
+        The spec name is ``phi_capture`` or ``p_capture``, but the guide
+        creates ``eta_capture_loc`` / ``eta_capture_scale``.  Exposing
+        ``"eta_capture"`` as an alias ensures cell-specific subsetting
+        picks up these keys when splitting by dataset.
+        """
+        return ["eta_capture"]
 
     def _get_distribution_type(self) -> Type:
         """Return Normal as the base distribution type for eta."""
