@@ -82,9 +82,13 @@ def _sample_capture_biology_informed(
 ) -> jnp.ndarray:
     """Sample capture parameter from biology-informed prior.
 
-    Samples the latent variable eta_c = log(M_c / L_c) from a Normal
-    prior whose mean is anchored to the observed library size, then
-    applies the exact transformation to the capture parameter.
+    Samples the latent variable eta_c = log(M_c / L_c) from a
+    TruncatedNormal prior (low=0) whose mean is anchored to the observed
+    library size, then applies the exact transformation to the capture
+    parameter.
+
+    The truncation at zero enforces the physical constraint M_c >= L_c
+    (a cell cannot emit more molecules than it contains).
 
     Parameters
     ----------
@@ -104,11 +108,12 @@ def _sample_capture_biology_informed(
     jnp.ndarray
         Capture parameter values, shape ``(batch,)``.
     """
-    # eta_c ~ N(log_M0 - log_L_c, sigma_M^2)
+    # eta_c ~ TruncatedNormal(log_M0 - log_L_c, sigma_M^2, low=0)
+    # Truncation at 0 enforces eta_c >= 0 <=> p_capture <= 1.
     prior_mean = log_M0 - log_lib_sizes
     eta = numpyro.sample(
         "eta_capture",
-        dist.Normal(prior_mean, sigma_M).to_event(0),
+        dist.TruncatedNormal(prior_mean, sigma_M, low=0.0).to_event(0),
     )
 
     if use_phi_capture:

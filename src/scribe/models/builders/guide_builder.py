@@ -1604,9 +1604,10 @@ def setup_cell_specific_guide(
     """MeanField guide for biology-informed capture parameter.
 
     Provides per-cell variational parameters for eta_capture (the
-    unconstrained latent log(M_c / L_c)). The model then applies the
-    exact transformation to phi_capture or p_capture inside the
-    likelihood.
+    latent log(M_c / L_c), constrained >= 0). Uses TruncatedNormal(low=0)
+    to enforce the physical constraint that a cell cannot emit more
+    molecules than it contains. The model then applies the exact
+    transformation to phi_capture or p_capture inside the likelihood.
 
     For data-driven mode, also provides variational parameters for the
     shared mu_eta parameter.
@@ -1645,11 +1646,13 @@ def setup_cell_specific_guide(
         constraint=constraints.positive,
     )
 
+    # TruncatedNormal(low=0) matches the model prior and enforces
+    # eta_c >= 0 <=> p_capture <= 1.
     if batch_idx is None:
-        base_dist = dist.Normal(eta_loc, eta_scale)
+        base_dist = dist.TruncatedNormal(eta_loc, eta_scale, low=0.0)
     else:
-        base_dist = dist.Normal(
-            eta_loc[batch_idx], eta_scale[batch_idx]
+        base_dist = dist.TruncatedNormal(
+            eta_loc[batch_idx], eta_scale[batch_idx], low=0.0
         )
 
     eta = numpyro.sample("eta_capture", base_dist)

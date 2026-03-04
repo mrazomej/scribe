@@ -754,9 +754,9 @@ def _build_biology_informed_capture_posterior(
 ) -> Dict[str, Any]:
     """Build posterior for biology-informed capture parameter.
 
-    The variational posterior is on ``eta_capture`` (the unconstrained
-    log-ratio log(M_c / L_c)).  The capture parameter is a deterministic
-    transformation of eta.
+    The variational posterior is on ``eta_capture`` (the log-ratio
+    log(M_c / L_c), constrained >= 0 via TruncatedNormal).  The
+    capture parameter is a deterministic transformation of eta.
 
     Parameters
     ----------
@@ -777,20 +777,22 @@ def _build_biology_informed_capture_posterior(
     """
     distributions: Dict[str, Any] = {}
 
-    # Shared mu_eta for data-driven mode
+    # Shared mu_eta for data-driven mode (unconstrained — can be any real)
     if "mu_eta_loc" in params:
         distributions["mu_eta"] = dist.Normal(
             params["mu_eta_loc"], params["mu_eta_scale"]
         )
 
-    # Per-cell eta_capture posterior
+    # Per-cell eta_capture posterior (truncated at 0 to enforce
+    # the physical constraint M_c >= L_c <=> p_capture <= 1)
     if "eta_capture_loc" in params:
         loc = params["eta_capture_loc"]
         scale = params["eta_capture_scale"]
-        eta_dist = dist.Normal(loc, scale)
+        eta_dist = dist.TruncatedNormal(loc, scale, low=0.0)
         if split:
             distributions["eta_capture"] = [
-                dist.Normal(loc[i], scale[i]) for i in range(loc.shape[0])
+                dist.TruncatedNormal(loc[i], scale[i], low=0.0)
+                for i in range(loc.shape[0])
             ]
         else:
             distributions["eta_capture"] = eta_dist

@@ -175,7 +175,9 @@ likelihood = NBWithVCPLikelihood(
 
 VCP likelihoods accept an optional `biology_informed_spec`
 (`BiologyInformedCaptureSpec`) that replaces the flat capture prior with a
-library-size-anchored Normal prior on the latent variable `eta_c`. The
+library-size-anchored TruncatedNormal (low=0) prior on the latent variable
+`eta_c = log(M_c / L_c)`. The truncation enforces the physical constraint
+`M_c >= L_c` (a cell cannot emit more molecules than it contains). The
 combination of `capture_prior` and `shared_capture_scaling` yields four modes:
 
 - **`capture_prior="default"` + `shared_capture_scaling=false`**: Standard flat

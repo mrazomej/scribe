@@ -71,9 +71,11 @@ Regularized horseshoe shrinkage uses **`HalfCauchySpec`** (τ, λ scales) and
 
 **`BiologyInformedCaptureSpec`** represents the biology-informed capture
 probability prior for VCP models. Instead of using a flat prior on `p_capture`
-or `phi_capture`, it samples a latent variable `eta_c` from a Normal prior
-anchored to observed library sizes and the expected total mRNA count (`M_0`).
-The capture parameter is then derived via exact transformations.
+or `phi_capture`, it samples a latent variable `eta_c` from a TruncatedNormal
+(low=0) prior anchored to observed library sizes and the expected total mRNA
+count (`M_0`). The truncation at zero enforces the physical constraint
+`M_c >= L_c` (equivalently, `p_capture <= 1`). The capture parameter is then
+derived via exact transformations.
 
 Fields: `log_M0` (log expected total mRNA), `sigma_M` (log-scale std-dev),
 `data_driven` (if True, `log_M0` is replaced by a learned shared parameter
