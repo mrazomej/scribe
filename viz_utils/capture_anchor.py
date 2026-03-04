@@ -21,7 +21,10 @@ from scribe.models.config.organism_priors import resolve_organism_priors
 
 from ._common import console
 from .config import _get_config_values
-from .dispatch import _get_map_estimates_for_plot
+from .dispatch import (
+    _get_map_estimates_for_plot,
+    _get_cell_assignment_probabilities_for_plot,
+)
 
 
 def _resolve_expected_log_m0(cfg):
@@ -172,4 +175,270 @@ def plot_capture_anchor(results, counts, figs_dir, cfg, viz_cfg):
     )
     plt.close(fig)
 
+    return output_path
+
+
+def _compute_binned_trend(x, y, n_bins=30, min_cells_per_bin=5):
+    """Compute robust binned trend statistics for plotting.
+
+    Parameters
+    ----------
+    x : ndarray
+        Independent variable values (library size).
+    y : ndarray
+        Dependent variable values (capture probability).
+    n_bins : int, optional
+        Number of quantile bins used to aggregate points.
+    min_cells_per_bin : int, optional
+        Minimum number of cells required for a bin to contribute to the
+        returned trend.
+
+    Returns
+    -------
+    tuple of ndarray
+        Pair ``(x_center, y_center)`` with median bin centers and median
+        response values. Empty arrays are returned when no stable bins can be
+        formed.
+    """
+    # Ensure finite pairs only so trend statistics are numerically stable.
+    finite_mask = np.isfinite(x) & np.isfinite(y)
+    x_valid = np.asarray(x[finite_mask], dtype=float)
+    y_valid = np.asarray(y[finite_mask], dtype=float)
+    if x_valid.size == 0:
+        return np.array([]), np.array([])
+
+    # Quantile bins are robust to long-tail library-size distributions.
+    q = np.linspace(0.0, 1.0, int(max(n_bins, 2)) + 1)
+    bin_edges = np.unique(np.quantile(x_valid, q))
+    if bin_edges.size < 2:
+        return np.array([]), np.array([])
+
+    x_centers = []
+    y_centers = []
+    for left, right in zip(bin_edges[:-1], bin_edges[1:]):
+        if right <= left:
+            continue
+        in_bin = (x_valid >= left) & (x_valid < right)
+        if np.count_nonzero(in_bin) < int(min_cells_per_bin):
+            continue
+        x_centers.append(float(np.median(x_valid[in_bin])))
+        y_centers.append(float(np.median(y_valid[in_bin])))
+
+    return np.asarray(x_centers), np.asarray(y_centers)
+
+
+def _plot_trend_line(ax, x, y, label, color, n_bins, min_cells_per_bin):
+    """Plot one binned trend curve for ``p_capture`` scaling diagnostics."""
+    # Draw a light point cloud first to preserve raw-data context.
+    ax.scatter(
+        x,
+        y,
+        s=4.0,
+        alpha=0.08,
+        color=color,
+        linewidths=0.0,
+    )
+
+    # Overlay the robust trend summary used for comparison across groups.
+    trend_x, trend_y = _compute_binned_trend(
+        x,
+        y,
+        n_bins=n_bins,
+        min_cells_per_bin=min_cells_per_bin,
+    )
+    if trend_x.size > 1:
+        ax.plot(trend_x, trend_y, linewidth=2.0, color=color, label=label)
+
+
+def plot_p_capture_scaling(
+    results,
+    counts,
+    figs_dir,
+    cfg,
+    viz_cfg,
+    *,
+    is_mixture=False,
+    is_multi_dataset=False,
+    dataset_codes=None,
+    dataset_names=None,
+):
+    r"""Plot ``p_capture`` versus library-size scaling diagnostics.
+
+    This diagnostic is intended for VCP models and is independent of
+    eta-parameterization. It includes:
+
+    1. Global trend over all cells.
+    2. Optional split by mixture component (MAP assignment).
+    3. Optional split by dataset when multiple datasets are present.
+
+    Parameters
+    ----------
+    results : ScribeSVIResults or ScribeMCMCResults
+        Fitted model results object.
+    counts : array-like
+        Observed UMI count matrix ``(n_cells, n_genes)``.
+    figs_dir : str
+        Directory where output figure is saved.
+    cfg : OmegaConf
+        Hydra run configuration loaded from ``.hydra/config.yaml``.
+    viz_cfg : OmegaConf
+        Visualization config. Expected to include ``p_capture_scaling_opts``.
+    is_mixture : bool, optional
+        Whether the model uses more than one component.
+    is_multi_dataset : bool, optional
+        Whether the run includes multiple datasets.
+    dataset_codes : ndarray, optional
+        Integer dataset code per cell (same ordering as ``counts`` rows).
+    dataset_names : sequence of str, optional
+        Category names corresponding to ``dataset_codes``.
+
+    Returns
+    -------
+    str or None
+        Output file path on success, else ``None`` when ``p_capture`` is
+        unavailable.
+    """
+    console.print("[dim]Plotting p-capture scaling diagnostic...[/dim]")
+
+    # Pull p_capture from MAP estimates and return gracefully when unavailable.
+    map_estimates = _get_map_estimates_for_plot(results, counts=counts)
+    p_capture = map_estimates.get("p_capture")
+    if p_capture is None:
+        console.print(
+            "[yellow]Skipping p-capture scaling: p_capture is unavailable "
+            "in MAP estimates.[/yellow]"
+        )
+        return None
+    p_capture = np.asarray(p_capture, dtype=float).reshape(-1)
+
+    # Build per-cell library size on original count scale to match the EDA plot.
+    library_size = np.asarray(counts.sum(axis=1), dtype=float).reshape(-1)
+
+    # Read options with conservative defaults for robust behavior on small data.
+    opts = viz_cfg.get("p_capture_scaling_opts", {})
+    n_bins = int(opts.get("n_bins", 30))
+    min_cells_per_bin = int(opts.get("min_cells_per_bin", 5))
+    assignment_batch_size = int(opts.get("assignment_batch_size", 512))
+
+    panel_specs = [("global", None)]
+    if is_mixture:
+        panel_specs.append(("component", None))
+    if is_multi_dataset:
+        panel_specs.append(("dataset", None))
+
+    fig, axes = plt.subplots(
+        1,
+        len(panel_specs),
+        figsize=(6.0 * len(panel_specs), 5.0),
+        squeeze=False,
+    )
+    axes = axes.flatten()
+
+    # Global panel: one trend using all cells.
+    ax_global = axes[0]
+    _plot_trend_line(
+        ax_global,
+        library_size,
+        p_capture,
+        label=r"all cells",
+        color="black",
+        n_bins=n_bins,
+        min_cells_per_bin=min_cells_per_bin,
+    )
+    ax_global.set_xlabel(r"$L_c$")
+    ax_global.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
+    ax_global.set_title(r"Global $p_{\mathrm{capture}}$ scaling")
+    ax_global.set_ylim(0.0, 1.05)
+    ax_global.legend(fontsize=8)
+
+    panel_idx = 1
+
+    # Component panel: derive hard MAP assignments from assignment probabilities.
+    if is_mixture:
+        component_probs = _get_cell_assignment_probabilities_for_plot(
+            results,
+            counts=counts,
+            batch_size=assignment_batch_size,
+            use_mean=False,
+        )
+        component_ids = np.argmax(np.asarray(component_probs), axis=1)
+        unique_components = np.unique(component_ids)
+        colors = plt.cm.tab10(np.linspace(0, 1, unique_components.size))
+
+        ax_comp = axes[panel_idx]
+        for comp_color, comp_id in zip(colors, unique_components):
+            in_comp = component_ids == comp_id
+            if np.count_nonzero(in_comp) < max(min_cells_per_bin, 10):
+                continue
+            _plot_trend_line(
+                ax_comp,
+                library_size[in_comp],
+                p_capture[in_comp],
+                label=rf"$k={int(comp_id)}$",
+                color=comp_color,
+                n_bins=n_bins,
+                min_cells_per_bin=min_cells_per_bin,
+            )
+        ax_comp.set_xlabel(r"$L_c$")
+        ax_comp.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
+        ax_comp.set_title(r"Split by component")
+        ax_comp.set_ylim(0.0, 1.05)
+        handles, labels = ax_comp.get_legend_handles_labels()
+        if handles:
+            ax_comp.legend(fontsize=8)
+        panel_idx += 1
+
+    # Dataset panel: use dataset key coding prepared in visualize.py.
+    if (
+        is_multi_dataset
+        and dataset_codes is not None
+        and dataset_names is not None
+    ):
+        dataset_codes = np.asarray(dataset_codes, dtype=int).reshape(-1)
+        unique_datasets = np.unique(dataset_codes)
+        colors = plt.cm.Set2(np.linspace(0, 1, unique_datasets.size))
+
+        ax_ds = axes[panel_idx]
+        for ds_color, ds_code in zip(colors, unique_datasets):
+            in_ds = dataset_codes == ds_code
+            if np.count_nonzero(in_ds) < max(min_cells_per_bin, 10):
+                continue
+            if int(ds_code) < len(dataset_names):
+                ds_label = str(dataset_names[int(ds_code)])
+            else:
+                ds_label = f"dataset_{int(ds_code)}"
+            _plot_trend_line(
+                ax_ds,
+                library_size[in_ds],
+                p_capture[in_ds],
+                label=ds_label,
+                color=ds_color,
+                n_bins=n_bins,
+                min_cells_per_bin=min_cells_per_bin,
+            )
+        ax_ds.set_xlabel(r"$L_c$")
+        ax_ds.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
+        ax_ds.set_title(r"Split by dataset")
+        ax_ds.set_ylim(0.0, 1.05)
+        handles, labels = ax_ds.get_legend_handles_labels()
+        if handles:
+            ax_ds.legend(fontsize=8)
+
+    plt.tight_layout()
+
+    output_format = viz_cfg.get("format", "png")
+    config_vals = _get_config_values(cfg, results=results)
+    fname = (
+        f"{config_vals['method']}_{config_vals['parameterization'].replace('-', '_')}_"
+        f"{config_vals['model_type'].replace('_', '-')}_"
+        f"{config_vals['n_components']:02d}components_"
+        f"{config_vals['run_size_token']}_p_capture_scaling.{output_format}"
+    )
+    output_path = os.path.join(figs_dir, fname)
+    fig.savefig(output_path, bbox_inches="tight")
+    console.print(
+        "[green]✓[/green] [dim]Saved p-capture scaling plot to[/dim] "
+        f"[cyan]{output_path}[/cyan]"
+    )
+    plt.close(fig)
     return output_path

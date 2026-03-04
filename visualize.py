@@ -49,6 +49,7 @@ from viz_utils import (
     plot_mixture_composition,
     plot_annotation_ppc,
     plot_capture_anchor,
+    plot_p_capture_scaling,
 )
 from viz_utils.memory import cleanup_plot_memory
 
@@ -174,11 +175,20 @@ Examples:
         "(for biology-informed capture prior runs).",
     )
     parser.add_argument(
+        "--p-capture-scaling",
+        action="store_true",
+        default=None,
+        dest="p_capture_scaling",
+        help="Enable p_capture versus library-size scaling diagnostic "
+        "(for VCP models).",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         dest="all_plots",
         help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
-        "mixture PPC, mixture composition, annotation PPC, capture-anchor)",
+        "mixture PPC, mixture composition, annotation PPC, capture-anchor, "
+        "p-capture-scaling)",
     )
 
     # Recursive mode
@@ -272,6 +282,7 @@ def _load_default_viz_config():
                 "mixture_composition": False,
                 "annotation_ppc": False,
                 "capture_anchor": False,
+                "p_capture_scaling": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
                 "ppc_opts": {"n_rows": 6, "n_cols": 6, "n_samples": 1500},
@@ -316,6 +327,11 @@ def _load_default_viz_config():
                     "scatter_size": 6,
                     "scatter_alpha": 0.35,
                 },
+                "p_capture_scaling_opts": {
+                    "n_bins": 30,
+                    "min_cells_per_bin": 5,
+                    "assignment_batch_size": 512,
+                },
             }
         )
 
@@ -345,6 +361,7 @@ def _build_viz_config(args):
         viz_cfg.mixture_composition = True
         viz_cfg.annotation_ppc = True
         viz_cfg.capture_anchor = True
+        viz_cfg.p_capture_scaling = True
 
     # Apply boolean overrides only when flags are explicitly provided.
     if args.no_loss:
@@ -367,6 +384,8 @@ def _build_viz_config(args):
         viz_cfg.annotation_ppc = True
     if args.capture_anchor:
         viz_cfg.capture_anchor = True
+    if args.p_capture_scaling:
+        viz_cfg.p_capture_scaling = True
 
     # Scalar / numeric overrides (only when provided).
     if args.format is not None:
@@ -406,6 +425,42 @@ def _has_biology_informed_capture_prior(cfg):
         priors_cfg.get(key) is not None
         for key in ("organism", "eta_capture", "mu_eta")
     )
+
+
+def _is_vcp_model(cfg, results):
+    """Return whether the current run corresponds to a VCP model.
+
+    Parameters
+    ----------
+    cfg : OmegaConf
+        Run configuration loaded from ``.hydra/config.yaml``.
+    results : object
+        Loaded results object that may expose ``model_config`` metadata.
+
+    Returns
+    -------
+    bool
+        ``True`` when model metadata indicates variable-capture behavior.
+    """
+    # Use explicit config flags first, which are cheap and unambiguous.
+    model_name = (
+        str(cfg.get("model", "")).lower() if hasattr(cfg, "get") else ""
+    )
+    if "vcp" in model_name:
+        return True
+    if hasattr(cfg, "get") and cfg.get("variable_capture", False):
+        return True
+
+    # Fall back to serialized model config metadata when available.
+    model_cfg = getattr(results, "model_config", None)
+    if model_cfg is not None:
+        if bool(getattr(model_cfg, "uses_variable_capture", False)):
+            return True
+        base_model = str(getattr(model_cfg, "base_model", "")).lower()
+        if "vcp" in base_model:
+            return True
+
+    return False
 
 
 # ------------------------------------------------------------------------------
@@ -591,16 +646,12 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     # ======================================================================
     # Load Original Configuration
     # ======================================================================
-    console.print(
-        f"[dim]Loading config from:[/dim] [cyan]{config_file}[/cyan]"
-    )
+    console.print(f"[dim]Loading config from:[/dim] [cyan]{config_file}[/cyan]")
     orig_cfg = OmegaConf.load(config_file)
     console.print("[green]Configuration loaded![/green]")
 
     # Display key config info
-    console.print(
-        f"[dim]  Data:[/dim] {orig_cfg.data.get('name', 'unknown')}"
-    )
+    console.print(f"[dim]  Data:[/dim] {orig_cfg.data.get('name', 'unknown')}")
     console.print(
         f"[dim]  Model:[/dim] {orig_cfg.get('model', 'derived from flags')}"
     )
@@ -694,15 +745,11 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     cell_labels = None
     if annotation_key is not None:
         if isinstance(annotation_key, str):
-            cell_labels = np.array(
-                adata.obs[annotation_key].astype(str)
-            )
+            cell_labels = np.array(adata.obs[annotation_key].astype(str))
         else:
             # List of columns → composite labels joined with "__"
             annotation_key = list(annotation_key)
-            parts = [
-                adata.obs[k].astype(str) for k in annotation_key
-            ]
+            parts = [adata.obs[k].astype(str) for k in annotation_key]
             combined = parts[0]
             for part in parts[1:]:
                 combined = combined + "__" + part
@@ -715,8 +762,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     # ======================================================================
     # Multi-dataset detection
     # ======================================================================
-    dataset_key = (
-        orig_cfg.data.get("dataset_key") or orig_cfg.get("dataset_key")
+    dataset_key = orig_cfg.data.get("dataset_key") or orig_cfg.get(
+        "dataset_key"
     )
     n_datasets = getattr(results.model_config, "n_datasets", None)
     is_multi_dataset = dataset_key is not None and n_datasets is not None
@@ -740,6 +787,14 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     # ======================================================================
     fmt = viz_cfg.format
     uses_bio_capture_prior = _has_biology_informed_capture_prior(orig_cfg)
+    is_vcp_model = _is_vcp_model(orig_cfg, results)
+
+    # Global mixture detection is used by p_capture scaling before per-dataset
+    # subsetting occurs.
+    global_nc = getattr(results, "n_components", None)
+    if global_nc is None:
+        global_nc = orig_cfg.get("n_components")
+    is_global_mixture = global_nc is not None and global_nc > 1
 
     # Ensure we release plot-related host/GPU memory between heavy stages.
     def _cleanup_after_plot():
@@ -754,9 +809,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     if viz_cfg.loss:
         if not overwrite and _plot_exists(figs_dir, "_loss", fmt):
             plots_skipped.append("loss")
-            console.print(
-                "[yellow]  Skipping loss (already exists)[/yellow]"
-            )
+            console.print("[yellow]  Skipping loss (already exists)[/yellow]")
         else:
             # For MCMC runs this branch now renders diagnostics instead of ELBO.
             if hasattr(results, "loss_history"):
@@ -768,8 +821,55 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 plots_generated.append("loss")
                 console.print("[green]  Loss plot saved[/green]")
             except Exception as e:
+                console.print(f"[red]  Failed to generate loss plot: {e}[/red]")
+            finally:
+                _cleanup_after_plot()
+
+    # ------------------------------------------------------------------
+    # p_capture scaling is a global diagnostic over all cells.
+    # This runs independently of eta-parameterization and only requires VCP.
+    # ------------------------------------------------------------------
+    if viz_cfg.p_capture_scaling:
+        if not is_vcp_model:
+            console.print(
+                "[yellow]  Skipping p-capture scaling "
+                "(model is not VCP)[/yellow]"
+            )
+        elif not overwrite and _plot_exists(
+            figs_dir, "_p_capture_scaling", fmt
+        ):
+            plots_skipped.append("p-capture scaling")
+            console.print(
+                "[yellow]  Skipping p-capture scaling "
+                "(already exists)[/yellow]"
+            )
+        else:
+            console.print(
+                "[dim]Generating p-capture scaling diagnostic...[/dim]"
+            )
+            try:
+                output_path = plot_p_capture_scaling(
+                    results=results,
+                    counts=counts,
+                    figs_dir=figs_dir,
+                    cfg=orig_cfg,
+                    viz_cfg=viz_cfg,
+                    is_mixture=is_global_mixture,
+                    is_multi_dataset=is_multi_dataset,
+                    dataset_codes=dataset_codes if is_multi_dataset else None,
+                    dataset_names=dataset_names if is_multi_dataset else None,
+                )
+                if output_path is not None:
+                    plots_generated.append("p-capture scaling")
+                    console.print(
+                        "[green]  p-capture scaling plot saved[/green]"
+                    )
+                else:
+                    plots_skipped.append("p-capture scaling")
+            except Exception as e:
                 console.print(
-                    f"[red]  Failed to generate loss plot: {e}[/red]"
+                    f"[red]  Failed to generate p-capture scaling plot: "
+                    f"{e}[/red]"
                 )
             finally:
                 _cleanup_after_plot()
@@ -833,8 +933,11 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 )
                 try:
                     plot_ppc(
-                        ds_results, ds_counts, ds_figs_dir,
-                        orig_cfg, viz_cfg,
+                        ds_results,
+                        ds_counts,
+                        ds_figs_dir,
+                        orig_cfg,
+                        viz_cfg,
                     )
                     plots_generated.append(f"PPC{ds_label}")
                     console.print("[green]  PPC plots saved[/green]")
@@ -858,8 +961,11 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 )
                 try:
                     plot_bio_ppc(
-                        ds_results, ds_counts, ds_figs_dir,
-                        orig_cfg, viz_cfg,
+                        ds_results,
+                        ds_counts,
+                        ds_figs_dir,
+                        orig_cfg,
+                        viz_cfg,
                     )
                     plots_generated.append(f"bio-PPC{ds_label}")
                     console.print("[green]  Bio-PPC plots saved[/green]")
@@ -878,9 +984,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                     "[yellow]  Skipping UMAP (already exists)[/yellow]"
                 )
             else:
-                console.print(
-                    "[dim]Generating UMAP projection plot...[/dim]"
-                )
+                console.print("[dim]Generating UMAP projection plot...[/dim]")
                 try:
                     plot_umap(
                         ds_results,
@@ -908,13 +1012,14 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                     "[yellow]  Skipping heatmap (already exists)[/yellow]"
                 )
             else:
-                console.print(
-                    "[dim]Generating correlation heatmap...[/dim]"
-                )
+                console.print("[dim]Generating correlation heatmap...[/dim]")
                 try:
                     plot_correlation_heatmap(
-                        ds_results, ds_counts, ds_figs_dir,
-                        orig_cfg, viz_cfg,
+                        ds_results,
+                        ds_counts,
+                        ds_figs_dir,
+                        orig_cfg,
+                        viz_cfg,
                     )
                     plots_generated.append(f"heatmap{ds_label}")
                     console.print("[green]  Heatmap saved[/green]")
@@ -942,18 +1047,17 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                         "(already exists)[/yellow]"
                     )
                 else:
-                    console.print(
-                        "[dim]Generating mixture model PPC...[/dim]"
-                    )
+                    console.print("[dim]Generating mixture model PPC...[/dim]")
                     try:
                         plot_mixture_ppc(
-                            ds_results, ds_counts, ds_figs_dir,
-                            orig_cfg, viz_cfg,
+                            ds_results,
+                            ds_counts,
+                            ds_figs_dir,
+                            orig_cfg,
+                            viz_cfg,
                         )
                         plots_generated.append(f"mixture PPC{ds_label}")
-                        console.print(
-                            "[green]  Mixture PPC saved[/green]"
-                        )
+                        console.print("[green]  Mixture PPC saved[/green]")
                     except Exception as e:
                         console.print(
                             f"[red]  Failed to generate mixture "
@@ -972,17 +1076,14 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                 if not overwrite and _plot_exists(
                     ds_figs_dir, "_mixture_composition", fmt
                 ):
-                    plots_skipped.append(
-                        f"mixture composition{ds_label}"
-                    )
+                    plots_skipped.append(f"mixture composition{ds_label}")
                     console.print(
                         "[yellow]  Skipping mixture composition "
                         "(already exists)[/yellow]"
                     )
                 else:
                     console.print(
-                        "[dim]Generating mixture composition "
-                        "plot...[/dim]"
+                        "[dim]Generating mixture composition " "plot...[/dim]"
                     )
                     try:
                         plot_mixture_composition(
@@ -993,9 +1094,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                             viz_cfg,
                             cell_labels=ds_cell_labels,
                         )
-                        plots_generated.append(
-                            f"mixture composition{ds_label}"
-                        )
+                        plots_generated.append(f"mixture composition{ds_label}")
                         console.print(
                             "[green]  Mixture composition saved[/green]"
                         )
@@ -1023,9 +1122,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                         "(already exists)[/yellow]"
                     )
                 else:
-                    console.print(
-                        "[dim]Generating annotation PPC...[/dim]"
-                    )
+                    console.print("[dim]Generating annotation PPC...[/dim]")
                     try:
                         plot_annotation_ppc(
                             ds_results,
@@ -1035,12 +1132,8 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                             orig_cfg,
                             viz_cfg,
                         )
-                        plots_generated.append(
-                            f"annotation PPC{ds_label}"
-                        )
-                        console.print(
-                            "[green]  Annotation PPC saved[/green]"
-                        )
+                        plots_generated.append(f"annotation PPC{ds_label}")
+                        console.print("[green]  Annotation PPC saved[/green]")
                     except Exception as e:
                         console.print(
                             f"[red]  Failed to generate annotation "
@@ -1100,9 +1193,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     # Completion Summary
     # ======================================================================
     plots_str = ", ".join(plots_generated) if plots_generated else "None"
-    console.print(
-        f"[dim]Plots generated:[/dim] [bold]{plots_str}[/bold]"
-    )
+    console.print(f"[dim]Plots generated:[/dim] [bold]{plots_str}[/bold]")
     if plots_skipped:
         skipped_str = ", ".join(plots_skipped)
         console.print(
@@ -1157,9 +1248,7 @@ def main() -> None:
     if viz_cfg.annotation_ppc:
         enabled_plots.append("annotation PPC")
 
-    console.print(
-        f"[dim]Plots to generate:[/dim] {', '.join(enabled_plots)}"
-    )
+    console.print(f"[dim]Plots to generate:[/dim] {', '.join(enabled_plots)}")
     console.print(f"[dim]Output format:[/dim] {viz_cfg.format}")
 
     # ======================================================================
@@ -1194,9 +1283,7 @@ def main() -> None:
 
     model_dirs = []
     for expr in input_exprs:
-        model_dirs.extend(
-            _resolve_model_dirs(expr, recursive=args.recursive)
-        )
+        model_dirs.extend(_resolve_model_dirs(expr, recursive=args.recursive))
     model_dirs = sorted(set(model_dirs))
 
     if not model_dirs:
@@ -1216,9 +1303,7 @@ def main() -> None:
                 "[bold red]ERROR: Model directory does not exist or "
                 "does not contain scribe_results.pkl![/bold red]"
             )
-            console.print(
-                f"[red]   Input:[/red] [cyan]{missing}[/cyan]"
-            )
+            console.print(f"[red]   Input:[/red] [cyan]{missing}[/cyan]")
         return
 
     n_dirs = len(model_dirs)
@@ -1264,9 +1349,7 @@ def main() -> None:
             )
         )
         console.print(f"[dim]Directories processed:[/dim] {n_dirs}")
-        console.print(
-            f"[dim]Succeeded:[/dim] [green]{succeeded}[/green]"
-        )
+        console.print(f"[dim]Succeeded:[/dim] [green]{succeeded}[/green]")
         if failed > 0:
             console.print(f"[dim]Failed:[/dim] [red]{failed}[/red]")
 

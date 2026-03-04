@@ -22,6 +22,7 @@ from viz_utils import (
     plot_annotation_ppc,
     plot_bio_ppc,
     plot_capture_anchor,
+    plot_p_capture_scaling,
     plot_correlation_heatmap,
     plot_ecdf,
     plot_loss,
@@ -68,6 +69,7 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_mixture_composition)
     assert callable(plot_annotation_ppc)
     assert callable(plot_capture_anchor)
+    assert callable(plot_p_capture_scaling)
     assert callable(_get_config_values)
     assert callable(_get_predictive_samples_for_plot)
     assert callable(_get_training_diagnostic_payload)
@@ -244,6 +246,7 @@ def test_umap_cache_path_multi_column_is_stable():
 
 def test_umap_cache_path_multi_column_changes_across_combinations():
     """Different multi-column value combinations must produce different cache paths."""
+
     def _cfg(treatment, kit):
         return OmegaConf.create(
             {
@@ -257,11 +260,15 @@ def test_umap_cache_path_multi_column_changes_across_combinations():
 
     path_a = _build_umap_cache_path(cfg=_cfg("drug", "10x"), cache_umap=True)
     path_b = _build_umap_cache_path(cfg=_cfg("ctrl", "10x"), cache_umap=True)
-    path_c = _build_umap_cache_path(cfg=_cfg("drug", "dropseq"), cache_umap=True)
+    path_c = _build_umap_cache_path(
+        cfg=_cfg("drug", "dropseq"), cache_umap=True
+    )
     assert len({path_a, path_b, path_c}) == 3
 
 
-def test_plot_bio_ppc_aligns_counts_subset_with_results_order(monkeypatch, tmp_path):
+def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
+    monkeypatch, tmp_path
+):
     """Bio-PPC denoising must align count columns with subsetted result order.
 
     The ``results[selected_idx]`` path keeps genes in original-order semantics
@@ -301,9 +308,7 @@ def test_plot_bio_ppc_aligns_counts_subset_with_results_order(monkeypatch, tmp_p
         # Shape: (n_samples, n_cells, n_selected_genes)
         return np.zeros((n_samples, n_cells, selected_idx.size), dtype=float)
 
-    def _fake_denoised(
-        _results, *, counts, rng_key, method, cell_batch_size
-    ):
+    def _fake_denoised(_results, *, counts, rng_key, method, cell_batch_size):
         _ = rng_key, method, cell_batch_size
         captured["counts_for_denoise"] = counts.copy()
         return np.zeros_like(counts, dtype=float)
@@ -419,3 +424,91 @@ def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
     )
     assert output_path is not None
     assert output_path.endswith("_capture_anchor.png")
+
+
+def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
+    """p-capture scaling plot should write an output file with expected suffix.
+
+    This test stubs MAP extraction and assignment helpers so plotting can run
+    with a lightweight fake results object.
+    """
+    import viz_utils.capture_anchor as capture_anchor_module
+
+    class _FakeResults:
+        """Minimal result stub used by p-capture scaling plotting."""
+
+        model_type = "zinbvcp"
+        n_components = 2
+
+    counts = np.array(
+        [
+            [10, 0, 1],
+            [4, 2, 0],
+            [7, 1, 3],
+            [2, 0, 0],
+            [6, 1, 0],
+            [9, 2, 2],
+        ],
+        dtype=float,
+    )
+    p_capture = np.array([0.3, 0.5, 0.4, 0.2, 0.6, 0.55], dtype=float)
+
+    # Stub map extraction to provide deterministic p_capture values.
+    monkeypatch.setattr(
+        capture_anchor_module,
+        "_get_map_estimates_for_plot",
+        lambda *_args, **_kwargs: {"p_capture": p_capture},
+    )
+    # Stub component assignment probabilities for mixture split plotting.
+    monkeypatch.setattr(
+        capture_anchor_module,
+        "_get_cell_assignment_probabilities_for_plot",
+        lambda *_args, **_kwargs: np.array(
+            [
+                [0.8, 0.2],
+                [0.7, 0.3],
+                [0.6, 0.4],
+                [0.2, 0.8],
+                [0.1, 0.9],
+                [0.3, 0.7],
+            ]
+        ),
+    )
+    # Stub filename config to keep assertion stable.
+    monkeypatch.setattr(
+        capture_anchor_module,
+        "_get_config_values",
+        lambda *_args, **_kwargs: {
+            "method": "svi",
+            "parameterization": "mean_odds",
+            "model_type": "zinbvcp",
+            "n_components": 2,
+            "run_size_token": "100steps",
+        },
+    )
+
+    cfg = OmegaConf.create({})
+    viz_cfg = OmegaConf.create(
+        {
+            "format": "png",
+            "p_capture_scaling_opts": {
+                "n_bins": 8,
+                "min_cells_per_bin": 1,
+                "assignment_batch_size": 4,
+            },
+        }
+    )
+
+    output_path = plot_p_capture_scaling(
+        _FakeResults(),
+        counts=counts,
+        figs_dir=str(tmp_path),
+        cfg=cfg,
+        viz_cfg=viz_cfg,
+        is_mixture=True,
+        is_multi_dataset=True,
+        dataset_codes=np.array([0, 0, 1, 1, 0, 1]),
+        dataset_names=["A", "B"],
+    )
+    assert output_path is not None
+    assert output_path.endswith("_p_capture_scaling.png")

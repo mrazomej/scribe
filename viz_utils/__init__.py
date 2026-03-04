@@ -6,7 +6,10 @@ Re-exports all public symbols for backward compatibility with
 """
 
 from .config import _get_config_values
-from .dispatch import _get_predictive_samples_for_plot, _get_training_diagnostic_payload
+from .dispatch import (
+    _get_predictive_samples_for_plot,
+    _get_training_diagnostic_payload,
+)
 from .cache import _build_umap_cache_path
 from .loss import plot_loss
 from .ecdf import plot_ecdf
@@ -16,7 +19,7 @@ from .umap import plot_umap
 from .heatmap import plot_correlation_heatmap
 from .mixture_ppc import plot_mixture_ppc, plot_mixture_composition
 from .annotation_ppc import plot_annotation_ppc
-from .capture_anchor import plot_capture_anchor
+from .capture_anchor import plot_capture_anchor, plot_p_capture_scaling
 
 __all__ = [
     "plot_loss",
@@ -29,6 +32,7 @@ __all__ = [
     "plot_mixture_composition",
     "plot_annotation_ppc",
     "plot_capture_anchor",
+    "plot_p_capture_scaling",
     "_get_config_values",
     "_get_predictive_samples_for_plot",
     "_get_training_diagnostic_payload",
