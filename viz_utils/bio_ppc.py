@@ -103,7 +103,12 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
     denoise_cell_batch_size = int(
         viz_cfg.get("bio_ppc_opts", {}).get("denoise_cell_batch_size", 256)
     )
-    counts_subset = counts[:, selected_idx]
+    # ``results[selected_idx]`` subsets by boolean mask and keeps original
+    # gene order, not the incoming index order.  Use the same sorted-by-original
+    # order for counts so denoising receives columns aligned with
+    # ``results_subset`` parameters.
+    selected_idx_sorted_by_original = np.sort(selected_idx)
+    counts_subset = counts[:, selected_idx_sorted_by_original]
     denoised_subset = _get_denoised_counts_for_plot(
         results_subset,
         counts=counts_subset,
@@ -114,7 +119,6 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
     # Build a position map: original gene index → position inside the
     # gene-subset that was passed to the biological PPC sampler.
-    selected_idx_sorted_by_original = np.sort(selected_idx)
     subset_positions = {
         gene_idx: pos
         for pos, gene_idx in enumerate(selected_idx_sorted_by_original)

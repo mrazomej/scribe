@@ -19,6 +19,7 @@ from viz_utils import (
     _get_predictive_samples_for_plot,
     _get_training_diagnostic_payload,
     plot_annotation_ppc,
+    plot_bio_ppc,
     plot_correlation_heatmap,
     plot_ecdf,
     plot_loss,
@@ -58,6 +59,7 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_loss)
     assert callable(plot_ecdf)
     assert callable(plot_ppc)
+    assert callable(plot_bio_ppc)
     assert callable(plot_umap)
     assert callable(plot_correlation_heatmap)
     assert callable(plot_mixture_ppc)
@@ -248,3 +250,95 @@ def test_umap_cache_path_multi_column_changes_across_combinations():
     path_b = _build_umap_cache_path(cfg=_cfg("ctrl", "10x"), cache_umap=True)
     path_c = _build_umap_cache_path(cfg=_cfg("drug", "dropseq"), cache_umap=True)
     assert len({path_a, path_b, path_c}) == 3
+
+
+def test_plot_bio_ppc_aligns_counts_subset_with_results_order(monkeypatch, tmp_path):
+    """Bio-PPC denoising must align count columns with subsetted result order.
+
+    The ``results[selected_idx]`` path keeps genes in original-order semantics
+    (boolean-mask subsetting), while ``selected_idx`` itself is log-bin order.
+    This test ensures Bio-PPC denoising receives counts in original index order
+    so denoised histograms align with the biological PPC parameter subset.
+    """
+    import viz_utils.bio_ppc as bio_ppc_module
+
+    # Keep selected_idx intentionally unsorted to exercise the alignment path.
+    selected_idx = np.array([4, 1, 3], dtype=int)
+    sorted_idx = np.array([1, 3, 4], dtype=int)
+    n_cells = 5
+    n_genes = 6
+    counts = np.arange(n_cells * n_genes).reshape(n_cells, n_genes)
+
+    class _FakeResults:
+        """Minimal results stub supporting gene subsetting and config access."""
+
+        model_type = "nbvcp"
+        n_components = None
+
+        def __getitem__(self, index):
+            _ = index
+            return self
+
+    captured = {}
+
+    def _fake_select_genes(_counts, _rows, _cols):
+        means = np.median(_counts, axis=0)
+        return selected_idx, means
+
+    def _fake_bio_samples(
+        _results, *, rng_key, n_samples, counts, batch_size, store_samples
+    ):
+        _ = rng_key, counts, batch_size, store_samples
+        # Shape: (n_samples, n_cells, n_selected_genes)
+        return np.zeros((n_samples, n_cells, selected_idx.size), dtype=float)
+
+    def _fake_denoised(
+        _results, *, counts, rng_key, method, cell_batch_size
+    ):
+        _ = rng_key, method, cell_batch_size
+        captured["counts_for_denoise"] = counts.copy()
+        return np.zeros_like(counts, dtype=float)
+
+    monkeypatch.setattr(bio_ppc_module, "_select_genes", _fake_select_genes)
+    monkeypatch.setattr(
+        bio_ppc_module,
+        "_get_biological_ppc_samples_for_plot",
+        _fake_bio_samples,
+    )
+    monkeypatch.setattr(
+        bio_ppc_module, "_get_denoised_counts_for_plot", _fake_denoised
+    )
+    monkeypatch.setattr(
+        bio_ppc_module.scribe.viz,
+        "plot_histogram_credible_regions_stairs",
+        lambda *args, **kwargs: None,
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "inference": {
+                "method": "svi",
+                "parameterization": "mean_odds",
+                "n_components": 1,
+            },
+            "model": "zinbvcp",
+        }
+    )
+    viz_cfg = OmegaConf.create(
+        {
+            "ppc_opts": {"n_rows": 1, "n_cols": 3, "n_samples": 2},
+            "bio_ppc_opts": {"denoise_cell_batch_size": 2},
+            "format": "png",
+        }
+    )
+
+    plot_bio_ppc(
+        _FakeResults(),
+        counts=counts,
+        figs_dir=str(tmp_path),
+        cfg=cfg,
+        viz_cfg=viz_cfg,
+    )
+
+    expected = counts[:, sorted_idx]
+    np.testing.assert_array_equal(captured["counts_for_denoise"], expected)
