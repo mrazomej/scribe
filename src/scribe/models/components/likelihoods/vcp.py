@@ -306,10 +306,15 @@ class NBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset phi becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
-                # Guard with use_dataset_indexing so gene-specific phi
-                # (n_genes,) is left alone — it broadcasts naturally with the
-                # (n_cells, 1) capture dimension.
-                if phi.ndim == 1 and not is_mixture and use_dataset_indexing:
+                # Guard with use_dataset_indexing and a cell-axis size check so
+                # gene-specific phi (n_genes,) is left alone. Only per-cell
+                # vectors (n_cells,) should be expanded.
+                if (
+                    phi.ndim == 1
+                    and not is_mixture
+                    and use_dataset_indexing
+                    and phi.shape[0] == capture_value.shape[0]
+                ):
                     phi = phi[:, None]
 
                 # Reshape capture for broadcasting
@@ -356,9 +361,15 @@ class NBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset p becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
-                # Guard with use_dataset_indexing so gene-specific p (n_genes,)
-                # is left alone — it broadcasts naturally with capture.
-                if p.ndim == 1 and not is_mixture and use_dataset_indexing:
+                # Guard with use_dataset_indexing and a cell-axis size check so
+                # gene-specific p (n_genes,) is left alone. Only per-cell
+                # vectors (n_cells,) should be expanded.
+                if (
+                    p.ndim == 1
+                    and not is_mixture
+                    and use_dataset_indexing
+                    and p.shape[0] == capture_value.shape[0]
+                ):
                     p = p[:, None]
 
                 if is_mixture:
@@ -660,10 +671,15 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset phi becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
-                # Guard with use_dataset_indexing so gene-specific phi
-                # (n_genes,) is left alone — it broadcasts naturally with the
-                # (n_cells, 1) capture dimension.
-                if phi.ndim == 1 and not is_mixture and use_dataset_indexing:
+                # Guard with use_dataset_indexing and a cell-axis size check so
+                # gene-specific phi (n_genes,) is left alone. Only per-cell
+                # vectors (n_cells,) should be expanded.
+                if (
+                    phi.ndim == 1
+                    and not is_mixture
+                    and use_dataset_indexing
+                    and phi.shape[0] == capture_value.shape[0]
+                ):
                     phi = phi[:, None]
 
                 # Reshape capture for broadcasting
@@ -711,9 +727,15 @@ class ZINBWithVCPLikelihood(Likelihood):
 
                 # Scalar-per-dataset p becomes (n_cells,) after indexing;
                 # expand to (n_cells, 1) so it broadcasts with capture and r.
-                # Guard with use_dataset_indexing so gene-specific p (n_genes,)
-                # is left alone — it broadcasts naturally with capture.
-                if p.ndim == 1 and not is_mixture and use_dataset_indexing:
+                # Guard with use_dataset_indexing and a cell-axis size check so
+                # gene-specific p (n_genes,) is left alone. Only per-cell
+                # vectors (n_cells,) should be expanded.
+                if (
+                    p.ndim == 1
+                    and not is_mixture
+                    and use_dataset_indexing
+                    and p.shape[0] == capture_value.shape[0]
+                ):
                     p = p[:, None]
 
                 if is_mixture:

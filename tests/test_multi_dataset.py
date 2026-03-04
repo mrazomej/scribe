@@ -290,6 +290,33 @@ class TestIndexDatasetParams:
         expected = jnp.array([0.3, 0.3, 0.7, 0.3, 0.7])
         np.testing.assert_allclose(result["p"], expected)
 
+    def test_param_specs_prevent_ambiguous_1d_gene_slicing(self):
+        """Gene-specific 1D params stay unsliced when specs mark non-dataset."""
+        n_datasets = 3
+        n_genes = 3
+        dataset_indices = jnp.array([0, 1, 2, 0])
+
+        # n_genes == n_datasets is intentionally ambiguous by shape alone.
+        # The param spec metadata should keep this gene-specific vector intact.
+        param_values = {"phi": jnp.linspace(0.1, 0.3, n_genes)}
+        param_specs = [
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+            )
+        ]
+
+        result = index_dataset_params(
+            param_values=param_values,
+            dataset_indices=dataset_indices,
+            n_datasets=n_datasets,
+            param_specs=param_specs,
+        )
+        assert result["phi"].shape == (n_genes,)
+        np.testing.assert_allclose(result["phi"], param_values["phi"])
+
 
 # ==============================================================================
 # Helper to build a minimal DatasetHierarchicalExpNormalSpec

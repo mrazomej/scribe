@@ -1617,6 +1617,30 @@ class TestHierarchicalFlags:
         assert "logit_gate_loc" in spec_names
         assert "logit_gate_scale" in spec_names
 
+    def test_mean_odds_hierarchical_p_multi_dataset_gate_validates(self):
+        """Regression test for mean_odds hierarchical_p + dataset gate dry-run."""
+        from scribe.models.presets.factory import create_model
+
+        # This configuration previously failed during model validation dry run
+        # because gene-specific phi was reshaped as if it were per-cell.
+        config = ModelConfig(
+            base_model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            hierarchical_dataset_gate=True,
+            n_datasets=2,
+            # Keep these enabled to match the failing override family.
+            hierarchical_dataset_mu=True,
+        )
+
+        model, guide, specs = create_model(config, validate=True)
+        spec_names = [s.name for s in specs]
+        assert model is not None
+        assert guide is not None
+        assert "phi" in spec_names
+        assert "gate" in spec_names
+
     def test_is_hierarchical_property(self):
         """is_hierarchical is True when either flag is set."""
         config_p = ModelConfig(

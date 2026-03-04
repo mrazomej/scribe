@@ -114,6 +114,11 @@ parameter. When provided, per-dataset parameters are automatically indexed
 to per-cell values inside the NumPyro plate context before building the
 observation distribution.
 
+For VCP likelihoods, 1D `p`/`phi` expansion to `(batch, 1)` is now guarded by
+the capture vector length (`capture_value.shape[0]`). This keeps gene-specific
+vectors `(n_genes,)` from being misinterpreted as per-cell vectors when
+dataset indexing is enabled.
+
 ### Mixture + Dataset Axis Convention
 
 When a parameter is **both** mixture-specific and dataset-specific, its shape
