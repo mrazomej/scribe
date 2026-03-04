@@ -110,6 +110,36 @@ def _should_emit_progress_update(step: int, n_steps: int) -> bool:
     return step % interval == 0
 
 
+def _mean_ignoring_nans(values: List[float]) -> float:
+    """
+    Compute a mean while excluding NaN values.
+
+    Parameters
+    ----------
+    values : List[float]
+        Sequence of scalar loss values.
+
+    Returns
+    -------
+    float
+        Arithmetic mean over finite, non-NaN values. Returns ``nan`` when
+        there are no finite values to average.
+
+    Notes
+    -----
+    This helper is used for progress reporting only so that transient NaNs
+    from unstable minibatches do not contaminate the displayed rolling mean
+    when stable updates are enabled.
+    """
+    # Convert once to a NumPy array so masking is vectorized and warning-free.
+    array_values = np.asarray(values, dtype=float)
+    # Keep only finite values; this naturally excludes NaN and +/-Inf.
+    finite_values = array_values[np.isfinite(array_values)]
+    if finite_values.size == 0:
+        return float("nan")
+    return float(np.mean(finite_values))
+
+
 def _run_with_early_stopping(
     svi: SVI,
     rng_key: random.PRNGKey,
@@ -303,7 +333,7 @@ def _run_with_early_stopping(
             if should_display:
                 batch_start = max(0, len(losses) - loss_display_interval)
                 batch_end = len(losses)
-                avg_loss = np.mean(losses[batch_start:batch_end])
+                avg_loss = _mean_ignoring_nans(losses[batch_start:batch_end])
                 loss_info = (
                     f"init loss: {init_loss:.4e}, "
                     f"avg. loss [{batch_start + 1}-{batch_end}]: {avg_loss:.4e}"
