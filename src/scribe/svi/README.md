@@ -826,6 +826,7 @@ final_results = SVIResultsFactory.create_results(
 - Enable `stable_update=True` (default)
 - Use unconstrained parameterizations when convergence is difficult
 - Check for NaN values in loss history
+- Progress-bar rolling mean loss ignores NaN/Inf values to keep reporting stable
 
 ## Integration with Other Modules
 

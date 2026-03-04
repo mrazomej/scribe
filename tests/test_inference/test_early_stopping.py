@@ -421,6 +421,27 @@ class TestSVIProgressLoggingInterval:
         assert updates == 20
 
 
+class TestSVIProgressLossAggregation:
+    """Test progress-bar loss aggregation helpers."""
+
+    def test_mean_ignoring_nans_drops_nan_entries(self):
+        """NaN values are ignored when reporting rolling mean loss."""
+        from scribe.svi.inference_engine import _mean_ignoring_nans
+
+        # Mix finite losses with NaNs to emulate unstable minibatch windows.
+        losses = [10.0, float("nan"), 14.0, float("nan"), 16.0]
+        # Only finite entries should contribute to the reported average.
+        assert _mean_ignoring_nans(losses) == pytest.approx((10.0 + 14.0 + 16.0) / 3.0)
+
+    def test_mean_ignoring_nans_returns_nan_for_all_non_finite(self):
+        """All-non-finite windows return NaN instead of raising/warning."""
+        from scribe.svi.inference_engine import _mean_ignoring_nans
+
+        # The display helper should safely handle windows with no finite values.
+        losses = [float("nan"), float("inf"), float("-inf")]
+        assert np.isnan(_mean_ignoring_nans(losses))
+
+
 # =============================================================================
 # Integration Tests - Actual SVI Runs (Slow, skipped by default)
 # =============================================================================
