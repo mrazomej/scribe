@@ -8,6 +8,7 @@ and package-root compatibility exports.
 from unittest.mock import MagicMock
 
 import jax.numpy as jnp
+from jax import random
 import numpy as np
 from omegaconf import OmegaConf
 
@@ -20,6 +21,7 @@ from viz_utils import (
     _get_training_diagnostic_payload,
     plot_annotation_ppc,
     plot_bio_ppc,
+    plot_capture_anchor,
     plot_correlation_heatmap,
     plot_ecdf,
     plot_loss,
@@ -65,6 +67,7 @@ def test_package_root_exports_expected_symbols():
     assert callable(plot_mixture_ppc)
     assert callable(plot_mixture_composition)
     assert callable(plot_annotation_ppc)
+    assert callable(plot_capture_anchor)
     assert callable(_get_config_values)
     assert callable(_get_predictive_samples_for_plot)
     assert callable(_get_training_diagnostic_payload)
@@ -109,14 +112,20 @@ def test_predictive_helper_truncates_mcmc_draws():
 
     selected = _get_predictive_samples_for_plot(
         results,
-        rng_key=None,
+        rng_key=random.PRNGKey(0),
         n_samples=2,
         counts=np.zeros((3, 2), dtype=np.int32),
         batch_size=None,
         store_samples=True,
     )
     assert selected.shape == (2, 3, 2)
-    assert np.array_equal(selected, full_predictive[:2])
+    # MCMC helper samples draws without replacement, so order/content are
+    # deterministic for a fixed key but not guaranteed to be the first draws.
+    assert len({draw.tobytes() for draw in selected}) == 2
+    for draw in selected:
+        assert any(
+            np.array_equal(draw, candidate) for candidate in full_predictive
+        )
 
 
 def test_training_payload_includes_mcmc_diagnostics():
@@ -342,3 +351,71 @@ def test_plot_bio_ppc_aligns_counts_subset_with_results_order(monkeypatch, tmp_p
 
     expected = counts[:, sorted_idx]
     np.testing.assert_array_equal(captured["counts_for_denoise"], expected)
+
+
+def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
+    """Capture-anchor plot should write an output file with expected suffix.
+
+    This test stubs map extraction and filename metadata so it can verify
+    plotting behavior without requiring a full fitted results object.
+    """
+    import viz_utils.capture_anchor as capture_anchor_module
+
+    class _FakeResults:
+        """Minimal stub used to satisfy result-object access in plotting."""
+
+        model_type = "zinbvcp"
+        n_components = 1
+
+    # Provide deterministic eta values with one value per cell.
+    eta_values = np.array([0.2, 0.4, 0.5, 0.1], dtype=float)
+    counts = np.array(
+        [
+            [10, 0, 1],
+            [4, 2, 0],
+            [7, 1, 3],
+            [2, 0, 0],
+        ],
+        dtype=float,
+    )
+
+    # Mock map extraction so the plot function receives eta values directly.
+    monkeypatch.setattr(
+        capture_anchor_module,
+        "_get_map_estimates_for_plot",
+        lambda *_args, **_kwargs: {"eta_capture": eta_values},
+    )
+    # Mock filename metadata to keep assertion stable and focused.
+    monkeypatch.setattr(
+        capture_anchor_module,
+        "_get_config_values",
+        lambda *_args, **_kwargs: {
+            "method": "svi",
+            "parameterization": "mean_odds",
+            "model_type": "zinbvcp",
+            "n_components": 1,
+            "run_size_token": "100steps",
+        },
+    )
+
+    cfg = OmegaConf.create({"priors": {"eta_capture": [12.2, 1e-5]}})
+    viz_cfg = OmegaConf.create(
+        {
+            "format": "png",
+            "capture_anchor_opts": {
+                "n_bins": 12,
+                "scatter_size": 5,
+                "scatter_alpha": 0.25,
+            },
+        }
+    )
+
+    output_path = plot_capture_anchor(
+        _FakeResults(),
+        counts=counts,
+        figs_dir=str(tmp_path),
+        cfg=cfg,
+        viz_cfg=viz_cfg,
+    )
+    assert output_path is not None
+    assert output_path.endswith("_capture_anchor.png")
