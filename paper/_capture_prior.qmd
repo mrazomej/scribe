@@ -284,6 +284,23 @@ shared across all datasets. This is particularly useful in multi-dataset setting
 (see @sec-hierarchical-datasets) where we want to ensure that all datasets share
 the same capture-probability-versus-library-size relationship.
 
+### Two variants: data-driven only vs. biology + data
+
+There are two ways to use shared scaling, depending on whether biological
+knowledge is available:
+
+1. **Data-driven only** (`capture_prior="default"` with `shared_capture_scaling=true`):
+   No organism-specific anchor. The prior on $\mu_\eta$ is vague, centered at
+   $\log M_0 = 10$ (i.e., $M_0 \approx 22{,}000$) with $\sigma_\mu = 5$ and
+   $\sigma_\eta = 1$. This lets the data fully determine the
+   capture-probability-versus-library-size slope, while still enforcing a shared
+   relationship across datasets to prevent the degeneracy in @sec-cap-identifiability.
+
+2. **Biology + data** (`capture_prior="biology_informed"` with
+   `shared_capture_scaling=true`): The prior on $\mu_\eta$ is centered on the
+   organism-specific $M_0$ (e.g., 200,000 for human), with a moderate
+   $\sigma_\mu$ so the data can refine the estimate.
+
 ### Model specification
 
 We replace the fixed $\log M_0$ with a latent variable $\mu_\eta$ that is
@@ -297,9 +314,11 @@ $$
 \eta_c \sim \mathcal{N}(\mu_\eta - \log L_c, \; \sigma_\eta^2),
 $${#eq-cap-dd-eta-prior}
 
-where $\sigma_\mu$ is the prior uncertainty on the effective total mRNA (set
-wide, e.g., $\sigma_\mu = 1.0$, when the organism is unknown) and $\sigma_\eta$
-plays the same role as $\sigma_M$ in the biology-informed prior.
+where $\log M_0$ and $\sigma_\mu$ depend on the mode: in the data-driven-only
+variant, $\log M_0 = 10$, $\sigma_\mu = 5$, $\sigma_\eta = 1$; in the
+biology-informed variant, $\log M_0$ comes from the organism and $\sigma_\mu$ is
+set moderately. The parameter $\sigma_\eta$ plays the same role as $\sigma_M$ in
+the biology-informed prior.
 
 The key constraint is that $\mu_\eta$ is a **single scalar parameter shared
 across all datasets**. This forces all datasets to share the same relationship
@@ -325,8 +344,17 @@ rather than to different biological expression levels.
 
 ## Connection between the two approaches {#sec-cap-connection}
 
-The biology-informed prior and the data-driven shared scaling are closely
-related. The biology-informed prior is a special case of the data-driven approach
+The four modes are orthogonal combinations of `capture_prior` and
+`shared_capture_scaling`:
+
+| `capture_prior` | `shared_capture_scaling` | Behavior |
+|-----------------|--------------------------|----------|
+| `"default"` | `false` | Standard flat prior (no eta framework) |
+| `"default"` | `true` | Data-driven only: vague prior, no M_0 anchoring |
+| `"biology_informed"` | `false` | Fixed M_0, no shared parameter |
+| `"biology_informed"` | `true` | Biology + data: shared $\mu_\eta$ centered on M_0 |
+
+The biology-informed prior is a special case of the data-driven approach
 with $\mu_\eta = \log M_0$ fixed (equivalently, $\sigma_\mu = 0$). Conversely,
 the data-driven approach generalizes the biology-informed prior by allowing the
 data to refine the estimate of total mRNA.

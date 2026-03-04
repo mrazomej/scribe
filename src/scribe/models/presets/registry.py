@@ -326,6 +326,32 @@ def build_capture_spec(
             use_phi_capture=use_phi_capture,
         )
 
+    # ---- Data-driven shared scaling (no M_0 anchoring) ----
+    # Uses the eta_c framework with a vague prior on the shared mu_eta
+    # parameter.  The data determines the overall capture-vs-library-size
+    # slope rather than a fixed biological constant.
+    shared_capture_scaling = getattr(
+        model_config, "shared_capture_scaling", False
+    )
+    if shared_capture_scaling:
+        log_M0_vague = 10.0   # ~22K molecules: neutral init, p_capture~0.9
+        sigma_M_vague = 1.0   # wide per-cell variation (~2.7x fold)
+        sigma_mu_vague = 5.0  # very flat prior on shared mu_eta
+
+        capture_family = guide_families.get(capture_param_name)
+        return BiologyInformedCaptureSpec(
+            name=capture_param_name,
+            shape_dims=("n_cells",),
+            default_params=(log_M0_vague, sigma_M_vague),
+            is_cell_specific=True,
+            guide_family=capture_family,
+            log_M0=log_M0_vague,
+            sigma_M=sigma_M_vague,
+            data_driven=True,
+            sigma_mu=sigma_mu_vague,
+            use_phi_capture=use_phi_capture,
+        )
+
     # ---- Standard (flat) capture prior path ----
     # Check if amortization is enabled for capture probability
     amort_config = guide_families.capture_amortization

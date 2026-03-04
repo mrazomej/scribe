@@ -90,16 +90,23 @@ mode. Single-dataset fits should use `hierarchical_p` and/or
 #### Biology-Informed Capture Prior
 
 For VCP models (`nbvcp`, `zinbvcp`), the capture probability can be anchored to
-biological knowledge about total cellular mRNA content:
+biological knowledge about total cellular mRNA content. The combination of
+`capture_prior` and `shared_capture_scaling` defines four orthogonal modes:
+
+| `capture_prior` | `shared_capture_scaling` | Behavior |
+|-----------------|--------------------------|----------|
+| `"default"` | `false` | Standard flat prior (no eta framework) |
+| `"default"` | `true` | Learn shared `mu_eta` with vague prior (data-driven only): log_M0=10.0, sigma_mu=5.0, sigma_M=1.0; no M_0 anchoring |
+| `"biology_informed"` | `false` | Fixed M_0 from organism/total_mrna_mean, no shared parameter |
+| `"biology_informed"` | `true` | Learn shared `mu_eta` centered on M_0 (biology + data) |
 
 - `capture_prior: str` — `"default"` or `"biology_informed"`
 - `shared_capture_scaling: bool` — When True, learn a shared `mu_eta`
-  across datasets instead of using fixed `M_0`. Can be combined with
-  either `capture_prior` mode (auto-promotes `"default"` to
-  `"biology_informed"` with vague defaults).
-- `organism: Optional[str]` — Sets default `M_0` for the organism:
-  `"human"`, `"mouse"`, `"yeast"`, `"ecoli"` (and aliases like
-  `"homo_sapiens"`)
+  across datasets. With `"default"`, uses a vague prior (no biological anchor);
+  with `"biology_informed"`, centers the prior on organism-specific M_0.
+- `organism: Optional[str]` — Sets default `M_0` for the organism (only used
+  when `capture_prior="biology_informed"`): `"human"`, `"mouse"`, `"yeast"`,
+  `"ecoli"` (and aliases like `"homo_sapiens"`)
 - `total_mrna_mean: Optional[float]` — Override `M_0` directly (takes
   precedence over organism)
 - `total_mrna_log_sigma: Optional[float]` — Log-scale std-dev of cell-to-cell

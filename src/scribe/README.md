@@ -394,7 +394,7 @@ results = scribe.fit(
 results = scribe.fit(
     adata,
     model="nbvcp",
-    shared_capture_scaling=True,  # auto-promotes to biology_informed
+    shared_capture_scaling=True,  # vague data-driven prior, no M_0 anchoring
 )
 ```
 

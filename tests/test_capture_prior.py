@@ -137,28 +137,30 @@ class TestModelConfigCapturePrior:
         assert config.shared_capture_scaling is True
         assert config.total_mrna_mean == 200_000
 
-    def test_shared_capture_scaling_auto_promotes_default(self):
-        """shared_capture_scaling with default auto-promotes to biology_informed."""
+    def test_shared_capture_scaling_keeps_default_prior(self):
+        """shared_capture_scaling with default stays default (no auto-promote)."""
         builder = ModelConfigBuilder()
         builder._base_model = "nbvcp"
         builder._shared_capture_scaling = True
         config = builder.build()
-        # Auto-promoted from default to biology_informed
-        assert config.capture_prior == "biology_informed"
+        # capture_prior stays "default" — no auto-promote
+        assert config.capture_prior == "default"
         assert config.shared_capture_scaling is True
-        # Falls back to mammalian default
-        assert config.total_mrna_mean == 200_000
-        assert config.total_mrna_log_sigma == 0.5
+        # No M_0 or sigma injected
+        assert config.total_mrna_mean is None
+        assert config.total_mrna_log_sigma is None
 
-    def test_shared_capture_scaling_auto_promote_with_organism(self):
-        """Auto-promote uses organism M_0 as center when provided."""
+    def test_shared_capture_scaling_with_organism_stays_default(self):
+        """shared_capture_scaling + organism keeps capture_prior='default'."""
         builder = ModelConfigBuilder()
         builder._base_model = "nbvcp"
         builder._shared_capture_scaling = True
         builder._organism = "yeast"
         config = builder.build()
-        assert config.capture_prior == "biology_informed"
-        assert config.total_mrna_mean == 60_000
+        # capture_prior remains default; organism priors are resolved
+        # but used only if the registry or user explicitly requests them.
+        assert config.capture_prior == "default"
+        assert config.organism == "yeast"
 
     def test_shared_capture_scaling_requires_vcp(self):
         """shared_capture_scaling with non-VCP model should raise."""
@@ -400,8 +402,8 @@ class TestModelDryRun:
         assert len(bio_specs) == 1
         assert bio_specs[0].data_driven is True
 
-    def test_nbvcp_auto_promote_shared_scaling(self):
-        """Auto-promoted shared_capture_scaling should create successfully."""
+    def test_nbvcp_shared_scaling_default_creates_vague_spec(self):
+        """shared_capture_scaling + default prior creates spec with vague params."""
         from scribe.models.presets.factory import create_model
 
         builder = ModelConfigBuilder()
@@ -419,7 +421,12 @@ class TestModelDryRun:
             if isinstance(s, BiologyInformedCaptureSpec)
         ]
         assert len(bio_specs) == 1
-        assert bio_specs[0].data_driven is True
+        spec = bio_specs[0]
+        assert spec.data_driven is True
+        # Vague defaults — no M_0 anchoring
+        assert spec.log_M0 == 10.0
+        assert spec.sigma_M == 1.0
+        assert spec.sigma_mu == 5.0
 
     def test_builder_with_capture_prior_method(self):
         """Test the builder's with_capture_prior method."""
