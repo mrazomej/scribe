@@ -478,7 +478,11 @@ class ModelConfigBuilder:
         # BetaPrime: both must be > 0
         BETAPRIME_PARAMS = frozenset({"phi", "phi_capture"})
 
+        # Capture-prior keys are validated by ModelConfig, skip here
+        _CAPTURE_PRIOR_KEYS = {"organism", "eta_capture", "mu_eta"}
         for param, value in self._priors.items():
+            if param in _CAPTURE_PRIOR_KEYS:
+                continue
             try:
                 vals = self._prior_value_to_tuple(value)
             except ValueError as e:
@@ -593,10 +597,16 @@ class ModelConfigBuilder:
         # For now, pass empty list - preset factories will populate it
         param_specs: List[ParamSpec] = []
 
-        # Build priors from merged user + defaults (convert arrays to tuples)
-        priors_dict = {
-            k: self._prior_value_to_tuple(v) for k, v in self._priors.items()
-        }
+        # Build priors from merged user + defaults (convert arrays to tuples).
+        # Special capture-prior keys (organism, eta_capture, mu_eta) may be
+        # strings or tuples and are passed through as-is.
+        _CAPTURE_PRIOR_KEYS = {"organism", "eta_capture", "mu_eta"}
+        priors_dict = {}
+        for k, v in self._priors.items():
+            if k in _CAPTURE_PRIOR_KEYS:
+                priors_dict[k] = v
+            else:
+                priors_dict[k] = self._prior_value_to_tuple(v)
         priors = PriorOverrides(**priors_dict)
 
         # Build unified ModelConfig
