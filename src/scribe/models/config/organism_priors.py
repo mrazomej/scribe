@@ -3,8 +3,8 @@
 Each entry maps an organism name to its expected total mRNA per cell (M_0)
 and the log-scale standard deviation (sigma_M) representing cell-to-cell
 variation in total mRNA content.  These values are used when
-``capture_prior`` is set to ``"biology_informed"`` and the user specifies
-``organism`` instead of providing explicit hyperparameters.
+``priors.organism`` is set and explicit ``priors.eta_capture`` is not
+provided.
 
 See Also
 --------

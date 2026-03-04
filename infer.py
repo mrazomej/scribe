@@ -371,25 +371,6 @@ def _load_svi_init(svi_init_path, console: Console = None):
 # ------------------------------------------------------------------------------
 
 
-def _resolve_organism(value):
-    """Extract a plain organism string from Hydra config values.
-
-    Hydra may resolve ``organism=human`` into a DictConfig (from
-    ``conf/_organism_defaults/human.yaml``) instead of a plain string.
-    This helper normalises both cases to ``str | None``.
-    """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    # DictConfig from Hydra config group — not what we want; ignore it
-    # and let the Python-side organism_priors.py lookup handle resolution.
-    return None
-
-
-# ------------------------------------------------------------------------------
-
-
 def _resolve_empirical_mixing_components(
     config_n_components: int | None, results
 ) -> int | None:
@@ -677,11 +658,7 @@ def main(cfg: DictConfig) -> None:
         "horseshoe_tau0": cfg.get("horseshoe_tau0", 1.0),
         "horseshoe_slab_df": cfg.get("horseshoe_slab_df", 4),
         "horseshoe_slab_scale": cfg.get("horseshoe_slab_scale", 2.0),
-        "capture_prior": cfg.get("capture_prior", "default"),
         "shared_capture_scaling": cfg.get("shared_capture_scaling", False),
-        "organism": _resolve_organism(cfg.get("organism", None)),
-        "total_mrna_mean": cfg.get("total_mrna_mean", None),
-        "total_mrna_log_sigma": cfg.get("total_mrna_log_sigma", None),
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,

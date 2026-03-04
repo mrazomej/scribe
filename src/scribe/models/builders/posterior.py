@@ -387,10 +387,12 @@ def get_posterior_distributions(
     # -------------------------------------------------------------------------
     # Add capture probability if applicable
     # -------------------------------------------------------------------------
-    capture_prior = getattr(model_config, "capture_prior", "default")
+    bio_capture = getattr(
+        model_config, "uses_biology_informed_capture", False
+    )
     shared_scaling = getattr(model_config, "shared_capture_scaling", False)
     if uses_vcp:
-        if capture_prior == "biology_informed" or shared_scaling:
+        if bio_capture or shared_scaling:
             # Biology-informed or data-driven shared scaling: posterior
             # is on eta_capture (and optionally mu_eta).
             distributions.update(

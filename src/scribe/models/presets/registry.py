@@ -299,74 +299,40 @@ def build_capture_spec(
     use_phi_capture = capture_param_name == "phi_capture"
 
     # ---- Biology-informed capture prior path ----
-    capture_prior = (
-        getattr(model_config, "capture_prior", "default")
-        if model_config
-        else "default"
-    )
-    if capture_prior == "biology_informed":
-        total_mrna_mean = model_config.total_mrna_mean
-        sigma_M = model_config.total_mrna_log_sigma
-        log_M0 = math.log(total_mrna_mean)
-        # shared_capture_scaling enables learning mu_eta as a shared latent
-        data_driven = getattr(
-            model_config, "shared_capture_scaling", False
+    # Read eta_capture / mu_eta from the priors dict (already resolved
+    # by the ModelConfig validator from priors.organism if applicable).
+    priors_extra = {}
+    if model_config is not None:
+        priors_extra = (
+            getattr(model_config.priors, "__pydantic_extra__", None) or {}
         )
 
-        capture_family = guide_families.get(capture_param_name)
-        return BiologyInformedCaptureSpec(
+    eta_capture = priors_extra.get("eta_capture")
+    mu_eta = priors_extra.get("mu_eta")
+    shared_scaling = getattr(
+        model_config, "shared_capture_scaling", False
+    )
+
+    if eta_capture is not None:
+        log_M0, sigma_M = eta_capture
+        data_driven = shared_scaling
+
+        spec_kwargs = dict(
             name=capture_param_name,
             shape_dims=("n_cells",),
             default_params=(log_M0, sigma_M),
             is_cell_specific=True,
-            guide_family=capture_family,
+            guide_family=guide_families.get(capture_param_name),
             log_M0=log_M0,
             sigma_M=sigma_M,
             data_driven=data_driven,
             use_phi_capture=use_phi_capture,
         )
+        # When shared scaling is on, sigma_mu comes from mu_eta prior
+        if data_driven and mu_eta is not None:
+            spec_kwargs["sigma_mu"] = mu_eta[1]
 
-    # ---- Data-driven shared scaling (default capture prior) ----
-    # Uses the eta_c framework with a learned shared mu_eta parameter.
-    #
-    # Behavior:
-    # 1) If user provided total_mrna_mean (or organism resolved it in config),
-    #    use that to anchor log_M0 while still learning shared mu_eta.
-    # 2) Otherwise fall back to vague defaults (purely data-driven).
-    shared_capture_scaling = getattr(
-        model_config, "shared_capture_scaling", False
-    )
-    if shared_capture_scaling:
-        total_mrna_mean = getattr(model_config, "total_mrna_mean", None)
-        sigma_M_cfg = getattr(model_config, "total_mrna_log_sigma", None)
-
-        if total_mrna_mean is not None:
-            log_M0 = math.log(total_mrna_mean)
-            # If mean is user-provided, config validation ensures a default
-            # sigma_M exists (0.5) when not explicitly set.
-            sigma_M = sigma_M_cfg if sigma_M_cfg is not None else 0.5
-        else:
-            log_M0 = 10.0   # ~22K molecules: neutral init, p_capture~0.9
-            sigma_M = 1.0   # wide per-cell variation (~2.7x fold)
-
-        # Keep a broad prior on shared mu_eta in default mode; this preserves
-        # the "data-driven" semantics while honoring any user-provided M_0
-        # anchor for the center.
-        sigma_mu_vague = 5.0  # very flat prior on shared mu_eta
-
-        capture_family = guide_families.get(capture_param_name)
-        return BiologyInformedCaptureSpec(
-            name=capture_param_name,
-            shape_dims=("n_cells",),
-            default_params=(log_M0, sigma_M),
-            is_cell_specific=True,
-            guide_family=capture_family,
-            log_M0=log_M0,
-            sigma_M=sigma_M,
-            data_driven=True,
-            sigma_mu=sigma_mu_vague,
-            use_phi_capture=use_phi_capture,
-        )
+        return BiologyInformedCaptureSpec(**spec_kwargs)
 
     # ---- Standard (flat) capture prior path ----
     # Check if amortization is enabled for capture probability

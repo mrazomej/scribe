@@ -403,11 +403,7 @@ from scribe.models.config import ModelConfigBuilder
 config = (ModelConfigBuilder()
     .for_model("nbvcp")
     .with_parameterization("mean_odds")
-    .with_capture_prior(
-        mode="biology_informed",
-        organism="human",
-        shared_capture_scaling=True,
-    )
+    .with_capture_priors(organism="human", shared_capture_scaling=True)
     .build())
 ```
 

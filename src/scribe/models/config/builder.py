@@ -98,11 +98,7 @@ class ModelConfigBuilder:
         self._horseshoe_tau0: float = 1.0
         self._horseshoe_slab_df: int = 4
         self._horseshoe_slab_scale: float = 2.0
-        self._capture_prior: str = "default"
         self._shared_capture_scaling: bool = False
-        self._organism: Optional[str] = None
-        self._total_mrna_mean: Optional[float] = None
-        self._total_mrna_log_sigma: Optional[float] = None
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
         self._guide_families: Optional[GuideFamilyConfig] = None
@@ -202,51 +198,38 @@ class ModelConfigBuilder:
 
     # --------------------------------------------------------------------------
 
-    def with_capture_prior(
+    def with_capture_priors(
         self,
-        mode: str = "biology_informed",
         organism: Optional[str] = None,
-        total_mrna_mean: Optional[float] = None,
-        total_mrna_log_sigma: Optional[float] = None,
+        eta_capture: Optional[tuple] = None,
+        mu_eta: Optional[tuple] = None,
         shared_capture_scaling: bool = False,
     ) -> "ModelConfigBuilder":
         """Configure the biology-informed capture probability prior.
 
+        Sets keys in the ``priors`` dict that activate the eta_c
+        parameterization.  The ``ModelConfig`` validator resolves
+        organism → eta_capture defaults automatically.
+
         Parameters
         ----------
-        mode : str
-            Prior mode: ``"default"`` or ``"biology_informed"``.
         organism : str, optional
-            Organism name for default M_0 lookup (e.g. ``"human"``).
-        total_mrna_mean : float, optional
-            Override total mRNA per cell (M_0).
-        total_mrna_log_sigma : float, optional
-            Override log-scale std-dev of cell-to-cell mRNA variation.
+            Organism name (e.g. ``"human"``). Resolves default
+            ``eta_capture`` via ``organism_priors``.
+        eta_capture : tuple of (float, float), optional
+            ``(log_M0, sigma_M)`` for the per-cell prior.
+        mu_eta : tuple of (float, float), optional
+            ``(center, sigma_mu)`` for the shared mu_eta prior.
         shared_capture_scaling : bool
-            If True, learn a shared mu_eta parameter across datasets
-            instead of using a fixed M_0.
+            If True, learn a shared mu_eta across datasets.
         """
-        self._capture_prior = mode
         self._shared_capture_scaling = shared_capture_scaling
         if organism is not None:
-            self._organism = organism
-        if total_mrna_mean is not None:
-            self._total_mrna_mean = total_mrna_mean
-        if total_mrna_log_sigma is not None:
-            self._total_mrna_log_sigma = total_mrna_log_sigma
-        return self
-
-    # --------------------------------------------------------------------------
-
-    def with_organism(self, organism: str) -> "ModelConfigBuilder":
-        """Set the organism for biology-informed priors.
-
-        Parameters
-        ----------
-        organism : str
-            Organism name (e.g. ``"human"``, ``"mouse"``, ``"yeast"``).
-        """
-        self._organism = organism
+            self._priors["organism"] = organism
+        if eta_capture is not None:
+            self._priors["eta_capture"] = eta_capture
+        if mu_eta is not None:
+            self._priors["mu_eta"] = mu_eta
         return self
 
     # --------------------------------------------------------------------------
@@ -630,11 +613,7 @@ class ModelConfigBuilder:
             horseshoe_tau0=self._horseshoe_tau0,
             horseshoe_slab_df=self._horseshoe_slab_df,
             horseshoe_slab_scale=self._horseshoe_slab_scale,
-            capture_prior=self._capture_prior,
             shared_capture_scaling=self._shared_capture_scaling,
-            organism=self._organism,
-            total_mrna_mean=self._total_mrna_mean,
-            total_mrna_log_sigma=self._total_mrna_log_sigma,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
             guide_families=self._guide_families,

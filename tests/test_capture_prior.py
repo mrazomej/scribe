@@ -3,6 +3,11 @@
 Tests organism prior resolution, BiologyInformedCaptureSpec creation,
 ModelConfig validation, shared_capture_scaling, TruncatedNormal
 enforcement, and model dry-run with the biology-informed capture prior.
+
+The capture prior is configured entirely through the ``priors`` dict:
+  - ``priors.organism``    — shortcut to resolve defaults
+  - ``priors.eta_capture`` — explicit ``[log_M0, sigma_M]``
+  - ``priors.mu_eta``      — explicit ``[center, sigma_mu]``
 """
 
 import math
@@ -19,7 +24,7 @@ from scribe.models.config.organism_priors import (
 from scribe.models.config import ModelConfig, ModelConfigBuilder
 from scribe.models.builders.parameter_specs import BiologyInformedCaptureSpec
 from scribe.models.presets.registry import build_capture_spec
-from scribe.models.config.groups import GuideFamilyConfig
+from scribe.models.config.groups import GuideFamilyConfig, PriorOverrides
 from scribe.models.config.enums import Parameterization
 
 
@@ -66,135 +71,156 @@ class TestOrganismPriorResolution:
 
 
 # =============================================================================
-# ModelConfig validation
+# ModelConfig validation — new priors-based API
 # =============================================================================
 
 
 class TestModelConfigCapturePrior:
-    """Test ModelConfig validation for capture_prior fields."""
+    """Test ModelConfig validation for priors-based capture configuration."""
 
-    def test_flat_prior_no_organism_needed(self):
-        """Flat prior is the default and doesn't need organism."""
+    def test_default_no_biology_informed(self):
+        """Default config has no biology-informed capture."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
             .build()
         )
-        assert config.capture_prior == "default"
-        assert config.organism is None
+        assert config.uses_biology_informed_capture is False
 
-    def test_biology_informed_requires_organism_or_M0(self):
-        """biology_informed without organism or M_0 should raise."""
-        with pytest.raises(ValueError, match="organism.*total_mrna_mean"):
-            ModelConfigBuilder()._capture_prior = "biology_informed"
-            builder = ModelConfigBuilder()
-            builder._base_model = "nbvcp"
-            builder._capture_prior = "biology_informed"
-            builder.build()
+    def test_organism_activates_biology_informed(self):
+        """priors.organism should resolve eta_capture and activate bio path."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human")
+            .build()
+        )
+        assert config.uses_biology_informed_capture is True
+        extra = getattr(config.priors, "__pydantic_extra__", {})
+        eta = extra.get("eta_capture")
+        assert eta is not None
+        assert eta[0] == pytest.approx(math.log(200_000))
+        assert eta[1] == pytest.approx(0.5)
 
-    def test_biology_informed_with_organism(self):
-        """biology_informed with organism should resolve M_0."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._capture_prior = "biology_informed"
-        builder._organism = "human"
-        config = builder.build()
-        assert config.capture_prior == "biology_informed"
-        assert config.total_mrna_mean == 200_000
-        assert config.total_mrna_log_sigma == 0.5
+    def test_explicit_eta_capture(self):
+        """Explicit priors.eta_capture overrides organism defaults."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(eta_capture=(11.0, 0.3))
+            .build()
+        )
+        assert config.uses_biology_informed_capture is True
+        extra = getattr(config.priors, "__pydantic_extra__", {})
+        assert extra["eta_capture"] == (11.0, 0.3)
 
-    def test_biology_informed_manual_M0(self):
-        """Explicit total_mrna_mean overrides organism default."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._capture_prior = "biology_informed"
-        builder._total_mrna_mean = 100_000
-        config = builder.build()
-        assert config.total_mrna_mean == 100_000
-        # sigma defaults to 0.5 when not specified
-        assert config.total_mrna_log_sigma == 0.5
+    def test_eta_capture_overrides_organism(self):
+        """Explicit eta_capture takes precedence over organism."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human", eta_capture=(10.0, 0.2))
+            .build()
+        )
+        extra = getattr(config.priors, "__pydantic_extra__", {})
+        # Explicit eta_capture wins
+        assert extra["eta_capture"] == (10.0, 0.2)
 
-    def test_biology_informed_manual_override_organism(self):
-        """Explicit M_0 takes precedence over organism default."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._capture_prior = "biology_informed"
-        builder._organism = "human"
-        builder._total_mrna_mean = 150_000
-        config = builder.build()
-        # Explicit value wins over organism default
-        assert config.total_mrna_mean == 150_000
-
-    def test_shared_capture_scaling_with_biology_informed(self):
-        """shared_capture_scaling with biology_informed keeps the prior mode."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._capture_prior = "biology_informed"
-        builder._shared_capture_scaling = True
-        builder._organism = "human"
-        config = builder.build()
-        assert config.capture_prior == "biology_informed"
+    def test_shared_scaling_with_organism(self):
+        """shared_capture_scaling=True + organism resolves mu_eta defaults."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human", shared_capture_scaling=True)
+            .build()
+        )
         assert config.shared_capture_scaling is True
-        assert config.total_mrna_mean == 200_000
+        extra = getattr(config.priors, "__pydantic_extra__", {})
+        mu_eta = extra.get("mu_eta")
+        assert mu_eta is not None
+        # Center from eta_capture[0], sigma_mu defaults to 1.0 (anchored)
+        assert mu_eta[0] == pytest.approx(math.log(200_000))
+        assert mu_eta[1] == pytest.approx(1.0)
 
-    def test_shared_capture_scaling_keeps_default_prior(self):
-        """shared_capture_scaling with default stays default (no auto-promote)."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._shared_capture_scaling = True
-        config = builder.build()
-        # capture_prior stays "default" — no auto-promote
-        assert config.capture_prior == "default"
-        assert config.shared_capture_scaling is True
-        # No M_0 or sigma injected
-        assert config.total_mrna_mean is None
-        assert config.total_mrna_log_sigma is None
+    def test_shared_scaling_explicit_mu_eta(self):
+        """Explicit priors.mu_eta overrides defaults."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(
+                organism="human",
+                mu_eta=(11.5, 0.5),
+                shared_capture_scaling=True,
+            )
+            .build()
+        )
+        extra = getattr(config.priors, "__pydantic_extra__", {})
+        assert extra["mu_eta"] == (11.5, 0.5)
 
-    def test_shared_capture_scaling_with_organism_stays_default(self):
-        """shared_capture_scaling + organism keeps capture_prior='default'."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._shared_capture_scaling = True
-        builder._organism = "yeast"
-        config = builder.build()
-        # capture_prior remains default; organism priors are resolved
-        # but used only if the registry or user explicitly requests them.
-        assert config.capture_prior == "default"
-        assert config.organism == "yeast"
-
-    def test_shared_capture_scaling_requires_vcp(self):
+    def test_shared_scaling_requires_vcp(self):
         """shared_capture_scaling with non-VCP model should raise."""
         with pytest.raises(ValueError, match="VCP"):
-            builder = ModelConfigBuilder()
-            builder._base_model = "nbdm"
-            builder._shared_capture_scaling = True
-            builder.build()
+            (
+                ModelConfigBuilder()
+                .for_model("nbdm")
+                .with_capture_priors(
+                    organism="human", shared_capture_scaling=True
+                )
+                .build()
+            )
 
-    def test_capture_prior_requires_vcp(self):
-        """Non-flat capture_prior with non-VCP model should raise."""
+    def test_eta_capture_requires_vcp(self):
+        """priors.eta_capture with non-VCP model should raise."""
         with pytest.raises(ValueError, match="VCP"):
-            builder = ModelConfigBuilder()
-            builder._base_model = "nbdm"
-            builder._capture_prior = "biology_informed"
-            builder._organism = "human"
-            builder.build()
+            (
+                ModelConfigBuilder()
+                .for_model("nbdm")
+                .with_capture_priors(organism="human")
+                .build()
+            )
 
-    def test_invalid_capture_prior_mode(self):
-        """Invalid capture_prior mode should raise."""
-        with pytest.raises(ValueError, match="capture_prior"):
-            builder = ModelConfigBuilder()
-            builder._base_model = "nbvcp"
-            builder._capture_prior = "invalid_mode"
-            builder.build()
+    def test_sigma_mu_default_anchored(self):
+        """When shared scaling + anchor, sigma_mu defaults to 1.0."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(
+                eta_capture=(11.5, 0.5), shared_capture_scaling=True
+            )
+            .build()
+        )
+        extra = getattr(config.priors, "__pydantic_extra__", {})
+        assert extra["mu_eta"][1] == pytest.approx(1.0)
 
-    def test_data_driven_is_no_longer_valid_mode(self):
-        """'data_driven' was replaced by shared_capture_scaling flag."""
-        with pytest.raises(ValueError, match="capture_prior"):
-            builder = ModelConfigBuilder()
-            builder._base_model = "nbvcp"
-            builder._capture_prior = "data_driven"
-            builder.build()
+    def test_backward_compat_setstate(self):
+        """Old pickled configs with capture_prior field should migrate."""
+        # Simulate old __setstate__ dict
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .build()
+        )
+        old_state = {"__dict__": config.__dict__.copy()}
+        old_dict = old_state["__dict__"]
+        old_dict["capture_prior"] = "biology_informed"
+        old_dict["organism"] = "human"
+        old_dict["total_mrna_mean"] = 200_000
+        old_dict["total_mrna_log_sigma"] = 0.5
+
+        config2 = ModelConfig.__new__(ModelConfig)
+        config2.__setstate__(old_state)
+        extra = getattr(config2.priors, "__pydantic_extra__", {})
+        assert "eta_capture" in extra
+        assert extra["eta_capture"][0] == pytest.approx(math.log(200_000))
+        assert extra.get("organism") == "human"
 
 
 # =============================================================================
@@ -258,10 +284,10 @@ class TestBiologyInformedCaptureSpec:
 
 
 class TestBuildCaptureSpec:
-    """Test build_capture_spec with biology-informed config."""
+    """Test build_capture_spec with the new priors-based config."""
 
     def test_flat_returns_standard_spec(self):
-        """Flat prior should return ExpNormalSpec for phi_capture."""
+        """Default (no priors) should return ExpNormalSpec for phi_capture."""
         config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
@@ -281,15 +307,15 @@ class TestBuildCaptureSpec:
         )
         assert isinstance(spec, ExpNormalSpec)
 
-    def test_biology_informed_returns_bio_spec(self):
-        """Biology-informed config should return BiologyInformedCaptureSpec."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._parameterization = Parameterization.MEAN_ODDS
-        builder._capture_prior = "biology_informed"
-        builder._organism = "human"
-        config = builder.build()
-
+    def test_organism_returns_bio_spec(self):
+        """priors.organism should produce BiologyInformedCaptureSpec."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human")
+            .build()
+        )
         from scribe.models.parameterizations import PARAMETERIZATIONS
 
         param_strategy = PARAMETERIZATIONS[config.parameterization]
@@ -303,16 +329,17 @@ class TestBuildCaptureSpec:
         assert spec.use_phi_capture is True
         assert spec.log_M0 == pytest.approx(math.log(200_000))
 
-    def test_shared_scaling_returns_bio_spec_data_driven(self):
-        """shared_capture_scaling should produce BiologyInformedCaptureSpec with data_driven=True."""
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._parameterization = Parameterization.MEAN_ODDS
-        builder._capture_prior = "biology_informed"
-        builder._shared_capture_scaling = True
-        builder._organism = "mouse"
-        config = builder.build()
-
+    def test_shared_scaling_returns_data_driven(self):
+        """shared_capture_scaling + organism should produce data_driven spec."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(
+                organism="mouse", shared_capture_scaling=True
+            )
+            .build()
+        )
         from scribe.models.parameterizations import PARAMETERIZATIONS
 
         param_strategy = PARAMETERIZATIONS[config.parameterization]
@@ -325,6 +352,31 @@ class TestBuildCaptureSpec:
         assert isinstance(spec, BiologyInformedCaptureSpec)
         assert spec.data_driven is True
 
+    def test_explicit_sigma_mu_propagates(self):
+        """Explicit mu_eta sigma should propagate to spec."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(
+                organism="human",
+                mu_eta=(math.log(200_000), 0.5),
+                shared_capture_scaling=True,
+            )
+            .build()
+        )
+        from scribe.models.parameterizations import PARAMETERIZATIONS
+
+        param_strategy = PARAMETERIZATIONS[config.parameterization]
+        spec = build_capture_spec(
+            unconstrained=False,
+            guide_families=GuideFamilyConfig(),
+            param_strategy=param_strategy,
+            model_config=config,
+        )
+        assert isinstance(spec, BiologyInformedCaptureSpec)
+        assert spec.sigma_mu == pytest.approx(0.5)
+
 
 # =============================================================================
 # Model dry run with biology-informed capture prior
@@ -335,22 +387,22 @@ class TestModelDryRun:
     """Test that model creation succeeds with biology-informed capture."""
 
     def test_nbvcp_biology_informed_mean_odds(self):
-        """NBVCP with biology-informed prior in mean_odds should create."""
+        """NBVCP with organism prior in mean_odds should create."""
         from scribe.models.presets.factory import create_model
 
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._parameterization = Parameterization.MEAN_ODDS
-        builder._unconstrained = True
-        builder._capture_prior = "biology_informed"
-        builder._organism = "human"
-        config = builder.build()
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_capture_priors(organism="human")
+            .build()
+        )
 
         model_fn, guide_fn, param_specs = create_model(config)
         assert model_fn is not None
         assert guide_fn is not None
 
-        # Check that a BiologyInformedCaptureSpec was produced
         bio_specs = [
             s for s in param_specs
             if isinstance(s, BiologyInformedCaptureSpec)
@@ -359,15 +411,16 @@ class TestModelDryRun:
         assert bio_specs[0].use_phi_capture is True
 
     def test_zinbvcp_biology_informed_canonical(self):
-        """ZINBVCP with biology-informed prior in canonical should create."""
+        """ZINBVCP with organism=yeast in canonical should create."""
         from scribe.models.presets.factory import create_model
 
-        builder = ModelConfigBuilder()
-        builder._base_model = "zinbvcp"
-        builder._parameterization = Parameterization.CANONICAL
-        builder._capture_prior = "biology_informed"
-        builder._organism = "yeast"
-        config = builder.build()
+        config = (
+            ModelConfigBuilder()
+            .for_model("zinbvcp")
+            .with_parameterization("canonical")
+            .with_capture_priors(organism="yeast")
+            .build()
+        )
 
         model_fn, guide_fn, param_specs = create_model(config)
         assert model_fn is not None
@@ -381,17 +434,17 @@ class TestModelDryRun:
         assert bio_specs[0].log_M0 == pytest.approx(math.log(60_000))
 
     def test_nbvcp_shared_capture_scaling(self):
-        """NBVCP with shared_capture_scaling should create with data_driven spec."""
+        """NBVCP with shared_capture_scaling should create data_driven spec."""
         from scribe.models.presets.factory import create_model
 
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._parameterization = Parameterization.MEAN_ODDS
-        builder._unconstrained = True
-        builder._capture_prior = "biology_informed"
-        builder._shared_capture_scaling = True
-        builder._organism = "human"
-        config = builder.build()
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_capture_priors(organism="human", shared_capture_scaling=True)
+            .build()
+        )
 
         model_fn, guide_fn, param_specs = create_model(config)
         assert model_fn is not None
@@ -403,88 +456,49 @@ class TestModelDryRun:
         assert len(bio_specs) == 1
         assert bio_specs[0].data_driven is True
 
-    def test_nbvcp_shared_scaling_default_creates_vague_spec(self):
-        """shared_capture_scaling + default prior creates spec with vague params."""
+    def test_shared_scaling_with_explicit_eta_and_mu(self):
+        """Explicit eta_capture + mu_eta should propagate to spec."""
         from scribe.models.presets.factory import create_model
 
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._parameterization = Parameterization.MEAN_ODDS
-        builder._unconstrained = True
-        builder._shared_capture_scaling = True
-        config = builder.build()
-
-        model_fn, guide_fn, param_specs = create_model(config)
-        assert model_fn is not None
-
-        bio_specs = [
-            s for s in param_specs
-            if isinstance(s, BiologyInformedCaptureSpec)
-        ]
-        assert len(bio_specs) == 1
-        spec = bio_specs[0]
-        assert spec.data_driven is True
-        # Vague defaults — no M_0 anchoring
-        assert spec.log_M0 == 10.0
-        assert spec.sigma_M == 1.0
-        assert spec.sigma_mu == 5.0
-
-    def test_shared_scaling_default_honors_manual_m0_anchor(self):
-        """Default shared scaling uses user-provided M_0 / sigma_M when set."""
-        from scribe.models.presets.factory import create_model
-
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._parameterization = Parameterization.MEAN_ODDS
-        builder._unconstrained = True
-        builder._shared_capture_scaling = True
-        builder._total_mrna_mean = 100_000
-        builder._total_mrna_log_sigma = 0.2
-        config = builder.build()
-
-        model_fn, guide_fn, param_specs = create_model(config)
-        assert model_fn is not None
-        assert guide_fn is not None
-
-        bio_specs = [
-            s for s in param_specs
-            if isinstance(s, BiologyInformedCaptureSpec)
-        ]
-        assert len(bio_specs) == 1
-        spec = bio_specs[0]
-        assert spec.data_driven is True
-        assert spec.log_M0 == pytest.approx(math.log(100_000))
-        assert spec.sigma_M == pytest.approx(0.2)
-        # Default mode keeps a broad shared-mu prior.
-        assert spec.sigma_mu == pytest.approx(5.0)
-
-    def test_builder_with_capture_prior_method(self):
-        """Test the builder's with_capture_prior method."""
-        builder = (
+        config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_prior(
-                mode="biology_informed",
-                organism="human",
+            .unconstrained()
+            .with_capture_priors(
+                eta_capture=(11.5, 0.3),
+                mu_eta=(11.5, 0.5),
+                shared_capture_scaling=True,
             )
+            .build()
         )
-        config = builder.build()
-        assert config.capture_prior == "biology_informed"
-        assert config.total_mrna_mean == 200_000
 
-    def test_builder_with_organism_method(self):
-        """Test the builder's with_organism method."""
-        builder = (
+        model_fn, guide_fn, param_specs = create_model(config)
+        assert model_fn is not None
+
+        bio_specs = [
+            s for s in param_specs
+            if isinstance(s, BiologyInformedCaptureSpec)
+        ]
+        assert len(bio_specs) == 1
+        spec = bio_specs[0]
+        assert spec.data_driven is True
+        assert spec.log_M0 == pytest.approx(11.5)
+        assert spec.sigma_M == pytest.approx(0.3)
+        assert spec.sigma_mu == pytest.approx(0.5)
+
+    def test_builder_with_capture_priors_method(self):
+        """Test the builder's with_capture_priors method."""
+        config = (
             ModelConfigBuilder()
             .for_model("nbvcp")
             .with_parameterization("mean_odds")
-            .with_capture_prior(mode="biology_informed")
-            .with_organism("mouse")
+            .with_capture_priors(organism="human")
+            .build()
         )
-        config = builder.build()
-        assert config.organism == "mouse"
-        assert config.total_mrna_mean == 200_000
+        assert config.uses_biology_informed_capture is True
+        extra = getattr(config.priors, "__pydantic_extra__", {})
+        assert extra["eta_capture"][0] == pytest.approx(math.log(200_000))
 
 
 # =============================================================================
@@ -504,8 +518,6 @@ class TestTruncatedNormalPrior:
             _sample_capture_biology_informed,
         )
 
-        # Run the model function in a traced context to inspect the
-        # distribution registered at the eta_capture sample site.
         log_lib_sizes = jnp.log(jnp.array([5_000.0, 20_000.0, 100_000.0]))
 
         def _model():
@@ -516,18 +528,15 @@ class TestTruncatedNormalPrior:
                 use_phi_capture=True,
             )
 
-        # Trace the model to inspect the sample site
         trace = numpyro.handlers.trace(
             numpyro.handlers.seed(_model, rng_seed=0)
         ).get_trace()
 
         eta_site = trace["eta_capture"]
         eta_dist = eta_site["fn"]
-        # Should be a LeftTruncatedDistribution (TruncatedNormal's type)
         assert isinstance(
             eta_dist, dist.truncated.LeftTruncatedDistribution
         ), f"Expected TruncatedNormal, got {type(eta_dist)}"
-        # All sampled values must be >= 0
         assert jnp.all(eta_site["value"] >= 0)
 
     def test_model_prior_samples_positive(self):
@@ -539,7 +548,6 @@ class TestTruncatedNormalPrior:
             _sample_capture_biology_informed,
         )
 
-        # High library size close to M_0 to stress the truncation
         log_lib_sizes = jnp.log(jnp.array([150_000.0]))
 
         def _model():
@@ -550,17 +558,14 @@ class TestTruncatedNormalPrior:
                 use_phi_capture=False,
             )
 
-        # Draw 1000 samples via predictive
         predictive = numpyro.infer.Predictive(
             _model, num_samples=1000
         )
         samples = predictive(jax.random.PRNGKey(42))
         eta_samples = samples["eta_capture"]
-        # Every sample must be non-negative
         assert jnp.all(eta_samples >= 0), (
             f"Found negative eta_capture: min={float(eta_samples.min())}"
         )
-        # p_capture = exp(-eta) should be in (0, 1]
         p_samples = jnp.exp(-eta_samples)
         assert jnp.all(p_samples <= 1.0)
         assert jnp.all(p_samples > 0.0)
@@ -575,13 +580,14 @@ class TestTruncatedNormalPrior:
             "eta_capture_loc": jnp.array([1.0, 2.0, 0.3]),
             "eta_capture_scale": jnp.array([0.5, 0.4, 0.6]),
         }
-        builder = ModelConfigBuilder()
-        builder._base_model = "nbvcp"
-        builder._capture_prior = "biology_informed"
-        builder._organism = "human"
-        config = builder.build()
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbvcp")
+            .with_parameterization("mean_odds")
+            .with_capture_priors(organism="human")
+            .build()
+        )
 
-        # Non-split: single distribution
         result = _build_biology_informed_capture_posterior(
             params, config, split=False
         )
@@ -590,7 +596,6 @@ class TestTruncatedNormalPrior:
             eta_dist, dist.truncated.LeftTruncatedDistribution
         )
 
-        # Split: list of per-cell distributions
         result_split = _build_biology_informed_capture_posterior(
             params, config, split=True
         )
