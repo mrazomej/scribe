@@ -119,9 +119,10 @@ $$
 \eta_c = \log \frac{M_c}{L_c}.
 $${#eq-cap-eta-def}
 
-This variable is always well-defined and positive (since $M_c \geq L_c$ in the
-generative model). From $\eta_c$, both parameterizations of the capture
-probability can be recovered exactly.
+This variable is always well-defined and **strictly non-negative** (since
+$M_c \geq L_c$ in the generative model---a cell cannot emit more molecules than
+it contains). From $\eta_c$, both parameterizations of the capture probability
+can be recovered exactly.
 
 ### Recovery of $\nu_c$ (the $p_\text{capture}$ parameterization)
 
@@ -194,11 +195,24 @@ $$
 $${#eq-cap-eta-decompose}
 
 where $\log L_c$ is a known constant for each cell (computed from the observed
-data). Since $\log M_c$ is normally distributed, so is $\eta_c$:
+data). Since $\log M_c$ is normally distributed, $\eta_c$ inherits a normal
+location--scale structure. However, because $M_c \geq L_c$ by the physics of the
+generative process, we must have $\eta_c \geq 0$. We therefore place a
+**truncated normal** prior:
 
 $$
-\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2).
+\eta_c \sim \mathcal{N}^{+}(\log M_0 - \log L_c, \; \sigma_M^2),
 $${#eq-cap-eta-prior}
+
+where $\mathcal{N}^{+}(\mu, \sigma^2)$ denotes the normal distribution
+truncated below at zero (i.e., $\eta_c \geq 0$). The truncation enforces the
+physical constraint $\nu_c \leq 1$: a cell cannot emit more molecules than it
+contains. For the vast majority of cells the prior mean $\log M_0 - \log L_c$ is
+well above zero (for instance, $M_0 = 200{,}000$ and $L_c = 20{,}000$ gives a
+mean of $\log 10 \approx 2.3$), so the truncation has negligible effect. It
+matters only for high-capture cells whose library size approaches $M_0$, exactly
+the regime where allowing $\eta_c < 0$ would imply the biologically impossible
+$\nu_c > 1$.
 
 This is the **biology-informed prior on the capture efficiency**. Its key
 properties are:
@@ -224,6 +238,13 @@ properties are:
    $\nu_c \approx 0.5$, well outside the regime where the logit approximation
    holds.
 
+4. **Physical constraint.** The truncation at zero guarantees that the implied
+   capture probability $\nu_c = \exp(-\eta_c)$ always lies in $(0, 1]$. Without
+   truncation, the normal tail below zero would assign probability to the
+   impossible event $\nu_c > 1$. For cells with $L_c$ close to $M_0$, this tail
+   mass can be substantial (e.g., $\sim 28\%$ when $\log M_0 - \log L_c = 0.29$
+   with $\sigma_M = 0.5$).
+
 ### Implied prior on $\nu_c$ and $\phi_c$
 
 Combining @eq-cap-eta-prior with the exact transformations, the implied priors on
@@ -231,15 +252,17 @@ the capture probability and capture odds are:
 
 $$
 \nu_c = \exp\!\left(-\eta_c\right), \quad
-\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2),
+\eta_c \sim \mathcal{N}^{+}(\log M_0 - \log L_c, \; \sigma_M^2),
 $${#eq-cap-nu-prior}
 
 $$
 \phi_c = \exp(\eta_c) - 1, \quad
-\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2).
+\eta_c \sim \mathcal{N}^{+}(\log M_0 - \log L_c, \; \sigma_M^2).
 $${#eq-cap-phi-prior}
 
-These are proper distributions on $(0, 1)$ and $(0, \infty)$, respectively.
+These are proper distributions on $(0, 1]$ and $[0, \infty)$, respectively. The
+truncation ensures that $\nu_c$ never exceeds 1 and $\phi_c$ is always
+non-negative, as required by the generative model.
 
 ### Interpretation of $\sigma_M$
 
@@ -311,14 +334,15 @@ $$
 $${#eq-cap-dd-mu-prior}
 
 $$
-\eta_c \sim \mathcal{N}(\mu_\eta - \log L_c, \; \sigma_\eta^2),
+\eta_c \sim \mathcal{N}^{+}(\mu_\eta - \log L_c, \; \sigma_\eta^2),
 $${#eq-cap-dd-eta-prior}
 
 where $\log M_0$ and $\sigma_\mu$ depend on the mode: in the data-driven-only
 variant, $\log M_0 = 10$, $\sigma_\mu = 5$, $\sigma_\eta = 1$; in the
 biology-informed variant, $\log M_0$ comes from the organism and $\sigma_\mu$ is
 set moderately. The parameter $\sigma_\eta$ plays the same role as $\sigma_M$ in
-the biology-informed prior.
+the biology-informed prior. As in the single-dataset case, the truncation at zero
+enforces $\nu_c \leq 1$.
 
 The key constraint is that $\mu_\eta$ is a **single scalar parameter shared
 across all datasets**. This forces all datasets to share the same relationship
@@ -334,7 +358,7 @@ leading to two separate capture-probability-versus-library-size curves. With the
 shared $\mu_\eta$, both datasets are forced onto the same curve:
 
 $$
-\eta_c^{(d)} \sim \mathcal{N}(\mu_\eta - \log L_c^{(d)}, \; \sigma_\eta^2),
+\eta_c^{(d)} \sim \mathcal{N}^{+}(\mu_\eta - \log L_c^{(d)}, \; \sigma_\eta^2),
 \quad d = 1, 2, \ldots, D,
 $${#eq-cap-dd-shared}
 
@@ -394,15 +418,18 @@ $${#eq-cap-summary-eta}
 variation $\sigma_M$:
 
 $$
-\eta_c \sim \mathcal{N}(\log M_0 - \log L_c, \; \sigma_M^2).
+\eta_c \sim \mathcal{N}^{+}(\log M_0 - \log L_c, \; \sigma_M^2).
 $${#eq-cap-summary-bio-prior}
+
+The $\mathcal{N}^{+}$ denotes a normal distribution truncated below at zero,
+enforcing the physical constraint $M_c \geq L_c$ (equivalently $\nu_c \leq 1$).
 
 **Data-driven shared scaling.** With a learned total mRNA $\mu_\eta$ shared
 across datasets:
 
 $$
 \mu_\eta \sim \mathcal{N}(\log M_0, \sigma_\mu^2), \qquad
-\eta_c \sim \mathcal{N}(\mu_\eta - \log L_c, \; \sigma_\eta^2).
+\eta_c \sim \mathcal{N}^{+}(\mu_\eta - \log L_c, \; \sigma_\eta^2).
 $${#eq-cap-summary-dd-prior}
 
 **Exact transformations** (valid for any capture regime):

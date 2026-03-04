@@ -1,13 +1,14 @@
 """Tests for biology-informed capture probability prior.
 
 Tests organism prior resolution, BiologyInformedCaptureSpec creation,
-ModelConfig validation, shared_capture_scaling auto-promote, and
-model dry-run with the biology-informed capture prior.
+ModelConfig validation, shared_capture_scaling, TruncatedNormal
+enforcement, and model dry-run with the biology-informed capture prior.
 """
 
 import math
 
 import jax.numpy as jnp
+import numpyro.distributions as dist
 import numpy as np
 import pytest
 
@@ -455,3 +456,116 @@ class TestModelDryRun:
         config = builder.build()
         assert config.organism == "mouse"
         assert config.total_mrna_mean == 200_000
+
+
+# =============================================================================
+# TruncatedNormal enforcement for eta_capture
+# =============================================================================
+
+
+class TestTruncatedNormalPrior:
+    """Verify that the eta_capture prior and posterior use TruncatedNormal."""
+
+    def test_model_prior_uses_truncated_normal(self):
+        """_sample_capture_biology_informed should sample from TruncatedNormal."""
+        import jax
+        import numpyro
+
+        from scribe.models.components.likelihoods.base import (
+            _sample_capture_biology_informed,
+        )
+
+        # Run the model function in a traced context to inspect the
+        # distribution registered at the eta_capture sample site.
+        log_lib_sizes = jnp.log(jnp.array([5_000.0, 20_000.0, 100_000.0]))
+
+        def _model():
+            _sample_capture_biology_informed(
+                log_lib_sizes=log_lib_sizes,
+                log_M0=math.log(200_000),
+                sigma_M=0.5,
+                use_phi_capture=True,
+            )
+
+        # Trace the model to inspect the sample site
+        trace = numpyro.handlers.trace(
+            numpyro.handlers.seed(_model, rng_seed=0)
+        ).get_trace()
+
+        eta_site = trace["eta_capture"]
+        eta_dist = eta_site["fn"]
+        # Should be a LeftTruncatedDistribution (TruncatedNormal's type)
+        assert isinstance(
+            eta_dist, dist.truncated.LeftTruncatedDistribution
+        ), f"Expected TruncatedNormal, got {type(eta_dist)}"
+        # All sampled values must be >= 0
+        assert jnp.all(eta_site["value"] >= 0)
+
+    def test_model_prior_samples_positive(self):
+        """Draw many samples from the prior and verify all are non-negative."""
+        import jax
+        import numpyro
+
+        from scribe.models.components.likelihoods.base import (
+            _sample_capture_biology_informed,
+        )
+
+        # High library size close to M_0 to stress the truncation
+        log_lib_sizes = jnp.log(jnp.array([150_000.0]))
+
+        def _model():
+            _sample_capture_biology_informed(
+                log_lib_sizes=log_lib_sizes,
+                log_M0=math.log(200_000),
+                sigma_M=0.5,
+                use_phi_capture=False,
+            )
+
+        # Draw 1000 samples via predictive
+        predictive = numpyro.infer.Predictive(
+            _model, num_samples=1000
+        )
+        samples = predictive(jax.random.PRNGKey(42))
+        eta_samples = samples["eta_capture"]
+        # Every sample must be non-negative
+        assert jnp.all(eta_samples >= 0), (
+            f"Found negative eta_capture: min={float(eta_samples.min())}"
+        )
+        # p_capture = exp(-eta) should be in (0, 1]
+        p_samples = jnp.exp(-eta_samples)
+        assert jnp.all(p_samples <= 1.0)
+        assert jnp.all(p_samples > 0.0)
+
+    def test_posterior_uses_truncated_normal(self):
+        """_build_biology_informed_capture_posterior returns TruncatedNormal."""
+        from scribe.models.builders.posterior import (
+            _build_biology_informed_capture_posterior,
+        )
+
+        params = {
+            "eta_capture_loc": jnp.array([1.0, 2.0, 0.3]),
+            "eta_capture_scale": jnp.array([0.5, 0.4, 0.6]),
+        }
+        builder = ModelConfigBuilder()
+        builder._base_model = "nbvcp"
+        builder._capture_prior = "biology_informed"
+        builder._organism = "human"
+        config = builder.build()
+
+        # Non-split: single distribution
+        result = _build_biology_informed_capture_posterior(
+            params, config, split=False
+        )
+        eta_dist = result["eta_capture"]
+        assert isinstance(
+            eta_dist, dist.truncated.LeftTruncatedDistribution
+        )
+
+        # Split: list of per-cell distributions
+        result_split = _build_biology_informed_capture_posterior(
+            params, config, split=True
+        )
+        for d in result_split["eta_capture"]:
+            assert isinstance(
+                d, dist.truncated.LeftTruncatedDistribution
+            )
