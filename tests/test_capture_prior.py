@@ -429,6 +429,35 @@ class TestModelDryRun:
         assert spec.sigma_M == 1.0
         assert spec.sigma_mu == 5.0
 
+    def test_shared_scaling_default_honors_manual_m0_anchor(self):
+        """Default shared scaling uses user-provided M_0 / sigma_M when set."""
+        from scribe.models.presets.factory import create_model
+
+        builder = ModelConfigBuilder()
+        builder._base_model = "nbvcp"
+        builder._parameterization = Parameterization.MEAN_ODDS
+        builder._unconstrained = True
+        builder._shared_capture_scaling = True
+        builder._total_mrna_mean = 100_000
+        builder._total_mrna_log_sigma = 0.2
+        config = builder.build()
+
+        model_fn, guide_fn, param_specs = create_model(config)
+        assert model_fn is not None
+        assert guide_fn is not None
+
+        bio_specs = [
+            s for s in param_specs
+            if isinstance(s, BiologyInformedCaptureSpec)
+        ]
+        assert len(bio_specs) == 1
+        spec = bio_specs[0]
+        assert spec.data_driven is True
+        assert spec.log_M0 == pytest.approx(math.log(100_000))
+        assert spec.sigma_M == pytest.approx(0.2)
+        # Default mode keeps a broad shared-mu prior.
+        assert spec.sigma_mu == pytest.approx(5.0)
+
     def test_builder_with_capture_prior_method(self):
         """Test the builder's with_capture_prior method."""
         builder = (

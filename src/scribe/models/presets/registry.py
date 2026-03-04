@@ -326,27 +326,43 @@ def build_capture_spec(
             use_phi_capture=use_phi_capture,
         )
 
-    # ---- Data-driven shared scaling (no M_0 anchoring) ----
-    # Uses the eta_c framework with a vague prior on the shared mu_eta
-    # parameter.  The data determines the overall capture-vs-library-size
-    # slope rather than a fixed biological constant.
+    # ---- Data-driven shared scaling (default capture prior) ----
+    # Uses the eta_c framework with a learned shared mu_eta parameter.
+    #
+    # Behavior:
+    # 1) If user provided total_mrna_mean (or organism resolved it in config),
+    #    use that to anchor log_M0 while still learning shared mu_eta.
+    # 2) Otherwise fall back to vague defaults (purely data-driven).
     shared_capture_scaling = getattr(
         model_config, "shared_capture_scaling", False
     )
     if shared_capture_scaling:
-        log_M0_vague = 10.0   # ~22K molecules: neutral init, p_capture~0.9
-        sigma_M_vague = 1.0   # wide per-cell variation (~2.7x fold)
+        total_mrna_mean = getattr(model_config, "total_mrna_mean", None)
+        sigma_M_cfg = getattr(model_config, "total_mrna_log_sigma", None)
+
+        if total_mrna_mean is not None:
+            log_M0 = math.log(total_mrna_mean)
+            # If mean is user-provided, config validation ensures a default
+            # sigma_M exists (0.5) when not explicitly set.
+            sigma_M = sigma_M_cfg if sigma_M_cfg is not None else 0.5
+        else:
+            log_M0 = 10.0   # ~22K molecules: neutral init, p_capture~0.9
+            sigma_M = 1.0   # wide per-cell variation (~2.7x fold)
+
+        # Keep a broad prior on shared mu_eta in default mode; this preserves
+        # the "data-driven" semantics while honoring any user-provided M_0
+        # anchor for the center.
         sigma_mu_vague = 5.0  # very flat prior on shared mu_eta
 
         capture_family = guide_families.get(capture_param_name)
         return BiologyInformedCaptureSpec(
             name=capture_param_name,
             shape_dims=("n_cells",),
-            default_params=(log_M0_vague, sigma_M_vague),
+            default_params=(log_M0, sigma_M),
             is_cell_specific=True,
             guide_family=capture_family,
-            log_M0=log_M0_vague,
-            sigma_M=sigma_M_vague,
+            log_M0=log_M0,
+            sigma_M=sigma_M,
             data_driven=True,
             sigma_mu=sigma_mu_vague,
             use_phi_capture=use_phi_capture,
