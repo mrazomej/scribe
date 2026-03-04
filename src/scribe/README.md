@@ -368,33 +368,30 @@ results = scribe.fit(
     adata,
     model="nbvcp",
     parameterization="mean_odds",
-    capture_prior="biology_informed",
-    organism="human",         # Sets M_0 = 200,000 for human cells
+    priors={"organism": "human"},  # Sets M_0 = 200,000 for human cells
 )
 
-# Manual M_0 override
+# Manual eta_capture override
 results = scribe.fit(
     adata,
     model="zinbvcp",
-    capture_prior="biology_informed",
-    total_mrna_mean=150_000,  # Custom M_0
-    total_mrna_log_sigma=0.3, # Tighter prior
+    priors={"eta_capture": (11.5, 0.3)},  # Custom log_M0 and sigma_M
 )
 
 # Shared capture scaling (learns M_0 across datasets)
 results = scribe.fit(
     adata,
     model="nbvcp",
-    capture_prior="biology_informed",
     shared_capture_scaling=True,
-    organism="mouse",
+    priors={"organism": "mouse"},
 )
 
-# Pure data-driven (no biological anchor needed)
+# Shared scaling with tight sigma_mu control
 results = scribe.fit(
     adata,
     model="nbvcp",
-    shared_capture_scaling=True,  # vague data-driven prior, no M_0 anchoring
+    shared_capture_scaling=True,
+    priors={"organism": "human", "mu_eta": (12.2, 0.3)},
 )
 ```
 
