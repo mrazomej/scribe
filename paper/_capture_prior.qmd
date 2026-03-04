@@ -432,9 +432,25 @@ assuming $\nu_c = L_c / C$, i.e., the same structural relationship as
    probabilistic framework, the per-gene parameters ($r_g$, $\mu_g$, gate) can
    still absorb gene-specific effects that a simple scaling cannot.
 
+4. Most importantly, the capture probability enters the likelihood **nonlinearly**.
+   As shown in @sec-dirichlet-multinomial, marginalizing the binomial thinning
+   over the NB prior yields an effective success probability
+   $$
+   \hat{p} = \frac{p}{\nu_c + p(1 - \nu_c)},
+   $${#eq-cap-phat-reminder}
+   which is a nonlinear function of both the biological parameter $p$ and the
+   capture efficiency $\nu_c$. Standard normalization implicitly assumes that
+   capture acts as a simple multiplicative scaling of the mean ($\langle u_{gc}
+   \rangle = \nu_c \cdot \mu_g$), but this ignores the effect of $\nu_c$ on the
+   full shape of the distribution---its variance, overdispersion, and tail
+   behavior all depend on $\hat{p}$, not just the mean. Even with $M_0$ fixed
+   deterministically, the model accounts for this nonlinear interaction through
+   the likelihood, something no preprocessing step can replicate.
+
 In summary, the deterministic limit of the biology-informed prior provides a
 principled statistical foundation for what the field already does heuristically
----but within a coherent generative model that enables proper uncertainty
+---but within a coherent generative model that accounts for the nonlinear
+coupling between capture and expression, enables proper uncertainty
 quantification, differential expression testing, and denoising.
 
 ### A strength of the Bayesian approach {#sec-cap-bayesian-strength}
