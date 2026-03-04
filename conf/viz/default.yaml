@@ -14,6 +14,7 @@ viz:
   mixture_ppc: false  # Only runs when mixture_model=true, shows genes differing between components
   mixture_composition: false  # Only runs when mixture_model=true; barplot of MAP component composition
   annotation_ppc: false  # Only runs when annotation_key is set; per-annotation component PPC
+  capture_anchor: false  # Only runs for biology-informed capture prior runs
   format: png  # Output format: png, pdf, svg, eps
 
   # ECDF plot options
@@ -71,3 +72,9 @@ viz:
     _rows: 5  # Number of expression bins
     n_cols: 5  # Number of genes per bin
     n_samples: 1024  # Number of PPC samples per annotation
+
+  # Capture-anchor options
+  capture_anchor_opts:
+    n_bins: 50  # Number of bins for eta+log(L) histogram
+    scatter_size: 6  # Marker size for eta vs log-library scatter
+    scatter_alpha: 0.35  # Marker alpha for eta vs log-library scatter

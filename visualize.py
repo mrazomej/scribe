@@ -48,6 +48,7 @@ from viz_utils import (
     plot_mixture_ppc,
     plot_mixture_composition,
     plot_annotation_ppc,
+    plot_capture_anchor,
 )
 from viz_utils.memory import cleanup_plot_memory
 
@@ -165,11 +166,19 @@ Examples:
         "against its corresponding component's posterior predictive.",
     )
     parser.add_argument(
+        "--capture-anchor",
+        action="store_true",
+        default=None,
+        dest="capture_anchor",
+        help="Enable eta capture-anchor diagnostic "
+        "(for biology-informed capture prior runs).",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         dest="all_plots",
         help="Enable all plots (loss, ECDF, PPC, bio-PPC, UMAP, heatmap, "
-        "mixture PPC, mixture composition, annotation PPC)",
+        "mixture PPC, mixture composition, annotation PPC, capture-anchor)",
     )
 
     # Recursive mode
@@ -262,6 +271,7 @@ def _load_default_viz_config():
                 "mixture_ppc": False,
                 "mixture_composition": False,
                 "annotation_ppc": False,
+                "capture_anchor": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
                 "ppc_opts": {"n_rows": 6, "n_cols": 6, "n_samples": 1500},
@@ -301,6 +311,11 @@ def _load_default_viz_config():
                     "n_cols": 5,
                     "n_samples": 1500,
                 },
+                "capture_anchor_opts": {
+                    "n_bins": 50,
+                    "scatter_size": 6,
+                    "scatter_alpha": 0.35,
+                },
             }
         )
 
@@ -329,6 +344,7 @@ def _build_viz_config(args):
         viz_cfg.mixture_ppc = True
         viz_cfg.mixture_composition = True
         viz_cfg.annotation_ppc = True
+        viz_cfg.capture_anchor = True
 
     # Apply boolean overrides only when flags are explicitly provided.
     if args.no_loss:
@@ -349,6 +365,8 @@ def _build_viz_config(args):
         viz_cfg.mixture_composition = True
     if args.annotation_ppc:
         viz_cfg.annotation_ppc = True
+    if args.capture_anchor:
+        viz_cfg.capture_anchor = True
 
     # Scalar / numeric overrides (only when provided).
     if args.format is not None:
@@ -365,6 +383,29 @@ def _build_viz_config(args):
         viz_cfg.umap_opts.n_ppc_samples = args.umap_ppc_samples
 
     return viz_cfg
+
+
+def _has_biology_informed_capture_prior(cfg):
+    """Return whether biology-informed eta capture priors are active.
+
+    Parameters
+    ----------
+    cfg : OmegaConf
+        Run configuration loaded from ``.hydra/config.yaml``.
+
+    Returns
+    -------
+    bool
+        ``True`` when any of ``priors.organism``, ``priors.eta_capture``,
+        or ``priors.mu_eta`` is set in the run configuration.
+    """
+    priors_cfg = cfg.get("priors") if hasattr(cfg, "get") else None
+    if priors_cfg is None or not hasattr(priors_cfg, "get"):
+        return False
+    return any(
+        priors_cfg.get(key) is not None
+        for key in ("organism", "eta_capture", "mu_eta")
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -698,6 +739,7 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
     # Generate Plots
     # ======================================================================
     fmt = viz_cfg.format
+    uses_bio_capture_prior = _has_biology_informed_capture_prior(orig_cfg)
 
     # Ensure we release plot-related host/GPU memory between heavy stages.
     def _cleanup_after_plot():
@@ -1016,6 +1058,43 @@ def _process_single_model_dir(model_dir, viz_cfg, overwrite=False):
                     "[yellow]  Skipping annotation PPC "
                     "(no annotation_key in config)[/yellow]"
                 )
+
+        if viz_cfg.capture_anchor:
+            if not uses_bio_capture_prior:
+                console.print(
+                    "[yellow]  Skipping capture-anchor "
+                    "(biology-informed capture prior not active)[/yellow]"
+                )
+            elif not overwrite and _plot_exists(
+                ds_figs_dir, "_capture_anchor", fmt
+            ):
+                plots_skipped.append(f"capture-anchor{ds_label}")
+                console.print(
+                    "[yellow]  Skipping capture-anchor "
+                    "(already exists)[/yellow]"
+                )
+            else:
+                console.print(
+                    "[dim]Generating capture-anchor diagnostic...[/dim]"
+                )
+                try:
+                    output_path = plot_capture_anchor(
+                        ds_results, ds_counts, ds_figs_dir, orig_cfg, viz_cfg
+                    )
+                    if output_path is not None:
+                        plots_generated.append(f"capture-anchor{ds_label}")
+                        console.print(
+                            "[green]  Capture-anchor plot saved[/green]"
+                        )
+                    else:
+                        plots_skipped.append(f"capture-anchor{ds_label}")
+                except Exception as e:
+                    console.print(
+                        f"[red]  Failed to generate capture-anchor plot: "
+                        f"{e}[/red]"
+                    )
+                finally:
+                    _cleanup_after_plot()
 
     # ======================================================================
     # Completion Summary
