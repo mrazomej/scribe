@@ -183,18 +183,15 @@ VCP likelihoods accept an optional `biology_informed_spec`
 library-size-anchored TruncatedNormal (low=0) prior on the latent variable
 `eta_c = log(M_c / L_c)`. The truncation enforces the physical constraint
 `M_c >= L_c` (a cell cannot emit more molecules than it contains). The
-combination of `capture_prior` and `shared_capture_scaling` yields four modes:
+biology-informed path activates automatically when `priors.organism`,
+`priors.eta_capture`, or `priors.mu_eta` is set:
 
-- **`capture_prior="default"` + `shared_capture_scaling=false`**: Standard flat
+- **No capture priors + `shared_capture_scaling=false`**: Standard flat
   prior (no eta framework).
-- **`capture_prior="default"` + `shared_capture_scaling=true`**: Data-driven
-  only. Learn shared `mu_eta` with vague prior (log_M0=10.0, sigma_mu=5.0,
-  sigma_M=1.0); no M_0 anchoring. Lets the data determine the
-  capture-vs-library-size slope.
-- **`capture_prior="biology_informed"` + `shared_capture_scaling=false`**:
+- **`priors.eta_capture` set + `shared_capture_scaling=false`**:
   Fixed M_0, no shared parameter.
-- **`capture_prior="biology_informed"` + `shared_capture_scaling=true`**: Learn
-  shared `mu_eta` centered on M_0 (biology + data).
+- **`priors.eta_capture` set + `shared_capture_scaling=true`**: Learn shared
+  `mu_eta` centered on M_0. `priors.mu_eta` controls `sigma_mu`.
 
 When the eta framework is active:
 

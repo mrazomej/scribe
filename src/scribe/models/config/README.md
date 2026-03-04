@@ -90,40 +90,36 @@ mode. Single-dataset fits should use `hierarchical_p` and/or
 #### Biology-Informed Capture Prior
 
 For VCP models (`nbvcp`, `zinbvcp`), the capture probability can be anchored to
-biological knowledge about total cellular mRNA content. The combination of
-`capture_prior` and `shared_capture_scaling` defines four orthogonal modes:
+biological knowledge about total cellular mRNA content. The biology-informed path
+activates automatically when any of `priors.organism`, `priors.eta_capture`, or
+`priors.mu_eta` is set.
 
-| `capture_prior` | `shared_capture_scaling` | Behavior |
-|-----------------|--------------------------|----------|
-| `"default"` | `false` | Standard flat prior (no eta framework) |
-| `"default"` | `true` | Learn shared `mu_eta` (data-driven). If `total_mrna_mean` / `total_mrna_log_sigma` are provided (or resolved via `organism`), they anchor `log_M0` / `sigma_M`; otherwise uses vague defaults: log_M0=10.0, sigma_mu=5.0, sigma_M=1.0 |
-| `"biology_informed"` | `false` | Fixed M_0 from organism/total_mrna_mean, no shared parameter |
-| `"biology_informed"` | `true` | Learn shared `mu_eta` centered on M_0 (biology + data) |
+| `priors.eta_capture` | `shared_capture_scaling` | Behavior |
+|----------------------|--------------------------|----------|
+| not set | `false` | Standard flat prior (no eta framework) |
+| set (directly or via `priors.organism`) | `false` | Fixed M_0, no shared parameter |
+| set | `true` | Learn shared `mu_eta` centered on M_0. `priors.mu_eta` controls the prior on the shared parameter. |
 
-- `capture_prior: str` — `"default"` or `"biology_informed"`
-- `shared_capture_scaling: bool` — When True, learn a shared `mu_eta`
-  across datasets. With `"default"`, uses user-provided `M_0`/`sigma_M` if
-  available, otherwise a vague prior; with `"biology_informed"`, centers the
-  prior on organism-specific (or user-overridden) `M_0`.
-- `organism: Optional[str]` — Sets default `M_0` for the organism (only used
-  when `capture_prior="biology_informed"`): `"human"`, `"mouse"`, `"yeast"`,
-  `"ecoli"` (and aliases like `"homo_sapiens"`)
-- `total_mrna_mean: Optional[float]` — Override `M_0` directly (takes
-  precedence over organism)
-- `total_mrna_log_sigma: Optional[float]` — Log-scale std-dev of cell-to-cell
-  mRNA variation (default: 0.5)
+- `priors.organism: str` — Shortcut to resolve default `eta_capture` and
+  `mu_eta` values: `"human"`, `"mouse"`, `"yeast"`, `"ecoli"` (and aliases).
+- `priors.eta_capture: (float, float)` — `(log_M0, sigma_M)` for the per-cell
+  TruncatedNormal+ prior on `eta_c`. Overrides organism defaults.
+- `priors.mu_eta: (float, float)` — `(center, sigma_mu)` for the shared
+  `mu_eta` Normal prior. When not set but `shared_capture_scaling=True`,
+  defaults to `(eta_capture[0], 1.0)`.
+- `shared_capture_scaling: bool` — When True, learn a shared `mu_eta` across
+  datasets instead of using a fixed M_0.
 
 The biology-informed prior samples a latent variable
-`eta_c ~ N(log M_0 - log L_c, sigma_M^2)` and derives capture parameters via
-exact transformations (`p_capture = exp(-eta)`, `phi_capture = exp(eta) - 1`).
-The data-driven variant learns a shared `mu_eta` parameter across datasets. See
-`paper/_capture_prior.qmd` for full derivations.
+`eta_c ~ TruncatedNormal+(log M_0 - log L_c, sigma_M^2, low=0)` and derives
+capture parameters via exact transformations (`p_capture = exp(-eta)`,
+`phi_capture = exp(eta) - 1`). See `paper/_capture_prior.qmd` for derivations.
 
 ```python
 config = (ModelConfigBuilder()
     .for_model("nbvcp")
     .with_parameterization("mean_odds")
-    .with_capture_prior(mode="biology_informed", organism="human")
+    .with_capture_priors(organism="human")
     .build())
 ```
 

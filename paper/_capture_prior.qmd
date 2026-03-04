@@ -312,17 +312,11 @@ the same capture-probability-versus-library-size relationship.
 There are two ways to use shared scaling, depending on whether biological
 knowledge is available:
 
-1. **Data-driven only** (`capture_prior="default"` with `shared_capture_scaling=true`):
-   No organism-specific anchor. The prior on $\mu_\eta$ is vague, centered at
-   $\log M_0 = 10$ (i.e., $M_0 \approx 22{,}000$) with $\sigma_\mu = 5$ and
-   $\sigma_\eta = 1$. This lets the data fully determine the
-   capture-probability-versus-library-size slope, while still enforcing a shared
-   relationship across datasets to prevent the degeneracy in @sec-cap-identifiability.
-
-2. **Biology + data** (`capture_prior="biology_informed"` with
-   `shared_capture_scaling=true`): The prior on $\mu_\eta$ is centered on the
-   organism-specific $M_0$ (e.g., 200,000 for human), with a moderate
-   $\sigma_\mu$ so the data can refine the estimate.
+1. **Biology + data** (`priors.organism="human"` or `priors.eta_capture` set,
+   with `shared_capture_scaling=true`): The prior on $\mu_\eta$ is centered on
+   the organism-specific $M_0$ (e.g., 200,000 for human). The standard
+   deviation $\sigma_\mu$ is controllable via `priors.mu_eta` (defaults to 1.0
+   when `shared_capture_scaling=true`).
 
 ### Model specification
 
@@ -337,12 +331,12 @@ $$
 \eta_c \sim \mathcal{N}^{+}(\mu_\eta - \log L_c, \; \sigma_\eta^2),
 $${#eq-cap-dd-eta-prior}
 
-where $\log M_0$ and $\sigma_\mu$ depend on the mode: in the data-driven-only
-variant, $\log M_0 = 10$, $\sigma_\mu = 5$, $\sigma_\eta = 1$; in the
-biology-informed variant, $\log M_0$ comes from the organism and $\sigma_\mu$ is
-set moderately. The parameter $\sigma_\eta$ plays the same role as $\sigma_M$ in
-the biology-informed prior. As in the single-dataset case, the truncation at zero
-enforces $\nu_c \leq 1$.
+where $\log M_0$ and $\sigma_\mu$ come from `priors.eta_capture` and
+`priors.mu_eta` respectively. When `priors.mu_eta` is not set and
+`shared_capture_scaling=true`, the defaults are $(\log M_0, 1.0)$ where
+$\log M_0$ is taken from `priors.eta_capture[0]`. The parameter $\sigma_\eta$
+plays the same role as $\sigma_M$ in the biology-informed prior. As in the
+single-dataset case, the truncation at zero enforces $\nu_c \leq 1$.
 
 The key constraint is that $\mu_\eta$ is a **single scalar parameter shared
 across all datasets**. This forces all datasets to share the same relationship
@@ -368,19 +362,17 @@ rather than to different biological expression levels.
 
 ## Connection between the two approaches {#sec-cap-connection}
 
-The four modes are orthogonal combinations of `capture_prior` and
-`shared_capture_scaling`:
+The capture prior behavior is determined by the presence of `priors.eta_capture`
+(set directly or resolved from `priors.organism`) and `shared_capture_scaling`:
 
-| `capture_prior` | `shared_capture_scaling` | Behavior |
-|-----------------|--------------------------|----------|
-| `"default"` | `false` | Standard flat prior (no eta framework) |
-| `"default"` | `true` | Data-driven only: vague prior, no M_0 anchoring |
-| `"biology_informed"` | `false` | Fixed M_0, no shared parameter |
-| `"biology_informed"` | `true` | Biology + data: shared $\mu_\eta$ centered on M_0 |
+| `priors.eta_capture` | `shared_capture_scaling` | Behavior |
+|----------------------|--------------------------|----------|
+| not set | `false` | Standard flat prior (no eta framework) |
+| set | `false` | Fixed M_0, no shared parameter |
+| set | `true` | Shared $\mu_\eta$ centered on M_0 (`priors.mu_eta` controls $\sigma_\mu$) |
 
-The biology-informed prior is a special case of the data-driven approach
-with $\mu_\eta = \log M_0$ fixed (equivalently, $\sigma_\mu = 0$). Conversely,
-the data-driven approach generalizes the biology-informed prior by allowing the
+The fixed-M_0 case is a special case of the shared approach with
+$\sigma_\mu = 0$. The shared approach generalizes it by allowing the
 data to refine the estimate of total mRNA.
 
 Both approaches nest the flat (uninformative) prior as a limiting case. As
