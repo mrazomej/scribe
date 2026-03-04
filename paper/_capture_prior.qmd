@@ -298,6 +298,174 @@ where $f_{\text{genes}} = \sum_{g \in \text{subset}} u_g / \sum_{g \in
 averaged across cells. When fitting the full transcriptome---as is recommended
 for this model---$f_{\text{genes}} = 1$ and no adjustment is needed.
 
+## Deterministic anchoring: fixing $M_0$ as a known constant {#sec-cap-deterministic}
+
+The biology-informed prior of @sec-cap-biology-prior treats $M_c$ as a random
+variable with cell-to-cell variation controlled by $\sigma_M$. A natural question
+is: can we simply **fix** $M_0$ as a known constant, setting $\sigma_M \to 0$?
+In other words, can we declare that every cell contains exactly $M_0$ mRNA
+molecules and let the model infer $\nu_c$ deterministically as $L_c / M_0$?
+
+Perhaps surprisingly, the answer is **yes**---and the justification comes
+directly from the negative binomial model itself.
+
+### The law of large numbers for total mRNA {#sec-cap-lln}
+
+Recall from @sec-dirichlet-multinomial that under the shared-$p$ assumption, each
+gene's true transcript count is an independent negative binomial:
+
+$$
+m_g \sim \text{NB}(r_g, p), \qquad g = 1, \ldots, G.
+$${#eq-cap-mg-nb}
+
+The total mRNA in the cell is the sum over all genes:
+
+$$
+M_c = \sum_{g=1}^G m_g.
+$${#eq-cap-mc-sum}
+
+Since the $m_g$ are independent negative binomials sharing the same $p$, their
+sum is again negative binomial:
+
+$$
+M_c \sim \text{NB}(r_T, p), \qquad r_T = \sum_{g=1}^G r_g.
+$${#eq-cap-mc-nb}
+
+The mean and variance of this distribution are:
+
+$$
+\langle M_c \rangle = \frac{r_T(1-p)}{p}, \qquad
+\text{Var}(M_c) = \frac{r_T(1-p)}{p^2}.
+$${#eq-cap-mc-moments}
+
+The coefficient of variation (CV) is therefore:
+
+$$
+\text{CV}(M_c) = \frac{\sqrt{\text{Var}(M_c)}}{\langle M_c \rangle} =
+\frac{1}{\sqrt{r_T \cdot p}}.
+$${#eq-cap-mc-cv}
+
+This is the key result. The aggregate dispersion $r_T$ is the sum of per-gene
+dispersions across the entire transcriptome. For a mammalian cell with $G \approx
+20{,}000$ genes and typical per-gene dispersions $r_g \sim 1$--$10$, we have
+$r_T \gtrsim 50{,}000$. With $p \sim 0.5$--$0.9$, the coefficient of variation
+is:
+
+$$
+\text{CV}(M_c) \approx \frac{1}{\sqrt{50{,}000 \times 0.7}} \approx 0.005.
+$${#eq-cap-mc-cv-numerical}
+
+That is, **the stochastic variation in $M_c$ predicted by the NB model is only
+about $0.5\%$**. This is simply the law of large numbers at work: summing tens
+of thousands of independent random variables produces a total that concentrates
+tightly around its expectation. Within the model, total mRNA is effectively
+deterministic.
+
+### Biological vs. stochastic variation {#sec-cap-bio-vs-stoch}
+
+The argument above addresses the within-model stochastic variation. The real
+sources of cell-to-cell variation in $M_c$ are **biological**: different cell
+types, cell-cycle stages, and cell sizes change the $r_g$ profiles across cells,
+which changes the expectation $\mu_T = \sum_g \mu_g$. The $\sigma_M$ parameter
+in the biology-informed prior is meant to capture this biological heterogeneity,
+not the negligible within-model stochastic noise.
+
+This distinction leads to a clear practical guideline:
+
+- **Homogeneous populations** (e.g., a cell line, sorted cells of the same type):
+  Biological variation in $M_c$ is small. Setting $\sigma_M \approx 0$ (in
+  practice, $\sigma_M \lesssim 0.01$) is well justified. The total mRNA is
+  determined by the cell type, and all cells of that type are similar.
+
+- **Heterogeneous populations** (e.g., mixed cell types, tissue samples):
+  Different cell types genuinely differ in total mRNA content, sometimes by
+  $2$--$3\times$ or more. Here, a moderate $\sigma_M \approx 0.3$--$0.5$ is
+  appropriate to accommodate this variation.
+
+### The deterministic limit and its consequences {#sec-cap-det-limit}
+
+Setting $\sigma_M \to 0$ in the prior @eq-cap-eta-prior gives a delta-function
+prior:
+
+$$
+\eta_c = \log M_0 - \log L_c \quad \text{(deterministic)},
+$${#eq-cap-eta-deterministic}
+
+which implies
+
+$$
+\nu_c = \frac{L_c}{M_0}, \qquad
+\phi_c = \frac{M_0}{L_c} - 1.
+$${#eq-cap-nu-deterministic}
+
+In this limit, the capture probability is no longer a latent variable---it is a
+**known function of the data**. The model has zero degrees of freedom in
+$\nu_c$: every cell's capture efficiency is pinned by its library size and the
+biological constant $M_0$. This completely eliminates the degeneracy described in
+@sec-cap-identifiability, because the product $\nu_c \cdot \mu_T$ is no longer
+free to redistribute between its two factors.
+
+### Relationship to standard normalization {#sec-cap-normalization}
+
+The deterministic anchoring has a close relationship to the normalization methods
+widely used in single-cell genomics (CPM, scran, etc.). These methods divide
+each cell's counts by its library size and multiply by a constant:
+
+$$
+\tilde{u}_{gc} = u_{gc} \cdot \frac{C}{L_c},
+$${#eq-cap-cpm}
+
+where $C$ is a reference constant (e.g., $10^6$ for CPM). This is equivalent to
+assuming $\nu_c = L_c / C$, i.e., the same structural relationship as
+@eq-cap-nu-deterministic. The difference is that:
+
+1. Standard normalization uses an **arbitrary** reference constant ($10^4$,
+   $10^6$, median library size), while the biology-informed approach anchors to a
+   **biologically meaningful** quantity $M_0$.
+
+2. Standard normalization is a **preprocessing step** that discards information
+   about the total count, while the biology-informed prior operates within the
+   full probabilistic model, preserving the likelihood structure and uncertainty
+   quantification.
+
+3. Standard normalization applies uniformly to all genes, while in the
+   probabilistic framework, the per-gene parameters ($r_g$, $\mu_g$, gate) can
+   still absorb gene-specific effects that a simple scaling cannot.
+
+In summary, the deterministic limit of the biology-informed prior provides a
+principled statistical foundation for what the field already does heuristically
+---but within a coherent generative model that enables proper uncertainty
+quantification, differential expression testing, and denoising.
+
+### A strength of the Bayesian approach {#sec-cap-bayesian-strength}
+
+The deterministic anchoring of $M_0$ illustrates a fundamental advantage of
+Bayesian modeling: the ability to **directly inject domain knowledge** into the
+inference procedure. In a frequentist or purely data-driven framework, one must
+either (a) estimate all parameters from data alone, inevitably encountering the
+identifiability problem, or (b) apply ad-hoc preprocessing corrections that are
+disconnected from the likelihood.
+
+The Bayesian framework provides a middle path. By encoding the biological
+constraint $M_0 \approx 200{,}000$ as a prior, we:
+
+- **Resolve the degeneracy** without removing the capture probability from the
+  model. The variable $\nu_c$ remains part of the generative process; we have
+  simply constrained it with information that was always available but
+  traditionally left on the table.
+
+- **Maintain a knob for relaxation.** The prior width $\sigma_M$ provides a
+  continuous spectrum from full determinism ($\sigma_M = 0$, complete trust in
+  $M_0$) to full flexibility ($\sigma_M \to \infty$, flat prior). In practice,
+  one can start with $\sigma_M \approx 0$ and gradually relax to find the
+  regime where the data and the prior agree.
+
+- **Enable fair cross-dataset comparison.** When the same $M_0$ is used across
+  datasets, the capture probabilities are placed on a common, interpretable scale.
+  Differences in $\nu_c$ between datasets reflect genuine differences in capture
+  efficiency (e.g., different kits, protocols), not artifacts of parameter
+  trading.
+
 ## Data-driven shared scaling {#sec-cap-data-driven}
 
 In the biology-informed prior (@sec-cap-biology-prior), the total mRNA $M_0$ is
@@ -360,22 +528,26 @@ where $D$ is the number of datasets. Any difference in library size between kits
 is correctly attributed to different capture efficiencies along a shared curve,
 rather than to different biological expression levels.
 
-## Connection between the two approaches {#sec-cap-connection}
+## Connection between the approaches {#sec-cap-connection}
 
 The capture prior behavior is determined by the presence of `priors.eta_capture`
-(set directly or resolved from `priors.organism`) and `shared_capture_scaling`:
+(set directly or resolved from `priors.organism`), `shared_capture_scaling`, and
+the value of $\sigma_M$:
 
-| `priors.eta_capture` | `shared_capture_scaling` | Behavior |
-|----------------------|--------------------------|----------|
-| not set | `false` | Standard flat prior (no eta framework) |
-| set | `false` | Fixed M_0, no shared parameter |
-| set | `true` | Shared $\mu_\eta$ centered on M_0 (`priors.mu_eta` controls $\sigma_\mu$) |
+| `priors.eta_capture` | `shared_capture_scaling` | $\sigma_M$ | Behavior |
+|---|---|---|---|
+| not set | `false` | — | Standard flat prior (no eta framework) |
+| set | `false` | $\approx 0$ | Deterministic anchoring (@sec-cap-deterministic) |
+| set | `false` | $> 0$ | Biology-informed prior with cell-to-cell variation |
+| set | `true` | $> 0$ | Shared $\mu_\eta$ centered on $M_0$ (@sec-cap-data-driven) |
 
-The fixed-M_0 case is a special case of the shared approach with
-$\sigma_\mu = 0$. The shared approach generalizes it by allowing the
-data to refine the estimate of total mRNA.
+The four cases form a hierarchy of increasing flexibility. The deterministic
+anchoring ($\sigma_M \to 0$) completely eliminates the degeneracy by construction.
+The biology-informed prior ($\sigma_M > 0$) allows for genuine cell-to-cell
+variation while still anchoring the scale. The shared scaling approach additionally
+allows the data to refine the population-level estimate of total mRNA.
 
-Both approaches nest the flat (uninformative) prior as a limiting case. As
+All approaches nest the flat (uninformative) prior as a limiting case. As
 $\sigma_M \to \infty$ (or $\sigma_\eta \to \infty$), the prior on $\eta_c$
 becomes flat, and the model reverts to the behavior of the original VCP model
 with $\nu_c \sim \text{Beta}(1, 1)$.
@@ -406,8 +578,20 @@ $$
 \eta_c = \log \frac{M_c}{L_c}.
 $${#eq-cap-summary-eta}
 
-**Biology-informed prior.** Given organism-specific $M_0$ and cell-to-cell
-variation $\sigma_M$:
+**Deterministic anchoring** ($\sigma_M \to 0$). The capture probability is a
+known function of the data:
+
+$$
+\eta_c = \log M_0 - \log L_c, \quad
+\nu_c = L_c / M_0, \quad
+\phi_c = M_0 / L_c - 1.
+$${#eq-cap-summary-deterministic}
+
+Justified by the law of large numbers: under the NB model,
+$\text{CV}(M_c) = 1/\sqrt{r_T p} \approx 0.5\%$ for mammalian cells.
+
+**Biology-informed prior** ($\sigma_M > 0$). Given organism-specific $M_0$ and
+cell-to-cell variation $\sigma_M$:
 
 $$
 \eta_c \sim \mathcal{N}^{+}(\log M_0 - \log L_c, \; \sigma_M^2).
