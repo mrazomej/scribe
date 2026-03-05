@@ -64,10 +64,17 @@ class NegativeBinomialLikelihood(Likelihood):
         # r shape (n_components, n_genes) → mixture; (n_genes,) → regular NB.
         is_mixture = "mixing_weights" in param_values
 
-        # Scalar-per-dataset p becomes (n_cells,) after indexing;
-        # expand to (n_cells, 1) so it broadcasts with (n_cells, n_genes) r
+        # For non-mixture paths, when r is (n_cells, n_genes) we need to
+        # distinguish whether a 1-D p vector is per-cell or per-gene:
+        # - per-cell p (len == n_cells) -> (n_cells, 1)
+        # - per-gene p (len == n_genes) -> (1, n_genes)
+        # This avoids accidental transposition-like broadcasting errors when
+        # n_cells != n_genes (e.g. validation dry runs).
         if not is_mixture and p.ndim == 1 and r.ndim == 2:
-            p = p[:, None]
+            if p.shape[0] == r.shape[0]:
+                p = p[:, None]
+            elif p.shape[0] == r.shape[1]:
+                p = p[None, :]
 
         if is_mixture:
             # Mixture model: expect mixing_weights giving Categorical mixture

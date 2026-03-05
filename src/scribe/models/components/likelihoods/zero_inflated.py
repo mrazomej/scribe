@@ -66,14 +66,23 @@ class ZeroInflatedNBLikelihood(Likelihood):
         r = param_values["r"]
         gate = param_values["gate"]
 
-        # Scalar-per-dataset p/gate become (n_cells,) after indexing;
-        # expand to (n_cells, 1) so they broadcast with (n_cells, n_genes)
+        # For non-mixture paths, when r is (n_cells, n_genes) we need to
+        # distinguish whether a 1-D p/gate vector is per-cell or per-gene:
+        # - per-cell vector (len == n_cells) -> (n_cells, 1)
+        # - per-gene vector (len == n_genes) -> (1, n_genes)
+        # This keeps broadcasting correct when n_cells != n_genes.
         is_mixture = "mixing_weights" in param_values
         if not is_mixture:
             if p.ndim == 1 and r.ndim == 2:
-                p = p[:, None]
+                if p.shape[0] == r.shape[0]:
+                    p = p[:, None]
+                elif p.shape[0] == r.shape[1]:
+                    p = p[None, :]
             if gate.ndim == 1 and r.ndim == 2:
-                gate = gate[:, None]
+                if gate.shape[0] == r.shape[0]:
+                    gate = gate[:, None]
+                elif gate.shape[0] == r.shape[1]:
+                    gate = gate[None, :]
 
         if is_mixture:
             # ================================================================
