@@ -416,3 +416,60 @@ class TestMapPPCSampling:
         """MAP PPC should reject non-positive sample counts."""
         with pytest.raises(ValueError, match="n_samples must be >= 1"):
             standard_results.get_map_ppc_samples(n_samples=0)
+
+
+# --------------------------------------------------------------------------
+# Result concatenation
+# --------------------------------------------------------------------------
+
+
+class TestResultConcatenation:
+    """Test concat validation behavior on MCMC results."""
+
+    def test_concat_rejects_model_config_mismatch(self):
+        """Concatenation should fail when model_config values differ."""
+        samples = _make_standard_samples(n_samples=10, n_genes=4)
+        res_a = ScribeMCMCResults(
+            samples=samples,
+            n_cells=6,
+            n_genes=4,
+            model_type="nbdm",
+            model_config=_make_model_config("nbdm", unconstrained=False),
+            prior_params={},
+        )
+        res_b = ScribeMCMCResults(
+            samples=samples,
+            n_cells=5,
+            n_genes=4,
+            model_type="nbdm",
+            model_config=_make_model_config("nbdm", unconstrained=True),
+            prior_params={},
+        )
+
+        with pytest.raises(ValueError, match="model_config mismatch"):
+            ScribeMCMCResults.concat([res_a, res_b])
+
+    def test_concat_rejects_sample_count_mismatch(self):
+        """Concatenation should fail when posterior draw counts differ."""
+        samples_a = _make_standard_samples(n_samples=10, n_genes=4)
+        samples_b = _make_standard_samples(n_samples=7, n_genes=4)
+
+        res_a = ScribeMCMCResults(
+            samples=samples_a,
+            n_cells=6,
+            n_genes=4,
+            model_type="nbdm",
+            model_config=_make_model_config("nbdm"),
+            prior_params={},
+        )
+        res_b = ScribeMCMCResults(
+            samples=samples_b,
+            n_cells=5,
+            n_genes=4,
+            model_type="nbdm",
+            model_config=_make_model_config("nbdm"),
+            prior_params={},
+        )
+
+        with pytest.raises(ValueError, match="same number of samples"):
+            ScribeMCMCResults.concat([res_a, res_b])

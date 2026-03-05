@@ -447,6 +447,23 @@ gene_subset = results[:100]  # First 100 genes
 gene_component_subset = results[1:4, [1, 2]]
 ```
 
+**Concatenating compatible results (cell axis):**
+```python
+# Concatenate SVI results that share model_config/model_type and genes.
+# This stacks cell-specific parameters (e.g. p_capture) across objects.
+combined = ScribeSVIResults.concat([results_a, results_b])
+
+# Gene order is validated via var.index when available; if order differs
+# but content matches, concat reorders to the first object's gene order.
+```
+
+Concatenation constraints:
+- All inputs must have matching `model_type`, `model_config`, and `prior_params`.
+- Non-cell-specific parameters must be identical across inputs.
+- Cell counts may differ; concat joins along the cell axis.
+- If `_dataset_indices` and `_n_cells_per_dataset` are present, they are merged
+  so `get_dataset(d)` keeps working on the concatenated object.
+
 #### Advanced Features
 
 **Normalization:**

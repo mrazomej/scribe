@@ -6,7 +6,7 @@ and composes analysis functionality from mixins, mirroring the SVI results
 architecture.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from dataclasses import dataclass, field
 
 import jax.numpy as jnp
@@ -14,6 +14,8 @@ import pandas as pd
 
 from ..models.config import ModelConfig
 from ..core.serialization import make_model_config_pickle_safe
+from ._dataset import _build_cell_specific_keys
+from ..svi._gene_subsetting import build_gene_axis_by_key
 
 # Mixin imports
 from ._parameter_extraction import ParameterExtractionMixin
@@ -119,6 +121,118 @@ class ScribeMCMCResults(
 
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)
+
+    @classmethod
+    def concat(
+        cls,
+        results_list: List["ScribeMCMCResults"],
+        *,
+        align_genes: str = "strict",
+        join: str = "cells",
+        check_model: bool = True,
+    ) -> "ScribeMCMCResults":
+        """Concatenate multiple MCMC results objects along the cell axis.
+
+        The method supports combining objects that represent the same model and
+        gene space while differing in cell count. Cell-specific posterior
+        samples are concatenated along the cell axis, while non-cell-specific
+        samples must be identical across inputs.
+
+        Parameters
+        ----------
+        results_list : list of ScribeMCMCResults
+            Results objects to concatenate. At least one element is required.
+        align_genes : {"strict"}, default="strict"
+            Gene-alignment strategy. ``"strict"`` requires matching gene sets;
+            if all objects include ``var``, differing gene order is resolved by
+            reordering to match the first object.
+        join : {"cells"}, default="cells"
+            Concatenation axis. Only cell-axis concatenation is supported.
+        check_model : bool, default=True
+            If ``True``, require exact agreement for model-level fields
+            (``model_type``, ``model_config``, and ``prior_params``).
+
+        Returns
+        -------
+        ScribeMCMCResults
+            Concatenated MCMC results with ``_mcmc=None``.
+
+        Raises
+        ------
+        ValueError
+            If inputs are empty, incompatible, or use unsupported options.
+        TypeError
+            If inputs are not all ``ScribeMCMCResults`` instances.
+        """
+        if not results_list:
+            raise ValueError("results_list must contain at least one element.")
+        if join != "cells":
+            raise ValueError("Only join='cells' is currently supported.")
+        if align_genes != "strict":
+            raise ValueError("Only align_genes='strict' is currently supported.")
+
+        for idx, res in enumerate(results_list):
+            if not isinstance(res, cls):
+                raise TypeError(
+                    f"All entries must be {cls.__name__}; got {type(res)} at index {idx}."
+                )
+
+        reference = results_list[0]
+        if check_model:
+            _validate_mcmc_model_compatibility(reference, results_list)
+
+        aligned_results = _align_mcmc_genes_to_reference(
+            reference=reference, results_list=results_list
+        )
+        first = aligned_results[0]
+
+        _validate_equal_mcmc_sample_sizes(aligned_results)
+
+        # Classify cell-specific sample sites from ParamSpec metadata so only
+        # cell-axis variables are concatenated along axis 1.
+        cell_sample_keys = _build_cell_specific_keys(
+            first.model_config.param_specs or [],
+            first.samples,
+        )
+        samples = _concat_mcmc_samples(
+            sample_dicts=[res.samples for res in aligned_results],
+            cell_specific_keys=cell_sample_keys,
+        )
+
+        obs = _concat_optional_obs([res.obs for res in aligned_results])
+        var = first.var.copy() if first.var is not None else None
+        uns = _merge_optional_uns([res.uns for res in aligned_results])
+
+        n_cells_total = int(sum(res.n_cells for res in aligned_results))
+        n_obs_total = (
+            int(sum(res.n_obs for res in aligned_results))
+            if all(res.n_obs is not None for res in aligned_results)
+            else (obs.shape[0] if obs is not None else None)
+        )
+
+        return cls(
+            samples=samples,
+            n_cells=n_cells_total,
+            n_genes=first.n_genes,
+            model_type=first.model_type,
+            model_config=first.model_config,
+            prior_params=first.prior_params,
+            obs=obs,
+            var=var,
+            uns=uns,
+            n_obs=n_obs_total,
+            n_vars=first.n_genes,
+            predictive_samples=None,
+            n_components=first.n_components,
+            denoised_counts=None,
+            _n_cells_per_dataset=_merge_cells_per_dataset(
+                [getattr(res, "_n_cells_per_dataset", None) for res in aligned_results]
+            ),
+            _dataset_indices=_concat_dataset_indices(
+                [getattr(res, "_dataset_indices", None) for res in aligned_results]
+            ),
+            _mcmc=None,
+        )
 
     # -------------------------------------------------------------------------
     # Post-init validation
@@ -363,3 +477,235 @@ class ScribeMCMCResults(
     def __setstate__(self, state: Dict[str, Any]) -> None:
         """Restore instance state after unpickling."""
         self.__dict__.update(state)
+
+
+def _validate_mcmc_model_compatibility(
+    reference: ScribeMCMCResults, results_list: List[ScribeMCMCResults]
+) -> None:
+    """Validate model-level compatibility for MCMC concatenation."""
+    for idx, res in enumerate(results_list[1:], start=1):
+        if res.model_type != reference.model_type:
+            raise ValueError(
+                f"model_type mismatch at index {idx}: "
+                f"{res.model_type} != {reference.model_type}"
+            )
+        if res.model_config != reference.model_config:
+            raise ValueError(f"model_config mismatch at index {idx}.")
+        if res.prior_params != reference.prior_params:
+            raise ValueError(f"prior_params mismatch at index {idx}.")
+        if set(res.samples.keys()) != set(reference.samples.keys()):
+            raise ValueError(f"samples keys mismatch at index {idx}.")
+
+
+def _align_mcmc_genes_to_reference(
+    reference: ScribeMCMCResults, results_list: List[ScribeMCMCResults]
+) -> List[ScribeMCMCResults]:
+    """Align MCMC results to the reference gene order when ``var`` is available."""
+    all_have_var = all(res.var is not None for res in results_list)
+    if not all_have_var:
+        if any(res.n_genes != reference.n_genes for res in results_list):
+            raise ValueError(
+                "All results must have identical n_genes when var metadata is missing."
+            )
+        return results_list
+
+    ref_names = pd.Index(reference.var.index)
+    aligned: List[ScribeMCMCResults] = []
+    for idx, res in enumerate(results_list):
+        names = pd.Index(res.var.index)
+        if len(names) != len(ref_names):
+            raise ValueError(f"Gene count mismatch at index {idx}.")
+        if set(names) != set(ref_names):
+            raise ValueError(f"Gene set mismatch at index {idx}.")
+        if names.equals(ref_names):
+            aligned.append(res)
+            continue
+
+        indexer = names.get_indexer(ref_names)
+        if (indexer < 0).any():
+            raise ValueError(f"Could not align genes at index {idx}.")
+        aligned.append(_reorder_mcmc_result_genes(res, indexer))
+
+    return aligned
+
+
+def _reorder_mcmc_result_genes(
+    result: ScribeMCMCResults, gene_indexer: jnp.ndarray
+) -> ScribeMCMCResults:
+    """Return a copy of MCMC results with all gene-specific sample sites reordered."""
+    gene_indexer = jnp.asarray(gene_indexer)
+    sample_gene_axis = _mcmc_sample_gene_axes(result)
+    samples = _reorder_dict_by_gene_axis(result.samples, sample_gene_axis, gene_indexer)
+    var = result.var.iloc[list(map(int, gene_indexer.tolist()))].copy()
+
+    return type(result)(
+        samples=samples,
+        n_cells=result.n_cells,
+        n_genes=result.n_genes,
+        model_type=result.model_type,
+        model_config=result.model_config,
+        prior_params=result.prior_params,
+        obs=result.obs,
+        var=var,
+        uns=result.uns,
+        n_obs=result.n_obs,
+        n_vars=result.n_vars,
+        predictive_samples=None,
+        n_components=result.n_components,
+        denoised_counts=None,
+        _n_cells_per_dataset=getattr(result, "_n_cells_per_dataset", None),
+        _dataset_indices=getattr(result, "_dataset_indices", None),
+        _mcmc=None,
+    )
+
+
+def _mcmc_sample_gene_axes(result: ScribeMCMCResults) -> Dict[str, int]:
+    """Infer gene-axis mapping for MCMC samples from ParamSpec metadata."""
+    specs = result.model_config.param_specs or []
+    if specs:
+        spec_axes: Dict[str, int] = {}
+        for spec in specs:
+            is_gene_specific = getattr(spec, "is_gene_specific", False) or (
+                "n_genes" in getattr(spec, "shape_dims", ())
+            )
+            if not is_gene_specific or "n_genes" not in getattr(spec, "shape_dims", ()):
+                continue
+            axis_without_sample = list(spec.shape_dims).index("n_genes")
+            axis_with_sample = axis_without_sample + 1
+            for key in result.samples:
+                if key == spec.name and hasattr(result.samples[key], "ndim"):
+                    if result.samples[key].ndim > axis_with_sample:
+                        spec_axes[key] = axis_with_sample
+
+        if spec_axes:
+            return spec_axes
+
+    fallback = build_gene_axis_by_key(
+        specs, result.samples, result.n_genes
+    ) or {}
+    return fallback
+
+
+def _validate_equal_mcmc_sample_sizes(results_list: List[ScribeMCMCResults]) -> None:
+    """Ensure all MCMC results carry the same posterior draw count."""
+    sample_counts: List[int] = []
+    for res in results_list:
+        count = None
+        for value in res.samples.values():
+            if hasattr(value, "ndim") and value.ndim > 0:
+                count = int(value.shape[0])
+                break
+        if count is None:
+            raise ValueError(
+                "Could not infer MCMC sample count from samples dictionary."
+            )
+        sample_counts.append(count)
+    if len(set(sample_counts)) != 1:
+        raise ValueError(
+            "All concatenated MCMC results must have the same number of samples; "
+            f"got {sample_counts}."
+        )
+
+
+def _concat_mcmc_samples(
+    sample_dicts: List[Dict[str, Any]], cell_specific_keys: set
+) -> Dict[str, Any]:
+    """Concatenate MCMC sample dictionaries with cell-aware semantics."""
+    keys = sample_dicts[0].keys()
+    out: Dict[str, Any] = {}
+    for key in keys:
+        values = [d[key] for d in sample_dicts]
+        if key in cell_specific_keys:
+            for idx, val in enumerate(values):
+                if not hasattr(val, "ndim") or val.ndim < 2:
+                    raise ValueError(
+                        f"Cell-specific sample '{key}' must have ndim >= 2; "
+                        f"found {getattr(val, 'ndim', None)} at index {idx}."
+                    )
+            out[key] = jnp.concatenate(values, axis=1)
+            continue
+        if not _all_equal(values):
+            raise ValueError(
+                f"Non-cell-specific sample '{key}' differs across results."
+            )
+        out[key] = values[0]
+    return out
+
+
+def _reorder_dict_by_gene_axis(data: Dict, axis_by_key: Dict[str, int], indexer) -> Dict:
+    """Apply deterministic reordering on keys that carry a gene axis."""
+    reordered: Dict[str, Any] = {}
+    for key, value in data.items():
+        if not hasattr(value, "ndim") or key not in axis_by_key:
+            reordered[key] = value
+            continue
+        reordered[key] = jnp.take(value, indexer, axis=axis_by_key[key])
+    return reordered
+
+
+def _concat_optional_obs(values: List[Optional[pd.DataFrame]]) -> Optional[pd.DataFrame]:
+    """Concatenate optional ``obs`` frames row-wise."""
+    if all(v is None for v in values):
+        return None
+    if any(v is None for v in values):
+        raise ValueError("obs must be present on all inputs or none of them.")
+    return pd.concat(values, axis=0)
+
+
+def _merge_optional_uns(values: List[Optional[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    """Merge ``uns`` by requiring all non-null values to be equal."""
+    if all(v is None for v in values):
+        return None
+    base = values[0]
+    for idx, value in enumerate(values[1:], start=1):
+        if not _all_equal([base, value]):
+            raise ValueError(f"uns mismatch at index {idx}.")
+    return base
+
+
+def _merge_cells_per_dataset(values: List[Optional[jnp.ndarray]]) -> Optional[jnp.ndarray]:
+    """Merge per-dataset cell counts by element-wise sum when available."""
+    if all(v is None for v in values):
+        return None
+    if any(v is None for v in values):
+        raise ValueError(
+            "_n_cells_per_dataset must be present on all inputs or none of them."
+        )
+    lengths = [len(v) for v in values]
+    if len(set(lengths)) != 1:
+        raise ValueError(f"_n_cells_per_dataset length mismatch: {lengths}")
+    stacked = jnp.stack(values, axis=0)
+    return jnp.sum(stacked, axis=0)
+
+
+def _concat_dataset_indices(values: List[Optional[jnp.ndarray]]) -> Optional[jnp.ndarray]:
+    """Concatenate dataset-index vectors when present."""
+    if all(v is None for v in values):
+        return None
+    if any(v is None for v in values):
+        raise ValueError("_dataset_indices must be present on all inputs or none of them.")
+    return jnp.concatenate(values, axis=0)
+
+
+def _all_equal(values: List[Any]) -> bool:
+    """Return ``True`` when all values compare equal with array support."""
+    first = values[0]
+    for other in values[1:]:
+        if not _value_equal(first, other):
+            return False
+    return True
+
+
+def _value_equal(left: Any, right: Any) -> bool:
+    """Compare values with explicit handling for arrays and pandas objects."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, pd.DataFrame):
+        return left.equals(right)
+    if isinstance(left, dict):
+        if set(left.keys()) != set(right.keys()):
+            return False
+        return all(_value_equal(left[k], right[k]) for k in left)
+    if hasattr(left, "shape") and hasattr(right, "shape"):
+        return bool(jnp.array_equal(jnp.asarray(left), jnp.asarray(right)))
+    return left == right
