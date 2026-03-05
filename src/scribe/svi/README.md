@@ -481,6 +481,10 @@ Concatenation constraints:
   `_n_cells_per_dataset`, `_dataset_indices`, and sets
   `model_config.n_datasets`, so `get_dataset(i)` and 3-axis indexing
   (`combined[:, :, i]`) work immediately on the concatenated result.
+  Non-cell-specific parameters (e.g. gene-level `mu_loc`) are stacked along a
+  new dataset axis so that `get_dataset(i)` recovers each input's original
+  parameter values. At least two results are required (single-element lists
+  are rejected to prevent the `res.concat([other])` classmethod footgun).
 
 #### Advanced Features
 

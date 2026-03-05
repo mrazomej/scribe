@@ -137,6 +137,12 @@ class ScribeSVIResults(
     # _subset_posterior_samples use this instead of heuristics.
     _gene_axis_by_key: Optional[Dict[str, int]] = None
 
+    # Keys that were stacked along a new dataset axis during concat
+    # promotion (single-dataset → multi-dataset).  Used by get_dataset()
+    # to know which params/samples need dataset-axis slicing even though
+    # they lack ``is_dataset`` in their ParamSpec.
+    _promoted_dataset_keys: Optional[set] = None
+
     @classmethod
     def concat(
         cls,
@@ -295,6 +301,7 @@ class ScribeSVIResults(
         # can retrieve the i-th original result's cells.
         n_inputs = len(aligned_results)
         combined_config = first.model_config
+        promoted_dataset_keys = None
         if n_cells_per_dataset is None and n_inputs > 1:
             n_cells_per_dataset = jnp.array(
                 [int(res.n_cells) for res in aligned_results],
@@ -309,6 +316,30 @@ class ScribeSVIResults(
             combined_config = first.model_config.model_copy(
                 update={"n_datasets": n_inputs}
             )
+
+            # Stack non-cell-specific params along a new dataset axis (0)
+            # so get_dataset(i) can recover per-dataset values.
+            promoted_dataset_keys = set()
+            for key in params:
+                if key not in cell_param_keys:
+                    stacked = jnp.stack(
+                        [res.params[key] for res in aligned_results], axis=0
+                    )
+                    params[key] = stacked
+                    promoted_dataset_keys.add(key)
+
+            # Same for posterior_samples: dataset axis is 1 (after sample axis).
+            if posterior_samples is not None:
+                for key in posterior_samples:
+                    if key not in cell_param_keys:
+                        stacked = jnp.stack(
+                            [
+                                res.posterior_samples[key]
+                                for res in aligned_results
+                            ],
+                            axis=1,
+                        )
+                        posterior_samples[key] = stacked
 
         combined = cls(
             params=params,
@@ -331,6 +362,7 @@ class ScribeSVIResults(
             _dataset_indices=dataset_indices,
             _original_n_genes=_merge_original_n_genes(aligned_results),
             _gene_axis_by_key=getattr(first, "_gene_axis_by_key", None),
+            _promoted_dataset_keys=promoted_dataset_keys,
         )
         return combined
 

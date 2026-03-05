@@ -380,12 +380,17 @@ class DatasetMixin:
         dataset_keys = _build_dataset_keys(
             self.model_config.param_specs, self.params, n_datasets
         )
+        # Keys promoted during concat (stacked at axis 0 for params).
+        promoted = getattr(self, "_promoted_dataset_keys", None) or set()
         n_components = getattr(self.model_config, "n_components", None)
 
         new_params: Dict[str, jnp.ndarray] = {}
         for key, value in self.params.items():
+            # Promoted keys always have the dataset axis at position 0.
+            if key in promoted and hasattr(value, "ndim") and value.ndim >= 1:
+                new_params[key] = value[dataset_index]
+                continue
             if key in dataset_keys and hasattr(value, "ndim"):
-                # Look up spec to determine if this param is also mixture
                 spec = _match_spec_for_key(
                     key, self.model_config.param_specs or []
                 )
@@ -481,10 +486,15 @@ class DatasetMixin:
         specs_by_name = {
             s.name: s for s in (self.model_config.param_specs or [])
         }
+        # Promoted keys have the dataset axis at position 1 (after sample axis).
+        promoted = getattr(self, "_promoted_dataset_keys", None) or set()
         n_components = getattr(self.model_config, "n_components", None)
         new_samples: Dict[str, jnp.ndarray] = {}
 
         for key, value in samples.items():
+            if key in promoted and hasattr(value, "ndim") and value.ndim >= 2:
+                new_samples[key] = value[:, dataset_index]
+                continue
             spec = specs_by_name.get(key)
             is_ds = spec is not None and getattr(spec, "is_dataset", False)
             is_mix = spec is not None and getattr(spec, "is_mixture", False)
