@@ -250,6 +250,45 @@ def _plot_trend_line(ax, x, y, label, color, n_bins, min_cells_per_bin):
         ax.plot(trend_x, trend_y, linewidth=2.0, color=color, label=label)
 
 
+def _set_dynamic_y_limits(ax, y_values, pad_fraction=0.15):
+    """Set data-driven y-axis limits for capture-probability panels.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Target axis whose limits will be updated.
+    y_values : ndarray
+        Capture-probability values used to infer display range.
+    pad_fraction : float, optional
+        Relative padding added around the data range.
+    """
+    # Keep only finite values to avoid propagating NaN/inf into axis bounds.
+    y_valid = np.asarray(y_values, dtype=float)
+    y_valid = y_valid[np.isfinite(y_valid)]
+    if y_valid.size == 0:
+        return
+
+    y_min = float(np.min(y_valid))
+    y_max = float(np.max(y_valid))
+    y_range = y_max - y_min
+
+    # Expand narrow ranges so small p_capture variation remains visible.
+    if y_range <= 1e-6:
+        pad = 0.02
+    else:
+        pad = max(1e-3, y_range * float(pad_fraction))
+
+    lower = max(0.0, y_min - pad)
+    upper = min(1.0, y_max + pad)
+
+    # If clipping to [0,1] collapses the interval, widen slightly.
+    if upper - lower <= 1e-5:
+        lower = max(0.0, y_min - 0.02)
+        upper = min(1.0, y_max + 0.02)
+
+    ax.set_ylim(lower, upper)
+
+
 def plot_p_capture_scaling(
     results,
     counts,
@@ -348,7 +387,7 @@ def plot_p_capture_scaling(
     ax_global.set_xlabel(r"$L_c$")
     ax_global.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
     ax_global.set_title(r"Global $p_{\mathrm{capture}}$ scaling")
-    ax_global.set_ylim(0.0, 1.05)
+    _set_dynamic_y_limits(ax_global, p_capture)
     ax_global.legend(fontsize=8)
 
     panel_idx = 1
@@ -364,6 +403,8 @@ def plot_p_capture_scaling(
         component_ids = np.argmax(np.asarray(component_probs), axis=1)
         unique_components = np.unique(component_ids)
         colors = plt.cm.tab10(np.linspace(0, 1, unique_components.size))
+        # Track values that were actually plotted to derive faithful y-limits.
+        component_values = []
 
         ax_comp = axes[panel_idx]
         for comp_color, comp_id in zip(colors, unique_components):
@@ -379,10 +420,14 @@ def plot_p_capture_scaling(
                 n_bins=n_bins,
                 min_cells_per_bin=min_cells_per_bin,
             )
+            component_values.append(p_capture[in_comp])
         ax_comp.set_xlabel(r"$L_c$")
         ax_comp.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
         ax_comp.set_title(r"Split by component")
-        ax_comp.set_ylim(0.0, 1.05)
+        if component_values:
+            _set_dynamic_y_limits(ax_comp, np.concatenate(component_values))
+        else:
+            _set_dynamic_y_limits(ax_comp, p_capture)
         handles, labels = ax_comp.get_legend_handles_labels()
         if handles:
             ax_comp.legend(fontsize=8)
@@ -397,6 +442,8 @@ def plot_p_capture_scaling(
         dataset_codes = np.asarray(dataset_codes, dtype=int).reshape(-1)
         unique_datasets = np.unique(dataset_codes)
         colors = plt.cm.Set2(np.linspace(0, 1, unique_datasets.size))
+        # Track values that were actually plotted to derive faithful y-limits.
+        dataset_values = []
 
         ax_ds = axes[panel_idx]
         for ds_color, ds_code in zip(colors, unique_datasets):
@@ -416,10 +463,14 @@ def plot_p_capture_scaling(
                 n_bins=n_bins,
                 min_cells_per_bin=min_cells_per_bin,
             )
+            dataset_values.append(p_capture[in_ds])
         ax_ds.set_xlabel(r"$L_c$")
         ax_ds.set_ylabel(r"$\hat{p}_{\mathrm{capture},c}^{\mathrm{MAP}}$")
         ax_ds.set_title(r"Split by dataset")
-        ax_ds.set_ylim(0.0, 1.05)
+        if dataset_values:
+            _set_dynamic_y_limits(ax_ds, np.concatenate(dataset_values))
+        else:
+            _set_dynamic_y_limits(ax_ds, p_capture)
         handles, labels = ax_ds.get_legend_handles_labels()
         if handles:
             ax_ds.legend(fontsize=8)
