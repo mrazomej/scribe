@@ -127,9 +127,10 @@ class ScribeMCMCResults(
         cls,
         results_list: List["ScribeMCMCResults"],
         *,
-        align_genes: str = "strict",
+        align_genes: str = "assume_aligned",
         join: str = "cells",
         check_model: bool = True,
+        validation: str = "var_only",
     ) -> "ScribeMCMCResults":
         """Concatenate multiple MCMC results objects along the cell axis.
 
@@ -141,16 +142,24 @@ class ScribeMCMCResults(
         Parameters
         ----------
         results_list : list of ScribeMCMCResults
-            Results objects to concatenate. At least one element is required.
-        align_genes : {"strict"}, default="strict"
+            Results objects to concatenate. At least two elements are required.
+        align_genes : {"strict", "assume_aligned"}, default="strict"
             Gene-alignment strategy. ``"strict"`` requires matching gene sets;
             if all objects include ``var``, differing gene order is resolved by
-            reordering to match the first object.
+            reordering to match the first object. ``"assume_aligned"`` skips
+            gene-set/order validation and assumes all inputs are already aligned.
         join : {"cells"}, default="cells"
             Concatenation axis. Only cell-axis concatenation is supported.
         check_model : bool, default=True
             If ``True``, require exact agreement for model-level fields
             (``model_type``, ``model_config``, and ``prior_params``).
+        validation : {"strict", "var_only"}, default="strict"
+            Validation policy for non-cell-specific fields.
+            ``"strict"`` enforces deep equality checks for shared sample sites
+            and metadata. ``"var_only"`` performs fast key-level checks and
+            relies on the user-trusted model fit plus gene validation from
+            ``var`` (or ``n_genes`` when ``var`` is missing), taking
+            non-cell-specific values from the first object.
 
         Returns
         -------
@@ -164,12 +173,31 @@ class ScribeMCMCResults(
         TypeError
             If inputs are not all ``ScribeMCMCResults`` instances.
         """
-        if not results_list:
-            raise ValueError("results_list must contain at least one element.")
+        # Guard against accidentally passing a single results object instead of
+        # a list/tuple. Because results support ``__getitem__``, iterating over
+        # a single object can trigger expensive implicit indexing.
+        if isinstance(results_list, cls):
+            raise TypeError(
+                "results_list must be a sequence of results, e.g. "
+                "ScribeMCMCResults.concat([res_a, res_b])."
+            )
+        if not results_list or len(results_list) < 2:
+            raise ValueError(
+                "results_list must contain at least two elements. "
+                "Note: concat is a classmethod — call "
+                "ScribeMCMCResults.concat([res_a, res_b]), not "
+                "res_a.concat([res_b])."
+            )
         if join != "cells":
             raise ValueError("Only join='cells' is currently supported.")
-        if align_genes != "strict":
-            raise ValueError("Only align_genes='strict' is currently supported.")
+        if align_genes not in {"strict", "assume_aligned"}:
+            raise ValueError(
+                "align_genes must be one of {'strict', 'assume_aligned'}."
+            )
+        if validation not in {"strict", "var_only"}:
+            raise ValueError(
+                "validation must be one of {'strict', 'var_only'}."
+            )
 
         for idx, res in enumerate(results_list):
             if not isinstance(res, cls):
@@ -181,8 +209,12 @@ class ScribeMCMCResults(
         if check_model:
             _validate_mcmc_model_compatibility(reference, results_list)
 
-        aligned_results = _align_mcmc_genes_to_reference(
-            reference=reference, results_list=results_list
+        aligned_results = (
+            _align_mcmc_genes_to_reference(
+                reference=reference, results_list=results_list
+            )
+            if align_genes == "strict"
+            else results_list
         )
         first = aligned_results[0]
 
@@ -197,11 +229,15 @@ class ScribeMCMCResults(
         samples = _concat_mcmc_samples(
             sample_dicts=[res.samples for res in aligned_results],
             cell_specific_keys=cell_sample_keys,
+            strict=(validation == "strict"),
         )
 
         obs = _concat_optional_obs([res.obs for res in aligned_results])
         var = first.var.copy() if first.var is not None else None
-        uns = _merge_optional_uns([res.uns for res in aligned_results])
+        uns = _merge_optional_uns(
+            [res.uns for res in aligned_results],
+            strict=(validation == "strict"),
+        )
 
         n_cells_total = int(sum(res.n_cells for res in aligned_results))
         n_obs_total = (
@@ -210,12 +246,46 @@ class ScribeMCMCResults(
             else (obs.shape[0] if obs is not None else None)
         )
 
+        # --- dataset metadata: merge existing or promote single-dataset ---
+        n_cells_per_dataset = _merge_cells_per_dataset(
+            [
+                getattr(res, "_n_cells_per_dataset", None)
+                for res in aligned_results
+            ]
+        )
+        dataset_indices = _concat_dataset_indices(
+            [
+                getattr(res, "_dataset_indices", None)
+                for res in aligned_results
+            ]
+        )
+
+        # When all inputs are single-dataset and we are combining more than
+        # one, promote to a multi-dataset result so that ``get_dataset(i)``
+        # can retrieve the i-th original result's cells.
+        n_inputs = len(aligned_results)
+        combined_config = first.model_config
+        if n_cells_per_dataset is None and n_inputs > 1:
+            n_cells_per_dataset = jnp.array(
+                [int(res.n_cells) for res in aligned_results],
+                dtype=jnp.int32,
+            )
+            dataset_indices = jnp.concatenate(
+                [
+                    jnp.full(int(res.n_cells), i, dtype=jnp.int32)
+                    for i, res in enumerate(aligned_results)
+                ]
+            )
+            combined_config = first.model_config.model_copy(
+                update={"n_datasets": n_inputs}
+            )
+
         return cls(
             samples=samples,
             n_cells=n_cells_total,
             n_genes=first.n_genes,
             model_type=first.model_type,
-            model_config=first.model_config,
+            model_config=combined_config,
             prior_params=first.prior_params,
             obs=obs,
             var=var,
@@ -225,12 +295,8 @@ class ScribeMCMCResults(
             predictive_samples=None,
             n_components=first.n_components,
             denoised_counts=None,
-            _n_cells_per_dataset=_merge_cells_per_dataset(
-                [getattr(res, "_n_cells_per_dataset", None) for res in aligned_results]
-            ),
-            _dataset_indices=_concat_dataset_indices(
-                [getattr(res, "_dataset_indices", None) for res in aligned_results]
-            ),
+            _n_cells_per_dataset=n_cells_per_dataset,
+            _dataset_indices=dataset_indices,
             _mcmc=None,
         )
 
@@ -513,13 +579,14 @@ def _align_mcmc_genes_to_reference(
     aligned: List[ScribeMCMCResults] = []
     for idx, res in enumerate(results_list):
         names = pd.Index(res.var.index)
+        # Fast no-op path when names are already identical.
+        if names.equals(ref_names):
+            aligned.append(res)
+            continue
         if len(names) != len(ref_names):
             raise ValueError(f"Gene count mismatch at index {idx}.")
         if set(names) != set(ref_names):
             raise ValueError(f"Gene set mismatch at index {idx}.")
-        if names.equals(ref_names):
-            aligned.append(res)
-            continue
 
         indexer = names.get_indexer(ref_names)
         if (indexer < 0).any():
@@ -535,7 +602,9 @@ def _reorder_mcmc_result_genes(
     """Return a copy of MCMC results with all gene-specific sample sites reordered."""
     gene_indexer = jnp.asarray(gene_indexer)
     sample_gene_axis = _mcmc_sample_gene_axes(result)
-    samples = _reorder_dict_by_gene_axis(result.samples, sample_gene_axis, gene_indexer)
+    samples = _reorder_dict_by_gene_axis(
+        result.samples, sample_gene_axis, gene_indexer
+    )
     var = result.var.iloc[list(map(int, gene_indexer.tolist()))].copy()
 
     return type(result)(
@@ -568,7 +637,9 @@ def _mcmc_sample_gene_axes(result: ScribeMCMCResults) -> Dict[str, int]:
             is_gene_specific = getattr(spec, "is_gene_specific", False) or (
                 "n_genes" in getattr(spec, "shape_dims", ())
             )
-            if not is_gene_specific or "n_genes" not in getattr(spec, "shape_dims", ()):
+            if not is_gene_specific or "n_genes" not in getattr(
+                spec, "shape_dims", ()
+            ):
                 continue
             axis_without_sample = list(spec.shape_dims).index("n_genes")
             axis_with_sample = axis_without_sample + 1
@@ -580,13 +651,15 @@ def _mcmc_sample_gene_axes(result: ScribeMCMCResults) -> Dict[str, int]:
         if spec_axes:
             return spec_axes
 
-    fallback = build_gene_axis_by_key(
-        specs, result.samples, result.n_genes
-    ) or {}
+    fallback = (
+        build_gene_axis_by_key(specs, result.samples, result.n_genes) or {}
+    )
     return fallback
 
 
-def _validate_equal_mcmc_sample_sizes(results_list: List[ScribeMCMCResults]) -> None:
+def _validate_equal_mcmc_sample_sizes(
+    results_list: List[ScribeMCMCResults],
+) -> None:
     """Ensure all MCMC results carry the same posterior draw count."""
     sample_counts: List[int] = []
     for res in results_list:
@@ -608,7 +681,7 @@ def _validate_equal_mcmc_sample_sizes(results_list: List[ScribeMCMCResults]) -> 
 
 
 def _concat_mcmc_samples(
-    sample_dicts: List[Dict[str, Any]], cell_specific_keys: set
+    sample_dicts: List[Dict[str, Any]], cell_specific_keys: set, strict: bool
 ) -> Dict[str, Any]:
     """Concatenate MCMC sample dictionaries with cell-aware semantics."""
     keys = sample_dicts[0].keys()
@@ -624,7 +697,7 @@ def _concat_mcmc_samples(
                     )
             out[key] = jnp.concatenate(values, axis=1)
             continue
-        if not _all_equal(values):
+        if strict and not _all_equal(values):
             raise ValueError(
                 f"Non-cell-specific sample '{key}' differs across results."
             )
@@ -632,7 +705,9 @@ def _concat_mcmc_samples(
     return out
 
 
-def _reorder_dict_by_gene_axis(data: Dict, axis_by_key: Dict[str, int], indexer) -> Dict:
+def _reorder_dict_by_gene_axis(
+    data: Dict, axis_by_key: Dict[str, int], indexer
+) -> Dict:
     """Apply deterministic reordering on keys that carry a gene axis."""
     reordered: Dict[str, Any] = {}
     for key, value in data.items():
@@ -643,7 +718,9 @@ def _reorder_dict_by_gene_axis(data: Dict, axis_by_key: Dict[str, int], indexer)
     return reordered
 
 
-def _concat_optional_obs(values: List[Optional[pd.DataFrame]]) -> Optional[pd.DataFrame]:
+def _concat_optional_obs(
+    values: List[Optional[pd.DataFrame]],
+) -> Optional[pd.DataFrame]:
     """Concatenate optional ``obs`` frames row-wise."""
     if all(v is None for v in values):
         return None
@@ -652,18 +729,25 @@ def _concat_optional_obs(values: List[Optional[pd.DataFrame]]) -> Optional[pd.Da
     return pd.concat(values, axis=0)
 
 
-def _merge_optional_uns(values: List[Optional[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
-    """Merge ``uns`` by requiring all non-null values to be equal."""
+def _merge_optional_uns(
+    values: List[Optional[Dict[str, Any]]], strict: bool
+) -> Optional[Dict[str, Any]]:
+    """Merge ``uns`` with configurable strictness."""
     if all(v is None for v in values):
         return None
     base = values[0]
+    # In fast mode, trust the caller and keep the first uns payload.
+    if not strict:
+        return base
     for idx, value in enumerate(values[1:], start=1):
         if not _all_equal([base, value]):
             raise ValueError(f"uns mismatch at index {idx}.")
     return base
 
 
-def _merge_cells_per_dataset(values: List[Optional[jnp.ndarray]]) -> Optional[jnp.ndarray]:
+def _merge_cells_per_dataset(
+    values: List[Optional[jnp.ndarray]],
+) -> Optional[jnp.ndarray]:
     """Merge per-dataset cell counts by element-wise sum when available."""
     if all(v is None for v in values):
         return None
@@ -678,12 +762,16 @@ def _merge_cells_per_dataset(values: List[Optional[jnp.ndarray]]) -> Optional[jn
     return jnp.sum(stacked, axis=0)
 
 
-def _concat_dataset_indices(values: List[Optional[jnp.ndarray]]) -> Optional[jnp.ndarray]:
+def _concat_dataset_indices(
+    values: List[Optional[jnp.ndarray]],
+) -> Optional[jnp.ndarray]:
     """Concatenate dataset-index vectors when present."""
     if all(v is None for v in values):
         return None
     if any(v is None for v in values):
-        raise ValueError("_dataset_indices must be present on all inputs or none of them.")
+        raise ValueError(
+            "_dataset_indices must be present on all inputs or none of them."
+        )
     return jnp.concatenate(values, axis=0)
 
 

@@ -142,9 +142,10 @@ class ScribeSVIResults(
         cls,
         results_list: List["ScribeSVIResults"],
         *,
-        align_genes: str = "strict",
+        align_genes: str = "assume_aligned",
         join: str = "cells",
         check_model: bool = True,
+        validation: str = "var_only",
     ) -> "ScribeSVIResults":
         """Concatenate multiple SVI results objects along the cell axis.
 
@@ -157,16 +158,24 @@ class ScribeSVIResults(
         Parameters
         ----------
         results_list : list of ScribeSVIResults
-            Results objects to concatenate. At least one element is required.
-        align_genes : {"strict"}, default="strict"
+            Results objects to concatenate. At least two elements are required.
+        align_genes : {"strict", "assume_aligned"}, default="strict"
             Gene-alignment strategy. ``"strict"`` requires matching gene sets;
             if all objects include ``var``, differing gene order is resolved by
-            reordering to match the first object.
+            reordering to match the first object. ``"assume_aligned"`` skips
+            gene-set/order validation and assumes all inputs are already aligned.
         join : {"cells"}, default="cells"
             Concatenation axis. Only cell-axis concatenation is supported.
         check_model : bool, default=True
             If ``True``, require exact agreement for model-level fields
             (``model_type``, ``model_config``, and ``prior_params``).
+        validation : {"strict", "var_only"}, default="strict"
+            Validation policy for non-cell-specific fields.
+            ``"strict"`` enforces deep equality checks for shared tensors and
+            metadata. ``"var_only"`` performs fast key-level checks and relies
+            on the user-trusted model fit plus gene validation from ``var`` (or
+            ``n_genes`` when ``var`` is missing), taking non-cell-specific
+            values from the first object.
 
         Returns
         -------
@@ -180,12 +189,31 @@ class ScribeSVIResults(
         TypeError
             If inputs are not all ``ScribeSVIResults`` instances.
         """
-        if not results_list:
-            raise ValueError("results_list must contain at least one element.")
+        # Guard against accidentally passing a single results object instead of
+        # a list/tuple. Because results support ``__getitem__``, iterating over
+        # a single object can trigger expensive implicit indexing.
+        if isinstance(results_list, cls):
+            raise TypeError(
+                "results_list must be a sequence of results, e.g. "
+                "ScribeSVIResults.concat([res_a, res_b])."
+            )
+        if not results_list or len(results_list) < 2:
+            raise ValueError(
+                "results_list must contain at least two elements. "
+                "Note: concat is a classmethod — call "
+                "ScribeSVIResults.concat([res_a, res_b]), not "
+                "res_a.concat([res_b])."
+            )
         if join != "cells":
             raise ValueError("Only join='cells' is currently supported.")
-        if align_genes != "strict":
-            raise ValueError("Only align_genes='strict' is currently supported.")
+        if align_genes not in {"strict", "assume_aligned"}:
+            raise ValueError(
+                "align_genes must be one of {'strict', 'assume_aligned'}."
+            )
+        if validation not in {"strict", "var_only"}:
+            raise ValueError(
+                "validation must be one of {'strict', 'var_only'}."
+            )
 
         for idx, res in enumerate(results_list):
             if not isinstance(res, cls):
@@ -197,8 +225,12 @@ class ScribeSVIResults(
         if check_model:
             _validate_svi_model_compatibility(reference, results_list)
 
-        aligned_results = _align_svi_genes_to_reference(
-            reference=reference, results_list=results_list
+        aligned_results = (
+            _align_svi_genes_to_reference(
+                reference=reference, results_list=results_list
+            )
+            if align_genes == "strict"
+            else results_list
         )
         first = aligned_results[0]
 
@@ -212,14 +244,14 @@ class ScribeSVIResults(
         params = _concat_svi_param_dicts(
             dicts=[res.params for res in aligned_results],
             cell_specific_keys=cell_param_keys,
+            strict=(validation == "strict"),
         )
 
         posterior_samples = _concat_svi_optional_sample_dicts(
-            dicts=[
-                res.posterior_samples for res in aligned_results
-            ],
+            dicts=[res.posterior_samples for res in aligned_results],
             cell_specific_keys=cell_param_keys,
             field_name="posterior_samples",
+            strict=(validation == "strict"),
         )
 
         predictive_samples = _concat_svi_predictive_samples(
@@ -228,7 +260,10 @@ class ScribeSVIResults(
 
         obs = _concat_optional_obs([res.obs for res in aligned_results])
         var = first.var.copy() if first.var is not None else None
-        uns = _merge_optional_uns([res.uns for res in aligned_results])
+        uns = _merge_optional_uns(
+            [res.uns for res in aligned_results],
+            strict=(validation == "strict"),
+        )
 
         n_cells_total = int(sum(res.n_cells for res in aligned_results))
         n_obs_total = (
@@ -241,13 +276,47 @@ class ScribeSVIResults(
             [jnp.asarray(res.loss_history) for res in aligned_results], axis=0
         )
 
+        # --- dataset metadata: merge existing or promote single-dataset ---
+        n_cells_per_dataset = _merge_cells_per_dataset(
+            [
+                getattr(res, "_n_cells_per_dataset", None)
+                for res in aligned_results
+            ]
+        )
+        dataset_indices = _concat_dataset_indices(
+            [
+                getattr(res, "_dataset_indices", None)
+                for res in aligned_results
+            ]
+        )
+
+        # When all inputs are single-dataset and we are combining more than
+        # one, promote to a multi-dataset result so that ``get_dataset(i)``
+        # can retrieve the i-th original result's cells.
+        n_inputs = len(aligned_results)
+        combined_config = first.model_config
+        if n_cells_per_dataset is None and n_inputs > 1:
+            n_cells_per_dataset = jnp.array(
+                [int(res.n_cells) for res in aligned_results],
+                dtype=jnp.int32,
+            )
+            dataset_indices = jnp.concatenate(
+                [
+                    jnp.full(int(res.n_cells), i, dtype=jnp.int32)
+                    for i, res in enumerate(aligned_results)
+                ]
+            )
+            combined_config = first.model_config.model_copy(
+                update={"n_datasets": n_inputs}
+            )
+
         combined = cls(
             params=params,
             loss_history=loss_history,
             n_cells=n_cells_total,
             n_genes=first.n_genes,
             model_type=first.model_type,
-            model_config=first.model_config,
+            model_config=combined_config,
             prior_params=first.prior_params,
             obs=obs,
             var=var,
@@ -258,12 +327,8 @@ class ScribeSVIResults(
             predictive_samples=predictive_samples,
             n_components=first.n_components,
             denoised_counts=None,
-            _n_cells_per_dataset=_merge_cells_per_dataset(
-                [getattr(res, "_n_cells_per_dataset", None) for res in aligned_results]
-            ),
-            _dataset_indices=_concat_dataset_indices(
-                [getattr(res, "_dataset_indices", None) for res in aligned_results]
-            ),
+            _n_cells_per_dataset=n_cells_per_dataset,
+            _dataset_indices=dataset_indices,
             _original_n_genes=_merge_original_n_genes(aligned_results),
             _gene_axis_by_key=getattr(first, "_gene_axis_by_key", None),
         )
@@ -322,13 +387,14 @@ def _align_svi_genes_to_reference(
     aligned: List[ScribeSVIResults] = []
     for idx, res in enumerate(results_list):
         names = pd.Index(res.var.index)
+        # Fast no-op path when names are already identical.
+        if names.equals(ref_names):
+            aligned.append(res)
+            continue
         if len(names) != len(ref_names):
             raise ValueError(f"Gene count mismatch at index {idx}.")
         if set(names) != set(ref_names):
             raise ValueError(f"Gene set mismatch at index {idx}.")
-        if names.equals(ref_names):
-            aligned.append(res)
-            continue
 
         indexer = names.get_indexer(ref_names)
         if (indexer < 0).any():
@@ -348,7 +414,9 @@ def _reorder_svi_result_genes(
         key: axis + 1 for key, axis in param_gene_axis.items()
     }
 
-    params = _reorder_dict_by_gene_axis(result.params, param_gene_axis, gene_indexer)
+    params = _reorder_dict_by_gene_axis(
+        result.params, param_gene_axis, gene_indexer
+    )
     posterior_samples = (
         _reorder_dict_by_gene_axis(
             result.posterior_samples, posterior_gene_axis, gene_indexer
@@ -383,7 +451,8 @@ def _reorder_svi_result_genes(
         _n_cells_per_dataset=getattr(result, "_n_cells_per_dataset", None),
         _dataset_indices=getattr(result, "_dataset_indices", None),
         _original_n_genes=getattr(result, "_original_n_genes", None),
-        _gene_axis_by_key=param_gene_axis or getattr(result, "_gene_axis_by_key", None),
+        _gene_axis_by_key=param_gene_axis
+        or getattr(result, "_gene_axis_by_key", None),
     )
 
 
@@ -402,7 +471,9 @@ def _svi_param_gene_axes(result: ScribeSVIResults) -> Dict[str, int]:
     )
 
 
-def _reorder_dict_by_gene_axis(data: Dict, axis_by_key: Dict[str, int], indexer) -> Dict:
+def _reorder_dict_by_gene_axis(
+    data: Dict, axis_by_key: Dict[str, int], indexer
+) -> Dict:
     """Apply deterministic reordering on keys that carry a gene axis."""
     reordered: Dict[str, Any] = {}
     for key, value in data.items():
@@ -414,7 +485,7 @@ def _reorder_dict_by_gene_axis(data: Dict, axis_by_key: Dict[str, int], indexer)
 
 
 def _concat_svi_param_dicts(
-    dicts: List[Dict[str, Any]], cell_specific_keys: set
+    dicts: List[Dict[str, Any]], cell_specific_keys: set, strict: bool
 ) -> Dict[str, Any]:
     """Concatenate SVI variational params with a cell-aware policy."""
     keys = dicts[0].keys()
@@ -424,7 +495,7 @@ def _concat_svi_param_dicts(
         if key in cell_specific_keys:
             out[key] = jnp.concatenate(values, axis=0)
             continue
-        if not _all_equal(values):
+        if strict and not _all_equal(values):
             raise ValueError(
                 f"Non-cell-specific parameter '{key}' differs across results."
             )
@@ -436,6 +507,7 @@ def _concat_svi_optional_sample_dicts(
     dicts: List[Optional[Dict[str, Any]]],
     cell_specific_keys: set,
     field_name: str,
+    strict: bool,
 ) -> Optional[Dict[str, Any]]:
     """Concatenate optional SVI sample dictionaries with validation."""
     if all(d is None for d in dicts):
@@ -463,7 +535,7 @@ def _concat_svi_optional_sample_dicts(
                 )
             out[key] = jnp.concatenate(values, axis=1)
             continue
-        if not _all_equal(values):
+        if strict and not _all_equal(values):
             raise ValueError(
                 f"Non-cell-specific '{field_name}[{key}]' differs across results."
             )
@@ -484,13 +556,17 @@ def _concat_svi_predictive_samples(
     sample_sizes = [v.shape[0] for v in values]
     gene_sizes = [v.shape[-1] for v in values]
     if len(set(sample_sizes)) != 1:
-        raise ValueError(f"predictive_samples sample-axis mismatch: {sample_sizes}")
+        raise ValueError(
+            f"predictive_samples sample-axis mismatch: {sample_sizes}"
+        )
     if len(set(gene_sizes)) != 1:
         raise ValueError(f"predictive_samples gene-axis mismatch: {gene_sizes}")
     return jnp.concatenate(values, axis=1)
 
 
-def _concat_optional_obs(values: List[Optional[pd.DataFrame]]) -> Optional[pd.DataFrame]:
+def _concat_optional_obs(
+    values: List[Optional[pd.DataFrame]],
+) -> Optional[pd.DataFrame]:
     """Concatenate optional ``obs`` frames row-wise."""
     if all(v is None for v in values):
         return None
@@ -499,18 +575,25 @@ def _concat_optional_obs(values: List[Optional[pd.DataFrame]]) -> Optional[pd.Da
     return pd.concat(values, axis=0)
 
 
-def _merge_optional_uns(values: List[Optional[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
-    """Merge ``uns`` by requiring all non-null values to be equal."""
+def _merge_optional_uns(
+    values: List[Optional[Dict[str, Any]]], strict: bool
+) -> Optional[Dict[str, Any]]:
+    """Merge ``uns`` with configurable strictness."""
     if all(v is None for v in values):
         return None
     base = values[0]
+    # In fast mode, trust the caller and keep the first uns payload.
+    if not strict:
+        return base
     for idx, value in enumerate(values[1:], start=1):
         if not _all_equal([base, value]):
             raise ValueError(f"uns mismatch at index {idx}.")
     return base
 
 
-def _merge_cells_per_dataset(values: List[Optional[jnp.ndarray]]) -> Optional[jnp.ndarray]:
+def _merge_cells_per_dataset(
+    values: List[Optional[jnp.ndarray]],
+) -> Optional[jnp.ndarray]:
     """Merge per-dataset cell counts by element-wise sum when available."""
     if all(v is None for v in values):
         return None
@@ -525,16 +608,22 @@ def _merge_cells_per_dataset(values: List[Optional[jnp.ndarray]]) -> Optional[jn
     return jnp.sum(stacked, axis=0)
 
 
-def _concat_dataset_indices(values: List[Optional[jnp.ndarray]]) -> Optional[jnp.ndarray]:
+def _concat_dataset_indices(
+    values: List[Optional[jnp.ndarray]],
+) -> Optional[jnp.ndarray]:
     """Concatenate dataset-index vectors when present."""
     if all(v is None for v in values):
         return None
     if any(v is None for v in values):
-        raise ValueError("_dataset_indices must be present on all inputs or none of them.")
+        raise ValueError(
+            "_dataset_indices must be present on all inputs or none of them."
+        )
     return jnp.concatenate(values, axis=0)
 
 
-def _merge_original_n_genes(results_list: List[ScribeSVIResults]) -> Optional[int]:
+def _merge_original_n_genes(
+    results_list: List[ScribeSVIResults],
+) -> Optional[int]:
     """Merge tracked original gene counts with consistency validation."""
     values = [getattr(r, "_original_n_genes", None) for r in results_list]
     non_null = [v for v in values if v is not None]
