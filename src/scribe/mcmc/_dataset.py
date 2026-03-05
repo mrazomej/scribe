@@ -187,10 +187,16 @@ class DatasetMixin:
         if getattr(self.model_config, "param_specs", None):
             specs_by_name = {s.name: s for s in self.model_config.param_specs}
 
+        # Promoted keys have dataset axis at 1 (after sample axis at 0).
+        promoted = getattr(self, "_promoted_dataset_keys", None) or set()
         n_components = getattr(self.model_config, "n_components", None)
 
         new_samples: Dict[str, jnp.ndarray] = {}
         for key, values in samples.items():
+            if key in promoted and hasattr(values, "ndim") and values.ndim >= 2:
+                new_samples[key] = values[:, dataset_index]
+                continue
+
             spec = specs_by_name.get(key)
             is_ds = spec is not None and getattr(spec, "is_dataset", False)
             is_mix = spec is not None and getattr(spec, "is_mixture", False)

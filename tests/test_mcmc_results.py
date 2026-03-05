@@ -526,12 +526,19 @@ class TestResultConcatenation:
         with pytest.raises(ValueError, match="Non-cell-specific sample"):
             ScribeMCMCResults.concat([res_a, res_b], validation="strict")
 
-        # In var_only mode, r is trusted from first object and p_capture
-        # is concatenated on the cell axis.
+        # In var_only mode, non-cell-specific samples are stacked along a
+        # dataset axis and cell-specific p_capture is concatenated.
         combined = ScribeMCMCResults.concat(
             [res_a, res_b], validation="var_only"
         )
-        np.testing.assert_allclose(combined.samples["r"], jnp.ones((n_samples, n_genes)))
+        assert combined.samples["r"].shape == (n_samples, 2, n_genes)
+        np.testing.assert_allclose(
+            combined.samples["r"][:, 0, :], jnp.ones((n_samples, n_genes))
+        )
+        np.testing.assert_allclose(
+            combined.samples["r"][:, 1, :],
+            jnp.ones((n_samples, n_genes)) * 7.0,
+        )
         assert combined.samples["p_capture"].shape == (n_samples, 5)
 
     def test_concat_assume_aligned_skips_gene_validation(self):
@@ -644,7 +651,7 @@ class TestResultConcatenation:
         )
         res_b = ScribeMCMCResults(
             samples={
-                "r": jnp.ones((n_samples, n_genes)),
+                "r": jnp.ones((n_samples, n_genes)) * 7.0,
                 "p_capture": jnp.ones((n_samples, 3)),
             },
             n_cells=3,
@@ -672,8 +679,24 @@ class TestResultConcatenation:
             jnp.array([0, 0, 1, 1, 1]),
         )
 
-        # Cell-specific samples are concatenated
+        # Cell-specific samples are concatenated along cell axis
         assert combined.samples["p_capture"].shape == (n_samples, 5)
+
+        # Gene-specific sample is stacked along new dataset axis (1)
+        assert combined.samples["r"].shape == (n_samples, 2, n_genes)
+        assert "r" in combined._promoted_dataset_keys
+
+        # get_dataset recovers per-dataset values
+        ds0 = combined.get_dataset(0)
+        ds1 = combined.get_dataset(1)
+        np.testing.assert_allclose(
+            ds0.samples["r"], jnp.ones((n_samples, n_genes))
+        )
+        np.testing.assert_allclose(
+            ds1.samples["r"], jnp.ones((n_samples, n_genes)) * 7.0
+        )
+        assert ds0.samples["p_capture"].shape == (n_samples, 2)
+        assert ds1.samples["p_capture"].shape == (n_samples, 3)
 
     def test_concat_rejects_single_element_list(self):
         """A single-element list is disallowed to prevent the instance-method footgun."""

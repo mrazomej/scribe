@@ -119,6 +119,12 @@ class ScribeMCMCResults(
     # can subset cell-specific parameters.
     _dataset_indices: Optional[jnp.ndarray] = None
 
+    # Keys that were stacked along a new dataset axis during concat
+    # promotion (single-dataset → multi-dataset).  Used by get_dataset()
+    # to know which samples need dataset-axis slicing even though they
+    # lack ``is_dataset`` in their ParamSpec.
+    _promoted_dataset_keys: Optional[set] = None
+
     # -- wrapped MCMC object (None on subsets) -------------------------------
     _mcmc: Optional[Any] = field(default=None, repr=False)
 
@@ -265,6 +271,7 @@ class ScribeMCMCResults(
         # can retrieve the i-th original result's cells.
         n_inputs = len(aligned_results)
         combined_config = first.model_config
+        promoted_dataset_keys = None
         if n_cells_per_dataset is None and n_inputs > 1:
             n_cells_per_dataset = jnp.array(
                 [int(res.n_cells) for res in aligned_results],
@@ -279,6 +286,19 @@ class ScribeMCMCResults(
             combined_config = first.model_config.model_copy(
                 update={"n_datasets": n_inputs}
             )
+
+            # Stack non-cell-specific samples along a new dataset axis (1,
+            # after the sample axis at 0) so get_dataset(i) can recover
+            # per-dataset values.
+            promoted_dataset_keys = set()
+            for key in samples:
+                if key not in cell_sample_keys:
+                    stacked = jnp.stack(
+                        [res.samples[key] for res in aligned_results],
+                        axis=1,
+                    )
+                    samples[key] = stacked
+                    promoted_dataset_keys.add(key)
 
         return cls(
             samples=samples,
@@ -297,6 +317,7 @@ class ScribeMCMCResults(
             denoised_counts=None,
             _n_cells_per_dataset=n_cells_per_dataset,
             _dataset_indices=dataset_indices,
+            _promoted_dataset_keys=promoted_dataset_keys,
             _mcmc=None,
         )
 

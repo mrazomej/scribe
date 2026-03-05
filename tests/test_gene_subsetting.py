@@ -246,7 +246,12 @@ class TestConcatGeneAlignment:
         )
         assert combined.n_cells == 5
         assert list(combined.var.index) == ["g1", "g2", "g3"]
-        np.testing.assert_allclose(combined.params["r_loc"], jnp.array([10.0, 20.0, 30.0]))
+        # After gene alignment both results have identical r_loc; promotion
+        # stacks them along a new dataset axis (2, 3).
+        np.testing.assert_allclose(
+            combined.params["r_loc"],
+            jnp.array([[10.0, 20.0, 30.0], [10.0, 20.0, 30.0]]),
+        )
         np.testing.assert_allclose(
             combined.params["p_capture_loc"],
             jnp.array([0.1, 0.2, 0.3, 0.4, 0.5]),
@@ -284,10 +289,13 @@ class TestConcatGeneAlignment:
         with pytest.raises(ValueError, match="Non-cell-specific parameter"):
             ScribeSVIResults.concat([res_a, res_b], validation="strict")
 
-        # In var_only mode, r_loc is trusted from the first object while
-        # cell-specific p_capture_loc is concatenated.
+        # In var_only mode, non-cell-specific params are stacked along a
+        # dataset axis; cell-specific p_capture_loc is concatenated.
         combined = ScribeSVIResults.concat([res_a, res_b], validation="var_only")
-        np.testing.assert_allclose(combined.params["r_loc"], jnp.array([10.0, 20.0, 30.0]))
+        np.testing.assert_allclose(
+            combined.params["r_loc"],
+            jnp.array([[10.0, 20.0, 30.0], [100.0, 200.0, 300.0]]),
+        )
         np.testing.assert_allclose(
             combined.params["p_capture_loc"],
             jnp.array([0.1, 0.2, 0.3]),
@@ -332,7 +340,7 @@ class TestConcatGeneAlignment:
         )
         res_b = self._make_concat_ready_result(
             var_index=["g1", "g2", "g3"],
-            r_values=[10.0, 20.0, 30.0],
+            r_values=[100.0, 200.0, 300.0],
             p_capture_values=[0.3, 0.4, 0.5],
         )
 
@@ -354,8 +362,12 @@ class TestConcatGeneAlignment:
             jnp.array([0, 0, 1, 1, 1]),
         )
 
+        # Gene-specific param should be stacked along dataset axis
+        assert combined.params["r_loc"].shape == (2, 3)
+        assert "r_loc" in combined._promoted_dataset_keys
+
     def test_concat_promotes_enables_get_dataset(self):
-        """After promotion, ``get_dataset(i)`` should recover the i-th input's cells."""
+        """After promotion, ``get_dataset(i)`` should recover per-dataset values."""
         res_a = self._make_concat_ready_result(
             var_index=["g1", "g2", "g3"],
             r_values=[10.0, 20.0, 30.0],
@@ -363,7 +375,7 @@ class TestConcatGeneAlignment:
         )
         res_b = self._make_concat_ready_result(
             var_index=["g1", "g2", "g3"],
-            r_values=[10.0, 20.0, 30.0],
+            r_values=[100.0, 200.0, 300.0],
             p_capture_values=[0.3, 0.4, 0.5],
         )
 
@@ -374,6 +386,7 @@ class TestConcatGeneAlignment:
         ds0 = combined.get_dataset(0)
         ds1 = combined.get_dataset(1)
 
+        # Cell-specific param should be sliced to correct cells
         assert ds0.n_cells == 2
         assert ds1.n_cells == 3
         np.testing.assert_allclose(
@@ -381,6 +394,14 @@ class TestConcatGeneAlignment:
         )
         np.testing.assert_allclose(
             ds1.params["p_capture_loc"], jnp.array([0.3, 0.4, 0.5])
+        )
+
+        # Gene-specific param should recover each input's original values
+        np.testing.assert_allclose(
+            ds0.params["r_loc"], jnp.array([10.0, 20.0, 30.0])
+        )
+        np.testing.assert_allclose(
+            ds1.params["r_loc"], jnp.array([100.0, 200.0, 300.0])
         )
 
     def test_concat_rejects_single_element_list(self):
