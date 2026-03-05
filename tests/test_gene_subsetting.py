@@ -241,7 +241,9 @@ class TestConcatGeneAlignment:
             p_capture_values=[0.3, 0.4, 0.5],
         )
 
-        combined = ScribeSVIResults.concat([res_a, res_b])
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b], align_genes="strict"
+        )
         assert combined.n_cells == 5
         assert list(combined.var.index) == ["g1", "g2", "g3"]
         np.testing.assert_allclose(combined.params["r_loc"], jnp.array([10.0, 20.0, 30.0]))
@@ -264,4 +266,129 @@ class TestConcatGeneAlignment:
         )
 
         with pytest.raises(ValueError, match="Gene set mismatch"):
-            ScribeSVIResults.concat([res_a, res_b])
+            ScribeSVIResults.concat([res_a, res_b], align_genes="strict")
+
+    def test_concat_var_only_skips_shared_tensor_equality(self):
+        """Fast validation should trust shared non-cell-specific tensors."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1, 0.2],
+        )
+        res_b = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[100.0, 200.0, 300.0],  # Intentionally different.
+            p_capture_values=[0.3],
+        )
+
+        with pytest.raises(ValueError, match="Non-cell-specific parameter"):
+            ScribeSVIResults.concat([res_a, res_b], validation="strict")
+
+        # In var_only mode, r_loc is trusted from the first object while
+        # cell-specific p_capture_loc is concatenated.
+        combined = ScribeSVIResults.concat([res_a, res_b], validation="var_only")
+        np.testing.assert_allclose(combined.params["r_loc"], jnp.array([10.0, 20.0, 30.0]))
+        np.testing.assert_allclose(
+            combined.params["p_capture_loc"],
+            jnp.array([0.1, 0.2, 0.3]),
+        )
+
+    def test_concat_assume_aligned_skips_gene_validation(self):
+        """Trusted align mode should avoid gene-set/order checks."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1],
+        )
+        # Deliberately different gene order/content; trusted mode bypasses checks.
+        res_b = self._make_concat_ready_result(
+            var_index=["x1", "x2", "x3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.2],
+        )
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b],
+            validation="var_only",
+            align_genes="assume_aligned",
+        )
+        assert combined.n_cells == 2
+
+    def test_concat_rejects_single_object_argument(self):
+        """Passing a single result instead of a list should fail fast."""
+        res = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1],
+        )
+        with pytest.raises(TypeError, match="sequence of results"):
+            ScribeSVIResults.concat(res)
+
+    def test_concat_promotes_to_multi_dataset(self):
+        """Concatenating single-dataset results should synthesize dataset metadata."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1, 0.2],
+        )
+        res_b = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.3, 0.4, 0.5],
+        )
+
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b], validation="var_only"
+        )
+
+        # model_config should now be multi-dataset
+        assert combined.model_config.n_datasets == 2
+
+        # _n_cells_per_dataset tracks each input's cell count
+        np.testing.assert_array_equal(
+            combined._n_cells_per_dataset, jnp.array([2, 3])
+        )
+
+        # _dataset_indices assigns cells to their source result
+        np.testing.assert_array_equal(
+            combined._dataset_indices,
+            jnp.array([0, 0, 1, 1, 1]),
+        )
+
+    def test_concat_promotes_enables_get_dataset(self):
+        """After promotion, ``get_dataset(i)`` should recover the i-th input's cells."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1, 0.2],
+        )
+        res_b = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.3, 0.4, 0.5],
+        )
+
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b], validation="var_only"
+        )
+
+        ds0 = combined.get_dataset(0)
+        ds1 = combined.get_dataset(1)
+
+        assert ds0.n_cells == 2
+        assert ds1.n_cells == 3
+        np.testing.assert_allclose(
+            ds0.params["p_capture_loc"], jnp.array([0.1, 0.2])
+        )
+        np.testing.assert_allclose(
+            ds1.params["p_capture_loc"], jnp.array([0.3, 0.4, 0.5])
+        )
+
+    def test_concat_rejects_single_element_list(self):
+        """A single-element list is disallowed to prevent the instance-method footgun."""
+        res = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1],
+        )
+        with pytest.raises(ValueError, match="at least two elements"):
+            ScribeSVIResults.concat([res])

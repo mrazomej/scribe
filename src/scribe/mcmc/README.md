@@ -275,6 +275,19 @@ gene_component_subset = results[1:4, [1, 2]]
 # Concatenate MCMC results that share model_config/model_type and genes.
 # Cell-specific sample sites (e.g. p_capture) are stacked on axis 1.
 combined = ScribeMCMCResults.concat([results_a, results_b])
+
+# Faster path when you trust fits and only want var/n_genes validation:
+combined_fast = ScribeMCMCResults.concat(
+    [results_a, results_b],
+    validation="var_only",  # skips deep equality on shared non-cell samples
+)
+
+# Fastest trusted mode: skip gene-set/order validation too.
+combined_trusted = ScribeMCMCResults.concat(
+    [results_a, results_b],
+    validation="var_only",
+    align_genes="assume_aligned",
+)
 ```
 
 Concatenation constraints:
@@ -286,6 +299,11 @@ Concatenation constraints:
   a single NumPyro `MCMC` run.
 - If `_dataset_indices` and `_n_cells_per_dataset` are present, they are merged
   so `get_dataset(d)` still reports correct per-dataset cell counts.
+- **Dataset promotion**: when all inputs are single-dataset (no existing dataset
+  metadata), concatenating two or more results automatically synthesizes
+  `_n_cells_per_dataset`, `_dataset_indices`, and sets
+  `model_config.n_datasets`, so `get_dataset(i)` and 3-axis indexing
+  (`combined[:, :, i]`) work immediately on the concatenated result.
 
 **Multi-Dataset Support:**
 

@@ -453,6 +453,19 @@ gene_component_subset = results[1:4, [1, 2]]
 # This stacks cell-specific parameters (e.g. p_capture) across objects.
 combined = ScribeSVIResults.concat([results_a, results_b])
 
+# Faster path when you trust the fits and only need gene validation:
+combined_fast = ScribeSVIResults.concat(
+    [results_a, results_b],
+    validation="var_only",  # skips deep equality on shared non-cell tensors
+)
+
+# Fastest trusted mode: skip gene-set/order validation too.
+combined_trusted = ScribeSVIResults.concat(
+    [results_a, results_b],
+    validation="var_only",
+    align_genes="assume_aligned",
+)
+
 # Gene order is validated via var.index when available; if order differs
 # but content matches, concat reorders to the first object's gene order.
 ```
@@ -463,6 +476,11 @@ Concatenation constraints:
 - Cell counts may differ; concat joins along the cell axis.
 - If `_dataset_indices` and `_n_cells_per_dataset` are present, they are merged
   so `get_dataset(d)` keeps working on the concatenated object.
+- **Dataset promotion**: when all inputs are single-dataset (no existing dataset
+  metadata), concatenating two or more results automatically synthesizes
+  `_n_cells_per_dataset`, `_dataset_indices`, and sets
+  `model_config.n_datasets`, so `get_dataset(i)` and 3-axis indexing
+  (`combined[:, :, i]`) work immediately on the concatenated result.
 
 #### Advanced Features
 

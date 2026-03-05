@@ -473,3 +473,218 @@ class TestResultConcatenation:
 
         with pytest.raises(ValueError, match="same number of samples"):
             ScribeMCMCResults.concat([res_a, res_b])
+
+    def test_concat_var_only_skips_shared_sample_equality(self):
+        """Fast validation should trust shared non-cell-specific samples."""
+        from scribe.models.builders.parameter_specs import BetaSpec, LogNormalSpec
+
+        n_samples = 8
+        n_genes = 3
+        r_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            unconstrained=True,
+        )
+        capture_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        config = _make_model_config(
+            "nbvcp",
+            unconstrained=True,
+            param_specs=[r_spec, capture_spec],
+        )
+
+        res_a = ScribeMCMCResults(
+            samples={
+                "r": jnp.ones((n_samples, n_genes)),
+                "p_capture": jnp.ones((n_samples, 2)),
+            },
+            n_cells=2,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        res_b = ScribeMCMCResults(
+            samples={
+                "r": jnp.ones((n_samples, n_genes)) * 7.0,  # Intentionally different.
+                "p_capture": jnp.ones((n_samples, 3)) * 2.0,
+            },
+            n_cells=3,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+
+        with pytest.raises(ValueError, match="Non-cell-specific sample"):
+            ScribeMCMCResults.concat([res_a, res_b], validation="strict")
+
+        # In var_only mode, r is trusted from first object and p_capture
+        # is concatenated on the cell axis.
+        combined = ScribeMCMCResults.concat(
+            [res_a, res_b], validation="var_only"
+        )
+        np.testing.assert_allclose(combined.samples["r"], jnp.ones((n_samples, n_genes)))
+        assert combined.samples["p_capture"].shape == (n_samples, 5)
+
+    def test_concat_assume_aligned_skips_gene_validation(self):
+        """Trusted align mode should avoid gene-set/order checks."""
+        from scribe.models.builders.parameter_specs import BetaSpec, LogNormalSpec
+        import pandas as pd
+
+        n_samples = 4
+        n_genes = 3
+        r_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            unconstrained=True,
+        )
+        capture_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        config = _make_model_config(
+            "nbvcp",
+            unconstrained=True,
+            param_specs=[r_spec, capture_spec],
+        )
+        res_a = ScribeMCMCResults(
+            samples={
+                "r": jnp.ones((n_samples, n_genes)),
+                "p_capture": jnp.ones((n_samples, 2)),
+            },
+            n_cells=2,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+            var=pd.DataFrame(index=["g1", "g2", "g3"]),
+        )
+        res_b = ScribeMCMCResults(
+            samples={
+                "r": jnp.ones((n_samples, n_genes)),
+                "p_capture": jnp.ones((n_samples, 1)),
+            },
+            n_cells=1,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+            var=pd.DataFrame(index=["x1", "x2", "x3"]),
+        )
+        combined = ScribeMCMCResults.concat(
+            [res_a, res_b],
+            validation="var_only",
+            align_genes="assume_aligned",
+        )
+        assert combined.n_cells == 3
+
+    def test_concat_rejects_single_object_argument(self):
+        """Passing a single result instead of a list should fail fast."""
+        samples = _make_standard_samples(n_samples=5, n_genes=3)
+        res = ScribeMCMCResults(
+            samples=samples,
+            n_cells=4,
+            n_genes=3,
+            model_type="nbdm",
+            model_config=_make_model_config("nbdm"),
+            prior_params={},
+        )
+        with pytest.raises(TypeError, match="sequence of results"):
+            ScribeMCMCResults.concat(res)
+
+    def test_concat_promotes_to_multi_dataset(self):
+        """Concatenating single-dataset results should synthesize dataset metadata."""
+        from scribe.models.builders.parameter_specs import BetaSpec, LogNormalSpec
+
+        n_samples = 4
+        n_genes = 3
+        r_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            unconstrained=True,
+        )
+        capture_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        config = _make_model_config(
+            "nbvcp",
+            unconstrained=True,
+            param_specs=[r_spec, capture_spec],
+        )
+
+        res_a = ScribeMCMCResults(
+            samples={
+                "r": jnp.ones((n_samples, n_genes)),
+                "p_capture": jnp.ones((n_samples, 2)),
+            },
+            n_cells=2,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        res_b = ScribeMCMCResults(
+            samples={
+                "r": jnp.ones((n_samples, n_genes)),
+                "p_capture": jnp.ones((n_samples, 3)),
+            },
+            n_cells=3,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+
+        combined = ScribeMCMCResults.concat(
+            [res_a, res_b], validation="var_only"
+        )
+
+        # model_config should now be multi-dataset
+        assert combined.model_config.n_datasets == 2
+
+        # _n_cells_per_dataset tracks each input's cell count
+        np.testing.assert_array_equal(
+            combined._n_cells_per_dataset, jnp.array([2, 3])
+        )
+
+        # _dataset_indices assigns cells to their source result
+        np.testing.assert_array_equal(
+            combined._dataset_indices,
+            jnp.array([0, 0, 1, 1, 1]),
+        )
+
+        # Cell-specific samples are concatenated
+        assert combined.samples["p_capture"].shape == (n_samples, 5)
+
+    def test_concat_rejects_single_element_list(self):
+        """A single-element list is disallowed to prevent the instance-method footgun."""
+        samples = _make_standard_samples(n_samples=5, n_genes=3)
+        res = ScribeMCMCResults(
+            samples=samples,
+            n_cells=4,
+            n_genes=3,
+            model_type="nbdm",
+            model_config=_make_model_config("nbdm"),
+            prior_params={},
+        )
+        with pytest.raises(ValueError, match="at least two elements"):
+            ScribeMCMCResults.concat([res])
