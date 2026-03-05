@@ -270,6 +270,23 @@ gene_subset = results[:100]
 gene_component_subset = results[1:4, [1, 2]]
 ```
 
+**Concatenating compatible results (cell axis):**
+```python
+# Concatenate MCMC results that share model_config/model_type and genes.
+# Cell-specific sample sites (e.g. p_capture) are stacked on axis 1.
+combined = ScribeMCMCResults.concat([results_a, results_b])
+```
+
+Concatenation constraints:
+- All inputs must have matching `model_type`, `model_config`, and `prior_params`.
+- Non-cell-specific sample sites must be identical across inputs.
+- All inputs must have the same number of posterior draws.
+- Cell counts may differ; concat joins along the cell axis.
+- The concatenated object sets `_mcmc=None` because it no longer corresponds to
+  a single NumPyro `MCMC` run.
+- If `_dataset_indices` and `_n_cells_per_dataset` are present, they are merged
+  so `get_dataset(d)` still reports correct per-dataset cell counts.
+
 **Multi-Dataset Support:**
 
 For hierarchical multi-dataset models, `DatasetMixin` (`_dataset.py`) provides

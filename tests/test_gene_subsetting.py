@@ -9,10 +9,12 @@ fallback behavior works when param_specs is empty.
 import pytest
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 
 from scribe.svi._gene_subsetting import build_gene_axis_by_key
 from scribe.svi.results import ScribeSVIResults
 from scribe.models.config import ModelConfig
+from scribe.models.builders.parameter_specs import LogNormalSpec, BetaSpec
 
 
 # Minimal spec-like object for testing (name, shape_dims, is_gene_specific)
@@ -185,3 +187,81 @@ class TestFallbackWhenParamSpecsEmpty:
         index = jnp.array([True, False, True, False, False])
         new_samples = results._subset_posterior_samples(samples, index)
         assert new_samples["r"].shape == (10, 2)
+
+
+class TestConcatGeneAlignment:
+    """Test gene-alignment behavior used by SVI result concatenation."""
+
+    def _make_concat_ready_result(self, var_index, r_values, p_capture_values):
+        """Construct a minimal SVI result with gene- and cell-specific params."""
+        r_spec = LogNormalSpec(
+            name="r",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+            unconstrained=True,
+        )
+        capture_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        config = ModelConfig(
+            base_model="nbvcp",
+            unconstrained=True,
+            param_specs=[r_spec, capture_spec],
+        )
+        return ScribeSVIResults(
+            params={
+                "r_loc": jnp.array(r_values, dtype=jnp.float32),
+                "p_capture_loc": jnp.array(p_capture_values, dtype=jnp.float32),
+            },
+            loss_history=jnp.array([1.0], dtype=jnp.float32),
+            n_cells=len(p_capture_values),
+            n_genes=len(var_index),
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+            var=pd.DataFrame(index=var_index),
+            n_vars=len(var_index),
+        )
+
+    def test_concat_reorders_genes_using_var_index(self):
+        """Concat should reorder gene axes when ``var.index`` content matches."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1, 0.2],
+        )
+        res_b = self._make_concat_ready_result(
+            var_index=["g3", "g1", "g2"],
+            r_values=[30.0, 10.0, 20.0],
+            p_capture_values=[0.3, 0.4, 0.5],
+        )
+
+        combined = ScribeSVIResults.concat([res_a, res_b])
+        assert combined.n_cells == 5
+        assert list(combined.var.index) == ["g1", "g2", "g3"]
+        np.testing.assert_allclose(combined.params["r_loc"], jnp.array([10.0, 20.0, 30.0]))
+        np.testing.assert_allclose(
+            combined.params["p_capture_loc"],
+            jnp.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+        )
+
+    def test_concat_rejects_different_gene_sets(self):
+        """Concat should fail when gene sets differ across inputs."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1],
+        )
+        res_b = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g4"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.2],
+        )
+
+        with pytest.raises(ValueError, match="Gene set mismatch"):
+            ScribeSVIResults.concat([res_a, res_b])

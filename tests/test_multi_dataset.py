@@ -1694,6 +1694,167 @@ class TestCellSpecificSubsetting:
 
 
 # ==============================================================================
+# Result concat across cell partitions
+# ==============================================================================
+
+
+class TestResultsConcat:
+    """Test SVI/MCMC concat for compatible multi-dataset partitions."""
+
+    def test_svi_concat_cells_preserves_dataset_metadata(self):
+        """SVI concat should stack cell-specific params and dataset metadata."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+        from scribe.svi.results import ScribeSVIResults
+
+        n_datasets = 2
+        n_genes = 4
+        ds_spec = _make_ds_exp_spec("r")
+        cell_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        config = ModelConfig(
+            base_model="nbvcp",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[ds_spec, cell_spec],
+        )
+
+        shared_params = {
+            "log_r_loc": jnp.zeros((n_datasets, n_genes)),
+            "log_r_scale": jnp.ones((n_datasets, n_genes)),
+            "log_r_dataset_loc_loc": jnp.zeros(n_genes),
+            "log_r_dataset_loc_scale": jnp.ones(n_genes),
+        }
+
+        res_a = ScribeSVIResults(
+            params={
+                **shared_params,
+                "p_capture_loc": jnp.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+            },
+            loss_history=jnp.array([1.0, 0.8]),
+            n_cells=5,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        res_a._dataset_indices = jnp.array([0, 1, 0, 1, 0])
+        res_a._n_cells_per_dataset = jnp.array([3, 2])
+
+        res_b = ScribeSVIResults(
+            params={
+                **shared_params,
+                "p_capture_loc": jnp.array([0.6, 0.7, 0.8, 0.9]),
+            },
+            loss_history=jnp.array([0.9, 0.7]),
+            n_cells=4,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        res_b._dataset_indices = jnp.array([1, 0, 1, 1])
+        res_b._n_cells_per_dataset = jnp.array([1, 3])
+
+        combined = ScribeSVIResults.concat([res_a, res_b])
+        assert combined.n_cells == 9
+        np.testing.assert_allclose(
+            combined.params["p_capture_loc"],
+            jnp.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),
+        )
+        np.testing.assert_array_equal(
+            combined._dataset_indices,
+            jnp.array([0, 1, 0, 1, 0, 1, 0, 1, 1]),
+        )
+        np.testing.assert_array_equal(
+            combined._n_cells_per_dataset,
+            jnp.array([4, 5]),
+        )
+        ds0 = combined.get_dataset(0)
+        ds1 = combined.get_dataset(1)
+        assert ds0.n_cells == 4
+        assert ds1.n_cells == 5
+
+    def test_mcmc_concat_cells_preserves_dataset_metadata(self):
+        """MCMC concat should stack cell-specific samples and metadata."""
+        from scribe.models.builders.parameter_specs import BetaSpec
+        from scribe.mcmc.results import ScribeMCMCResults
+
+        n_datasets = 2
+        n_genes = 4
+        n_samples = 6
+        ds_spec = _make_ds_exp_spec("r")
+        cell_spec = BetaSpec(
+            name="p_capture",
+            shape_dims=("n_cells",),
+            default_params=(1.0, 1.0),
+            is_cell_specific=True,
+            unconstrained=True,
+        )
+        config = ModelConfig(
+            base_model="nbvcp",
+            n_datasets=n_datasets,
+            unconstrained=True,
+            hierarchical_dataset_mu=True,
+            param_specs=[ds_spec, cell_spec],
+        )
+
+        shared_samples = {
+            "r": jnp.ones((n_samples, n_datasets, n_genes)),
+            "log_r_dataset_loc": jnp.zeros((n_samples, n_genes)),
+        }
+
+        res_a = ScribeMCMCResults(
+            samples={
+                **shared_samples,
+                "p_capture": jnp.arange(n_samples * 5).reshape(n_samples, 5),
+            },
+            n_cells=5,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        res_a._dataset_indices = jnp.array([0, 1, 0, 1, 0])
+        res_a._n_cells_per_dataset = jnp.array([3, 2])
+
+        res_b = ScribeMCMCResults(
+            samples={
+                **shared_samples,
+                "p_capture": jnp.arange(n_samples * 4).reshape(n_samples, 4) + 100,
+            },
+            n_cells=4,
+            n_genes=n_genes,
+            model_type="nbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        res_b._dataset_indices = jnp.array([1, 0, 1, 1])
+        res_b._n_cells_per_dataset = jnp.array([1, 3])
+
+        combined = ScribeMCMCResults.concat([res_a, res_b])
+        assert combined.n_cells == 9
+        assert combined.samples["p_capture"].shape == (n_samples, 9)
+        np.testing.assert_array_equal(
+            combined._dataset_indices,
+            jnp.array([0, 1, 0, 1, 0, 1, 0, 1, 1]),
+        )
+        np.testing.assert_array_equal(
+            combined._n_cells_per_dataset,
+            jnp.array([4, 5]),
+        )
+        ds0 = combined.get_dataset(0)
+        ds1 = combined.get_dataset(1)
+        assert ds0.n_cells == 4
+        assert ds1.n_cells == 5
+
+
+# ==============================================================================
 # Horseshoe Prior Tests
 # ==============================================================================
 
