@@ -242,9 +242,15 @@ def _run_with_early_stopping(
             )
 
             if progress:
+                # Display best_loss only when a meaningful finite value is
+                # available; a NaN here means the checkpoint was saved before
+                # the post-warmup baseline was established.
+                best_loss_str = (
+                    f"{best_loss:.4f}" if np.isfinite(best_loss) else "N/A"
+                )
                 rich_print(
                     f"[bold cyan]Resumed from checkpoint at step {start_step}"
-                    f"[/bold cyan] (best_loss: {best_loss:.4f})"
+                    f"[/bold cyan] (best_loss: {best_loss_str})"
                 )
 
     # Track best state in memory
@@ -358,11 +364,13 @@ def _run_with_early_stopping(
                 and len(losses) >= early_stopping.smoothing_window
             )
             if should_check:
-                # Compute smoothed loss (moving average)
+                # Compute smoothed loss (moving average), ignoring NaN
+                # values from numerically unstable steps so that transient
+                # instability does not corrupt best_loss or the checkpoint.
                 window_start = max(
                     0, len(losses) - early_stopping.smoothing_window
                 )
-                smoothed_loss = np.mean(losses[window_start:])
+                smoothed_loss = _mean_ignoring_nans(losses[window_start:])
 
                 # Apply convergence logic only after warmup when enabled. During
                 # warmup, we intentionally skip best-loss/patience updates so
