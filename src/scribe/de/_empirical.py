@@ -104,6 +104,58 @@ def _aggregate_genes(
     return r_A_agg, r_B_agg
 
 
+def _aggregate_simplex(
+    simplex: jnp.ndarray,
+    gene_mask: jnp.ndarray,
+) -> jnp.ndarray:
+    """Pool filtered genes into a single "other" column in simplex space.
+
+    This is the post-sampling counterpart to :func:`_aggregate_genes`.
+    It is used when gene-specific ``p`` samples are present (Gamma path),
+    because there is no principled way to merge ``p`` values before
+    sampling.  Instead, the full-gene simplex is sampled first and the
+    masked-out gene columns are summed into a single "other" proportion
+    afterwards.  The simplex constraint (rows sum to 1) is preserved
+    exactly because summing a subset of non-negative values that sum to 1
+    still sums to 1.
+
+    Parameters
+    ----------
+    simplex : jnp.ndarray, shape ``(N, D)``
+        Simplex samples with rows summing to 1.
+    gene_mask : jnp.ndarray, shape ``(D,)``
+        Boolean mask.  ``True`` = keep the gene as its own column,
+        ``False`` = merge into the "other" column.
+
+    Returns
+    -------
+    jnp.ndarray, shape ``(N, D_kept + 1)``
+        Reduced simplex where the last column holds the summed proportion
+        of all filtered genes.  ``D_kept = gene_mask.sum()``.
+
+    Raises
+    ------
+    ValueError
+        If ``gene_mask`` has the wrong length or keeps no genes.
+    """
+    gene_mask = jnp.asarray(gene_mask, dtype=bool)
+
+    if gene_mask.ndim != 1 or gene_mask.shape[0] != simplex.shape[1]:
+        raise ValueError(
+            f"gene_mask must be a 1-D boolean array of length D={simplex.shape[1]}, "
+            f"got shape {gene_mask.shape}."
+        )
+
+    D_kept = int(gene_mask.sum())
+    if D_kept == 0:
+        raise ValueError("gene_mask must keep at least one gene (all False).")
+
+    # Kept genes stay as individual columns; filtered genes are summed.
+    kept = simplex[:, gene_mask]  # (N, D_kept)
+    other = simplex[:, ~gene_mask].sum(axis=1, keepdims=True)  # (N, 1)
+    return jnp.concatenate([kept, other], axis=1)  # (N, D_kept + 1)
+
+
 # --------------------------------------------------------------------------
 # Expression mask helper
 # --------------------------------------------------------------------------
@@ -277,9 +329,15 @@ def compute_clr_differences(
         Number of posterior samples per batched Dirichlet sampling call.
     gene_mask : jnp.ndarray, shape ``(D,)``, optional
         Boolean mask selecting genes to keep.  Genes marked ``False``
-        are aggregated into a single "other" pseudo-gene before
-        Dirichlet sampling.  The "other" column is dropped from the
-        returned differences, so the output has ``D_kept`` columns.
+        are aggregated into a single "other" pseudo-gene whose proportion
+        is dropped from the returned differences.  When ``p_samples``
+        are absent (Dirichlet path), aggregation happens in the ``r``
+        parameter space before sampling via :func:`_aggregate_genes`.
+        When gene-specific ``p_samples`` are present (Gamma path),
+        aggregation is deferred to the simplex space after sampling via
+        :func:`_aggregate_simplex`, so that each gene's own ``p`` value
+        is used during composition sampling.  In both cases the output
+        has ``D_kept = gene_mask.sum()`` columns.
         If ``None`` (default), all genes are kept.
     p_samples_A : jnp.ndarray, shape ``(N, D)`` or ``(N, K, D)``, optional
         Posterior samples of gene-specific success probabilities for
@@ -353,22 +411,18 @@ def compute_clr_differences(
     if p_B is not None:
         p_B = p_B[:N]
 
-    # --- Gene aggregation (if requested) ---
-    if gene_mask is not None:
+    # --- Gene aggregation (Dirichlet path: aggregate r before sampling) ---
+    # When p is gene-specific (use_gamma), aggregation is deferred to the
+    # simplex space after sampling so each gene retains its own p during
+    # composition sampling.
+    if gene_mask is not None and not use_gamma:
         r_A, r_B = _aggregate_genes(r_A, r_B, gene_mask)
-        # gene_mask aggregation is not straightforward for p since it
-        # involves averaging probabilities; skip aggregation for p and
-        # note: gene_mask and gene-specific p should not be combined
-        if use_gamma:
-            raise ValueError(
-                "gene_mask and gene-specific p_samples cannot be used "
-                "together. Gene aggregation is not well-defined for "
-                "gene-specific success probabilities."
-            )
 
     # --- Composition sampling ---
     if use_gamma:
-        # Gamma-based composition sampling for gene-specific p
+        # Gamma-based composition sampling for gene-specific p.
+        # The full gene space (D columns) is sampled here; the gene_mask
+        # aggregation is applied in simplex space immediately after.
         key_A, key_B = random.split(rng_key)
         simplex_A = _batched_gamma_normalize(
             r_A, p_A, n_samples_dirichlet, key_A, batch_size
@@ -376,6 +430,11 @@ def compute_clr_differences(
         simplex_B = _batched_gamma_normalize(
             r_B, p_B, n_samples_dirichlet, key_B, batch_size
         )
+        # Aggregate filtered genes into "other" column after sampling so
+        # that the CLR normalization only includes expressed genes.
+        if gene_mask is not None:
+            simplex_A = _aggregate_simplex(simplex_A, gene_mask)
+            simplex_B = _aggregate_simplex(simplex_B, gene_mask)
     elif paired:
         simplex_A, simplex_B = _paired_dirichlet_sample(
             r_A, r_B, n_samples_dirichlet, rng_key, batch_size

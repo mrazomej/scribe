@@ -24,7 +24,7 @@ from scribe.de import (
     compute_clr_differences,
     empirical_differential_expression,
 )
-from scribe.de._empirical import _aggregate_genes
+from scribe.de._empirical import _aggregate_genes, _aggregate_simplex
 
 
 # --------------------------------------------------------------------------
@@ -606,6 +606,71 @@ class TestAggregateGenes:
 
 
 # --------------------------------------------------------------------------
+# Tests: _aggregate_simplex
+# --------------------------------------------------------------------------
+
+
+class TestAggregateSimplex:
+    """Tests for ``_aggregate_simplex`` helper."""
+
+    def test_output_shape(self, rng):
+        """Output shape is (N, D_kept + 1)."""
+        simplex = jax.nn.softmax(random.normal(rng, (100, 8)), axis=-1)
+        mask = jnp.array([True, True, True, False, False, True, True, False])
+        D_kept = int(mask.sum())
+        out = _aggregate_simplex(simplex, mask)
+        assert out.shape == (100, D_kept + 1)
+
+    def test_rows_sum_to_one(self, rng):
+        """Rows of the aggregated simplex must still sum to 1."""
+        simplex = jax.nn.softmax(random.normal(rng, (50, 6)), axis=-1)
+        mask = jnp.array([True, False, True, False, True, True])
+        out = _aggregate_simplex(simplex, mask)
+        np.testing.assert_allclose(
+            np.array(out.sum(axis=1)),
+            np.ones(50),
+            atol=1e-5,
+        )
+
+    def test_other_column_is_sum_of_masked(self, rng):
+        """Last column must equal the sum of all masked-out gene columns."""
+        simplex = jax.nn.softmax(random.normal(rng, (30, 5)), axis=-1)
+        mask = jnp.array([True, False, True, False, True])
+        out = _aggregate_simplex(simplex, mask)
+        expected_other = simplex[:, ~mask].sum(axis=1)
+        np.testing.assert_allclose(
+            np.array(out[:, -1]),
+            np.array(expected_other),
+            atol=1e-6,
+        )
+
+    def test_kept_columns_unchanged(self, rng):
+        """Kept gene columns must be identical to the original simplex columns."""
+        simplex = jax.nn.softmax(random.normal(rng, (40, 5)), axis=-1)
+        mask = jnp.array([True, False, True, False, True])
+        out = _aggregate_simplex(simplex, mask)
+        np.testing.assert_allclose(
+            np.array(out[:, :-1]),
+            np.array(simplex[:, mask]),
+            atol=1e-6,
+        )
+
+    def test_wrong_mask_length_raises(self):
+        """Mask length mismatch raises ValueError."""
+        simplex = jnp.ones((10, 4)) / 4.0
+        mask = jnp.array([True, False])
+        with pytest.raises(ValueError, match="gene_mask"):
+            _aggregate_simplex(simplex, mask)
+
+    def test_all_false_mask_raises(self):
+        """All-False mask must raise ValueError."""
+        simplex = jnp.ones((10, 4)) / 4.0
+        mask = jnp.array([False, False, False, False])
+        with pytest.raises(ValueError, match="gene_mask"):
+            _aggregate_simplex(simplex, mask)
+
+
+# --------------------------------------------------------------------------
 # Tests: compute_clr_differences with gene_mask
 # --------------------------------------------------------------------------
 
@@ -658,6 +723,43 @@ class TestCLRDifferencesGeneMask:
             gene_mask=mask,
         )
         assert delta.shape == (100, 3)
+
+    def test_gene_mask_with_p_samples_shape(self, rng):
+        """gene_mask and gene-specific p_samples can be combined (lazy path)."""
+        D = 8
+        r_A = jnp.abs(random.normal(rng, (100, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (100, D))) + 1.0
+        p_A = jax.nn.sigmoid(random.normal(random.PRNGKey(2), (100, D)))
+        p_B = jax.nn.sigmoid(random.normal(random.PRNGKey(3), (100, D)))
+        mask = jnp.array([True, True, True, False, False, True, True, False])
+        D_kept = int(mask.sum())
+        # Should not raise; lazy aggregation used after Gamma sampling.
+        delta = compute_clr_differences(
+            r_A, r_B,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+            rng_key=rng,
+            gene_mask=mask,
+        )
+        assert delta.shape == (100, D_kept)
+
+    def test_gene_mask_with_p_samples_simplex_property(self, rng):
+        """CLR aggregation with gene-specific p preserves finite values."""
+        D = 6
+        r_A = jnp.abs(random.normal(rng, (80, D))) + 1.0
+        r_B = jnp.abs(random.normal(random.PRNGKey(1), (80, D))) + 1.0
+        p_A = jax.nn.sigmoid(random.normal(random.PRNGKey(2), (80, D)))
+        p_B = jax.nn.sigmoid(random.normal(random.PRNGKey(3), (80, D)))
+        mask = jnp.array([True, True, True, True, False, False])
+        delta = compute_clr_differences(
+            r_A, r_B,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+            rng_key=rng,
+            gene_mask=mask,
+        )
+        # All delta values should be finite
+        assert jnp.all(jnp.isfinite(delta))
 
 
 # --------------------------------------------------------------------------
@@ -882,13 +984,19 @@ class TestResultsObjectDispatch:
         )
         assert de.gene_names == override_names
 
-    def test_gene_mask_silently_dropped_for_hierarchical(self, rng):
-        """gene_mask is ignored with a warning for hierarchical models."""
+    def test_gene_mask_works_for_hierarchical(self, rng):
+        """gene_mask filters genes correctly for hierarchical (gene-specific p) models.
+
+        With the lazy simplex aggregation path, gene_mask is applied after
+        Gamma-based sampling.  The DE results must have D_kept genes, not D.
+        """
         D = 5
         r = jnp.abs(random.normal(rng, (100, D))) + 1.0
         p = jax.nn.sigmoid(random.normal(random.PRNGKey(1), (100, D)))
         names = [f"gene_{i}" for i in range(D)]
         mask = jnp.array([True, True, False, True, True])
+        D_kept = int(mask.sum())
+        kept_names = [n for n, m in zip(names, mask.tolist()) if m]
 
         res_A = _MockResults(
             r, p_samples=p, gene_names=names, is_hierarchical=True
@@ -897,7 +1005,7 @@ class TestResultsObjectDispatch:
             r, p_samples=p, gene_names=names, is_hierarchical=True
         )
 
-        # Should warn but not raise
+        # Should not warn or raise — lazy simplex aggregation handles this.
         import warnings
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -907,12 +1015,16 @@ class TestResultsObjectDispatch:
                 gene_mask=mask,
                 rng_key=rng,
             )
-            assert len(w) == 1
-            assert "gene_mask" in str(w[0].message).lower()
+            # No gene_mask-related warning should be emitted
+            gene_mask_warns = [
+                x for x in w if "gene_mask" in str(x.message).lower()
+            ]
+            assert len(gene_mask_warns) == 0
 
-        # Should still produce valid results for all D genes
+        # Results must contain exactly D_kept genes
         result = de.gene_level(tau=0.0)
-        assert result["delta_mean"].shape == (D,)
+        assert result["delta_mean"].shape == (D_kept,)
+        assert de.gene_names == kept_names
 
     def test_parametric_method_raises_for_results_objects(self, rng):
         """method='parametric' rejects results objects."""

@@ -1384,20 +1384,6 @@ def compare(
         _phi_samples_A = phi_A
         _phi_samples_B = phi_B
 
-        # gene_mask and gene-specific p are mutually exclusive in
-        # compute_clr_differences; when p is gene-specific, silently
-        # drop gene_mask so the user doesn't have to know about this
-        # constraint.
-        if gene_mask is not None and p_samples_A is not None:
-            import warnings
-
-            warnings.warn(
-                "gene_mask is incompatible with gene-specific p_samples "
-                "(hierarchical model). Ignoring gene_mask.",
-                UserWarning,
-                stacklevel=2,
-            )
-            gene_mask = None
 
         # Replace model_A/model_B with raw r_samples for downstream
         model_A = r_A
