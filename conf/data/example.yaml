@@ -53,6 +53,17 @@ path: "data/my_experiment/counts.h5ad"
 # a layer (e.g., "counts", "raw_counts", "spliced").
 # layer: "counts"
 
+# ---- Optional: Covariate-Split Settings -------------------------------------
+# Column in adata.obs to split on (each unique value gets its own model fit)
+# split_by: "condition"
+
+# ---- Optional: Observation Pre-Filter -------------------------------------------------
+# Keep only rows where each column's value is in the allowed list (applied
+# before split_by discovery and per-job subsetting).
+# filter_obs:
+  # treatment: ["treated"]
+  # sample_id: ["sample_1", "sample_2"]
+
 # ---- Optional: Preprocessing Pipeline --------------------------------------
 # Uncomment and customize the block below to enable preprocessing.
 # Steps are applied in the order listed. All steps are optional; remove or
@@ -64,6 +75,7 @@ path: "data/my_experiment/counts.h5ad"
 #   # Useful for removing empty droplets or low-quality cells.
 #   filter_cells:
 #     min_genes: 200             # minimum genes per cell (null to skip)
+#     min_counts: 100            # minimum counts per cell (null to skip)
 #
 #   # Filter out genes detected in fewer than `min_cells` cells.
 #   # Removes genes that are too rare to model reliably.
