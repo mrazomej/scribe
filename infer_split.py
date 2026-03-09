@@ -69,6 +69,7 @@ import scanpy as sc
 from omegaconf import OmegaConf
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -81,6 +82,22 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _split_data_values(raw_value: str) -> list[str]:
+    """Split a ``data=...`` argument into one or more config keys.
+
+    Parameters
+    ----------
+    raw_value : str
+        Raw value from the ``data=...`` argument.
+
+    Returns
+    -------
+    list[str]
+        Data config keys with whitespace trimmed and empty entries removed.
+    """
+    return [part.strip() for part in raw_value.split(",") if part.strip()]
 
 
 def _detect_gpu_ids() -> list[str]:
@@ -113,7 +130,7 @@ def _detect_gpu_ids() -> list[str]:
         return []
 
 
-def _parse_args(argv: list[str]) -> tuple[str, dict, dict, list[str]]:
+def _parse_args(argv: list[str]) -> tuple[list[str], dict, dict, list[str]]:
     """Extract ``data=<name>``, ``data.*`` and ``split.*`` overrides.
 
     Parameters
@@ -123,8 +140,8 @@ def _parse_args(argv: list[str]) -> tuple[str, dict, dict, list[str]]:
 
     Returns
     -------
-    data_name : str
-        The value of the ``data=<name>`` argument.
+    data_names : list[str]
+        The value(s) of the ``data=...`` argument, split on commas.
     data_overrides : dict
         Any ``data.<key>=<value>`` overrides provided on the command line
         (e.g. ``data.n_jobs=4``).
@@ -134,7 +151,7 @@ def _parse_args(argv: list[str]) -> tuple[str, dict, dict, list[str]]:
     forwarded_args : list[str]
         All remaining arguments that should be forwarded to ``infer.py``.
     """
-    data_name: str | None = None
+    data_names: list[str] | None = None
     data_overrides: dict = {}
     split_overrides: dict = {}
     forwarded_args: list[str] = []
@@ -143,7 +160,7 @@ def _parse_args(argv: list[str]) -> tuple[str, dict, dict, list[str]]:
         # Match data=<name> (but not data.<key>=<value>)
         m = re.match(r"^data=([^\s]+)$", arg)
         if m and "." not in arg.split("=", 1)[0]:
-            data_name = m.group(1)
+            data_names = _split_data_values(m.group(1))
             continue
 
         # Match data.<key>=<value>
@@ -160,13 +177,13 @@ def _parse_args(argv: list[str]) -> tuple[str, dict, dict, list[str]]:
 
         forwarded_args.append(arg)
 
-    if data_name is None:
+    if data_names is None or not data_names:
         raise SystemExit(
             "ERROR: A data=<name> argument is required.\n"
             "Usage: python infer_split.py data=<name> [overrides ...]"
         )
 
-    return data_name, data_overrides, split_overrides, forwarded_args
+    return data_names, data_overrides, split_overrides, forwarded_args
 
 
 def _load_data_config(data_name: str) -> dict:
@@ -253,10 +270,7 @@ def _discover_covariate_values(
                 "No observations remain after applying filter_obs: "
                 f"{filter_obs}"
             )
-        print(
-            f"filter_obs applied: {adata.shape[0]:,}/{n_total:,} cells "
-            f"retained after filtering by {filter_obs}"
-        )
+        _ = n_total  # retained for debugging-friendly local context
 
     if isinstance(split_by, list):
         # Multi-column path: use the DataFrame to get all unique combinations
@@ -331,7 +345,9 @@ def _derive_output_prefix(data_name: str) -> str:
         Parent path portion of the key (e.g. ``panfibrosis/CKD``), or an empty
         string when no parent directories are present.
     """
-    parent_parts = Path(data_name).parts[:-1]
+    # Build parent path from slash-separated Hydra key, independent of OS
+    # separator semantics.
+    parent_parts = [part for part in data_name.split("/") if part][:-1]
     return "/".join(parent_parts)
 
 
@@ -420,19 +436,16 @@ def _generate_tmp_yamls(
             subset_value = value
 
         split_leaf_name = f"{original_name}_{safe_value}"
-        output_name = (
-            f"{output_prefix}/{split_leaf_name}"
-            if output_prefix
-            else split_leaf_name
-        )
-
         # Use a filename-safe stem that is unique to the source config key.
         tmp_file_stem = f"{source_tag}__{split_leaf_name}"
         tmp_names.append(tmp_file_stem)
 
         # Build the temporary config
         tmp_cfg = {
-            "name": output_name,
+            # Keep data.name slash-safe; nested grouping is injected via
+            # hydra.sweep.subdir using data.output_prefix.
+            "name": split_leaf_name,
+            "output_prefix": output_prefix,
             "path": abs_path,
             "subset_column": subset_column,
             "subset_value": subset_value,
@@ -458,6 +471,56 @@ def _generate_tmp_yamls(
             f.write(OmegaConf.to_yaml(cfg_obj))
 
     return tmp_names
+
+
+def _generate_passthrough_tmp_yaml(
+    data_cfg: dict,
+    data_name: str,
+    tmp_dir: Path,
+    gpu_id: str,
+) -> str:
+    """Write one temporary YAML for a dataset without split_by.
+
+    Parameters
+    ----------
+    data_cfg : dict
+        Original dataset config.
+    data_name : str
+        Source config key from ``data=...``.
+    tmp_dir : Path
+        Invocation-specific temp config directory.
+    gpu_id : str
+        GPU ID to assign for this passthrough config.
+
+    Returns
+    -------
+    str
+        Generated temp config stem (without ``.yaml``).
+    """
+    output_prefix = _derive_output_prefix(data_name)
+    source_tag = _sanitize_value(data_name)
+    original_name = data_cfg.get("name", "data")
+    original_path = data_cfg.get("path", "")
+    abs_path = (
+        original_path
+        if os.path.isabs(original_path)
+        else str(SCRIPT_DIR / original_path)
+    )
+
+    tmp_file_stem = f"{source_tag}__{_sanitize_value(original_name)}"
+    tmp_cfg = {"name": original_name, "output_prefix": output_prefix, "path": abs_path, "gpu_id": gpu_id}
+    skip_keys = {"name", "path", "split_by", "n_jobs", "gpu_id"}
+    for key, val in data_cfg.items():
+        if key not in skip_keys:
+            tmp_cfg[key] = val
+
+    yaml_path = tmp_dir / f"{tmp_file_stem}.yaml"
+    cfg_obj = OmegaConf.create(tmp_cfg)
+    with open(yaml_path, "w") as f:
+        f.write("# @package data\n")
+        f.write(OmegaConf.to_yaml(cfg_obj))
+
+    return tmp_file_stem
 
 
 def _cleanup_tmp_dir(tmp_dir: Path) -> None:
@@ -496,6 +559,7 @@ def _build_joblib_multirun_command(
         str(SCRIPT_DIR / "infer.py"),
         "-m",
         f"data={data_list}",
+        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname}}'",
         "hydra/launcher=joblib",
         f"hydra.launcher.n_jobs={n_jobs}",
         # GPU assignment is handled inside infer.py via cfg.data.gpu_id
@@ -544,6 +608,7 @@ def _build_submitit_multirun_command(
         str(SCRIPT_DIR / "infer.py"),
         "-m",
         f"data={data_list}",
+        "hydra.sweep.subdir='${data.output_prefix}/${data.name}/${model}/${inference.method}/${sanitize_dirname:${hydra:job.override_dirname}}'",
         "hydra/launcher=submitit_slurm",
         "hydra.launcher.nodes=1",
         "hydra.launcher.tasks_per_node=1",
@@ -579,57 +644,20 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 1. Parse CLI arguments
     # ------------------------------------------------------------------
-    data_name, data_overrides, split_overrides, forwarded_args = _parse_args(
+    data_names, data_overrides, split_overrides, forwarded_args = _parse_args(
         sys.argv[1:]
     )
-    console.print(
-        f"[dim]Data config:[/dim] [cyan]{data_name}[/cyan]"
-    )
+    console.print(f"[dim]Data configs:[/dim] [cyan]{', '.join(data_names)}[/cyan]")
 
     # ------------------------------------------------------------------
     # 2. Load the data config YAML
     # ------------------------------------------------------------------
-    data_cfg = _load_data_config(data_name)
-
-    # Apply any data.* overrides from the CLI
-    for key, val in data_overrides.items():
-        data_cfg[key] = val
-
-    split_by = data_cfg.get("split_by")
-    if split_by is None:
-        raise SystemExit(
-            "ERROR: The data config must include a 'split_by' field "
-            "specifying the .obs column to split on.\n"
-            f"Config loaded from: conf/data/{data_name}.yaml"
-        )
-
-    console.print(
-        f"[dim]Split-by column:[/dim] [cyan]{split_by}[/cyan]"
-    )
-
-    # ------------------------------------------------------------------
-    # 3. Discover covariate values
-    # ------------------------------------------------------------------
-    filter_obs = data_cfg.get("filter_obs")
-    if filter_obs:
-        # Format each filter condition as "column in [values]" for readability
-        filter_parts = [
-            f"{col} in {vals}" for col, vals in filter_obs.items()
-        ]
-        console.print(
-            f"[bold yellow]Pre-filter (filter_obs):[/bold yellow] "
-            f"[cyan]{', '.join(filter_parts)}[/cyan]"
-        )
-
-    console.print("[dim]Loading data to discover covariate values...[/dim]")
-    data_path = data_cfg["path"]
-    covariate_values = _discover_covariate_values(
-        data_path, split_by, filter_obs=filter_obs
-    )
-    console.print(
-        f"[green]✓[/green] Found [bold]{len(covariate_values)}[/bold] "
-        f"unique values: {covariate_values}"
-    )
+    loaded_data_cfgs: list[tuple[str, dict]] = []
+    for data_name in data_names:
+        data_cfg = _load_data_config(data_name)
+        for key, val in data_overrides.items():
+            data_cfg[key] = val
+        loaded_data_cfgs.append((data_name, data_cfg))
 
     # ------------------------------------------------------------------
     # 4. Determine parallelism settings
@@ -641,8 +669,15 @@ def main() -> None:
         + (f" (IDs: {', '.join(gpu_ids)})" if gpu_ids else "")
     )
 
-    # n_jobs: user override > data config > number of GPUs > 1
-    n_jobs_raw = data_overrides.get("n_jobs", data_cfg.get("n_jobs"))
+    # n_jobs: user override > max(data_cfg n_jobs) > number of GPUs > 1
+    cfg_n_jobs = [
+        cfg.get("n_jobs")
+        for _, cfg in loaded_data_cfgs
+        if cfg.get("n_jobs") is not None
+    ]
+    n_jobs_raw = data_overrides.get("n_jobs")
+    if n_jobs_raw is None and cfg_n_jobs:
+        n_jobs_raw = max(int(v) for v in cfg_n_jobs)
     if n_jobs_raw is not None:
         n_jobs = int(n_jobs_raw)
     else:
@@ -674,14 +709,60 @@ def main() -> None:
     )
 
     tmp_dir = _make_tmp_split_dir()
-    tmp_names = _generate_tmp_yamls(
-        data_cfg=data_cfg,
-        data_name=data_name,
-        split_by=split_by,
-        covariate_values=covariate_values,
-        gpu_ids=assigned_gpu_ids,
-        tmp_dir=tmp_dir,
+    tmp_names: list[str] = []
+    details_table = Table(
+        title="Dataset expansion",
+        show_header=True,
+        header_style="bold magenta",
     )
+    details_table.add_column("Dataset", style="cyan")
+    details_table.add_column("Mode", style="yellow")
+    details_table.add_column("Jobs", justify="right", style="green")
+
+    for data_name, data_cfg in loaded_data_cfgs:
+        split_by = data_cfg.get("split_by")
+        if split_by is None:
+            passthrough_name = _generate_passthrough_tmp_yaml(
+                data_cfg=data_cfg,
+                data_name=data_name,
+                tmp_dir=tmp_dir,
+                gpu_id=assigned_gpu_ids[0] if assigned_gpu_ids else "0",
+            )
+            tmp_names.append(passthrough_name)
+            details_table.add_row(data_name, "passthrough", "1")
+            continue
+
+        filter_obs = data_cfg.get("filter_obs")
+        if filter_obs:
+            filter_parts = [f"{col} in {vals}" for col, vals in filter_obs.items()]
+            console.print(
+                f"[bold yellow]Pre-filter ({data_name}):[/bold yellow] "
+                f"[cyan]{', '.join(filter_parts)}[/cyan]"
+            )
+
+        console.print(
+            f"[dim]Loading data for split discovery:[/dim] [cyan]{data_name}[/cyan]"
+        )
+        covariate_values = _discover_covariate_values(
+            data_cfg["path"], split_by, filter_obs=filter_obs
+        )
+        console.print(
+            f"[green]✓[/green] [cyan]{data_name}[/cyan] -> "
+            f"[bold]{len(covariate_values)}[/bold] split values"
+        )
+        created = _generate_tmp_yamls(
+            data_cfg=data_cfg,
+            data_name=data_name,
+            split_by=split_by,
+            covariate_values=covariate_values,
+            gpu_ids=assigned_gpu_ids,
+            tmp_dir=tmp_dir,
+        )
+        tmp_names.extend(created)
+        details_table.add_row(data_name, "split", str(len(created)))
+
+    console.print()
+    console.print(details_table)
     tmp_dir_name = tmp_dir.name
     for name in tmp_names:
         console.print(
@@ -760,8 +841,8 @@ def main() -> None:
         )
     )
     console.print(
-        f"[dim]Fitted {len(covariate_values)} models for "
-        f"{split_by} values: {covariate_values}[/dim]"
+        f"[dim]Executed {len(tmp_names)} total dataset jobs "
+        f"(split + passthrough).[/dim]"
     )
     console.print()
 
