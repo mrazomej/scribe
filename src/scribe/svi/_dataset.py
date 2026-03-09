@@ -489,9 +489,26 @@ class DatasetMixin:
         # Promoted keys have the dataset axis at position 1 (after sample axis).
         promoted = getattr(self, "_promoted_dataset_keys", None) or set()
         n_components = getattr(self.model_config, "n_components", None)
+        # Cell-specific posterior tensors have shape (S, n_cells, ...) and
+        # must be masked on axis 1 using the global dataset assignment.
+        cell_keys = _build_cell_specific_keys(
+            self.model_config.param_specs or [], samples
+        )
+        ds_indices = getattr(self, "_dataset_indices", None)
+        cell_mask = (
+            (ds_indices == dataset_index) if ds_indices is not None else None
+        )
         new_samples: Dict[str, jnp.ndarray] = {}
 
         for key, value in samples.items():
+            if (
+                key in cell_keys
+                and cell_mask is not None
+                and hasattr(value, "ndim")
+                and value.ndim >= 2
+            ):
+                new_samples[key] = value[:, cell_mask]
+                continue
             if key in promoted and hasattr(value, "ndim") and value.ndim >= 2:
                 new_samples[key] = value[:, dataset_index]
                 continue

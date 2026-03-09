@@ -8,6 +8,7 @@ fallback behavior works when param_specs is empty.
 
 import pytest
 import jax.numpy as jnp
+from jax import random
 import numpy as np
 import pandas as pd
 
@@ -413,3 +414,161 @@ class TestConcatGeneAlignment:
         )
         with pytest.raises(ValueError, match="at least two elements"):
             ScribeSVIResults.concat([res])
+
+    def test_concat_promoted_posterior_sampling_merges_dataset_samples(
+        self, monkeypatch
+    ):
+        """Promoted concat should sample per dataset and merge correctly."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1, 0.2],
+        )
+        res_b = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[100.0, 200.0, 300.0],
+            p_capture_values=[0.3, 0.4, 0.5],
+        )
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b], validation="var_only"
+        )
+
+        # The fallback only requires a non-None guide sentinel because this
+        # test monkeypatches the sampler itself.
+        monkeypatch.setattr(
+            ScribeSVIResults,
+            "_model_and_guide",
+            lambda self: (object(), object()),
+        )
+
+        # Simulate posterior draws from each dataset view. The fake sampler
+        # emits deterministic tensors from params/counts so we can verify
+        # merge semantics (stack non-cell keys, concat cell-specific keys).
+        def _fake_sampler(
+            guide,
+            params,
+            model,
+            model_args,
+            rng_key=None,
+            n_samples=100,
+            counts=None,
+            return_sites=None,
+        ):
+            _ = (guide, model, model_args, rng_key, return_sites)
+            n_cells = int(counts.shape[0]) if counts is not None else 0
+            r_template = jnp.asarray(params["r_loc"], dtype=jnp.float32)
+            r_samples = jnp.tile(r_template[None, :], (n_samples, 1))
+
+            if n_cells > 0:
+                capture_template = jnp.sum(
+                    jnp.asarray(counts, dtype=jnp.float32), axis=1
+                )
+                p_capture = jnp.tile(capture_template[None, :], (n_samples, 1))
+            else:
+                p_capture = jnp.zeros((n_samples, 0), dtype=jnp.float32)
+
+            return {
+                "r": r_samples,
+                "p_capture": p_capture,
+            }
+
+        monkeypatch.setattr(
+            "scribe.svi._sampling_posterior_predictive.sample_variational_posterior",
+            _fake_sampler,
+        )
+
+        counts = jnp.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [0.0, 0.0, 3.0],
+                [4.0, 0.0, 0.0],
+                [0.0, 5.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        posterior = combined.get_posterior_samples(
+            rng_key=random.PRNGKey(0),
+            n_samples=4,
+            counts=counts,
+            store_samples=True,
+        )
+
+        # Non-cell site is promoted to dataset axis: (S, Datasets, Genes).
+        assert posterior["r"].shape == (4, 2, 3)
+        np.testing.assert_allclose(
+            posterior["r"][:, 0, :],
+            jnp.tile(jnp.array([[10.0, 20.0, 30.0]]), (4, 1)),
+        )
+        np.testing.assert_allclose(
+            posterior["r"][:, 1, :],
+            jnp.tile(jnp.array([[100.0, 200.0, 300.0]]), (4, 1)),
+        )
+
+        # Cell-specific site concatenates along global cell axis: (S, C_total).
+        assert posterior["p_capture"].shape == (4, 5)
+        np.testing.assert_allclose(
+            posterior["p_capture"][0],
+            jnp.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=jnp.float32),
+        )
+
+        # get_dataset should slice merged posterior back to per-dataset views.
+        ds0 = combined.get_dataset(0)
+        ds1 = combined.get_dataset(1)
+        assert ds0.posterior_samples["r"].shape == (4, 3)
+        assert ds1.posterior_samples["r"].shape == (4, 3)
+        assert ds0.posterior_samples["p_capture"].shape == (4, 2)
+        assert ds1.posterior_samples["p_capture"].shape == (4, 3)
+
+    def test_concat_promoted_posterior_sampling_raises_on_sample_mismatch(
+        self, monkeypatch
+    ):
+        """Promoted fallback raises when dataset sample axes differ."""
+        res_a = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[10.0, 20.0, 30.0],
+            p_capture_values=[0.1, 0.2],
+        )
+        res_b = self._make_concat_ready_result(
+            var_index=["g1", "g2", "g3"],
+            r_values=[100.0, 200.0, 300.0],
+            p_capture_values=[0.3, 0.4, 0.5],
+        )
+        combined = ScribeSVIResults.concat(
+            [res_a, res_b], validation="var_only"
+        )
+
+        monkeypatch.setattr(
+            ScribeSVIResults,
+            "_model_and_guide",
+            lambda self: (object(), object()),
+        )
+
+        # Return a different sample count for each dataset to validate the
+        # explicit merge-time safety check.
+        def _fake_sampler_mismatch(
+            guide,
+            params,
+            model,
+            model_args,
+            rng_key=None,
+            n_samples=100,
+            counts=None,
+            return_sites=None,
+        ):
+            _ = (guide, model, model_args, rng_key, counts, return_sites)
+            dataset_factor = 0 if float(params["r_loc"][0]) < 50 else 1
+            n_local = n_samples + dataset_factor
+            r_template = jnp.asarray(params["r_loc"], dtype=jnp.float32)
+            r_samples = jnp.tile(r_template[None, :], (n_local, 1))
+            return {"r": r_samples}
+
+        monkeypatch.setattr(
+            "scribe.svi._sampling_posterior_predictive.sample_variational_posterior",
+            _fake_sampler_mismatch,
+        )
+
+        with pytest.raises(ValueError, match="Sample-axis mismatch"):
+            combined.get_posterior_samples(
+                rng_key=random.PRNGKey(0), n_samples=3, store_samples=False
+            )

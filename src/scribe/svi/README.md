@@ -485,6 +485,12 @@ Concatenation constraints:
   new dataset axis so that `get_dataset(i)` recovers each input's original
   parameter values. At least two results are required (single-element lists
   are rejected to prevent the `res.concat([other])` classmethod footgun).
+- **Posterior sampling on promoted concat objects**: `get_posterior_samples()`
+  automatically detects concat-promoted results and falls back to per-dataset
+  sampling under the hood (`get_dataset(i)` per dataset, then merged back).
+  This avoids shape mismatches for independently fitted single-dataset
+  hierarchical models (for example with `hierarchical_p` or
+  `hierarchical_gate`) while preserving a combined posterior dictionary layout.
 
 #### Advanced Features
 
