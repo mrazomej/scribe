@@ -286,3 +286,50 @@ def test_filter_obs_multiple_columns(tmp_path):
     assert result.shape[0] == 2
     assert (result.obs["siRNA"] == "SCRAMBLE").all()
     assert (result.obs["batch"] == "A").all()
+
+
+# ---------------------------------------------------------------------------
+# filter_cells preprocessing
+# ---------------------------------------------------------------------------
+
+
+def test_filter_cells_supports_multiple_thresholds_sequentially(tmp_path):
+    """filter_cells should apply min_counts and min_genes in sequence."""
+    obs = pd.DataFrame(index=["c0", "c1", "c2"])
+    # c0: 0 counts/0 genes, c1: 2 counts/1 gene, c2: 4 counts/2 genes
+    X = np.asarray(
+        [
+            [0, 0, 0, 0, 0],
+            [2, 0, 0, 0, 0],
+            [2, 2, 0, 0, 0],
+        ],
+        dtype=np.float32,
+    )
+    adata = AnnData(X=X, obs=obs)
+    path = str(tmp_path / "cells_filters.h5ad")
+    adata.write_h5ad(path)
+
+    # Sequential behavior should retain only c2 after both thresholds.
+    result = load_and_preprocess_anndata(
+        path,
+        return_jax=False,
+        prep_config={"filter_cells": {"min_counts": 2, "min_genes": 2}},
+    )
+    assert result.shape[0] == 1
+    assert list(result.obs_names) == ["c2"]
+
+
+def test_filter_cells_raises_on_unknown_filter_key(tmp_path):
+    """Unknown filter_cells keys should raise a clear ValueError."""
+    obs = pd.DataFrame(index=["c0", "c1"])
+    X = np.asarray([[1, 0, 0, 0, 0], [1, 1, 0, 0, 0]], dtype=np.float32)
+    adata = AnnData(X=X, obs=obs)
+    path = str(tmp_path / "unknown_filter_key.h5ad")
+    adata.write_h5ad(path)
+
+    with pytest.raises(ValueError, match="Unsupported preprocessing.filter_cells"):
+        load_and_preprocess_anndata(
+            path,
+            return_jax=False,
+            prep_config={"filter_cells": {"min_reads": 10}},
+        )
