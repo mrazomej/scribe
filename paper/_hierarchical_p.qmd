@@ -358,13 +358,13 @@ parameters. Given the Poisson-Gamma representation, the conditional expected
 count is
 
 $$
-\langle u_g \mid \lambda_g \rangle = \lambda_g.
+\langle m_g \mid \lambda_g \rangle = \lambda_g.
 $${#eq-hier-conditional-mean}
 
 The marginal expected count (averaging over the Gamma prior) is
 
 $$
-\mu_g = \langle u_g \rangle = \langle \lambda_g \rangle =
+\mu_g = \langle m_g \rangle = \langle \lambda_g \rangle =
 \frac{r_g}{\theta_g} = r_g \cdot \frac{1 - p_g}{p_g},
 $${#eq-hier-marginal-mean}
 
