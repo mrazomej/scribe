@@ -3090,12 +3090,14 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "anndata" },
     { name = "arviz" },
     { name = "bokeh" },
     { name = "colorcet" },
     { name = "corner" },
     { name = "datashader" },
     { name = "gseapy" },
+    { name = "h5py" },
     { name = "holoviews" },
     { name = "hydra-core" },
     { name = "hydra-joblib-launcher" },
@@ -3141,12 +3143,14 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anndata", specifier = ">=0.12.10" },
     { name = "arviz", specifier = ">=0.20.0" },
     { name = "bokeh", specifier = ">=3.8.0" },
     { name = "colorcet", specifier = ">=3.1.0" },
     { name = "corner", specifier = ">=2.2.3" },
     { name = "datashader", specifier = ">=0.18.2" },
     { name = "gseapy", specifier = ">=1.1.11" },
+    { name = "h5py", specifier = ">=3.12.1" },
     { name = "holoviews", specifier = ">=1.21.0" },
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "hydra-joblib-launcher", specifier = ">=1.2" },
