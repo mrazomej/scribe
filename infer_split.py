@@ -63,6 +63,7 @@ import sys
 import shutil
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 import scanpy as sc
 from omegaconf import OmegaConf
@@ -74,7 +75,6 @@ from rich.panel import Panel
 # ---------------------------------------------------------------------------
 
 CONF_DATA_DIR = Path("conf") / "data"
-TMP_SPLIT_DIR = CONF_DATA_DIR / "_tmp_split"
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
@@ -316,11 +316,48 @@ def _sanitize_value(value: str) -> str:
     )
 
 
+def _derive_output_prefix(data_name: str) -> str:
+    """Derive a nested output prefix from a data config key.
+
+    Parameters
+    ----------
+    data_name : str
+        Data config key from ``data=...`` (e.g.
+        ``panfibrosis/CKD/GSE140023_filter-none_split-disease``).
+
+    Returns
+    -------
+    str
+        Parent path portion of the key (e.g. ``panfibrosis/CKD``), or an empty
+        string when no parent directories are present.
+    """
+    parent_parts = Path(data_name).parts[:-1]
+    return "/".join(parent_parts)
+
+
+def _make_tmp_split_dir() -> Path:
+    """Create a unique temporary config directory for this invocation.
+
+    Returns
+    -------
+    Path
+        Newly created directory under ``conf/data``.
+    """
+    # A unique directory per process avoids collisions when multiple split
+    # orchestrators run concurrently.
+    suffix = f"{os.getpid()}_{uuid4().hex[:8]}"
+    tmp_dir = CONF_DATA_DIR / f"_tmp_split_{suffix}"
+    tmp_dir.mkdir(parents=True, exist_ok=False)
+    return tmp_dir
+
+
 def _generate_tmp_yamls(
     data_cfg: dict,
+    data_name: str,
     split_by: str | list[str],
     covariate_values: list[str] | list[tuple[str, ...]],
     gpu_ids: list[str],
+    tmp_dir: Path,
 ) -> list[str]:
     """Write temporary data YAML configs for each covariate value (or combination).
 
@@ -334,6 +371,8 @@ def _generate_tmp_yamls(
     ----------
     data_cfg : dict
         The original data config contents.
+    data_name : str
+        Source data config key passed via ``data=...``.
     split_by : str or list[str]
         The covariate column name(s).
     covariate_values : list[str] or list[tuple[str, ...]]
@@ -343,18 +382,19 @@ def _generate_tmp_yamls(
         Physical GPU ID strings (e.g. ``["0", "1"]`` or ``["2", "3"]``).
         Jobs are assigned round-robin.  If empty, all configs get
         ``gpu_id: "0"``.
+    tmp_dir : Path
+        Per-invocation directory where split YAML files are written.
 
     Returns
     -------
     list[str]
-        Names of the generated configs (relative to ``conf/data/``),
-        without the ``.yaml`` suffix.  These can be passed to
-        ``data=_tmp_split/<name>`` in the Hydra command.
+        File stems of generated configs (without ``.yaml`` suffix).
     """
-    TMP_SPLIT_DIR.mkdir(parents=True, exist_ok=True)
-
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    output_prefix = _derive_output_prefix(data_name)
     original_name = data_cfg.get("name", "data")
     original_path = data_cfg.get("path", "")
+    source_tag = _sanitize_value(data_name)
 
     # Resolve to absolute so each Hydra worker finds the file regardless
     # of its working directory.
@@ -379,12 +419,20 @@ def _generate_tmp_yamls(
             subset_column = split_by
             subset_value = value
 
-        tmp_name = f"{original_name}_{safe_value}"
-        tmp_names.append(tmp_name)
+        split_leaf_name = f"{original_name}_{safe_value}"
+        output_name = (
+            f"{output_prefix}/{split_leaf_name}"
+            if output_prefix
+            else split_leaf_name
+        )
+
+        # Use a filename-safe stem that is unique to the source config key.
+        tmp_file_stem = f"{source_tag}__{split_leaf_name}"
+        tmp_names.append(tmp_file_stem)
 
         # Build the temporary config
         tmp_cfg = {
-            "name": tmp_name,
+            "name": output_name,
             "path": abs_path,
             "subset_column": subset_column,
             "subset_value": subset_value,
@@ -403,7 +451,7 @@ def _generate_tmp_yamls(
                 tmp_cfg[key] = val
 
         # Write with the @package directive so Hydra merges correctly
-        yaml_path = TMP_SPLIT_DIR / f"{tmp_name}.yaml"
+        yaml_path = tmp_dir / f"{tmp_file_stem}.yaml"
         cfg_obj = OmegaConf.create(tmp_cfg)
         with open(yaml_path, "w") as f:
             f.write("# @package data\n")
@@ -412,10 +460,16 @@ def _generate_tmp_yamls(
     return tmp_names
 
 
-def _cleanup_tmp_dir() -> None:
-    """Remove the temporary split config directory if it exists."""
-    if TMP_SPLIT_DIR.exists():
-        shutil.rmtree(TMP_SPLIT_DIR)
+def _cleanup_tmp_dir(tmp_dir: Path) -> None:
+    """Remove a temporary split config directory if it exists.
+
+    Parameters
+    ----------
+    tmp_dir : Path
+        Temporary directory created for this infer_split invocation.
+    """
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
 
 
 def _build_joblib_multirun_command(
@@ -619,11 +673,20 @@ def main() -> None:
         )
     )
 
+    tmp_dir = _make_tmp_split_dir()
     tmp_names = _generate_tmp_yamls(
-        data_cfg, split_by, covariate_values, assigned_gpu_ids
+        data_cfg=data_cfg,
+        data_name=data_name,
+        split_by=split_by,
+        covariate_values=covariate_values,
+        gpu_ids=assigned_gpu_ids,
+        tmp_dir=tmp_dir,
     )
+    tmp_dir_name = tmp_dir.name
     for name in tmp_names:
-        console.print(f"  [dim]Created:[/dim] conf/data/_tmp_split/{name}.yaml")
+        console.print(
+            f"  [dim]Created:[/dim] conf/data/{tmp_dir_name}/{name}.yaml"
+        )
 
     # ------------------------------------------------------------------
     # 6. Build and launch Hydra multirun command
@@ -636,7 +699,7 @@ def main() -> None:
         )
     )
 
-    data_list = ",".join(f"_tmp_split/{n}" for n in tmp_names)
+    data_list = ",".join(f"{tmp_dir_name}/{n}" for n in tmp_names)
 
     # Default launcher preserves prior behavior for direct infer_split usage.
     if launcher_mode == "submitit_slurm":
@@ -680,7 +743,7 @@ def main() -> None:
         # ------------------------------------------------------------------
         console.print()
         console.print("[dim]Cleaning up temporary configs...[/dim]")
-        _cleanup_tmp_dir()
+        _cleanup_tmp_dir(tmp_dir)
         console.print(
             "[green]✓[/green] Temporary configs removed."
         )

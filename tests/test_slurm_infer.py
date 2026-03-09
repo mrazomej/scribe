@@ -9,7 +9,9 @@ from slurm_infer import (
     build_batch_script,
     build_split_submitit_orchestrator_command,
     build_submitit_multirun_command,
+    get_data_config_names,
     resolve_inference_script,
+    with_single_data_override,
 )
 
 
@@ -201,6 +203,57 @@ def test_resolve_inference_script_uses_split_entrypoint_when_split_by_is_list(
 
     script = resolve_inference_script(
         overrides=["data=batch_correction/a549"],
+        project_dir=tmp_path,
+    )
+    assert script == "infer_split.py"
+
+
+def test_get_data_config_names_parses_comma_separated_data_override():
+    """Extract a list of data config keys from a comma-separated data override."""
+    names = get_data_config_names(
+        ["model=nbdm", "data=panfibrosis/CKD/a,panfibrosis/IPF/b"]
+    )
+    assert names == ["panfibrosis/CKD/a", "panfibrosis/IPF/b"]
+
+
+def test_with_single_data_override_replaces_existing_data_override():
+    """Return overrides with exactly one data entry for a target dataset."""
+    updated = with_single_data_override(
+        ["data=d1,d2", "model=nbdm", "guide_rank=8"],
+        data_name="d2",
+    )
+    assert updated == ["model=nbdm", "guide_rank=8", "data=d2"]
+
+
+def test_resolve_inference_script_uses_split_when_any_multidata_config_has_split(
+    tmp_path: Path,
+):
+    """Multi-data inputs should select infer_split.py if any config has split_by."""
+    conf_data_dir = tmp_path / "conf" / "data" / "panfibrosis"
+    conf_data_dir.mkdir(parents=True, exist_ok=True)
+    (conf_data_dir / "a.yaml").write_text(
+        "\n".join(
+            [
+                "# @package data",
+                "name: a",
+                "path: /tmp/a.h5ad",
+                "split_by: condition",
+            ]
+        )
+    )
+    (conf_data_dir / "b.yaml").write_text(
+        "\n".join(
+            [
+                "# @package data",
+                "name: b",
+                "path: /tmp/b.h5ad",
+                "split_by: null",
+            ]
+        )
+    )
+
+    script = resolve_inference_script(
+        overrides=["data=panfibrosis/a,panfibrosis/b"],
         project_dir=tmp_path,
     )
     assert script == "infer_split.py"
