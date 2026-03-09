@@ -14,6 +14,62 @@ from omegaconf import OmegaConf, ListConfig
 # ==============================================================================
 
 
+def _apply_filter_cells_steps(
+    adata: AnnData, filter_cells_cfg: DictConfig | dict
+) -> None:
+    """Apply ``scanpy.pp.filter_cells`` criteria sequentially.
+
+    Scanpy allows only one of ``min_counts``, ``min_genes``, ``max_counts``, or
+    ``max_genes`` per call. This helper accepts a config map that can contain
+    multiple criteria and applies them one-by-one in a deterministic order.
+
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData object to filter in place.
+    filter_cells_cfg : DictConfig or dict
+        ``preprocessing.filter_cells`` configuration.
+
+    Raises
+    ------
+    ValueError
+        Raised when unsupported keys are provided under ``filter_cells``.
+    """
+    # Normalize OmegaConf containers into plain Python mappings so we can
+    # validate keys and iterate in a deterministic order.
+    if isinstance(filter_cells_cfg, DictConfig):
+        filter_cells_cfg = OmegaConf.to_container(
+            filter_cells_cfg, resolve=True
+        )
+
+    if not isinstance(filter_cells_cfg, dict):
+        raise ValueError(
+            "preprocessing.filter_cells must be a mapping of threshold keys "
+            "to values."
+        )
+
+    allowed_keys = ("min_counts", "min_genes", "max_counts", "max_genes")
+    unknown_keys = sorted(k for k in filter_cells_cfg if k not in allowed_keys)
+    if unknown_keys:
+        raise ValueError(
+            "Unsupported preprocessing.filter_cells key(s): "
+            f"{unknown_keys}. Supported keys are: {allowed_keys}"
+        )
+
+    for key in allowed_keys:
+        if key not in filter_cells_cfg:
+            continue
+        value = filter_cells_cfg[key]
+        if value is None:
+            continue
+        n_before = adata.shape[0]
+        sc.pp.filter_cells(adata, **{key: value})
+        print(
+            f"Filtering cells with {key}={value}: "
+            f"{adata.shape[0]}/{n_before} cells retained"
+        )
+
+
 def load_and_preprocess_anndata(
     path: str,
     prep_config: Optional[DictConfig] = None,
@@ -188,11 +244,16 @@ def load_and_preprocess_anndata(
 
     # If a preprocessing configuration is provided, apply the specified steps
     if prep_config:
+        # Normalize plain dict preprocessing configs so downstream attribute
+        # access (e.g., prep_config.filter_genes) works consistently.
+        if isinstance(prep_config, dict):
+            prep_config = OmegaConf.create(prep_config)
         print("Applying preprocessing steps...")
         # If cell filtering is specified, apply scanpy's filter_cells
         if "filter_cells" in prep_config:
-            print(f"Filtering cells with {prep_config.filter_cells}")
-            sc.pp.filter_cells(adata, **prep_config.filter_cells)
+            # Apply one threshold per Scanpy call so combined criteria such as
+            # min_counts + min_genes can be configured safely.
+            _apply_filter_cells_steps(adata, prep_config.filter_cells)
             print(f"Shape after filtering cells: {adata.shape}")
 
         # If gene filtering is specified, apply scanpy's filter_genes
