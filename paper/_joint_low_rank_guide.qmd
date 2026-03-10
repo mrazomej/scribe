@@ -1,0 +1,862 @@
+---
+editor:
+    render-on-save: true
+# bibliography: references.bib
+csl: ieee.csl
+format:
+  html:
+    filters: [tikz.lua, strip-yaml-frontmatter.lua, maintext-filter.lua, sitext-filter.lua]
+---
+
+# Joint low-rank variational guide for cross-parameter correlations {#sec-joint-low-rank-guide}
+
+In @sec-reparam, we introduced reparameterizations of the negative binomial
+parameters to reduce the strong within-gene correlation between $r_g$ and $p_g$.
+By working in terms of the mean $\mu_g$ and odds ratio $\phi$, or the mean
+$\mu_g$ and probability $p$, we obtained variational families whose factorized
+form provides a better geometric fit to the posterior. However, even with these
+reparameterizations, the variational guide factorizes **across** its per-gene
+parameters. That is, the guide takes the form
+
+$$
+q(\underline{\theta}_1, \underline{\theta}_2) =
+q(\underline{\theta}_1) \cdot q(\underline{\theta}_2),
+$${#eq-jlr-factorized-guide}
+
+where $\underline{\theta}_1$ and $\underline{\theta}_2$ denote the two
+per-gene parameter vectors in a given parameterization (e.g.,
+$\underline{\mu}$ and $\underline{\phi}$ in the mean-odds parameterization).
+
+In this section, we ask: **can we do better by introducing cross-parameter
+correlations into the variational guide?** We will show that:
+
+1. The posterior of the hierarchical model from @sec-hierarchical-p exhibits
+genuine cross-parameter correlations that a factorized guide cannot capture.
+
+2. A **joint low-rank covariance** over all per-gene parameters provides the
+necessary expressivity without fundamentally altering the model.
+
+3. The joint guide can be implemented in NumPyro via a **chain rule
+decomposition** that preserves exact ELBO computation, requiring only standard
+`numpyro.sample` calls.
+
+4. The conditional distribution at each step in the chain is itself a
+**low-rank multivariate normal**, making the implementation both clean and
+computationally efficient.
+
+## Sources of posterior cross-parameter correlation {#sec-jlr-sources}
+
+To motivate the joint guide, we must first understand *why* the posterior
+exhibits cross-parameter correlations. There are two distinct sources.
+
+### Within-gene correlation from the likelihood {#sec-jlr-within-gene}
+
+The first source is the negative binomial likelihood itself. For a single gene
+$g$ observed across $C$ cells, the likelihood couples $r_g$ and $p_g$ through
+the mean-variance relationship. In the canonical parameterization, the mean of
+the negative binomial is
+
+$$
+\mu_g = \frac{r_g (1 - p_g)}{p_g},
+$${#eq-jlr-nb-mean}
+
+so that many pairs $(r_g, p_g)$ can produce similar means, creating a curved
+ridge in the likelihood surface. This is the "banana-shaped" posterior
+correlation described in @sec-reparam. Reparameterization in terms of $(\mu_g,
+\phi)$ or $(\mu_g, p)$ partially decorrelates this structure by absorbing the
+mean-variance relationship into the parameterization itself.
+
+However, even with reparameterization, the two parameters of each gene are not
+fully independent in the posterior. The mean $\mu_g$ and the odds ratio $\phi_g$
+(or probability $p_g$) jointly determine both the mean *and* the variance of
+the gene's count distribution. The data constrain both moments, inducing a
+residual posterior correlation between the two parameters.
+
+### Across-gene correlation from hierarchical structure {#sec-jlr-across-gene}
+
+The second source arises specifically in the hierarchical model from
+@sec-hierarchical-p, and it is the more compelling motivation for a joint guide.
+
+Recall from @eq-hier-gene-specific-p that in the hierarchical model, each
+gene's success probability is drawn from a shared population distribution:
+
+$$
+\text{logit}(p_g) \sim \mathcal{N}(\mu_p, \sigma_p), \quad g = 1, \ldots, G.
+$${#eq-jlr-hier-p-recap}
+
+The hyperparameters $\mu_p$ and $\sigma_p$ are shared across all genes. In the
+full posterior, these hyperparameters are latent variables that must be
+marginalized or inferred jointly with the gene-specific parameters. Even when
+we condition on point estimates of $\mu_p$ and $\sigma_p$ (as in SVI), the
+variational posterior of the gene-specific parameters inherits correlations from
+the hierarchical structure.
+
+To see this concretely, consider the posterior coupling between genes $g$ and
+$g'$. The likelihood for gene $g$ constrains the pair $(r_g, p_g)$. The
+hierarchical prior links $p_g$ to $\mu_p$ and $\sigma_p$, which are also
+informed by the data from gene $g'$ through $p_{g'}$. This creates an indirect
+but genuine posterior dependence:
+
+$$
+r_g \longleftrightarrow p_g \longleftrightarrow (\mu_p, \sigma_p)
+\longleftrightarrow p_{g'} \longleftrightarrow r_{g'}.
+$${#eq-jlr-coupling-chain}
+
+The strength of this coupling depends on $\sigma_p$: when $\sigma_p$ is small
+(genes share similar $p_g$ values), the hierarchical prior tightly links the
+$p_g$'s, creating strong across-gene correlations. When $\sigma_p$ is large,
+the coupling weakens and each gene's parameters become more independent.
+
+It is important to note that this across-gene coupling does **not** arise from
+a total count constraint. As shown in @sec-hier-factorization-breaks, the
+Dirichlet-Multinomial factorization breaks down when the $p_g$ are
+gene-specific, so there is no shared $\hat{p}$ binding the genes through the
+total count. The coupling is entirely mediated by the hierarchical prior.
+
+## The factorized guide and its limitations {#sec-jlr-factorized-limitation}
+
+The current variational guide, even when using low-rank covariance for each
+parameter individually, takes the factorized form of
+@eq-jlr-factorized-guide. Each factor $q(\underline{\theta}_i)$ can be a
+`LowRankMultivariateNormal` in the unconstrained space, capturing gene-gene
+correlations *within* that parameter. For instance, with the mean-odds
+parameterization:
+
+$$
+q(\underline{\mu}^*, \underline{\phi}^*) =
+\underbrace{
+    q(\underline{\mu}^*)
+}_{\text{LowRankMVN}}
+\cdot
+\underbrace{
+    q(\underline{\phi}^*)
+}_{\text{LowRankMVN}},
+$${#eq-jlr-current-factorized}
+
+where $\underline{\mu}^* = \log \underline{\mu}$ and $\underline{\phi}^* =
+\log \underline{\phi}$ are the unconstrained (log-transformed) parameters. Each
+factor has its own low-rank covariance:
+
+$$
+q(\underline{\mu}^*) = \mathcal{N}(\underline{\mu}^* \mid
+\text{loc}_\mu, \; W_\mu W_\mu^\top + D_\mu),
+$${#eq-jlr-mu-marginal}
+
+$$
+q(\underline{\phi}^*) = \mathcal{N}(\underline{\phi}^* \mid
+\text{loc}_\phi, \; W_\phi W_\phi^\top + D_\phi),
+$${#eq-jlr-phi-marginal}
+
+where $W_\mu, W_\phi \in \mathbb{R}^{G \times k}$ are the low-rank factors and
+$D_\mu, D_\phi \in \mathbb{R}^G_{>0}$ are the diagonal components.
+
+This factorization is exact if and only if $\underline{\mu}^*$ and
+$\underline{\phi}^*$ are independent in the true posterior. As argued in
+@sec-jlr-sources, they are not: the within-gene likelihood coupling and the
+across-gene hierarchical coupling both induce cross-parameter correlations that
+the factorized guide structurally cannot represent.
+
+## The joint low-rank variational family {#sec-jlr-joint-family}
+
+### Stacked unconstrained representation {#sec-jlr-stacked}
+
+To capture cross-parameter correlations, we propose a joint variational
+distribution over all per-gene parameters simultaneously. We stack the
+unconstrained parameters into a single vector:
+
+$$
+\underline{\theta}^* =
+\begin{pmatrix}
+\underline{\theta}_1^* \\ \underline{\theta}_2^*
+\end{pmatrix}
+\in \mathbb{R}^{2G},
+$${#eq-jlr-stacked-vector}
+
+where $\underline{\theta}_1^*$ and $\underline{\theta}_2^*$ are the two
+$G$-dimensional unconstrained parameter vectors. For example, in the mean-odds
+parameterization, $\underline{\theta}_1^* = \log \underline{\mu}$ and
+$\underline{\theta}_2^* = \log \underline{\phi}$.
+
+We define the joint variational distribution as a low-rank multivariate normal
+over this $2G$-dimensional space:
+
+$$
+q(\underline{\theta}^*) = \mathcal{N}(\underline{\theta}^* \mid
+\text{loc}, \; \Sigma),
+$${#eq-jlr-joint-dist}
+
+with the low-rank-plus-diagonal covariance structure
+
+$$
+\Sigma = W W^\top + D,
+$${#eq-jlr-joint-cov}
+
+where $W \in \mathbb{R}^{2G \times k}$ is the low-rank factor and
+$D \in \mathbb{R}^{2G}_{>0}$ is the diagonal component.
+
+### Block structure {#sec-jlr-block-structure}
+
+The key to understanding the expressivity of the joint guide is its block
+structure. Partition the location, factor matrix, and diagonal according to the
+two parameter groups:
+
+$$
+\text{loc} = \begin{pmatrix} \text{loc}_1 \\ \text{loc}_2 \end{pmatrix},
+\quad
+W = \begin{pmatrix} W_1 \\ W_2 \end{pmatrix},
+\quad
+D = \begin{pmatrix} D_1 & 0 \\ 0 & D_2 \end{pmatrix},
+$${#eq-jlr-block-partition}
+
+where $W_1, W_2 \in \mathbb{R}^{G \times k}$ and $D_1, D_2 \in
+\mathbb{R}^{G}_{>0}$. The covariance matrix then has the block form
+
+$$
+\Sigma =
+\begin{pmatrix}
+W_1 W_1^\top + D_1 & W_1 W_2^\top \\
+W_2 W_1^\top & W_2 W_2^\top + D_2
+\end{pmatrix}
+=
+\begin{pmatrix}
+\Sigma_{11} & \Sigma_{12} \\
+\Sigma_{21} & \Sigma_{22}
+\end{pmatrix}.
+$${#eq-jlr-block-cov}
+
+The diagonal blocks $\Sigma_{11} = W_1 W_1^\top + D_1$ and
+$\Sigma_{22} = W_2 W_2^\top + D_2$ are the marginal covariances of the two
+parameter groups — analogous to what the separate `LowRankGuide`s already
+provide. The off-diagonal block
+
+$$
+\Sigma_{12} = W_1 W_2^\top
+$${#eq-jlr-cross-block}
+
+is the **cross-block**, a $G \times G$ matrix of rank at most $k$ that captures
+the correlations between $\underline{\theta}_1^*$ and
+$\underline{\theta}_2^*$. This cross-block is the new expressivity introduced
+by the joint guide. It encodes, for every pair of genes $(g, g')$, the
+correlation between parameter 1 of gene $g$ and parameter 2 of gene $g'$.
+
+### Parameter budget analysis {#sec-jlr-param-budget}
+
+The joint guide introduces a tradeoff in how parameters are allocated, not a
+free lunch. Consider two configurations at the same rank $k$:
+
+**Separate guides.** Two independent `LowRankMultivariateNormal` distributions,
+each over $G$ dimensions with rank $k$:
+
+$$
+\text{Separate:} \quad
+\underbrace{2 \times (Gk + 2G)}_{\text{two LowRank factors + locs + diags}}
+= 2Gk + 4G \text{ parameters}.
+$${#eq-jlr-param-separate}
+
+**Joint guide.** A single `LowRankMultivariateNormal` over $2G$ dimensions with
+rank $k$:
+
+$$
+\text{Joint:} \quad
+\underbrace{2Gk + 4G}_{\text{one LowRank factor + loc + diag}}
+\text{ parameters}.
+$${#eq-jlr-param-joint}
+
+The parameter counts are identical. However, the allocation is fundamentally
+different. In the separate case, each of the $k$ factor columns is a
+$G$-dimensional vector dedicated to within-block correlations. In the joint
+case, each factor column is a $2G$-dimensional vector that must simultaneously
+describe within-$\underline{\theta}_1$ correlations,
+within-$\underline{\theta}_2$ correlations, **and** cross-parameter
+correlations. The $k$ factors serve triple duty.
+
+This means the joint guide at rank $k$ trades within-block expressivity for
+cross-block expressivity. To strictly dominate two separate rank-$k$ guides
+(matching their within-block capacity while adding the cross-block), one would
+use rank $2k$ in the joint, yielding $4Gk + 4G$ parameters — exactly twice the
+factor cost.
+
+The practical bet is that for models with strong cross-parameter coupling
+(hierarchical $p_g$, mean-odds parameterization), the cross-block capacity is
+more valuable than the lost within-block detail. This is an empirical question
+that can be answered by comparing ELBO values across configurations.
+
+## The implementation challenge {#sec-jlr-numpyro-challenge}
+
+In NumPyro, the model and guide must register **matching sampling sites**. The
+model calls `numpyro.sample("r", prior_r)` and `numpyro.sample("p", prior_p)`
+as separate statements, and the guide must provide corresponding sample
+statements with exactly the same site names.
+
+A naive approach would be to sample the joint $2G$-dimensional vector as an
+auxiliary variable and then register the individual parameters via
+`numpyro.deterministic` or `Delta` distributions:
+
+```python
+# WRONG: breaks the ELBO
+z = numpyro.sample("z_joint", joint_mvn)  # auxiliary site
+r = numpyro.deterministic("r", transform_r(z[:G]))
+p = numpyro.deterministic("p", transform_p(z[G:]))
+```
+
+This fails because `numpyro.deterministic` does not contribute to the guide's
+log-density. NumPyro's `Trace_ELBO` computes
+
+$$
+\text{ELBO} = \sum_{\text{sites}} \left[
+    \log \pi_{\text{model}}(\text{site value}) -
+    \log q_{\text{guide}}(\text{site value})
+\right],
+$${#eq-jlr-elbo-sites}
+
+and only `numpyro.sample` sites contribute $\log q$ terms. The model has sites
+"r" and "p" but the guide only has site "z\_joint", so the ELBO is
+malformed: the entropy of the guide is not correctly accounted for, and the
+model sites "r" and "p" have no matching guide sites.
+
+## Chain rule decomposition {#sec-jlr-chain-rule}
+
+### The fundamental identity {#sec-jlr-chain-rule-identity}
+
+The solution is to use the chain rule of probability to decompose the joint
+variational distribution into a sequence of conditional distributions:
+
+$$
+q(\underline{\theta}_1^*, \underline{\theta}_2^*) =
+q(\underline{\theta}_1^*) \cdot
+q(\underline{\theta}_2^* \mid \underline{\theta}_1^*).
+$${#eq-jlr-chain-rule}
+
+This is an exact identity — no approximation is involved. Both factors are
+proper probability distributions with well-defined densities and non-zero
+entropy. The guide implementation then becomes:
+
+```python
+# CORRECT: exact ELBO
+theta_1 = numpyro.sample("theta_1", marginal_dist)
+theta_2 = numpyro.sample("theta_2", conditional_dist(theta_1))
+```
+
+Each model site has a matching guide site. The total guide log-density is
+
+$$
+\log q(\underline{\theta}_1^*, \underline{\theta}_2^*) =
+\log q(\underline{\theta}_1^*) +
+\log q(\underline{\theta}_2^* \mid \underline{\theta}_1^*),
+$${#eq-jlr-log-density-decomp}
+
+which is exactly the joint log-density by the chain rule. The ELBO from
+@eq-jlr-elbo-sites receives the correct entropy contribution from both sites.
+
+### Conditional distribution from the joint Gaussian {#sec-jlr-conditional}
+
+For a joint Gaussian distribution with block structure as in
+@eq-jlr-block-cov, the conditional distribution of
+$\underline{\theta}_2^*$ given $\underline{\theta}_1^*$ is itself Gaussian:
+
+$$
+\underline{\theta}_2^* \mid \underline{\theta}_1^* \sim
+\mathcal{N}\!\left(
+    \underline{\mu}_{2 \mid 1}, \;
+    \Sigma_{2 \mid 1}
+\right),
+$${#eq-jlr-conditional-dist}
+
+with conditional mean
+
+$$
+\underline{\mu}_{2 \mid 1} =
+\text{loc}_2 + \Sigma_{21} \, \Sigma_{11}^{-1}
+(\underline{\theta}_1^* - \text{loc}_1),
+$${#eq-jlr-cond-mean-general}
+
+and conditional covariance
+
+$$
+\Sigma_{2 \mid 1} =
+\Sigma_{22} - \Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}.
+$${#eq-jlr-cond-cov-general}
+
+These are standard results from multivariate normal theory. The challenge is
+computing $\Sigma_{11}^{-1}$ efficiently, since $\Sigma_{11} = W_1 W_1^\top +
+D_1$ is a $G \times G$ matrix. Naively inverting it would cost $O(G^3)$, which
+is prohibitive for $G \sim 2{,}000$ to $30{,}000$. This is where the low-rank
+structure becomes essential.
+
+## Efficient computation via the Woodbury identity {#sec-jlr-woodbury}
+
+### The matrix inversion lemma {#sec-jlr-woodbury-lemma}
+
+The Woodbury matrix identity (also known as the matrix inversion lemma) states
+that for an invertible matrix $A \in \mathbb{R}^{n \times n}$, matrices
+$U \in \mathbb{R}^{n \times k}$ and $V \in \mathbb{R}^{k \times n}$, and an
+invertible matrix $C \in \mathbb{R}^{k \times k}$:
+
+$$
+(A + UCV)^{-1} = A^{-1} - A^{-1} U
+\left(C^{-1} + V A^{-1} U\right)^{-1} V A^{-1}.
+$${#eq-jlr-woodbury-identity}
+
+The key insight is that this reduces the inversion of an $n \times n$ matrix to
+the inversion of a $k \times k$ matrix, which is dramatically cheaper when
+$k \ll n$.
+
+### Applying Woodbury to the marginal precision {#sec-jlr-woodbury-applied}
+
+We apply @eq-jlr-woodbury-identity with $A = D_1$ (diagonal, trivially
+invertible), $U = W_1$, $C = I_k$, $V = W_1^\top$:
+
+$$
+\Sigma_{11}^{-1} = (W_1 W_1^\top + D_1)^{-1} =
+D_1^{-1} - D_1^{-1} W_1
+\left(I_k + W_1^\top D_1^{-1} W_1\right)^{-1}
+W_1^\top D_1^{-1}.
+$${#eq-jlr-sigma11-inv}
+
+To simplify the expressions that follow, we define two $k \times k$ matrices
+that will appear repeatedly:
+
+$$
+H \equiv W_1^\top D_1^{-1} W_1 \in \mathbb{R}^{k \times k},
+$${#eq-jlr-H-def}
+
+$$
+M \equiv (I_k + H)^{-1} \in \mathbb{R}^{k \times k}.
+$${#eq-jlr-M-def}
+
+The matrix $H$ is symmetric positive semi-definite (as a product
+$W_1^\top D_1^{-1} W_1$ with $D_1^{-1}$ positive diagonal), and $I_k + H$ is
+therefore symmetric positive definite, so $M$ is well-defined and symmetric
+positive definite. In terms of $H$ and $M$, the Woodbury inversion becomes
+
+$$
+\Sigma_{11}^{-1} = D_1^{-1} - D_1^{-1} W_1 \, M \, W_1^\top D_1^{-1}.
+$${#eq-jlr-sigma11-inv-compact}
+
+### Simplifying the conditional mean {#sec-jlr-cond-mean-derivation}
+
+The conditional mean from @eq-jlr-cond-mean-general involves
+$\Sigma_{21} \Sigma_{11}^{-1}$, where $\Sigma_{21} = W_2 W_1^\top$. We
+need to compute $W_1^\top \Sigma_{11}^{-1}$, the right-multiplication of
+$\Sigma_{11}^{-1}$ by $W_1$. Substituting @eq-jlr-sigma11-inv-compact:
+
+$$
+W_1^\top \Sigma_{11}^{-1} =
+W_1^\top D_1^{-1} -
+W_1^\top D_1^{-1} W_1 \, M \, W_1^\top D_1^{-1}.
+$${#eq-jlr-w1-sigma11-step1}
+
+Recognizing $W_1^\top D_1^{-1} W_1 = H$ from @eq-jlr-H-def:
+
+$$
+W_1^\top \Sigma_{11}^{-1} =
+W_1^\top D_1^{-1} - H \, M \, W_1^\top D_1^{-1}
+= (I_k - HM) \, W_1^\top D_1^{-1}.
+$${#eq-jlr-w1-sigma11-step2}
+
+We now simplify $I_k - HM$. Since $M = (I_k + H)^{-1}$:
+
+$$
+I_k - HM = I_k - H(I_k + H)^{-1} = (I_k + H)^{-1}\left[(I_k + H) - H\right]
+= (I_k + H)^{-1} = M.
+$${#eq-jlr-I-minus-HM}
+
+Therefore:
+
+$$
+W_1^\top \Sigma_{11}^{-1} = M \, W_1^\top D_1^{-1}.
+$${#eq-jlr-w1-sigma11-final}
+
+This is a key simplification. Substituting into the conditional mean:
+
+$$
+\Sigma_{21} \, \Sigma_{11}^{-1} =
+W_2 \left(W_1^\top \Sigma_{11}^{-1}\right) =
+W_2 \, M \, W_1^\top D_1^{-1}.
+$${#eq-jlr-sigma21-sigma11}
+
+The conditional mean from @eq-jlr-cond-mean-general becomes:
+
+$$
+\boxed{
+\underline{\mu}_{2 \mid 1} =
+\text{loc}_2 + W_2 \, M \, W_1^\top D_1^{-1}
+\left(\underline{\theta}_1^* - \text{loc}_1\right).
+}
+$${#eq-jlr-cond-mean-final}
+
+### The conditional covariance is low-rank {#sec-jlr-cond-cov-derivation}
+
+We now turn to the conditional covariance from @eq-jlr-cond-cov-general. We
+need the product $\Sigma_{21} \Sigma_{11}^{-1} \Sigma_{12}$, where
+$\Sigma_{12} = W_1 W_2^\top$. From @eq-jlr-sigma21-sigma11:
+
+$$
+\Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
+= W_2 \, M \, W_1^\top D_1^{-1} \, W_1 W_2^\top.
+$${#eq-jlr-triple-product-step1}
+
+Recognizing $W_1^\top D_1^{-1} W_1 = H$:
+
+$$
+\Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
+= W_2 \, M H \, W_2^\top.
+$${#eq-jlr-triple-product-step2}
+
+Now, from @eq-jlr-I-minus-HM we know $I_k - HM = M$. Transposing (both $H$
+and $M$ are symmetric): $I_k - MH = M$, which gives $MH = I_k - M$. Therefore:
+
+$$
+\Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
+= W_2 (I_k - M) W_2^\top.
+$${#eq-jlr-triple-product-final}
+
+Substituting into the conditional covariance from @eq-jlr-cond-cov-general:
+
+$$
+\Sigma_{2 \mid 1}
+= \Sigma_{22} - \Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
+= (W_2 W_2^\top + D_2) - W_2 (I_k - M) W_2^\top.
+$${#eq-jlr-cond-cov-step1}
+
+Expanding:
+
+$$
+\Sigma_{2 \mid 1}
+= W_2 W_2^\top + D_2 - W_2 W_2^\top + W_2 M W_2^\top
+= W_2 \, M \, W_2^\top + D_2.
+$${#eq-jlr-cond-cov-step2}
+
+This is the central result:
+
+$$
+\boxed{
+\Sigma_{2 \mid 1} = W_2 \, M \, W_2^\top + D_2.
+}
+$${#eq-jlr-cond-cov-final}
+
+### The conditional as a LowRankMultivariateNormal {#sec-jlr-cond-lowrank}
+
+The result @eq-jlr-cond-cov-final has a remarkable structure. Since $M$ is
+symmetric positive definite (as the inverse of the positive definite matrix
+$I_k + H$), it admits a Cholesky decomposition:
+
+$$
+M = L_M L_M^\top,
+$${#eq-jlr-cholesky-M}
+
+where $L_M \in \mathbb{R}^{k \times k}$ is lower triangular with positive
+diagonal. Substituting into @eq-jlr-cond-cov-final:
+
+$$
+\Sigma_{2 \mid 1} = (W_2 L_M)(W_2 L_M)^\top + D_2.
+$${#eq-jlr-cond-cov-factor}
+
+Defining the **conditional covariance factor**
+
+$$
+\widetilde{W}_2 \equiv W_2 L_M \in \mathbb{R}^{G \times k},
+$${#eq-jlr-cond-W-def}
+
+the conditional distribution from @eq-jlr-conditional-dist takes the form
+
+$$
+\underline{\theta}_2^* \mid \underline{\theta}_1^* \sim
+\text{LowRankMVN}\!\left(
+    \underline{\mu}_{2 \mid 1}, \;
+    \widetilde{W}_2, \;
+    D_2
+\right),
+$${#eq-jlr-cond-as-lowrank}
+
+where $\text{LowRankMVN}(\text{loc}, \text{cov\_factor}, \text{cov\_diag})$
+denotes a multivariate normal with covariance
+$\text{cov\_factor} \cdot \text{cov\_factor}^\top + \text{diag}(\text{cov\_diag})$.
+
+This is the same distribution family used for the existing per-parameter
+low-rank guides. The conditional has the **same rank** $k$ as the marginal.
+Furthermore, the conditional covariance factor $\widetilde{W}_2 = W_2 L_M$
+depends only on the variational parameters ($W_1$, $W_2$, $D_1$), not on the
+sampled value $\underline{\theta}_1^*$. Only the conditional mean
+$\underline{\mu}_{2 \mid 1}$ from @eq-jlr-cond-mean-final depends on the
+sample. This means $\widetilde{W}_2$ and $D_2$ can be precomputed once per
+optimization step, with only the $O(Gk)$ conditional mean update varying per
+sample.
+
+### Computational complexity {#sec-jlr-complexity}
+
+We summarize the computational costs. The operations are:
+
+1. Compute $H = W_1^\top D_1^{-1} W_1$: a product of $(k \times G)$ and
+   $(G \times k)$ matrices with an elementwise scaling, costing $O(Gk^2)$.
+
+2. Compute $M = (I_k + H)^{-1}$: inversion of a $k \times k$ positive definite
+   matrix via Cholesky decomposition, costing $O(k^3)$.
+
+3. Compute $L_M$ (Cholesky of $M$): $O(k^3)$.
+
+4. Compute $\widetilde{W}_2 = W_2 L_M$: a $(G \times k)$ times $(k \times k)$
+   matrix product, costing $O(Gk^2)$.
+
+5. Compute the conditional mean $\underline{\mu}_{2 \mid 1}$: a sequence of
+   matrix-vector products costing $O(Gk)$ (see @eq-jlr-cond-mean-final).
+
+The dominant cost is $O(Gk^2)$ for steps 1 and 4, plus $O(k^3)$ for the
+$k \times k$ operations. For typical values of $G = 2{,}000$ and $k = 10$,
+this amounts to approximately $400{,}000$ floating-point operations — negligible
+compared to the cost of evaluating the likelihood across $G$ genes and $C$
+cells in a single SVI step.
+
+## ELBO equivalence {#sec-jlr-elbo}
+
+We now prove that the chain rule decomposition yields an ELBO identical to what
+one would obtain from direct joint sampling.
+
+### Statement
+
+**Theorem.** Let $q(\underline{\theta}_1^*, \underline{\theta}_2^*)$ be the
+joint low-rank Gaussian from @eq-jlr-joint-dist, and let
+$q(\underline{\theta}_1^*)$ and
+$q(\underline{\theta}_2^* \mid \underline{\theta}_1^*)$ be its marginal and
+conditional as derived above. Then the ELBO computed by registering
+$\underline{\theta}_1^*$ and $\underline{\theta}_2^*$ as separate sampling
+sites with densities $q(\underline{\theta}_1^*)$ and
+$q(\underline{\theta}_2^* \mid \underline{\theta}_1^*)$ respectively equals the
+ELBO that would be obtained from a single sampling site with the joint density
+$q(\underline{\theta}_1^*, \underline{\theta}_2^*)$.
+
+### Proof
+
+The ELBO for the model $\pi$ with guide $q$ is
+
+$$
+\text{ELBO} =
+\mathbb{E}_{q}\!\left[
+    \log \pi(\text{data}, \underline{\theta}_1, \underline{\theta}_2) -
+    \log q(\underline{\theta}_1^*, \underline{\theta}_2^*)
+\right],
+$${#eq-jlr-elbo-def}
+
+where $\underline{\theta}_i$ denotes the constrained parameter obtained by
+applying the appropriate transform to $\underline{\theta}_i^*$ (with Jacobian
+corrections handled by `TransformedDistribution`).
+
+By the chain rule of probability:
+
+$$
+\log q(\underline{\theta}_1^*, \underline{\theta}_2^*) =
+\log q(\underline{\theta}_1^*) +
+\log q(\underline{\theta}_2^* \mid \underline{\theta}_1^*).
+$${#eq-jlr-chain-rule-log}
+
+This is an identity that holds for every realization
+$(\underline{\theta}_1^*, \underline{\theta}_2^*)$. Substituting into
+@eq-jlr-elbo-def:
+
+$$
+\text{ELBO} =
+\mathbb{E}_{q}\!\left[
+    \log \pi(\text{data}, \underline{\theta}_1, \underline{\theta}_2) -
+    \log q(\underline{\theta}_1^*) -
+    \log q(\underline{\theta}_2^* \mid \underline{\theta}_1^*)
+\right].
+$${#eq-jlr-elbo-decomposed}
+
+NumPyro's `Trace_ELBO` computes exactly @eq-jlr-elbo-decomposed: it sums
+$\log \pi(\text{site value})$ over model sites and subtracts
+$\log q(\text{site value})$ over guide sites. With the chain rule
+implementation, the guide has two sites contributing
+$\log q(\underline{\theta}_1^*)$ and
+$\log q(\underline{\theta}_2^* \mid \underline{\theta}_1^*)$. The sum of these
+two terms equals $\log q(\underline{\theta}_1^*, \underline{\theta}_2^*)$
+by @eq-jlr-chain-rule-log, so the ELBO is identical.
+
+### Gradient estimator
+
+Both the joint and conditional sampling procedures produce samples from the same
+joint distribution $q(\underline{\theta}_1^*, \underline{\theta}_2^*)$. In the
+reparameterization trick, both procedures express
+$(\underline{\theta}_1^*, \underline{\theta}_2^*)$ as affine transformations of
+independent standard normal variables:
+
+- **Joint sampling:** $\underline{\theta}^* = \text{loc} + W\varepsilon +
+  D^{1/2}\delta$ with $\varepsilon \sim \mathcal{N}(0, I_k)$,
+  $\delta \sim \mathcal{N}(0, I_{2G})$.
+
+- **Conditional sampling:** sample $\underline{\theta}_1^* = \text{loc}_1 +
+  W_1 \varepsilon_1 + D_1^{1/2} \delta_1$, then
+  $\underline{\theta}_2^* = \underline{\mu}_{2|1} + \widetilde{W}_2
+  \varepsilon_2 + D_2^{1/2} \delta_2$ with independent standard normals.
+
+For multivariate Gaussians, any decomposition into affine transformations of
+independent standard normals produces gradient estimators with the same
+variance, since the resulting joint distribution over
+$(\underline{\theta}_1^*, \underline{\theta}_2^*)$ is identical. The gradient
+of the ELBO with respect to the shared variational parameters
+$(W_1, W_2, D_1, D_2, \text{loc}_1, \text{loc}_2)$ is the same function
+regardless of the sampling procedure, and the Monte Carlo variance of the
+gradient estimator is determined by the joint distribution of the samples, which
+is the same in both cases. $\square$
+
+## Relationship to factorized guides {#sec-jlr-factorized-recovery}
+
+It is natural to ask whether the joint guide can recover the factorized guide
+as a special case. The answer depends on the rank.
+
+### At rank $k$: a different variational family
+
+At rank $k$, the joint guide **cannot** exactly recover two independent
+rank-$k$ `LowRankMultivariateNormal` distributions. To see this, note that the
+cross-block $\Sigma_{12} = W_1 W_2^\top$ from @eq-jlr-cross-block vanishes if
+and only if $W_1 W_2^\top = 0_{G \times G}$. For generic $W_1$ with full
+column rank (i.e., rank $k$), $W_1 x = 0$ only for $x = 0$. Therefore
+$W_1 W_2^\top = 0$ requires every column of $W_2$ to lie in the null space of
+$W_1^\top$, which for full-rank $W_1$ means $W_2 = 0$ — a degenerate case that
+eliminates the second parameter's covariance structure entirely.
+
+Consequently, at rank $k$, the joint guide represents a **different variational
+family** from two separate rank-$k$ guides: one that captures cross-parameter
+correlations at the expense of some within-block capacity.
+
+### At rank $2k$: strict generalization
+
+At rank $2k$, the joint guide **can** recover two independent rank-$k$
+distributions by using a block-diagonal factor matrix:
+
+$$
+W = \begin{pmatrix} W_1' & 0 \\ 0 & W_2' \end{pmatrix}
+\in \mathbb{R}^{2G \times 2k},
+$${#eq-jlr-block-diagonal-W}
+
+where $W_1', W_2' \in \mathbb{R}^{G \times k}$. The covariance becomes
+
+$$
+W W^\top =
+\begin{pmatrix}
+W_1' W_1'{}^\top & 0 \\
+0 & W_2' W_2'{}^\top
+\end{pmatrix},
+$${#eq-jlr-block-diagonal-cov}
+
+which is exactly two independent low-rank covariances with zero cross-block.
+The optimizer is free to deviate from this block-diagonal initialization and
+develop cross-parameter correlations as warranted by the data.
+
+Therefore, at rank $2k$, the joint guide is a **strict generalization** of two
+separate rank-$k$ guides: it includes the factorized case and can additionally
+represent any rank-$2k$ cross-parameter structure.
+
+## Extension to multiple parameters {#sec-jlr-extension}
+
+The chain rule decomposition extends naturally to $n > 2$ per-gene parameter
+groups. Consider, for example, a zero-inflated negative binomial (ZINB) model
+with three per-gene parameter vectors: $\underline{\mu}^*$ (log mean),
+$\underline{\phi}^*$ (log odds), and $\underline{g}^*$ (logit gate). The
+stacked unconstrained vector is
+
+$$
+\underline{\theta}^* =
+\begin{pmatrix}
+\underline{\theta}_1^* \\
+\underline{\theta}_2^* \\
+\underline{\theta}_3^*
+\end{pmatrix}
+\in \mathbb{R}^{3G},
+$${#eq-jlr-3param-vector}
+
+with joint low-rank covariance $\Sigma = W W^\top + D$ for
+$W \in \mathbb{R}^{3G \times k}$.
+
+The chain rule gives
+
+$$
+q(\underline{\theta}_1^*, \underline{\theta}_2^*, \underline{\theta}_3^*) =
+q(\underline{\theta}_1^*) \cdot
+q(\underline{\theta}_2^* \mid \underline{\theta}_1^*) \cdot
+q(\underline{\theta}_3^* \mid \underline{\theta}_1^*, \underline{\theta}_2^*),
+$${#eq-jlr-3param-chain}
+
+where each factor is sampled sequentially and registered as a separate
+`numpyro.sample` site. The computation proceeds as follows:
+
+1. **Sample $\underline{\theta}_1^*$** from its marginal
+   $\text{LowRankMVN}(\text{loc}_1, W_1, D_1)$.
+
+2. **Condition on $\underline{\theta}_1^*$**: the joint distribution of
+   $(\underline{\theta}_2^*, \underline{\theta}_3^*)$ given
+   $\underline{\theta}_1^*$ is a $2G$-dimensional LowRankMVN. By the
+   same Woodbury derivation as in @sec-jlr-woodbury, the conditional
+   covariance factor is $[W_2; W_3] L_{M_1}$ with
+   $M_1 = (I_k + W_1^\top D_1^{-1} W_1)^{-1}$.
+
+3. **Sample $\underline{\theta}_2^*$** from the marginal of this $2G$-dim
+   conditional (its first $G$ components), which is
+   $\text{LowRankMVN}(\underline{\mu}_{2|1}, W_2 L_{M_1}, D_2)$.
+
+4. **Condition on $\underline{\theta}_2^*$**: apply the Schur complement again
+   within the $2G$-dim conditional to obtain the distribution of
+   $\underline{\theta}_3^*$ given both $\underline{\theta}_1^*$ and
+   $\underline{\theta}_2^*$. This is itself a $G$-dimensional LowRankMVN of
+   rank $k$.
+
+5. **Sample $\underline{\theta}_3^*$** from this final conditional.
+
+At each step, the conditional is a LowRankMVN of rank $k$, and only $k \times
+k$ matrix operations are needed. The total computational cost is $O(nGk^2 +
+nk^3)$ for $n$ parameter groups — linear in the number of groups.
+
+## Applicability across parameterizations {#sec-jlr-parameterizations}
+
+The joint low-rank guide applies to all parameterizations of the negative
+binomial model. In each case, the stacked unconstrained vector consists of the
+per-gene parameters native to that parameterization:
+
+- **Canonical** ($r$, $p$): stack $\underline{\theta}^* = [\log
+  \underline{r}, \; \text{logit}\, \underline{p}]$ with transforms
+  $\exp$ and $\sigma$ (sigmoid).
+
+- **Mean-probability** ($\mu$, $p$): stack $\underline{\theta}^* = [\log
+  \underline{\mu}, \; \text{logit}\, \underline{p}]$ with transforms
+  $\exp$ and $\sigma$.
+
+- **Mean-odds** ($\mu$, $\phi$): stack $\underline{\theta}^* = [\log
+  \underline{\mu}, \; \log \underline{\phi}]$ with transform $\exp$ for
+  both.
+
+- **ZINB extensions**: add $\text{logit}\, \underline{g}$ (gate) as a third
+  parameter group, extending to $3G$ dimensions.
+
+The choice of which parameter to sample first (the marginal in the chain rule)
+is arbitrary and does not affect the ELBO. In practice, one may prefer to
+sample the parameter with the strongest marginal signal first (typically
+$\mu$, as it directly maps to mean expression), though this is a heuristic
+consideration for optimization dynamics, not a mathematical requirement.
+
+## Summary {#sec-jlr-summary}
+
+The joint low-rank variational guide addresses the factorization gap in the
+current SVI framework by introducing a single low-rank covariance matrix over
+all per-gene parameters. The key results are:
+
+1. **The posterior has genuine cross-parameter structure** arising from the
+   NB likelihood (within-gene) and the hierarchical prior (across-gene).
+
+2. **The chain rule decomposition** $q(\underline{\theta}_1^*,
+   \underline{\theta}_2^*) = q(\underline{\theta}_1^*) \cdot
+   q(\underline{\theta}_2^* \mid \underline{\theta}_1^*)$ provides exact
+   ELBO computation with standard NumPyro sampling sites.
+
+3. **The conditional is a LowRankMVN** of the same rank $k$, with
+   covariance factor $\widetilde{W}_2 = W_2 L_M$ and diagonal $D_2$
+   (see @eq-jlr-cond-cov-final and @eq-jlr-cond-cov-factor). Only the
+   conditional mean depends on the sampled value of $\underline{\theta}_1^*$.
+
+4. **Computational cost** is $O(Gk^2 + k^3)$ per conditioning step —
+   negligible relative to likelihood evaluation.
+
+5. **At rank $k$**, the joint guide trades within-block for cross-block
+   expressivity. **At rank $2k$**, it strictly generalizes two separate
+   rank-$k$ guides.
+
+6. **The pattern extends** to $n$ parameter groups (e.g., ZINB with gate) via
+   iterated Schur complements, with each conditional maintaining rank $k$.
