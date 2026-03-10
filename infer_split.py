@@ -806,8 +806,11 @@ def main() -> None:
             forwarded_args=forwarded_args,
         )
 
-    console.print(f"[dim]Command:[/dim]")
-    console.print(f"  [cyan]{' '.join(cmd)}[/cyan]")
+    console.print("[dim]Command:[/dim]")
+    # Escape brackets for Rich so list values like [mu,phi] aren't
+    # swallowed as markup tags.
+    cmd_str = " ".join(cmd).replace("[", "\\[")
+    console.print(f"  [cyan]{cmd_str}[/cyan]")
     console.print()
 
     try:
