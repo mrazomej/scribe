@@ -139,16 +139,20 @@ factor has its own low-rank covariance:
 
 $$
 q(\underline{\mu}^*) = \mathcal{N}(\underline{\mu}^* \mid
-\text{loc}_\mu, \; W_\mu W_\mu^\top + D_\mu),
+\text{loc}_\mu, \;
+\underline{\underline{W}}_\mu \underline{\underline{W}}_\mu^\top + \underline{\underline{D}}_\mu),
 $${#eq-jlr-mu-marginal}
 
 $$
 q(\underline{\phi}^*) = \mathcal{N}(\underline{\phi}^* \mid
-\text{loc}_\phi, \; W_\phi W_\phi^\top + D_\phi),
+\text{loc}_\phi, \;
+\underline{\underline{W}}_\phi \underline{\underline{W}}_\phi^\top + \underline{\underline{D}}_\phi),
 $${#eq-jlr-phi-marginal}
 
-where $W_\mu, W_\phi \in \mathbb{R}^{G \times k}$ are the low-rank factors and
-$D_\mu, D_\phi \in \mathbb{R}^G_{>0}$ are the diagonal components.
+where $\underline{\underline{W}}_\mu, \underline{\underline{W}}_\phi \in
+\mathbb{R}^{G \times k}$ are the low-rank factors and
+$\underline{\underline{D}}_\mu, \underline{\underline{D}}_\phi \in
+\mathbb{R}^{G \times G}$ are diagonal positive-definite matrices.
 
 This factorization is exact if and only if $\underline{\mu}^*$ and
 $\underline{\phi}^*$ are independent in the true posterior. As argued in
@@ -178,21 +182,24 @@ parameterization, $\underline{\theta}_1^* = \log \underline{\mu}$ and
 $\underline{\theta}_2^* = \log \underline{\phi}$.
 
 We define the joint variational distribution as a low-rank multivariate normal
-over this $2G$-dimensional space:
+over this $2G$-dimensional space. As in the rest of the manuscript, matrices are
+denoted with double underlines:
 
 $$
 q(\underline{\theta}^*) = \mathcal{N}(\underline{\theta}^* \mid
-\text{loc}, \; \Sigma),
+\text{loc}, \; \underline{\underline{\Sigma}}),
 $${#eq-jlr-joint-dist}
 
 with the low-rank-plus-diagonal covariance structure
 
 $$
-\Sigma = W W^\top + D,
+\underline{\underline{\Sigma}} =
+\underline{\underline{W}} \underline{\underline{W}}^\top + \underline{\underline{D}},
 $${#eq-jlr-joint-cov}
 
-where $W \in \mathbb{R}^{2G \times k}$ is the low-rank factor and
-$D \in \mathbb{R}^{2G}_{>0}$ is the diagonal component.
+where $\underline{\underline{W}} \in \mathbb{R}^{2G \times k}$ is the low-rank
+factor and $\underline{\underline{D}} \in \mathbb{R}^{2G \times 2G}$ is a
+diagonal positive-definite matrix.
 
 ### Block structure {#sec-jlr-block-structure}
 
@@ -203,34 +210,49 @@ two parameter groups:
 $$
 \text{loc} = \begin{pmatrix} \text{loc}_1 \\ \text{loc}_2 \end{pmatrix},
 \quad
-W = \begin{pmatrix} W_1 \\ W_2 \end{pmatrix},
+\underline{\underline{W}} = \begin{pmatrix}
+\underline{\underline{W}}_1 \\ \underline{\underline{W}}_2
+\end{pmatrix},
 \quad
-D = \begin{pmatrix} D_1 & 0 \\ 0 & D_2 \end{pmatrix},
+\underline{\underline{D}} = \begin{pmatrix}
+\underline{\underline{D}}_1 & 0 \\ 0 & \underline{\underline{D}}_2
+\end{pmatrix},
 $${#eq-jlr-block-partition}
 
-where $W_1, W_2 \in \mathbb{R}^{G \times k}$ and $D_1, D_2 \in
-\mathbb{R}^{G}_{>0}$. The covariance matrix then has the block form
+where $\underline{\underline{W}}_1, \underline{\underline{W}}_2 \in
+\mathbb{R}^{G \times k}$ and
+$\underline{\underline{D}}_1, \underline{\underline{D}}_2 \in
+\mathbb{R}^{G \times G}$ are diagonal positive-definite matrices. The
+covariance matrix then has the block form
+When referring to NumPyro's `cov_diag` argument, we use
+$\underline{d}_i = \operatorname{diag}^{-1}(\underline{\underline{D}}_i)$ for
+the corresponding diagonal vectors.
 
 $$
-\Sigma =
+\underline{\underline{\Sigma}} =
 \begin{pmatrix}
-W_1 W_1^\top + D_1 & W_1 W_2^\top \\
-W_2 W_1^\top & W_2 W_2^\top + D_2
+\underline{\underline{W}}_1 \underline{\underline{W}}_1^\top + \underline{\underline{D}}_1 &
+\underline{\underline{W}}_1 \underline{\underline{W}}_2^\top \\
+\underline{\underline{W}}_2 \underline{\underline{W}}_1^\top &
+\underline{\underline{W}}_2 \underline{\underline{W}}_2^\top + \underline{\underline{D}}_2
 \end{pmatrix}
 =
 \begin{pmatrix}
-\Sigma_{11} & \Sigma_{12} \\
-\Sigma_{21} & \Sigma_{22}
+\underline{\underline{\Sigma}}_{11} & \underline{\underline{\Sigma}}_{12} \\
+\underline{\underline{\Sigma}}_{21} & \underline{\underline{\Sigma}}_{22}
 \end{pmatrix}.
 $${#eq-jlr-block-cov}
 
-The diagonal blocks $\Sigma_{11} = W_1 W_1^\top + D_1$ and
-$\Sigma_{22} = W_2 W_2^\top + D_2$ are the marginal covariances of the two
+The diagonal blocks $\underline{\underline{\Sigma}}_{11} =
+\underline{\underline{W}}_1 \underline{\underline{W}}_1^\top + \underline{\underline{D}}_1$ and
+$\underline{\underline{\Sigma}}_{22} =
+\underline{\underline{W}}_2 \underline{\underline{W}}_2^\top + \underline{\underline{D}}_2$ are the marginal covariances of the two
 parameter groups — analogous to what the separate `LowRankGuide`s already
 provide. The off-diagonal block
 
 $$
-\Sigma_{12} = W_1 W_2^\top
+\underline{\underline{\Sigma}}_{12} =
+\underline{\underline{W}}_1 \underline{\underline{W}}_2^\top
 $${#eq-jlr-cross-block}
 
 is the **cross-block**, a $G \times G$ matrix of rank at most $k$ that captures
@@ -358,7 +380,7 @@ $$
 \underline{\theta}_2^* \mid \underline{\theta}_1^* \sim
 \mathcal{N}\!\left(
     \underline{\mu}_{2 \mid 1}, \;
-    \Sigma_{2 \mid 1}
+    \underline{\underline{\Sigma}}_{2 \mid 1}
 \right),
 $${#eq-jlr-conditional-dist}
 
@@ -366,20 +388,28 @@ with conditional mean
 
 $$
 \underline{\mu}_{2 \mid 1} =
-\text{loc}_2 + \Sigma_{21} \, \Sigma_{11}^{-1}
+\text{loc}_2 +
+\underline{\underline{\Sigma}}_{21} \,
+\underline{\underline{\Sigma}}_{11}^{-1}
 (\underline{\theta}_1^* - \text{loc}_1),
 $${#eq-jlr-cond-mean-general}
 
 and conditional covariance
 
 $$
-\Sigma_{2 \mid 1} =
-\Sigma_{22} - \Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}.
+\underline{\underline{\Sigma}}_{2 \mid 1} =
+\underline{\underline{\Sigma}}_{22} -
+\underline{\underline{\Sigma}}_{21} \,
+\underline{\underline{\Sigma}}_{11}^{-1} \,
+\underline{\underline{\Sigma}}_{12}.
 $${#eq-jlr-cond-cov-general}
 
 These are standard results from multivariate normal theory. The challenge is
-computing $\Sigma_{11}^{-1}$ efficiently, since $\Sigma_{11} = W_1 W_1^\top +
-D_1$ is a $G \times G$ matrix. Naively inverting it would cost $O(G^3)$, which
+computing $\underline{\underline{\Sigma}}_{11}^{-1}$ efficiently, since
+$\underline{\underline{\Sigma}}_{11} =
+\underline{\underline{W}}_1 \underline{\underline{W}}_1^\top +
+\underline{\underline{D}}_1$ is a $G \times G$ matrix. Naively inverting it
+would cost $O(G^3)$, which
 is prohibitive for $G \sim 2{,}000$ to $30{,}000$. This is where the low-rank
 structure becomes essential.
 
@@ -403,76 +433,157 @@ $k \ll n$.
 
 ### Applying Woodbury to the marginal precision {#sec-jlr-woodbury-applied}
 
-We apply @eq-jlr-woodbury-identity with $A = D_1$ (diagonal, trivially
-invertible), $U = W_1$, $C = I_k$, $V = W_1^\top$:
+We apply @eq-jlr-woodbury-identity with
+$A = \underline{\underline{D}}_1$ (diagonal, trivially invertible),
+$U = \underline{\underline{W}}_1$,
+$C = \underline{\underline{I}}_k$,
+$V = \underline{\underline{W}}_1^\top$:
 
 $$
-\Sigma_{11}^{-1} = (W_1 W_1^\top + D_1)^{-1} =
-D_1^{-1} - D_1^{-1} W_1
-\left(I_k + W_1^\top D_1^{-1} W_1\right)^{-1}
-W_1^\top D_1^{-1}.
+\underline{\underline{\Sigma}}_{11}^{-1} =
+\left(
+\underline{\underline{W}}_1 \underline{\underline{W}}_1^\top +
+\underline{\underline{D}}_1
+\right)^{-1}
+=
+\underline{\underline{D}}_1^{-1}
+- \underline{\underline{D}}_1^{-1} \underline{\underline{W}}_1
+\left(
+\underline{\underline{I}}_k +
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1} \underline{\underline{W}}_1
+\right)^{-1}
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}.
 $${#eq-jlr-sigma11-inv}
 
 To simplify the expressions that follow, we define two $k \times k$ matrices
 that will appear repeatedly:
 
 $$
-H \equiv W_1^\top D_1^{-1} W_1 \in \mathbb{R}^{k \times k},
+\underline{\underline{H}} \equiv
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1} \underline{\underline{W}}_1
+\in \mathbb{R}^{k \times k},
 $${#eq-jlr-H-def}
 
 $$
-M \equiv (I_k + H)^{-1} \in \mathbb{R}^{k \times k}.
+\underline{\underline{M}} \equiv
+\left(\underline{\underline{I}}_k + \underline{\underline{H}}\right)^{-1}
+\in \mathbb{R}^{k \times k}.
 $${#eq-jlr-M-def}
 
-The matrix $H$ is symmetric positive semi-definite (as a product
-$W_1^\top D_1^{-1} W_1$ with $D_1^{-1}$ positive diagonal), and $I_k + H$ is
-therefore symmetric positive definite, so $M$ is well-defined and symmetric
-positive definite. In terms of $H$ and $M$, the Woodbury inversion becomes
+The matrix $\underline{\underline{H}}$ is symmetric positive semi-definite (as a
+product
+$\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1} \underline{\underline{W}}_1$
+with $\underline{\underline{D}}_1^{-1}$ positive diagonal), and
+$\underline{\underline{I}}_k + \underline{\underline{H}}$ is therefore symmetric
+positive definite, so $\underline{\underline{M}}$ is well-defined and symmetric
+positive definite. In terms of $\underline{\underline{H}}$ and
+$\underline{\underline{M}}$, the Woodbury inversion becomes
 
 $$
-\Sigma_{11}^{-1} = D_1^{-1} - D_1^{-1} W_1 \, M \, W_1^\top D_1^{-1}.
+\underline{\underline{\Sigma}}_{11}^{-1}
+=
+\underline{\underline{D}}_1^{-1}
+- \underline{\underline{D}}_1^{-1}
+\underline{\underline{W}}_1 \,
+\underline{\underline{M}} \,
+\underline{\underline{W}}_1^\top
+\underline{\underline{D}}_1^{-1}.
 $${#eq-jlr-sigma11-inv-compact}
 
 ### Simplifying the conditional mean {#sec-jlr-cond-mean-derivation}
 
 The conditional mean from @eq-jlr-cond-mean-general involves
-$\Sigma_{21} \Sigma_{11}^{-1}$, where $\Sigma_{21} = W_2 W_1^\top$. We
-need to compute $W_1^\top \Sigma_{11}^{-1}$, the right-multiplication of
-$\Sigma_{11}^{-1}$ by $W_1$. Substituting @eq-jlr-sigma11-inv-compact:
+$\underline{\underline{\Sigma}}_{21}
+\underline{\underline{\Sigma}}_{11}^{-1}$, where
+$\underline{\underline{\Sigma}}_{21} =
+\underline{\underline{W}}_2 \underline{\underline{W}}_1^\top$. We need to
+compute
+$\underline{\underline{W}}_1^\top
+\underline{\underline{\Sigma}}_{11}^{-1}$.
+Substituting @eq-jlr-sigma11-inv-compact:
 
 $$
-W_1^\top \Sigma_{11}^{-1} =
-W_1^\top D_1^{-1} -
-W_1^\top D_1^{-1} W_1 \, M \, W_1^\top D_1^{-1}.
+\underline{\underline{W}}_1^\top
+\underline{\underline{\Sigma}}_{11}^{-1}
+=
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}
+- \underline{\underline{W}}_1^\top
+\underline{\underline{D}}_1^{-1}
+\underline{\underline{W}}_1 \,
+\underline{\underline{M}} \,
+\underline{\underline{W}}_1^\top
+\underline{\underline{D}}_1^{-1}.
 $${#eq-jlr-w1-sigma11-step1}
 
-Recognizing $W_1^\top D_1^{-1} W_1 = H$ from @eq-jlr-H-def:
+Recognizing
+$\underline{\underline{W}}_1^\top
+\underline{\underline{D}}_1^{-1}
+\underline{\underline{W}}_1
+=
+\underline{\underline{H}}$ from @eq-jlr-H-def:
 
 $$
-W_1^\top \Sigma_{11}^{-1} =
-W_1^\top D_1^{-1} - H \, M \, W_1^\top D_1^{-1}
-= (I_k - HM) \, W_1^\top D_1^{-1}.
+\underline{\underline{W}}_1^\top
+\underline{\underline{\Sigma}}_{11}^{-1}
+=
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}
+- \underline{\underline{H}} \, \underline{\underline{M}} \,
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}
+=
+\left(
+\underline{\underline{I}}_k -
+\underline{\underline{H}} \underline{\underline{M}}
+\right)
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}.
 $${#eq-jlr-w1-sigma11-step2}
 
-We now simplify $I_k - HM$. Since $M = (I_k + H)^{-1}$:
+We now simplify
+$\underline{\underline{I}}_k - \underline{\underline{H}} \underline{\underline{M}}$.
+Since
+$\underline{\underline{M}} =
+(\underline{\underline{I}}_k + \underline{\underline{H}})^{-1}$:
 
 $$
-I_k - HM = I_k - H(I_k + H)^{-1} = (I_k + H)^{-1}\left[(I_k + H) - H\right]
-= (I_k + H)^{-1} = M.
+\underline{\underline{I}}_k
+- \underline{\underline{H}} \underline{\underline{M}}
+=
+\underline{\underline{I}}_k -
+\underline{\underline{H}}
+(\underline{\underline{I}}_k + \underline{\underline{H}})^{-1}
+=
+(\underline{\underline{I}}_k + \underline{\underline{H}})^{-1}
+\left[
+(\underline{\underline{I}}_k + \underline{\underline{H}}) - \underline{\underline{H}}
+\right]
+=
+(\underline{\underline{I}}_k + \underline{\underline{H}})^{-1}
+= \underline{\underline{M}}.
 $${#eq-jlr-I-minus-HM}
 
 Therefore:
 
 $$
-W_1^\top \Sigma_{11}^{-1} = M \, W_1^\top D_1^{-1}.
+\underline{\underline{W}}_1^\top
+\underline{\underline{\Sigma}}_{11}^{-1}
+=
+\underline{\underline{M}} \,
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}.
 $${#eq-jlr-w1-sigma11-final}
 
 This is a key simplification. Substituting into the conditional mean:
 
 $$
-\Sigma_{21} \, \Sigma_{11}^{-1} =
-W_2 \left(W_1^\top \Sigma_{11}^{-1}\right) =
-W_2 \, M \, W_1^\top D_1^{-1}.
+\underline{\underline{\Sigma}}_{21} \, \underline{\underline{\Sigma}}_{11}^{-1}
+=
+\underline{\underline{W}}_2
+\left(
+\underline{\underline{W}}_1^\top
+\underline{\underline{\Sigma}}_{11}^{-1}
+\right)
+=
+\underline{\underline{W}}_2 \,
+\underline{\underline{M}} \,
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}.
 $${#eq-jlr-sigma21-sigma11}
 
 The conditional mean from @eq-jlr-cond-mean-general becomes:
@@ -480,7 +591,10 @@ The conditional mean from @eq-jlr-cond-mean-general becomes:
 $$
 \boxed{
 \underline{\mu}_{2 \mid 1} =
-\text{loc}_2 + W_2 \, M \, W_1^\top D_1^{-1}
+\text{loc}_2 +
+\underline{\underline{W}}_2 \,
+\underline{\underline{M}} \,
+\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1}
 \left(\underline{\theta}_1^* - \text{loc}_1\right).
 }
 $${#eq-jlr-cond-mean-final}
@@ -488,74 +602,85 @@ $${#eq-jlr-cond-mean-final}
 ### The conditional covariance is low-rank {#sec-jlr-cond-cov-derivation}
 
 We now turn to the conditional covariance from @eq-jlr-cond-cov-general. We
-need the product $\Sigma_{21} \Sigma_{11}^{-1} \Sigma_{12}$, where
-$\Sigma_{12} = W_1 W_2^\top$. From @eq-jlr-sigma21-sigma11:
+need the product
+$\underline{\underline{\Sigma}}_{21}
+\underline{\underline{\Sigma}}_{11}^{-1}
+\underline{\underline{\Sigma}}_{12}$, where
+$\underline{\underline{\Sigma}}_{12} =
+\underline{\underline{W}}_1 \underline{\underline{W}}_2^\top$. From
+@eq-jlr-sigma21-sigma11:
 
 $$
-\Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
-= W_2 \, M \, W_1^\top D_1^{-1} \, W_1 W_2^\top.
+\underline{\underline{\Sigma}}_{21} \, \underline{\underline{\Sigma}}_{11}^{-1} \, \underline{\underline{\Sigma}}_{12}
+:= \underline{\underline{W}}_2 \, \underline{\underline{M}} \, \underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1} \, \underline{\underline{W}}_1 \underline{\underline{W}}_2^\top.
 $${#eq-jlr-triple-product-step1}
 
-Recognizing $W_1^\top D_1^{-1} W_1 = H$:
+Recognizing $\underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1} \underline{\underline{W}}_1 = \underline{\underline{H}}$:
 
 $$
-\Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
-= W_2 \, M H \, W_2^\top.
+\underline{\underline{\Sigma}}_{21} \, \underline{\underline{\Sigma}}_{11}^{-1} \, \underline{\underline{\Sigma}}_{12}
+:= \underline{\underline{W}}_2 \, \underline{\underline{M}} \underline{\underline{H}} \, \underline{\underline{W}}_2^\top.
 $${#eq-jlr-triple-product-step2}
 
-Now, from @eq-jlr-I-minus-HM we know $I_k - HM = M$. Transposing (both $H$
-and $M$ are symmetric): $I_k - MH = M$, which gives $MH = I_k - M$. Therefore:
+Now, from @eq-jlr-I-minus-HM we know
+$\underline{\underline{I}}_k - \underline{\underline{H}}\underline{\underline{M}} = \underline{\underline{M}}$.
+Because $\underline{\underline{M}} = f(\underline{\underline{H}})$ with
+$f(x) = (1+x)^{-1}$, $\underline{\underline{M}}$ and $\underline{\underline{H}}$
+commute, so
+$\underline{\underline{M}}\underline{\underline{H}} =
+\underline{\underline{H}}\underline{\underline{M}} =
+\underline{\underline{I}}_k - \underline{\underline{M}}$. Therefore:
 
 $$
-\Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
-= W_2 (I_k - M) W_2^\top.
+\underline{\underline{\Sigma}}_{21} \, \underline{\underline{\Sigma}}_{11}^{-1} \, \underline{\underline{\Sigma}}_{12}
+:= \underline{\underline{W}}_2 (\underline{\underline{I}}_k - \underline{\underline{M}}) \underline{\underline{W}}_2^\top.
 $${#eq-jlr-triple-product-final}
 
 Substituting into the conditional covariance from @eq-jlr-cond-cov-general:
 
 $$
-\Sigma_{2 \mid 1}
-= \Sigma_{22} - \Sigma_{21} \, \Sigma_{11}^{-1} \, \Sigma_{12}
-= (W_2 W_2^\top + D_2) - W_2 (I_k - M) W_2^\top.
+\underline{\underline{\Sigma}}_{2 \mid 1}
+:= \underline{\underline{\Sigma}}_{22} - \underline{\underline{\Sigma}}_{21} \, \underline{\underline{\Sigma}}_{11}^{-1} \, \underline{\underline{\Sigma}}_{12}
+:= (\underline{\underline{W}}_2 \underline{\underline{W}}_2^\top + \underline{\underline{D}}_2) - \underline{\underline{W}}_2 (\underline{\underline{I}}_k - \underline{\underline{M}}) \underline{\underline{W}}_2^\top.
 $${#eq-jlr-cond-cov-step1}
 
 Expanding:
 
 $$
-\Sigma_{2 \mid 1}
-= W_2 W_2^\top + D_2 - W_2 W_2^\top + W_2 M W_2^\top
-= W_2 \, M \, W_2^\top + D_2.
+\underline{\underline{\Sigma}}_{2 \mid 1}
+:= \underline{\underline{W}}_2 \underline{\underline{W}}_2^\top + \underline{\underline{D}}_2 - \underline{\underline{W}}_2 \underline{\underline{W}}_2^\top + \underline{\underline{W}}_2 \underline{\underline{M}} \underline{\underline{W}}_2^\top
+:= \underline{\underline{W}}_2 \, \underline{\underline{M}} \, \underline{\underline{W}}_2^\top + \underline{\underline{D}}_2.
 $${#eq-jlr-cond-cov-step2}
 
 This is the central result:
 
 $$
 \boxed{
-\Sigma_{2 \mid 1} = W_2 \, M \, W_2^\top + D_2.
+\underline{\underline{\Sigma}}_{2 \mid 1} = \underline{\underline{W}}_2 \, \underline{\underline{M}} \, \underline{\underline{W}}_2^\top + \underline{\underline{D}}_2.
 }
 $${#eq-jlr-cond-cov-final}
 
 ### The conditional as a LowRankMultivariateNormal {#sec-jlr-cond-lowrank}
 
-The result @eq-jlr-cond-cov-final has a remarkable structure. Since $M$ is
+The result @eq-jlr-cond-cov-final has a remarkable structure. Since $\underline{\underline{M}}$ is
 symmetric positive definite (as the inverse of the positive definite matrix
-$I_k + H$), it admits a Cholesky decomposition:
+$\underline{\underline{I}}_k + \underline{\underline{H}}$), it admits a Cholesky decomposition:
 
 $$
-M = L_M L_M^\top,
+\underline{\underline{M}} = \underline{\underline{L}}_M \underline{\underline{L}}_M^\top,
 $${#eq-jlr-cholesky-M}
 
-where $L_M \in \mathbb{R}^{k \times k}$ is lower triangular with positive
+where $\underline{\underline{L}}_M \in \mathbb{R}^{k \times k}$ is lower triangular with positive
 diagonal. Substituting into @eq-jlr-cond-cov-final:
 
 $$
-\Sigma_{2 \mid 1} = (W_2 L_M)(W_2 L_M)^\top + D_2.
+\underline{\underline{\Sigma}}_{2 \mid 1} = (\underline{\underline{W}}_2 \underline{\underline{L}}_M)(\underline{\underline{W}}_2 \underline{\underline{L}}_M)^\top + \underline{\underline{D}}_2.
 $${#eq-jlr-cond-cov-factor}
 
 Defining the **conditional covariance factor**
 
 $$
-\widetilde{W}_2 \equiv W_2 L_M \in \mathbb{R}^{G \times k},
+\underline{\underline{\widetilde{W}}}_2 \equiv \underline{\underline{W}}_2 \underline{\underline{L}}_M \in \mathbb{R}^{G \times k},
 $${#eq-jlr-cond-W-def}
 
 the conditional distribution from @eq-jlr-conditional-dist takes the form
@@ -564,8 +689,8 @@ $$
 \underline{\theta}_2^* \mid \underline{\theta}_1^* \sim
 \text{LowRankMVN}\!\left(
     \underline{\mu}_{2 \mid 1}, \;
-    \widetilde{W}_2, \;
-    D_2
+    \underline{\underline{\widetilde{W}}}_2, \;
+    \operatorname{diag}(\underline{d}_2)
 \right),
 $${#eq-jlr-cond-as-lowrank}
 
@@ -575,11 +700,16 @@ $\text{cov\_factor} \cdot \text{cov\_factor}^\top + \text{diag}(\text{cov\_diag}
 
 This is the same distribution family used for the existing per-parameter
 low-rank guides. The conditional has the **same rank** $k$ as the marginal.
-Furthermore, the conditional covariance factor $\widetilde{W}_2 = W_2 L_M$
-depends only on the variational parameters ($W_1$, $W_2$, $D_1$), not on the
+Furthermore, the conditional covariance factor
+$\underline{\underline{\widetilde{W}}}_2 =
+\underline{\underline{W}}_2 \underline{\underline{L}}_M$
+depends only on the variational parameters
+($\underline{\underline{W}}_1$, $\underline{\underline{W}}_2$,
+$\underline{\underline{D}}_1$), not on the
 sampled value $\underline{\theta}_1^*$. Only the conditional mean
 $\underline{\mu}_{2 \mid 1}$ from @eq-jlr-cond-mean-final depends on the
-sample. This means $\widetilde{W}_2$ and $D_2$ can be precomputed once per
+sample. This means $\underline{\underline{\widetilde{W}}}_2$ and
+$\operatorname{diag}(\underline{d}_2)$ can be precomputed once per
 optimization step, with only the $O(Gk)$ conditional mean update varying per
 sample.
 
@@ -587,15 +717,27 @@ sample.
 
 We summarize the computational costs. The operations are:
 
-1. Compute $H = W_1^\top D_1^{-1} W_1$: a product of $(k \times G)$ and
+1. Compute
+   $\underline{\underline{H}} =
+   \underline{\underline{W}}_1^\top
+   \underline{\underline{D}}_1^{-1}
+   \underline{\underline{W}}_1$:
+   a product of $(k \times G)$ and
    $(G \times k)$ matrices with an elementwise scaling, costing $O(Gk^2)$.
 
-2. Compute $M = (I_k + H)^{-1}$: inversion of a $k \times k$ positive definite
+2. Compute
+   $\underline{\underline{M}} =
+   (\underline{\underline{I}}_k + \underline{\underline{H}})^{-1}$:
+   inversion of a $k \times k$ positive definite
    matrix via Cholesky decomposition, costing $O(k^3)$.
 
-3. Compute $L_M$ (Cholesky of $M$): $O(k^3)$.
+3. Compute $\underline{\underline{L}}_M$ (Cholesky of
+   $\underline{\underline{M}}$): $O(k^3)$.
 
-4. Compute $\widetilde{W}_2 = W_2 L_M$: a $(G \times k)$ times $(k \times k)$
+4. Compute
+   $\underline{\underline{\widetilde{W}}}_2 =
+   \underline{\underline{W}}_2 \underline{\underline{L}}_M$:
+   a $(G \times k)$ times $(k \times k)$
    matrix product, costing $O(Gk^2)$.
 
 5. Compute the conditional mean $\underline{\mu}_{2 \mid 1}$: a sequence of
@@ -679,24 +821,20 @@ reparameterization trick, both procedures express
 $(\underline{\theta}_1^*, \underline{\theta}_2^*)$ as affine transformations of
 independent standard normal variables:
 
-- **Joint sampling:** $\underline{\theta}^* = \text{loc} + W\varepsilon +
-  D^{1/2}\delta$ with $\varepsilon \sim \mathcal{N}(0, I_k)$,
-  $\delta \sim \mathcal{N}(0, I_{2G})$.
+- **Joint sampling:** $\underline{\theta}^* = \text{loc} + \underline{\underline{W}}\varepsilon +
+  \underline{\underline{D}}^{1/2}\delta$ with $\varepsilon \sim \mathcal{N}(0, \underline{\underline{I}}_k)$,
+  $\delta \sim \mathcal{N}(0, \underline{\underline{I}}_{2G})$.
 
 - **Conditional sampling:** sample $\underline{\theta}_1^* = \text{loc}_1 +
-  W_1 \varepsilon_1 + D_1^{1/2} \delta_1$, then
-  $\underline{\theta}_2^* = \underline{\mu}_{2|1} + \widetilde{W}_2
-  \varepsilon_2 + D_2^{1/2} \delta_2$ with independent standard normals.
+  \underline{\underline{W}}_1 \varepsilon_1 + \underline{\underline{D}}_1^{1/2} \delta_1$, then
+  $\underline{\theta}_2^* = \underline{\mu}_{2|1} + \underline{\underline{\widetilde{W}}}_2
+  \varepsilon_2 + \underline{\underline{D}}_2^{1/2} \delta_2$ with independent standard normals.
 
-For multivariate Gaussians, any decomposition into affine transformations of
-independent standard normals produces gradient estimators with the same
-variance, since the resulting joint distribution over
-$(\underline{\theta}_1^*, \underline{\theta}_2^*)$ is identical. The gradient
-of the ELBO with respect to the shared variational parameters
-$(W_1, W_2, D_1, D_2, \text{loc}_1, \text{loc}_2)$ is the same function
-regardless of the sampling procedure, and the Monte Carlo variance of the
-gradient estimator is determined by the joint distribution of the samples, which
-is the same in both cases. $\square$
+Both decompositions are valid reparameterizations of the same target
+$q(\underline{\theta}_1^*, \underline{\theta}_2^*)$, so both produce unbiased
+pathwise gradient estimators for the same ELBO objective. In practice, finite-sample
+Monte Carlo variance can differ slightly across equivalent reparameterizations,
+but no bias is introduced by using the chain-rule form. $\square$
 
 ## Relationship to factorized guides {#sec-jlr-factorized-recovery}
 
@@ -707,11 +845,11 @@ as a special case. The answer depends on the rank.
 
 At rank $k$, the joint guide **cannot** exactly recover two independent
 rank-$k$ `LowRankMultivariateNormal` distributions. To see this, note that the
-cross-block $\Sigma_{12} = W_1 W_2^\top$ from @eq-jlr-cross-block vanishes if
-and only if $W_1 W_2^\top = 0_{G \times G}$. For generic $W_1$ with full
-column rank (i.e., rank $k$), $W_1 x = 0$ only for $x = 0$. Therefore
-$W_1 W_2^\top = 0$ requires every column of $W_2$ to lie in the null space of
-$W_1^\top$, which for full-rank $W_1$ means $W_2 = 0$ — a degenerate case that
+cross-block $\underline{\underline{\Sigma}}_{12} = \underline{\underline{W}}_1 \underline{\underline{W}}_2^\top$ from @eq-jlr-cross-block vanishes if
+and only if $\underline{\underline{W}}_1 \underline{\underline{W}}_2^\top = 0_{G \times G}$. For generic $\underline{\underline{W}}_1$ with full
+column rank (i.e., rank $k$), $\underline{\underline{W}}_1 x = 0$ only for $x = 0$. Therefore
+$\underline{\underline{W}}_1 \underline{\underline{W}}_2^\top = 0$ requires every column of $\underline{\underline{W}}_2$ to lie in the null space of
+$\underline{\underline{W}}_1^\top$, which for full-rank $\underline{\underline{W}}_1$ means $\underline{\underline{W}}_2 = 0$ — a degenerate case that
 eliminates the second parameter's covariance structure entirely.
 
 Consequently, at rank $k$, the joint guide represents a **different variational
@@ -724,17 +862,17 @@ At rank $2k$, the joint guide **can** recover two independent rank-$k$
 distributions by using a block-diagonal factor matrix:
 
 $$
-W = \begin{pmatrix} W_1' & 0 \\ 0 & W_2' \end{pmatrix}
+\underline{\underline{W}} = \begin{pmatrix} \underline{\underline{W}}_1' & 0 \\ 0 & \underline{\underline{W}}_2' \end{pmatrix}
 \in \mathbb{R}^{2G \times 2k},
 $${#eq-jlr-block-diagonal-W}
 
-where $W_1', W_2' \in \mathbb{R}^{G \times k}$. The covariance becomes
+where $\underline{\underline{W}}_1', \underline{\underline{W}}_2' \in \mathbb{R}^{G \times k}$. The covariance becomes
 
 $$
-W W^\top =
+\underline{\underline{W}} \underline{\underline{W}}^\top =
 \begin{pmatrix}
-W_1' W_1'{}^\top & 0 \\
-0 & W_2' W_2'{}^\top
+\underline{\underline{W}}_1' \underline{\underline{W}}_1'{}^\top & 0 \\
+0 & \underline{\underline{W}}_2' \underline{\underline{W}}_2'{}^\top
 \end{pmatrix},
 $${#eq-jlr-block-diagonal-cov}
 
@@ -780,18 +918,18 @@ where each factor is sampled sequentially and registered as a separate
 `numpyro.sample` site. The computation proceeds as follows:
 
 1. **Sample $\underline{\theta}_1^*$** from its marginal
-   $\text{LowRankMVN}(\text{loc}_1, W_1, D_1)$.
+   $\text{LowRankMVN}(\text{loc}_1, \underline{\underline{W}}_1, \operatorname{diag}(\underline{d}_1))$.
 
 2. **Condition on $\underline{\theta}_1^*$**: the joint distribution of
    $(\underline{\theta}_2^*, \underline{\theta}_3^*)$ given
    $\underline{\theta}_1^*$ is a $2G$-dimensional LowRankMVN. By the
    same Woodbury derivation as in @sec-jlr-woodbury, the conditional
-   covariance factor is $[W_2; W_3] L_{M_1}$ with
-   $M_1 = (I_k + W_1^\top D_1^{-1} W_1)^{-1}$.
+   covariance factor is $[\underline{\underline{W}}_2; \underline{\underline{W}}_3] \underline{\underline{L}}_{M_1}$ with
+   $\underline{\underline{M}}_1 = (\underline{\underline{I}}_k + \underline{\underline{W}}_1^\top \underline{\underline{D}}_1^{-1} \underline{\underline{W}}_1)^{-1}$.
 
 3. **Sample $\underline{\theta}_2^*$** from the marginal of this $2G$-dim
    conditional (its first $G$ components), which is
-   $\text{LowRankMVN}(\underline{\mu}_{2|1}, W_2 L_{M_1}, D_2)$.
+   $\text{LowRankMVN}(\underline{\mu}_{2|1}, \underline{\underline{W}}_2 \underline{\underline{L}}_{M_1}, \operatorname{diag}(\underline{d}_2))$.
 
 4. **Condition on $\underline{\theta}_2^*$**: apply the Schur complement again
    within the $2G$-dim conditional to obtain the distribution of
@@ -847,7 +985,7 @@ all per-gene parameters. The key results are:
    ELBO computation with standard NumPyro sampling sites.
 
 3. **The conditional is a LowRankMVN** of the same rank $k$, with
-   covariance factor $\widetilde{W}_2 = W_2 L_M$ and diagonal $D_2$
+   covariance factor $\underline{\underline{\widetilde{W}}}_2 = \underline{\underline{W}}_2 \underline{\underline{L}}_M$ and diagonal $\operatorname{diag}(\underline{d}_2)$
    (see @eq-jlr-cond-cov-final and @eq-jlr-cond-cov-factor). Only the
    conditional mean depends on the sampled value of $\underline{\theta}_1^*$.
 
