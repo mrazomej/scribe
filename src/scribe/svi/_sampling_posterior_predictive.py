@@ -108,15 +108,20 @@ class PosteriorPredictiveSamplingMixin:
         store_samples: bool = True,
     ) -> jnp.ndarray:
         """Generate predictive samples using posterior parameter samples."""
+        from ..models.config import GuideFamilyConfig
         from ..models.model_registry import get_model_and_guide
 
         # For predictive sampling, we need the *constrained* model, which has
         # the 'counts' sample site. The posterior samples from the unconstrained
         # guide can be used with the constrained model.
+        # Use an empty GuideFamilyConfig so the guide is built with default
+        # MeanField families — the guide is discarded anyway, and keeping the
+        # original families (e.g. JointLowRankGuide) would be incompatible
+        # with constrained specs that lack a .transform attribute.
         model, _, _ = get_model_and_guide(
             self.model_config,
-            unconstrained=False,  # Explicitly get the constrained model
-            guide_families=None,  # Not relevant for the model (only guide)
+            unconstrained=False,
+            guide_families=GuideFamilyConfig(),
         )
 
         # Prepare base model arguments
