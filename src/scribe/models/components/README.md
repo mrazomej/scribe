@@ -8,7 +8,7 @@ This directory contains the atomic components used by the builders:
 
 - **likelihoods/**: Likelihood functions (NB, ZINB, VCP variants)
 - **guide_families.py**: Variational family implementations (MeanField, LowRank,
-  Amortized, VAELatentGuide)
+  JointLowRank, Amortized, VAELatentGuide)
 - **vae_components.py**: Encoder/decoder building blocks for VAE-style models
 - **covariate_embedding.py**: Categorical covariate embedding for conditioning
 - **amortizers.py**: Neural network amortizers for variational parameters
@@ -53,6 +53,7 @@ approximation to use:
 |-------------------------|---------------------------------|-------------------|
 | `MeanFieldGuide`        | Factorized variational family   | Default, fast     |
 | `LowRankGuide(rank)`    | Low-rank MVN covariance         | Gene correlations |
+| `JointLowRankGuide(rank, group)` | Joint low-rank MVN across parameter groups | Cross-parameter correlations |
 | `AmortizedGuide(net)`   | Neural network amortization     | High-dim params   |
 | `VAELatentGuide`        | VAE: encoder + latent_spec + decoder | Joint latent z + decoder-driven params |
 
@@ -65,6 +66,27 @@ from scribe.models.builders import BetaSpec, LogNormalSpec
 # Per-parameter guide families
 BetaSpec("p", (), (1.0, 1.0), guide_family=MeanFieldGuide())
 LogNormalSpec("r", ("n_genes",), (0.0, 1.0), guide_family=LowRankGuide(rank=10))
+```
+
+### JointLowRankGuide
+
+`JointLowRankGuide` captures cross-parameter correlations (e.g., between `mu`
+and `phi` across all genes) via a single low-rank MVN over the stacked
+unconstrained parameter vector. Parameters sharing the same `group` string are
+modeled jointly using a chain rule decomposition with Woodbury-efficient
+conditional distributions. See `paper/_joint_low_rank_guide.qmd` for the full
+derivation.
+
+```python
+from scribe.models.components import JointLowRankGuide
+from scribe.models.builders import ExpNormalSpec
+
+# Assign the same group to parameters that should be jointly modeled
+joint = JointLowRankGuide(rank=10, group="nb_params")
+ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
+             is_gene_specific=True, guide_family=joint, constrained_name="mu")
+ExpNormalSpec("phi", ("n_genes",), (0.0, 1.0),
+             is_gene_specific=True, guide_family=joint, constrained_name="phi")
 ```
 
 ## Covariate embedding
@@ -409,8 +431,9 @@ MY_STATISTIC = SufficientStatistic(
 │  │              │ │                  │ │ Embedding     │ │               │  │
 │  │ NegBinomial  │ │ MeanFieldGuide   │ │ CovariateSpec │ │ GaussianEnc   │  │
 │  │ ZINB, VCP    │ │ LowRankGuide     │ │ Covariate     │ │ MultiHeadDec   │  │
-│  │              │ │ AmortizedGuide   │ │ Embedding     │ │ AbstractEnc   │  │
-│  │              │ │ VAELatentGuide   │ │               │ │ AbstractDec   │  │
+│  │              │ │ JointLowRank     │ │ Embedding     │ │ AbstractEnc   │  │
+│  │              │ │ AmortizedGuide   │ │               │ │ AbstractDec   │  │
+│  │              │ │ VAELatentGuide   │ │               │ │               │  │
 │  └──────────────┘ └─────────────────┘ └──────────────┘ └───────────────┘  │
 │                                                                             │
 │  ┌─────────────────┐                                                       │

@@ -11,6 +11,8 @@ model can use different guide families. For example:
 - `r` (dispersion) might use `LowRankGuide` to capture gene correlations
 - `p_capture` might use `AmortizedGuide` for efficient inference
 - `p` (dropout) might use simple `MeanFieldGuide`
+- `mu` + `phi` might share a `JointLowRankGuide` for cross-parameter
+  correlations
 
 Classes
 -------
@@ -20,6 +22,8 @@ MeanFieldGuide
     Marker for mean-field (fully factorized) variational family.
 LowRankGuide
     Marker for low-rank MVN covariance structure.
+JointLowRankGuide
+    Marker for joint low-rank MVN across multiple parameter groups.
 AmortizedGuide
     Marker for amortized inference using neural networks.
 VAELatentGuide
@@ -153,6 +157,80 @@ class LowRankGuide(GuideFamily):
     def __post_init__(self) -> None:
         if self.rank <= 0:
             raise ValueError("rank must be positive")
+
+
+# ------------------------------------------------------------------------------
+# Joint Low-Rank Guide Family
+# ------------------------------------------------------------------------------
+
+
+@dataclass
+class JointLowRankGuide(GuideFamily):
+    """
+    Marker for joint low-rank MVN covariance across multiple parameter groups.
+
+    Instead of fitting separate LowRankMVN distributions per parameter, this
+    guide defines a single joint LowRankMVN over the stacked unconstrained
+    vector of all grouped parameters. The joint covariance captures
+    cross-parameter correlations (e.g., between mu_g and phi_g) that are
+    structurally absent from factorized guides.
+
+    Implementation uses the chain rule decomposition:
+
+        q(theta_1, theta_2) = q(theta_1) * q(theta_2 | theta_1)
+
+    where both the marginal and the conditional are LowRankMVN of the same
+    rank, computed via the Woodbury identity. This ensures exact ELBO
+    computation with standard NumPyro sampling sites.
+
+    Parameters
+    ----------
+    rank : int
+        Rank of the joint low-rank factor matrix W in R^{nG x rank}.
+        At rank k, the guide trades within-block for cross-block expressivity.
+        At rank 2k, it strictly generalizes two separate rank-k LowRankGuides.
+        Typical values: 10-20.
+    group : str
+        Identifier linking parameters that share the same joint covariance.
+        All ParamSpecs with a JointLowRankGuide having the same ``group``
+        are modeled jointly. The sampling order follows the order in which
+        specs appear in the parameter list.
+
+    Advantages
+    ----------
+    - Captures cross-parameter gene-gene correlations (Sigma_rp block)
+    - Each conditional in the chain is itself a LowRankMVN (same rank)
+    - Computational overhead is O(Gk^2 + k^3) per conditioning step
+    - Natural extension to 3+ parameters (e.g., ZINB with gate)
+
+    Disadvantages
+    -------------
+    - At rank k, within-block expressivity is reduced vs separate rank-k guides
+    - More complex optimization landscape
+    - Requires all grouped parameters to be gene-specific with the same shape
+
+    Examples
+    --------
+    >>> # Joint guide for mu and phi in mean-odds parameterization
+    >>> joint = JointLowRankGuide(rank=10, group="nb_params")
+    >>> ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
+    ...     is_gene_specific=True, guide_family=joint)
+    >>> ExpNormalSpec("phi", ("n_genes",), (0.0, 1.0),
+    ...     is_gene_specific=True, guide_family=joint)
+
+    See Also
+    --------
+    LowRankGuide : Per-parameter low-rank guide (no cross-parameter correlations).
+    """
+
+    rank: int = 10
+    group: str = "default"
+
+    def __post_init__(self) -> None:
+        if self.rank <= 0:
+            raise ValueError("rank must be positive")
+        if not self.group:
+            raise ValueError("group must be a non-empty string")
 
 
 # ------------------------------------------------------------------------------

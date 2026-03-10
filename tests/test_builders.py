@@ -1349,3 +1349,336 @@ class TestAmortizer:
         assert list(out_u.params.keys()) == ["loc", "log_scale"]
         scale = jnp.exp(out_u.params["log_scale"])
         assert jnp.all(scale > 0), "exp(log_scale) must be positive"
+
+
+# ==============================================================================
+# Test JointLowRankGuide
+# ==============================================================================
+
+
+class TestJointLowRankGuide:
+    """Test JointLowRankGuide: chain rule decomposition with Woodbury conditioning."""
+
+    def test_joint_guide_two_params(self, model_config, small_counts):
+        """Test joint guide with two gene-specific ExpNormalSpec parameters."""
+        from scribe.models.components import JointLowRankGuide
+
+        joint = JointLowRankGuide(rank=5, group="nb_params")
+        specs = [
+            ExpNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # Both sites should be registered
+        assert "mu" in tr
+        assert "phi" in tr
+
+        # Both should have correct shape (n_genes=20)
+        assert tr["mu"]["value"].shape == (20,)
+        assert tr["phi"]["value"].shape == (20,)
+
+        # Both should be positive (exp transform applied)
+        assert jnp.all(tr["mu"]["value"] > 0)
+        assert jnp.all(tr["phi"]["value"] > 0)
+
+    def test_joint_guide_has_log_prob(self, model_config, small_counts):
+        """Test that joint guide sites have proper log_prob (not Delta)."""
+        from scribe.models.components import JointLowRankGuide
+
+        joint = JointLowRankGuide(rank=3, group="test")
+        specs = [
+            ExpNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # Both sites should be sample sites with finite log_prob
+        # (not deterministic / Delta), which is the whole point of
+        # the chain rule decomposition
+        for name in ["mu", "phi"]:
+            assert tr[name]["type"] == "sample"
+            log_prob = tr[name]["fn"].log_prob(tr[name]["value"])
+            assert jnp.isfinite(log_prob).all(), (
+                f"Site '{name}' has non-finite log_prob, indicating "
+                "broken guide distribution"
+            )
+
+    def test_joint_guide_three_params(self, model_config, small_counts):
+        """Test joint guide with three parameters (e.g., ZINB with gate)."""
+        from scribe.models.components import JointLowRankGuide
+        from scribe.models.builders import SigmoidNormalSpec
+
+        joint = JointLowRankGuide(rank=4, group="zinb_params")
+        specs = [
+            ExpNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+            SigmoidNormalSpec(
+                name="gate",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="gate",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # All three sites should be present
+        assert "mu" in tr
+        assert "phi" in tr
+        assert "gate" in tr
+
+        # gate should be in (0, 1) (sigmoid transform)
+        assert jnp.all(tr["gate"]["value"] > 0)
+        assert jnp.all(tr["gate"]["value"] < 1)
+
+    def test_joint_guide_mixed_with_independent(self, model_config, small_counts):
+        """Test that joint specs and independent specs coexist correctly."""
+        from scribe.models.components import JointLowRankGuide
+
+        joint = JointLowRankGuide(rank=5, group="nb")
+        specs = [
+            # These two are jointly modeled
+            ExpNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+            # This one is independent (separate LowRank)
+            ExpNormalSpec(
+                name="r_extra",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=LowRankGuide(rank=3),
+                constrained_name="r_extra",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        assert "mu" in tr
+        assert "phi" in tr
+        assert "r_extra" in tr
+
+    def test_joint_guide_param_names(self, model_config, small_counts):
+        """Test that joint guide registers correctly named variational params."""
+        from scribe.models.components import JointLowRankGuide
+
+        joint = JointLowRankGuide(rank=5, group="mygroup")
+        specs = [
+            ExpNormalSpec(
+                name="mu",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="mu",
+            ),
+            ExpNormalSpec(
+                name="phi",
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                is_gene_specific=True,
+                guide_family=joint,
+                constrained_name="phi",
+            ),
+        ]
+
+        guide = GuideBuilder().from_specs(specs).build()
+
+        with numpyro.handlers.seed(rng_seed=0):
+            with numpyro.handlers.trace() as tr:
+                guide(
+                    n_cells=50,
+                    n_genes=20,
+                    model_config=model_config,
+                    counts=small_counts,
+                )
+
+        # Verify variational parameter naming convention
+        param_sites = {
+            name for name, site in tr.items() if site["type"] == "param"
+        }
+        expected_params = {
+            "joint_mygroup_mu_loc",
+            "joint_mygroup_mu_W",
+            "joint_mygroup_mu_raw_diag",
+            "joint_mygroup_phi_loc",
+            "joint_mygroup_phi_W",
+            "joint_mygroup_phi_raw_diag",
+        }
+        assert expected_params.issubset(param_sites), (
+            f"Missing expected params: {expected_params - param_sites}"
+        )
+
+    def test_joint_guide_validation(self):
+        """Test JointLowRankGuide validation."""
+        from scribe.models.components import JointLowRankGuide
+
+        # rank must be positive
+        with pytest.raises(ValueError, match="rank must be positive"):
+            JointLowRankGuide(rank=0, group="test")
+
+        with pytest.raises(ValueError, match="rank must be positive"):
+            JointLowRankGuide(rank=-1, group="test")
+
+        # group must be non-empty
+        with pytest.raises(ValueError, match="group must be a non-empty string"):
+            JointLowRankGuide(rank=5, group="")
+
+    def test_woodbury_conditional_params(self):
+        """Test the Woodbury conditional parameter computation directly."""
+        from scribe.models.builders.guide_builder import (
+            _woodbury_conditional_params,
+        )
+
+        G, k = 10, 3
+        key = random.PRNGKey(42)
+        keys = random.split(key, 6)
+
+        W1 = random.normal(keys[0], (G, k)) * 0.1
+        W2 = random.normal(keys[1], (G, k)) * 0.1
+        D1 = jnp.abs(random.normal(keys[2], (G,))) + 0.1
+        D2 = jnp.abs(random.normal(keys[3], (G,))) + 0.1
+        loc1 = random.normal(keys[4], (G,))
+        loc2 = random.normal(keys[5], (G,))
+        theta1 = loc1 + 0.5  # a sample
+
+        cond_loc, cond_W, cond_D = _woodbury_conditional_params(
+            W1, D1, W2, D2, loc1, loc2, theta1
+        )
+
+        # Shapes should be preserved
+        assert cond_loc.shape == (G,)
+        assert cond_W.shape == (G, k)
+        assert cond_D.shape == (G,)
+
+        # Conditional diagonal should be unchanged
+        assert jnp.allclose(cond_D, D2)
+
+        # All values should be finite
+        assert jnp.isfinite(cond_loc).all()
+        assert jnp.isfinite(cond_W).all()
+
+    def test_woodbury_reduces_to_marginal_when_uncorrelated(self):
+        """When W1 or W2 is zero, the conditional should equal the marginal."""
+        from scribe.models.builders.guide_builder import (
+            _woodbury_conditional_params,
+        )
+
+        G, k = 10, 3
+        key = random.PRNGKey(0)
+        keys = random.split(key, 5)
+
+        # W1 = 0 means no information from theta_1, so conditional = marginal
+        W1 = jnp.zeros((G, k))
+        W2 = random.normal(keys[0], (G, k)) * 0.1
+        D1 = jnp.ones(G)
+        D2 = jnp.abs(random.normal(keys[1], (G,))) + 0.1
+        loc1 = jnp.zeros(G)
+        loc2 = random.normal(keys[2], (G,))
+        theta1 = random.normal(keys[3], (G,))
+
+        cond_loc, cond_W, cond_D = _woodbury_conditional_params(
+            W1, D1, W2, D2, loc1, loc2, theta1
+        )
+
+        # With W1=0, conditioning provides no info: cond_loc should be loc2
+        assert jnp.allclose(cond_loc, loc2, atol=1e-5)
+
+        # cond_W should be W2 @ L_M where M = (I + 0)^{-1} = I, so L_M = I
+        assert jnp.allclose(cond_W, W2, atol=1e-5)
