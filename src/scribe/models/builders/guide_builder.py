@@ -1794,8 +1794,11 @@ def _woodbury_conditional_params(
     k = W1.shape[-1]
     IpH = jnp.eye(k) + H
     L_IpH = jnp.linalg.cholesky(IpH)
-    # Solve (I+H) M = I for M via triangular solves
-    M = jax.scipy.linalg.cho_solve((L_IpH, True), jnp.eye(k))
+    # Solve (I+H) M = I for M via triangular solves.
+    # Broadcast eye(k) to match batch dims so cho_solve doesn't confuse
+    # the batch axis (e.g. n_components) with the matrix axis (k).
+    eye_k = jnp.broadcast_to(jnp.eye(k), L_IpH.shape)
+    M = jax.scipy.linalg.cho_solve((L_IpH, True), eye_k)
 
     # L_M = cholesky(M) for the conditional covariance factor
     L_M = jnp.linalg.cholesky(M)
