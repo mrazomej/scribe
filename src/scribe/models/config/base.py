@@ -103,6 +103,7 @@ class ModelConfig(BaseModel):
         d.setdefault("hierarchical_dataset_p", "none")
         d.setdefault("hierarchical_dataset_gate", False)
         d.setdefault("shared_capture_scaling", False)
+        d.setdefault("joint_params", None)
 
         # Migrate legacy top-level capture prior fields into priors dict.
         # Old pickles may have capture_prior, organism, total_mrna_mean,
@@ -282,6 +283,18 @@ class ModelConfig(BaseModel):
             "datasets/components instead of using a fixed M_0. "
             "Requires priors.organism or priors.eta_capture to be set. "
             "priors.mu_eta controls the prior on the shared parameter."
+        ),
+    )
+
+    # Joint low-rank guide configuration
+    joint_params: Optional[List[str]] = Field(
+        None,
+        description=(
+            "List of gene-specific parameter names to model jointly via "
+            "JointLowRankGuide (e.g. ['mu', 'phi']). Requires guide_rank "
+            "to be set via guide_families. All listed parameters share a "
+            "single low-rank covariance structure capturing cross-parameter "
+            "correlations."
         ),
     )
 

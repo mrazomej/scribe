@@ -318,6 +318,9 @@ class ParameterExtractionMixin:
             # Handle conversion to scipy, accounting for split distributions
             scipy_distributions = {}
             for name, dist_obj in distributions.items():
+                # Joint distributions are numpyro-only metadata dicts
+                if name.startswith("joint:"):
+                    continue
                 if isinstance(dist_obj, list):
                     # Handle split distributions - convert each element
                     if all(isinstance(sublist, list) for sublist in dist_obj):
@@ -473,6 +476,11 @@ class ParameterExtractionMixin:
         # Get estimate of map
         map_estimates = {}
         for param, dist_obj in distributions.items():
+            # Skip full joint distributions (keyed as "joint:{group}");
+            # individual per-parameter marginals are already in the dict.
+            if param.startswith("joint:"):
+                continue
+
             # Handle transformed distributions (dict with 'base' and
             # 'transform') This is used for low-rank guides with transformations
             if (

@@ -230,6 +230,35 @@ This extends naturally to three or more parameters (e.g., ZINB with `gate`).
 Parameters not in a joint group are processed independently as usual. See
 `paper/_joint_low_rank_guide.qmd` for the full derivation.
 
+## Posterior Extraction
+
+The **`posterior`** module extracts posterior distributions from optimized
+variational parameters (e.g., after SVI inference). It handles all
+parameterizations and guide families, including **joint-aware** extraction for
+`JointLowRankGuide`.
+
+**Joint-aware posterior extraction:**
+
+- `posterior.py` handles `joint_{group}_{name}_*` param keys produced by
+  `JointLowRankGuide` (e.g., `joint_joint_mu_loc`, `joint_joint_mu_W`,
+  `joint_joint_mu_raw_diag`).
+- **`get_posterior_distributions`** returns:
+  - **Per-parameter marginals** keyed by parameter name (e.g., `"mu"`, `"phi"`):
+    each is a `LowRankMultivariateNormal` + transform, identical in structure
+    to standard low-rank posteriors.
+  - **Full joint distribution** keyed as `"joint:{group}"` (e.g., `"joint:joint"`):
+    a stacked `LowRankMultivariateNormal` over the concatenated parameter
+    space, with `param_names` and `param_sizes` for indexing.
+
+**Helper functions:**
+
+- **`_find_joint_prefix`**: Scans params for `joint_*_{name}_loc` and returns
+  the prefix (e.g., `"joint_joint_mu"`) or `None`.
+- **`_build_joint_low_rank_posterior`**: Builds the per-parameter marginal from
+  joint guide params (`{prefix}_loc`, `{prefix}_W`, `{prefix}_raw_diag`).
+- **`_build_joint_full_distribution`**: Stacks loc/W/D from each parameter in
+  the group into a single joint `LowRankMultivariateNormal`.
+
 ## Performance Considerations
 
 ### Amortized Guides
@@ -358,4 +387,5 @@ they have no guide counterpart.
 | `parameter_specs.py` | ParamSpec, LatentSpec, GaussianLatentSpec, Hierarchical*Spec, BiologyInformedCaptureSpec; `sample_prior` dispatch |
 | `model_builder.py` | ModelBuilder class |
 | `guide_builder.py` | GuideBuilder and `setup_guide` dispatch |
+| `posterior.py` | `get_posterior_distributions`; joint-aware extraction from `JointLowRankGuide` params |
 | `__init__.py` | Public API exports |

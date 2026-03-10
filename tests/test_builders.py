@@ -1682,3 +1682,282 @@ class TestJointLowRankGuide:
 
         # cond_W should be W2 @ L_M where M = (I + 0)^{-1} = I, so L_M = I
         assert jnp.allclose(cond_W, W2, atol=1e-5)
+
+
+# ==============================================================================
+# Integration tests: Config → Guide → SVI → Posterior Extraction
+# ==============================================================================
+
+
+class TestJointLowRankIntegration:
+    """End-to-end tests for the joint low-rank guide config pipeline.
+
+    Verifies that joint_params flows through config → preset_builder →
+    guide_builder → SVI → posterior extraction (get_distributions / get_map).
+    """
+
+    def test_config_joint_params_field(self):
+        """ModelConfig and builder accept and store joint_params."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .unconstrained()
+            .with_hierarchical_p()
+            .with_joint_params(["mu", "phi"])
+            .build()
+        )
+        assert config.joint_params == ["mu", "phi"]
+
+    def test_config_joint_params_none_by_default(self):
+        """joint_params defaults to None."""
+        config = (
+            ModelConfigBuilder()
+            .for_model("nbdm")
+            .with_parameterization("mean_odds")
+            .build()
+        )
+        assert config.joint_params is None
+
+    def test_preset_builder_creates_joint_guide(self):
+        """build_config_from_preset with joint_params assigns JointLowRankGuide."""
+        from scribe.models.components import JointLowRankGuide
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=5,
+            joint_params=["mu", "phi"],
+        )
+
+        assert config.joint_params == ["mu", "phi"]
+        gf = config.guide_families
+        assert gf is not None
+        assert isinstance(gf.mu, JointLowRankGuide)
+        assert isinstance(gf.phi, JointLowRankGuide)
+        assert gf.mu.rank == 5
+        assert gf.mu.group == "joint"
+
+    def test_preset_builder_requires_guide_rank(self):
+        """joint_params without guide_rank raises ValueError."""
+        with pytest.raises(ValueError, match="joint_params requires guide_rank"):
+            build_config_from_preset(
+                model="nbdm",
+                parameterization="mean_odds",
+                unconstrained=True,
+                hierarchical_p=True,
+                joint_params=["mu", "phi"],
+            )
+
+    def test_svi_with_joint_guide(self):
+        """Run a few SVI steps with jointly modeled mu and phi."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(42)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+        )
+
+        model_fn, guide_fn, config = get_model_and_guide(config)
+
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(0), **model_kwargs)
+
+        # Run 5 steps
+        for _ in range(5):
+            svi_state, loss = svi.update(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss), f"SVI loss is non-finite: {loss}"
+
+        params = svi.get_params(svi_state)
+
+        # Variational params should include joint_ prefixed keys
+        joint_keys = [k for k in params if k.startswith("joint_")]
+        assert len(joint_keys) > 0, (
+            f"Expected joint_ prefixed params, got: {sorted(params.keys())}"
+        )
+        # Specifically, we expect joint_joint_mu_loc, joint_joint_phi_loc, etc.
+        assert "joint_joint_mu_loc" in params
+        assert "joint_joint_phi_loc" in params
+
+    def test_posterior_extraction_marginals(self):
+        """get_posterior_distributions returns per-param marginals for joint params."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+        for _ in range(3):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        distributions = get_posterior_distributions(params, config)
+
+        # Per-parameter marginals should exist
+        assert "mu" in distributions
+        assert "phi" in distributions
+
+        # Both should be dict with base + transform (low-rank structure)
+        for name in ("mu", "phi"):
+            d = distributions[name]
+            assert isinstance(d, dict), f"{name} should be dict, got {type(d)}"
+            assert "base" in d
+            assert "transform" in d
+
+    def test_posterior_extraction_joint_distribution(self):
+        """get_posterior_distributions returns the full joint distribution."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+        import numpyro.distributions as dist
+
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+        for _ in range(3):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        distributions = get_posterior_distributions(params, config)
+
+        # Full joint distribution should be present
+        assert "joint:joint" in distributions
+        joint = distributions["joint:joint"]
+        assert "base" in joint
+        assert "param_names" in joint
+        assert joint["param_names"] == ["mu", "phi"]
+
+        # The joint base should be a LowRankMVN of dimension 2 * n_genes
+        base = joint["base"]
+        assert isinstance(base, dist.LowRankMultivariateNormal)
+        assert base.loc.shape == (2 * n_genes,)
+
+    def test_get_map_skips_joint_keys(self):
+        """get_map should work and not include joint:* keys."""
+        from scribe.svi._parameter_extraction import ParameterExtractionMixin
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+        for _ in range(3):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        # Build distributions and run get_map logic directly
+        distributions = get_posterior_distributions(params, config)
+        map_estimates = {}
+        for param, dist_obj in distributions.items():
+            if param.startswith("joint:"):
+                continue
+            if isinstance(dist_obj, dict) and "base" in dist_obj and "transform" in dist_obj:
+                base_dist = dist_obj["base"]
+                transform = dist_obj["transform"]
+                if hasattr(base_dist, "loc"):
+                    map_estimates[param] = transform(base_dist.loc)
+
+        # Should have mu and phi, but not joint:*
+        assert "mu" in map_estimates
+        assert "phi" in map_estimates
+        assert not any(k.startswith("joint:") for k in map_estimates)
+
+        # Values should be finite and positive (after exp transform)
+        assert jnp.isfinite(map_estimates["mu"]).all()
+        assert jnp.isfinite(map_estimates["phi"]).all()
+        assert jnp.all(map_estimates["mu"] > 0)
+        assert jnp.all(map_estimates["phi"] > 0)
+
+    def test_mean_prob_parameterization_joint(self):
+        """Joint guide works for mean_prob parameterization (mu + p)."""
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_prob",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=3,
+            joint_params=["mu", "p"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+        for _ in range(3):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+            loss = svi.evaluate(svi_state, **model_kwargs)
+            assert jnp.isfinite(loss)

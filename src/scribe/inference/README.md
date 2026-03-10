@@ -154,6 +154,10 @@ Build ModelConfig from preset parameters.
 - `inference_method`: Inference method string
 - `unconstrained`: Use unconstrained parameterization
 - `guide_rank`: Rank for low-rank guide
+- `joint_params`: Optional list of gene-specific parameter names. When set, the
+  listed parameters share a single JointLowRankGuide that captures
+  cross-parameter correlations via a shared low-rank covariance. Requires
+  `guide_rank` to be set. Example: `["mu", "phi"]`
 - `n_components`: Number of mixture components
 - `priors`: Dictionary of prior parameters
 - `capture_amortization`: Optional `AmortizationConfig` or dict. When provided,

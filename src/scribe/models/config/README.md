@@ -53,6 +53,7 @@ The primary interface for creating configurations. Provides fluent methods:
 - `.with_capture_priors(organism, eta_capture, mu_eta, shared_capture_scaling)`: Configure biology-informed capture prior (VCP models)
 - `.as_mixture(n_components, mixture_params)`: Configure as mixture
 - `.with_guide_families(guide_families)`: Set per-parameter guide families
+- `.with_joint_params(joint_params)`: Specify parameters to model jointly via JointLowRankGuide
 - `.with_priors(**priors)`: Set prior parameters
 - `.with_guides(**guides)`: Set guide parameters
 - `.with_vae(**vae_params)`: Configure VAE parameters
@@ -85,6 +86,14 @@ cells can be mapped to datasets. In practice, that means passing
 `adata.obs[dataset_key]`) or otherwise configuring explicit multi-dataset
 mode. Single-dataset fits should use `hierarchical_p` and/or
 `hierarchical_gate` instead.
+
+#### Joint Low-Rank Parameters
+
+For SVI with joint modeling of gene-specific parameters via a low-rank
+factorization:
+
+- `joint_params: Optional[List[str]]` — List of gene-specific parameter names
+  to model jointly via JointLowRankGuide.
 
 #### Biology-Informed Capture Prior
 
