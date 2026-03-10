@@ -39,6 +39,144 @@ if TYPE_CHECKING:
     from ..config import ModelConfig
 
 
+# =============================================================================
+# Joint low-rank key resolution helpers
+# =============================================================================
+
+
+def _find_joint_prefix(
+    params: Dict[str, jnp.ndarray],
+    name: str,
+) -> Optional[str]:
+    """Find the ``joint_{group}_{name}`` key prefix for a parameter.
+
+    Scans ``params`` for a key matching ``joint_*_{name}_loc``.  Returns
+    the prefix (everything before ``_loc``) if found, else ``None``.
+
+    Parameters
+    ----------
+    params : dict
+        Variational parameter dictionary.
+    name : str
+        Logical parameter name (e.g. ``"mu"``, ``"phi"``).
+
+    Returns
+    -------
+    str or None
+        The key prefix (e.g. ``"joint_joint_mu"``) or ``None``.
+    """
+    suffix = f"_{name}_loc"
+    for key in params:
+        if key.startswith("joint_") and key.endswith(suffix):
+            return key[: -len("_loc")]
+    return None
+
+
+def _build_joint_low_rank_posterior(
+    params: Dict[str, jnp.ndarray],
+    name: str,
+    prefix: str,
+    split: bool,
+) -> Dict[str, Any]:
+    """Build a low-rank marginal posterior from joint guide params.
+
+    Uses the stored ``{prefix}_loc``, ``{prefix}_W``,
+    ``{prefix}_raw_diag`` to reconstruct the per-parameter marginal
+    ``LowRankMVN`` + transform, identical in structure to the output
+    of ``_build_low_rank_exp_normal_posterior``.
+
+    Parameters
+    ----------
+    params : dict
+        Variational parameter dictionary.
+    name : str
+        Logical parameter name (determines transform: Exp vs Sigmoid).
+    prefix : str
+        Full key prefix (e.g. ``"joint_joint_mu"``).
+    split : bool
+        Whether to split (not supported for low-rank; ignored).
+
+    Returns
+    -------
+    dict
+        ``{"base": LowRankMVN, "transform": transform}``
+    """
+    import jax
+
+    loc = params[f"{prefix}_loc"]
+    W = params[f"{prefix}_W"]
+    raw_diag = params[f"{prefix}_raw_diag"]
+
+    D = jax.nn.softplus(raw_diag) + 1e-4
+    base = dist.LowRankMultivariateNormal(loc=loc, cov_factor=W, cov_diag=D)
+
+    if name in ("p", "gate", "p_capture"):
+        transform = dist.transforms.SigmoidTransform()
+    else:
+        transform = dist.transforms.ExpTransform()
+
+    return {"base": base, "transform": transform}
+
+
+def _build_joint_full_distribution(
+    params: Dict[str, jnp.ndarray],
+    joint_params: List[str],
+    group: str = "joint",
+) -> Optional[Dict[str, Any]]:
+    """Build the full joint ``LowRankMVN`` by stacking per-param blocks.
+
+    Concatenates ``loc``, ``W``, ``D`` from each parameter in the group
+    into a single ``2G``-dimensional (or ``nG``-dim) distribution.
+
+    Parameters
+    ----------
+    params : dict
+        Variational parameter dictionary.
+    joint_params : list of str
+        Ordered parameter names in the group.
+    group : str
+        Group name used in the key prefix.
+
+    Returns
+    -------
+    dict or None
+        ``{"base": LowRankMVN, "param_names": [...], "param_sizes": [...]}``
+        or ``None`` if the params are not found.
+    """
+    import jax
+
+    locs, Ws, Ds = [], [], []
+    sizes = []
+    for pname in joint_params:
+        prefix = f"joint_{group}_{pname}"
+        loc_key = f"{prefix}_loc"
+        if loc_key not in params:
+            return None
+        loc_i = params[loc_key]
+        W_i = params[f"{prefix}_W"]
+        raw_diag_i = params[f"{prefix}_raw_diag"]
+        D_i = jax.nn.softplus(raw_diag_i) + 1e-4
+
+        locs.append(loc_i)
+        Ws.append(W_i)
+        Ds.append(D_i)
+        sizes.append(loc_i.shape[-1])
+
+    # Stack into single vectors / matrices
+    full_loc = jnp.concatenate(locs, axis=-1)
+    full_W = jnp.concatenate(Ws, axis=-2)
+    full_D = jnp.concatenate(Ds, axis=-1)
+
+    base = dist.LowRankMultivariateNormal(
+        loc=full_loc, cov_factor=full_W, cov_diag=full_D
+    )
+    return {
+        "base": base,
+        "param_names": list(joint_params),
+        "param_sizes": sizes,
+    }
+
+
 def get_posterior_distributions(
     params: Dict[str, jnp.ndarray],
     model_config: ModelConfig,
@@ -199,7 +337,13 @@ def get_posterior_distributions(
                     params, loc_name, scale_name
                 )
             )
-            if target_name == "phi":
+            # Check if this param is part of a joint guide
+            jp = _find_joint_prefix(params, target_name)
+            if jp:
+                distributions[target_name] = _build_joint_low_rank_posterior(
+                    params, target_name, jp, split
+                )
+            elif target_name == "phi":
                 distributions[target_name] = _build_exp_normal_posterior(
                     params, target_name, is_mixture, split, is_scalar=False
                 )
@@ -419,6 +563,27 @@ def get_posterior_distributions(
         concentrations = params["mixing_concentrations"]
         distributions["mixing_weights"] = dist.Dirichlet(concentrations)
 
+    # -------------------------------------------------------------------------
+    # Build full joint distribution for jointly-modeled parameters.
+    # Keyed as "joint:{group}" alongside the per-parameter marginals above.
+    # -------------------------------------------------------------------------
+    config_joint = getattr(model_config, "joint_params", None)
+    if config_joint:
+        # Discover which groups are present by scanning param keys
+        groups_seen: Dict[str, List[str]] = {}
+        for pname in config_joint:
+            jp = _find_joint_prefix(params, pname)
+            if jp:
+                # Extract group name: key pattern is joint_{group}_{name}
+                parts = jp.split("_")
+                group = parts[1]
+                groups_seen.setdefault(group, []).append(pname)
+
+        for group, pnames in groups_seen.items():
+            joint_dist = _build_joint_full_distribution(params, pnames, group)
+            if joint_dist is not None:
+                distributions[f"joint:{group}"] = joint_dist
+
     return distributions
 
 
@@ -441,11 +606,22 @@ def _build_canonical_posteriors(
 
     if unconstrained:
         if "p" not in skip:
-            distributions["p"] = _build_sigmoid_normal_posterior(
-                params, "p", is_scalar=True, split=split
-            )
+            jp = _find_joint_prefix(params, "p")
+            if jp:
+                distributions["p"] = _build_joint_low_rank_posterior(
+                    params, "p", jp, split
+                )
+            else:
+                distributions["p"] = _build_sigmoid_normal_posterior(
+                    params, "p", is_scalar=True, split=split
+                )
         if "r" not in skip:
-            if low_rank:
+            jp = _find_joint_prefix(params, "r")
+            if jp:
+                distributions["r"] = _build_joint_low_rank_posterior(
+                    params, "r", jp, split
+                )
+            elif low_rank:
                 distributions["r"] = _build_low_rank_exp_normal_posterior(
                     params, "r", is_mixture, split
                 )
@@ -485,11 +661,22 @@ def _build_mean_prob_posteriors(
 
     if unconstrained:
         if "p" not in skip:
-            distributions["p"] = _build_sigmoid_normal_posterior(
-                params, "p", is_scalar=True, split=split
-            )
+            jp = _find_joint_prefix(params, "p")
+            if jp:
+                distributions["p"] = _build_joint_low_rank_posterior(
+                    params, "p", jp, split
+                )
+            else:
+                distributions["p"] = _build_sigmoid_normal_posterior(
+                    params, "p", is_scalar=True, split=split
+                )
         if "mu" not in skip:
-            if low_rank:
+            jp = _find_joint_prefix(params, "mu")
+            if jp:
+                distributions["mu"] = _build_joint_low_rank_posterior(
+                    params, "mu", jp, split
+                )
+            elif low_rank:
                 distributions["mu"] = _build_low_rank_exp_normal_posterior(
                     params, "mu", is_mixture, split
                 )
@@ -529,11 +716,22 @@ def _build_mean_odds_posteriors(
 
     if unconstrained:
         if "phi" not in skip:
-            distributions["phi"] = _build_exp_normal_posterior(
-                params, "phi", is_mixture=False, split=split, is_scalar=True
-            )
+            jp = _find_joint_prefix(params, "phi")
+            if jp:
+                distributions["phi"] = _build_joint_low_rank_posterior(
+                    params, "phi", jp, split
+                )
+            else:
+                distributions["phi"] = _build_exp_normal_posterior(
+                    params, "phi", is_mixture=False, split=split, is_scalar=True
+                )
         if "mu" not in skip:
-            if low_rank:
+            jp = _find_joint_prefix(params, "mu")
+            if jp:
+                distributions["mu"] = _build_joint_low_rank_posterior(
+                    params, "mu", jp, split
+                )
+            elif low_rank:
                 distributions["mu"] = _build_low_rank_exp_normal_posterior(
                     params, "mu", is_mixture, split
                 )

@@ -70,6 +70,7 @@ def build_config_from_preset(
     horseshoe_slab_scale: float = 2.0,
     shared_capture_scaling: bool = False,
     guide_rank: Optional[int] = None,
+    joint_params: Optional[List[str]] = None,
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
@@ -226,14 +227,35 @@ def build_config_from_preset(
     # ==========================================================================
     guide_family_kwargs = {}
 
+    # Validate joint_params requires guide_rank
+    if joint_params is not None and guide_rank is None:
+        raise ValueError(
+            "joint_params requires guide_rank to be set (it determines "
+            "the rank of the joint low-rank covariance)"
+        )
+
     # Handle low-rank guide for gene-specific parameter
     if guide_rank is not None:
-        from ..models.components import LowRankGuide
+        from ..models.components import JointLowRankGuide, LowRankGuide
 
-        # Get parameterization strategy to determine gene parameter name
         param_strategy = PARAMETERIZATIONS[parameterization]
         gene_param_name = param_strategy.gene_param_name  # "r" or "mu"
-        guide_family_kwargs[gene_param_name] = LowRankGuide(rank=guide_rank)
+
+        if joint_params is not None:
+            # Joint low-rank: all listed params share a single covariance
+            joint_guide = JointLowRankGuide(rank=guide_rank, group="joint")
+            for pname in joint_params:
+                guide_family_kwargs[pname] = joint_guide
+            # If the gene param is not in joint_params, give it an
+            # individual LowRankGuide so it still gets low-rank treatment
+            if gene_param_name not in joint_params:
+                guide_family_kwargs[gene_param_name] = LowRankGuide(
+                    rank=guide_rank
+                )
+        else:
+            guide_family_kwargs[gene_param_name] = LowRankGuide(
+                rank=guide_rank
+            )
 
     # Handle amortized inference for capture probability (VCP models only)
     if capture_amortization is not None:
@@ -345,6 +367,9 @@ def build_config_from_preset(
 
     if n_components is not None:
         builder.as_mixture(n_components, mixture_params)
+
+    if joint_params is not None:
+        builder.with_joint_params(joint_params)
 
     if guide_families is not None:
         builder.with_guide_families(guide_families)

@@ -89,6 +89,11 @@ mixture_params: null
 # null = mean-field, integer = low-rank with that rank
 guide_rank: null
 
+# Joint low-rank guide: model listed gene-specific parameters jointly,
+# capturing cross-parameter correlations (e.g. mu-phi).
+# Requires guide_rank to be set. Example: [mu, phi]
+joint_params: null
+
 # --- Priors Configuration (optional overrides) ---
 # Each prior is a list [param1, param2] for the distribution
 # - Beta priors: [alpha, beta]

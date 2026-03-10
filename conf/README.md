@@ -91,6 +91,7 @@ mixture_params: null  # which params are component-specific
 
 # Guide configuration
 guide_rank: null      # null = mean-field, int = low-rank
+joint_params: null    # null = per-param guides, list = joint low-rank for those params (requires guide_rank). E.g. [mu, phi]
 ```
 
 ### Prior Configuration

@@ -662,6 +662,7 @@ def main(cfg: DictConfig) -> None:
         "n_components": n_components,
         "mixture_params": cfg.get("mixture_params"),
         "guide_rank": cfg.guide_rank,
+        "joint_params": cfg.get("joint_params"),
         "priors": priors,
         # Amortization: single config object (when set, fit() uses it; else uses
         # individual params)
@@ -702,6 +703,10 @@ def main(cfg: DictConfig) -> None:
     if kwargs.get("guide_rank"):
         console.print(
             f"[dim]Guide rank:[/dim] [bold]{kwargs['guide_rank']}[/bold]"
+        )
+    if kwargs.get("joint_params"):
+        console.print(
+            f"[dim]Joint params:[/dim] [bold]{kwargs['joint_params']}[/bold]"
         )
     if kwargs.get("amortize_capture"):
         console.print(

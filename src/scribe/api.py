@@ -228,6 +228,7 @@ def fit(
     n_components: Optional[int] = None,
     mixture_params: Optional[List[str]] = None,
     guide_rank: Optional[int] = None,
+    joint_params: Optional[List[str]] = None,
     priors: Optional[Dict[str, Any]] = None,
     # VAE architecture options (when inference_method="vae")
     vae_latent_dim: int = 10,
@@ -331,6 +332,14 @@ def fit(
         Rank for low-rank variational guide on gene-specific parameters. If None
         (default), uses mean-field guide (fully factorized). Low-rank guides can
         capture gene correlations but use more memory.
+
+    joint_params : List[str], optional
+        List of gene-specific parameter names to model jointly via a
+        JointLowRankGuide (e.g., ``["mu", "phi"]``). Parameters in this
+        list share a single low-rank covariance structure that captures
+        cross-parameter correlations. Requires ``guide_rank`` to be set.
+        Typically used with ``hierarchical_p=True`` where multiple
+        parameters become gene-specific.
 
     priors : Dict[str, Any], optional
         Dictionary of prior hyperparameters keyed by parameter name. Values
@@ -748,6 +757,7 @@ def fit(
             horseshoe_slab_scale=horseshoe_slab_scale,
             shared_capture_scaling=shared_capture_scaling,
             guide_rank=guide_rank,
+            joint_params=joint_params,
             n_components=n_components,
             mixture_params=mixture_params,
             priors=priors,

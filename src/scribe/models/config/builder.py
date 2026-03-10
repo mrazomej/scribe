@@ -101,6 +101,7 @@ class ModelConfigBuilder:
         self._shared_capture_scaling: bool = False
         self._n_components: Optional[int] = None
         self._mixture_params: Optional[List[str]] = None
+        self._joint_params: Optional[List[str]] = None
         self._guide_families: Optional[GuideFamilyConfig] = None
         self._priors: Dict[str, Any] = (
             {}
@@ -254,6 +255,23 @@ class ModelConfigBuilder:
             raise ValueError("n_components must be >= 2 for mixture models")
         self._n_components = n_components
         self._mixture_params = mixture_params
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_joint_params(
+        self, joint_params: List[str]
+    ) -> "ModelConfigBuilder":
+        """Specify gene-specific parameters to model jointly.
+
+        Parameters
+        ----------
+        joint_params : List[str]
+            Parameter names to group into a JointLowRankGuide
+            (e.g. ``["mu", "phi"]``). Requires ``guide_rank`` to be
+            set so the rank is known.
+        """
+        self._joint_params = joint_params
         return self
 
     # --------------------------------------------------------------------------
@@ -616,6 +634,7 @@ class ModelConfigBuilder:
             shared_capture_scaling=self._shared_capture_scaling,
             n_components=self._n_components,
             mixture_params=self._mixture_params,
+            joint_params=self._joint_params,
             guide_families=self._guide_families,
             param_specs=param_specs,
             priors=priors,
