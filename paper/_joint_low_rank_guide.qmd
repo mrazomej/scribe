@@ -223,10 +223,7 @@ where $\underline{\underline{W}}_1, \underline{\underline{W}}_2 \in
 \mathbb{R}^{G \times k}$ and
 $\underline{\underline{D}}_1, \underline{\underline{D}}_2 \in
 \mathbb{R}^{G \times G}$ are diagonal positive-definite matrices. The
-covariance matrix then has the block form
-When referring to NumPyro's `cov_diag` argument, we use
-$\underline{d}_i = \operatorname{diag}^{-1}(\underline{\underline{D}}_i)$ for
-the corresponding diagonal vectors.
+covariance matrix then has the block form:
 
 $$
 \underline{\underline{\Sigma}} =
@@ -242,6 +239,10 @@ $$
 \underline{\underline{\Sigma}}_{21} & \underline{\underline{\Sigma}}_{22}
 \end{pmatrix}.
 $${#eq-jlr-block-cov}
+
+For implementation in NumPyro's `LowRankMultivariateNormal`, the diagonal term
+is provided as a vector. We denote this by
+$\underline{d}_i = \operatorname{diag}^{-1}(\underline{\underline{D}}_i)$.
 
 The diagonal blocks $\underline{\underline{\Sigma}}_{11} =
 \underline{\underline{W}}_1 \underline{\underline{W}}_1^\top + \underline{\underline{D}}_1$ and
