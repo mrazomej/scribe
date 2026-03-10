@@ -137,6 +137,7 @@ Each parameter can have its own guide family:
 |--------|-------------|----------|
 | `MeanFieldGuide` | Factorized variational family | Default, fast |
 | `LowRankGuide(rank)` | Low-rank MVN covariance | Gene correlations |
+| `JointLowRankGuide(rank, group)` | Joint low-rank MVN across parameter groups | Cross-parameter correlations |
 | `AmortizedGuide(net)` | Neural network amortization | High-dim params |
 | `VAELatentGuide` | VAE: encoder + latent_spec (z) + decoder | Joint latent z; decoder-driven params (no guide sites) |
 
@@ -202,6 +203,33 @@ specs = [
 ]
 ```
 
+### Joint Low-Rank Guide (Cross-Parameter Correlations)
+
+When gene-specific parameters are expected to be correlated (e.g., mean
+expression `mu` and dispersion `phi`), assign a `JointLowRankGuide` with the
+same `group` string to all parameters that should be jointly modeled. The guide
+builder uses a chain rule decomposition with Woodbury-efficient conditioning to
+sample from the joint distribution while maintaining separate NumPyro sample
+sites.
+
+```python
+from scribe.models.components import JointLowRankGuide
+from scribe.models.builders import ExpNormalSpec, GuideBuilder
+
+joint = JointLowRankGuide(rank=10, group="nb_params")
+specs = [
+    ExpNormalSpec("mu", ("n_genes",), (0.0, 1.0),
+                  is_gene_specific=True, guide_family=joint, constrained_name="mu"),
+    ExpNormalSpec("phi", ("n_genes",), (0.0, 1.0),
+                  is_gene_specific=True, guide_family=joint, constrained_name="phi"),
+]
+guide = GuideBuilder().from_specs(specs).build()
+```
+
+This extends naturally to three or more parameters (e.g., ZINB with `gate`).
+Parameters not in a joint group are processed independently as usual. See
+`paper/_joint_low_rank_guide.qmd` for the full derivation.
+
 ## Performance Considerations
 
 ### Amortized Guides
@@ -247,6 +275,10 @@ def setup_guide(spec, guide, dims, model_config, **kwargs):
 ```
 
 Adding new combinations is trivial - just add a new dispatch method.
+
+For `JointLowRankGuide`, parameters are grouped by `group` name and processed
+through `setup_joint_guide` using a chain rule decomposition rather than
+individual dispatch.
 
 ## Plate Handling
 

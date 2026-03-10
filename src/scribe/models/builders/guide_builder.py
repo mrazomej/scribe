@@ -67,6 +67,7 @@ from ..components.guide_families import (
     AmortizedGuide,
     VAELatentGuide,
     GuideFamily,
+    JointLowRankGuide,
     LowRankGuide,
     MeanFieldGuide,
 )
@@ -1734,6 +1735,233 @@ def setup_guide(
 
 
 # ==============================================================================
+# Joint Low-Rank Guide (cross-parameter correlations via chain rule)
+# ==============================================================================
+
+
+def _woodbury_conditional_params(
+    W1: jnp.ndarray,
+    D1: jnp.ndarray,
+    W2: jnp.ndarray,
+    D2: jnp.ndarray,
+    loc1: jnp.ndarray,
+    loc2: jnp.ndarray,
+    theta1_sample: jnp.ndarray,
+) -> tuple:
+    """Compute the conditional LowRankMVN parameters via Woodbury identity.
+
+    Given a joint LowRankMVN over [theta_1, theta_2] with factor W = [W1; W2]
+    and diagonal D = diag(D1, D2), computes the conditional distribution
+    theta_2 | theta_1 using the Schur complement with Woodbury inversion.
+
+    The conditional is itself a LowRankMVN:
+        cov_factor = W2 @ L_M   (where M = (I + W1^T D1^{-1} W1)^{-1})
+        cov_diag   = D2          (unchanged)
+        loc        = loc2 + W2 @ M @ W1^T @ D1^{-1} @ (theta1 - loc1)
+
+    Parameters
+    ----------
+    W1 : jnp.ndarray, shape (..., G, k)
+        Low-rank factor for parameter group 1.
+    D1 : jnp.ndarray, shape (..., G)
+        Diagonal covariance for parameter group 1.
+    W2 : jnp.ndarray, shape (..., G, k)
+        Low-rank factor for parameter group 2.
+    D2 : jnp.ndarray, shape (..., G)
+        Diagonal covariance for parameter group 2.
+    loc1 : jnp.ndarray, shape (..., G)
+        Location for parameter group 1.
+    loc2 : jnp.ndarray, shape (..., G)
+        Location for parameter group 2.
+    theta1_sample : jnp.ndarray, shape (..., G)
+        Sampled value of theta_1 (in unconstrained space).
+
+    Returns
+    -------
+    cond_loc : jnp.ndarray, shape (..., G)
+        Conditional mean for theta_2 | theta_1.
+    cond_W : jnp.ndarray, shape (..., G, k)
+        Conditional covariance factor for theta_2 | theta_1.
+    cond_D : jnp.ndarray, shape (..., G)
+        Conditional diagonal covariance (same as D2).
+    """
+    # H = W1^T @ diag(1/D1) @ W1, shape (..., k, k)
+    D1_inv = 1.0 / D1
+    W1_scaled = W1 * D1_inv[..., :, None]  # (..., G, k) * (..., G, 1)
+    H = jnp.einsum("...gk,...gl->...kl", W1_scaled, W1)  # (..., k, k)
+
+    # M = (I_k + H)^{-1} via Cholesky, shape (..., k, k)
+    k = W1.shape[-1]
+    IpH = jnp.eye(k) + H
+    L_IpH = jnp.linalg.cholesky(IpH)
+    # Solve (I+H) M = I for M via triangular solves
+    M = jax.scipy.linalg.cho_solve((L_IpH, True), jnp.eye(k))
+
+    # L_M = cholesky(M) for the conditional covariance factor
+    L_M = jnp.linalg.cholesky(M)
+
+    # Conditional covariance factor: W2 @ L_M, shape (..., G, k)
+    cond_W = jnp.einsum("...gk,...kl->...gl", W2, L_M)
+
+    # Conditional mean: loc2 + W2 @ M @ W1^T @ D1^{-1} @ (theta1 - loc1)
+    delta = theta1_sample - loc1  # (..., G)
+    v1 = delta * D1_inv  # (..., G)
+    v2 = jnp.einsum("...gk,...g->...k", W1, v1)  # (..., k)
+    v3 = jnp.einsum("...kl,...l->...k", M, v2)  # (..., k)
+    v4 = jnp.einsum("...gk,...k->...g", W2, v3)  # (..., G)
+    cond_loc = loc2 + v4
+
+    cond_D = D2
+
+    return cond_loc, cond_W, cond_D
+
+
+def setup_joint_guide(
+    specs: List["NormalWithTransformSpec"],
+    guide: JointLowRankGuide,
+    dims: Dict[str, int],
+    model_config: "ModelConfig",
+) -> List[jnp.ndarray]:
+    """Setup a joint low-rank guide over multiple gene-specific parameters.
+
+    Clean implementation of the chain rule decomposition. Samples each
+    parameter in unconstrained space from the marginal/conditional LowRankMVN,
+    then applies the transform via TransformedDistribution. The unconstrained
+    samples are used for subsequent conditioning steps.
+
+    Parameters
+    ----------
+    specs : List[NormalWithTransformSpec]
+        Ordered list of parameter specifications to model jointly.
+    guide : JointLowRankGuide
+        Joint low-rank guide marker.
+    dims : Dict[str, int]
+        Dimension sizes.
+    model_config : ModelConfig
+        Model configuration.
+
+    Returns
+    -------
+    List[jnp.ndarray]
+        Sampled parameter values in constrained space.
+    """
+    k = guide.rank
+
+    resolved_shape = resolve_shape(
+        specs[0].shape_dims,
+        dims,
+        is_mixture=specs[0].is_mixture,
+        is_dataset=specs[0].is_dataset,
+    )
+    n_batch_dims = len(resolved_shape) - 1
+
+    # Register per-parameter variational params for the joint
+    G = resolved_shape[-1] if resolved_shape else 1
+    locs = []
+    Ws = []
+    Ds = []
+    for spec in specs:
+        loc_i = numpyro.param(
+            f"joint_{guide.group}_{spec.name}_loc",
+            jnp.zeros(resolved_shape) if resolved_shape else jnp.zeros(G),
+        )
+        W_i = numpyro.param(
+            f"joint_{guide.group}_{spec.name}_W",
+            (
+                0.01 * jnp.ones((*resolved_shape, k))
+                if resolved_shape
+                else 0.01 * jnp.ones((G, k))
+            ),
+        )
+        raw_diag_i = numpyro.param(
+            f"joint_{guide.group}_{spec.name}_raw_diag",
+            (
+                -3.0 * jnp.ones(resolved_shape)
+                if resolved_shape
+                else -3.0 * jnp.ones(G)
+            ),
+        )
+        D_i = jax.nn.softplus(raw_diag_i) + 1e-4
+
+        locs.append(loc_i)
+        Ws.append(W_i)
+        Ds.append(D_i)
+
+    # Track unconstrained samples and the current conditional W/loc for each
+    # parameter (needed for iterated conditioning with n > 2 params)
+    unconstrained_samples = []
+    constrained_samples = []
+
+    # The current conditional factor and loc for each parameter, updated as
+    # we condition on earlier parameters in the chain
+    current_Ws = list(Ws)
+    current_locs = list(locs)
+
+    for i, spec in enumerate(specs):
+        if i == 0:
+            # First parameter: sample from marginal LowRankMVN + transform
+            base = dist.LowRankMultivariateNormal(
+                loc=current_locs[0],
+                cov_factor=current_Ws[0],
+                cov_diag=Ds[0],
+            )
+            transformed = dist.TransformedDistribution(base, spec.transform)
+
+            if n_batch_dims > 0:
+                transformed = transformed.to_event(n_batch_dims)
+
+            constrained = numpyro.sample(spec.constrained_name, transformed)
+            constrained_samples.append(constrained)
+
+            # Recover unconstrained sample via inverse transform
+            unconstrained = spec.transform.inv(constrained)
+            unconstrained_samples.append(unconstrained)
+
+        else:
+            # Condition on all previously sampled parameters, iteratively.
+            # Start from the original (or already-conditioned) W_i and loc_i
+            # for this parameter, then apply Woodbury conditioning for each
+            # theta_j, j < i.
+            #
+            # For the common case n=2, this is a single conditioning step.
+            cond_loc = current_locs[i]
+            cond_W = current_Ws[i]
+            cond_D = Ds[i]
+
+            for j in range(i):
+                cond_loc, cond_W, cond_D = _woodbury_conditional_params(
+                    W1=current_Ws[j],
+                    D1=Ds[j],
+                    W2=cond_W,
+                    D2=cond_D,
+                    loc1=current_locs[j],
+                    loc2=cond_loc,
+                    theta1_sample=unconstrained_samples[j],
+                )
+
+            base = dist.LowRankMultivariateNormal(
+                loc=cond_loc, cov_factor=cond_W, cov_diag=cond_D,
+            )
+            transformed = dist.TransformedDistribution(base, spec.transform)
+
+            if n_batch_dims > 0:
+                transformed = transformed.to_event(n_batch_dims)
+
+            constrained = numpyro.sample(spec.constrained_name, transformed)
+            constrained_samples.append(constrained)
+
+            unconstrained = spec.transform.inv(constrained)
+            unconstrained_samples.append(unconstrained)
+
+            # Update this parameter's conditional W and loc for use by
+            # subsequent parameters in the chain (needed for n > 2)
+            current_Ws[i] = cond_W
+            current_locs[i] = cond_loc
+
+    return constrained_samples
+
+
+# ==============================================================================
 # Guide Builder
 # ==============================================================================
 
@@ -1923,9 +2151,32 @@ class GuideBuilder:
 
             # ================================================================
             # 2. Setup guides for GENE-SPECIFIC parameters
+            #    JointLowRankGuide specs are grouped and handled together;
+            #    all other specs are handled individually as before.
             # ================================================================
             gene_specs = [s for s in specs if s.is_gene_specific]
+
+            # Collect JointLowRankGuide groups (preserving spec order)
+            joint_groups: Dict[str, List] = {}
+            joint_handled = set()
             for spec in gene_specs:
+                gf = spec.guide_family
+                if isinstance(gf, JointLowRankGuide):
+                    grp = gf.group
+                    if grp not in joint_groups:
+                        joint_groups[grp] = []
+                    joint_groups[grp].append(spec)
+                    joint_handled.add(spec.name)
+
+            # Process joint groups first
+            for grp_name, grp_specs in joint_groups.items():
+                guide_family = grp_specs[0].guide_family
+                setup_joint_guide(grp_specs, guide_family, dims, model_config)
+
+            # Process remaining (non-joint) gene-specific specs individually
+            for spec in gene_specs:
+                if spec.name in joint_handled:
+                    continue
                 guide_family = spec.guide_family or MeanFieldGuide()
                 setup_guide(spec, guide_family, dims, model_config)
 
