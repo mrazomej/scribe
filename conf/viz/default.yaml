@@ -26,7 +26,12 @@ viz:
   ppc_opts:
     n_rows: 5  # Number of expression bins (logarithmically spaced)
     n_cols: 5  # Number of genes per bin
-    n_samples: 1024
+    n_samples: 512
+    hist_max_bin_quantile: 0.99  # Adaptive upper-bin quantile for PPC histograms
+    hist_max_bin_floor: 10  # Minimum upper-bin cap to avoid over-truncation at low counts
+    render_auto_line_bin_threshold: 1000  # Switch to line/fill rendering above this many bins
+    render_line_target_points: 200  # Target point count after line-mode decimation
+    render_line_interpolate: true  # Interpolate line-mode curves for smoother high-bin plots
 
   # Biological PPC options
   bio_ppc_opts:
@@ -62,7 +67,7 @@ viz:
   mixture_ppc_opts:
     n_rows: 5  # Number of rows in the grid
     n_cols: 5  # Number of columns in the grid
-    n_samples: 1024  # Number of PPC samples per component
+    n_samples: 512  # Number of PPC samples per component
 
   # Mixture composition plot options
   mixture_composition_opts:
@@ -70,9 +75,9 @@ viz:
 
   # Annotation PPC options (per-annotation component PPC)
   annotation_ppc_opts:
-    _rows: 5  # Number of expression bins
+    n_rows: 5  # Number of expression bins
     n_cols: 5  # Number of genes per bin
-    n_samples: 1024  # Number of PPC samples per annotation
+    n_samples: 512  # Number of PPC samples per annotation
 
   # Capture-anchor options
   capture_anchor_opts:

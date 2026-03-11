@@ -31,6 +31,11 @@ from viz_utils import (
     plot_ppc,
     plot_umap,
 )
+from viz_utils.ppc_rendering import (
+    compute_adaptive_max_bin,
+    get_ppc_render_options,
+    should_use_line_mode,
+)
 
 
 def _make_mcmc_results_for_viz():
@@ -512,3 +517,31 @@ def test_plot_p_capture_scaling_saves_output(monkeypatch, tmp_path):
     )
     assert output_path is not None
     assert output_path.endswith("_p_capture_scaling.png")
+
+
+def test_ppc_render_options_defaults_are_stable():
+    """PPC render helpers should expose stable high-bin defaults."""
+    viz_cfg = OmegaConf.create({"ppc_opts": {}})
+    opts = get_ppc_render_options(viz_cfg)
+    assert opts["hist_max_bin_quantile"] == 0.99
+    assert opts["hist_max_bin_floor"] == 10
+    assert opts["render_auto_line_bin_threshold"] == 1000
+    assert opts["render_line_target_points"] == 200
+    assert opts["render_line_interpolate"] is True
+
+
+def test_compute_adaptive_max_bin_uses_quantile_and_floor():
+    """Adaptive max-bin helper should enforce configured floor."""
+    counts = np.array([0, 0, 1, 2, 100], dtype=float)
+    opts = {
+        "hist_max_bin_quantile": 0.50,
+        "hist_max_bin_floor": 10,
+    }
+    assert compute_adaptive_max_bin(counts, opts) == 10
+
+
+def test_should_use_line_mode_obeys_threshold():
+    """Large bin counts should trigger adaptive line rendering."""
+    opts = {"render_auto_line_bin_threshold": 1000}
+    assert should_use_line_mode(1001, opts) is True
+    assert should_use_line_mode(1000, opts) is False

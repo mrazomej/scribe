@@ -25,6 +25,12 @@ from .dispatch import (
     _get_denoised_counts_for_plot,
 )
 from .gene_selection import _select_genes
+from .ppc_rendering import (
+    compute_adaptive_max_bin,
+    get_ppc_render_options,
+    plot_histogram_credible_regions_adaptive,
+    plot_observed_histogram_adaptive,
+)
 
 
 def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
@@ -49,6 +55,7 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
         Visualization configuration (must contain ``ppc_opts``).
     """
     console.print("[dim]Plotting biological PPC (denoised)...[/dim]")
+    render_opts = get_ppc_render_options(viz_cfg)
 
     # ------------------------------------------------------------------
     # Gene selection (identical to standard PPC)
@@ -151,48 +158,37 @@ def plot_bio_ppc(results, counts, figs_dir, cfg, viz_cfg):
 
             gene_idx = selected_idx_sorted[i]
             subset_pos = subset_positions[gene_idx]
+            denoised_gene = denoised_subset[:, subset_pos]
+            max_bin = compute_adaptive_max_bin(denoised_gene, render_opts)
 
             # Credible bands from biological PPC
             credible_regions = scribe.stats.compute_histogram_credible_regions(
                 bio_predictive_samples[:, :, subset_pos],
                 credible_regions=[95, 68, 50],
+                max_bin=max_bin,
             )
 
             # Denoised data histogram
-            denoised_gene = denoised_subset[:, subset_pos]
             hist_results = np.histogram(
                 denoised_gene,
                 bins=credible_regions["bin_edges"],
                 density=True,
             )
-
-            # Determine a reasonable x-axis upper bound
-            cumsum_indices = np.where(
-                np.cumsum(hist_results[0]) <= 0.99
-            )[0]
-            max_bin = np.max(
-                [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
-            )
-
-            # Bio PPC credible-region bands
-            scribe.viz.plot_histogram_credible_regions_stairs(
+            # Bio PPC credible-region bands use the same adaptive style as
+            # standard PPC so very large count ranges remain fast to render.
+            render_meta = plot_histogram_credible_regions_adaptive(
                 ax,
                 credible_regions,
                 cmap="Greens",
                 alpha=0.5,
                 max_bin=max_bin,
+                render_opts=render_opts,
             )
-
-            # Denoised data step histogram
-            max_bin_hist = (
-                max_bin
-                if len(hist_results[0]) > max_bin
-                else len(hist_results[0])
-            )
-            ax.step(
-                hist_results[1][:max_bin_hist],
-                hist_results[0][:max_bin_hist],
-                where="post",
+            plot_observed_histogram_adaptive(
+                ax,
+                hist_results,
+                max_bin=max_bin,
+                render_meta=render_meta,
                 label="denoised",
                 color="black",
             )
