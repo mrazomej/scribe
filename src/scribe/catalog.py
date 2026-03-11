@@ -77,7 +77,11 @@ class ExperimentRun:
 
     # --------------------------------------------------------------------------
 
-    def load_data(self, return_jax: bool = False):
+    def load_data(
+        self,
+        return_jax: bool = False,
+        preprocessing: bool = True,
+    ):
         """
         Load and preprocess the original data used in this experiment.
 
@@ -86,9 +90,14 @@ class ExperimentRun:
 
         Parameters
         ----------
-        return_jax : bool, default True
+        return_jax : bool, default False
             If True, return the data as a JAX numpy array. If False, return the
             original AnnData object with all preprocessing applied.
+        preprocessing : bool, default True
+            If True, replay the full data pipeline specified in the experiment
+            config (``filter_obs``, ``subset_column``/``subset_value``, and
+            ``preprocessing``). If False, load raw data from ``data.path``
+            without applying those transformations.
 
         Returns
         -------
@@ -121,17 +130,35 @@ class ExperimentRun:
         # The path in config might be relative to the original working directory
         data_path = hydra.utils.to_absolute_path(data_path)
 
-        # Get preprocessing configuration if it exists
+        # Pull the optional data-pipeline settings from the run config so data
+        # loading can faithfully replay training-time filtering/subsetting.
         prep_config = data_config.get("preprocessing", None)
+        subset_column = data_config.get("subset_column", None)
+        subset_value = data_config.get("subset_value", None)
+        filter_obs = data_config.get("filter_obs", None)
+
+        # Allow callers to opt out and retrieve raw data from data.path.
+        if not preprocessing:
+            prep_config = None
+            subset_column = None
+            subset_value = None
+            filter_obs = None
 
         print(f"Loading data for experiment: {self.path}")
         print(f"Data path: {data_path}")
-        if prep_config:
+        if preprocessing and prep_config:
             print(f"Preprocessing config: {prep_config}")
+        elif not preprocessing:
+            print("Skipping preprocessing and subset/filter pipeline.")
 
         # Load and preprocess the data
         return load_and_preprocess_anndata(
-            data_path, prep_config, return_jax=return_jax
+            data_path,
+            prep_config=prep_config,
+            return_jax=return_jax,
+            subset_column=subset_column,
+            subset_value=subset_value,
+            filter_obs=filter_obs,
         )
 
     # --------------------------------------------------------------------------
@@ -687,7 +714,12 @@ class ExperimentCatalog:
 
     # --------------------------------------------------------------------------
 
-    def load_data(self, return_jax: bool = True, **filters):
+    def load_data(
+        self,
+        return_jax: bool = True,
+        preprocessing: bool = True,
+        **filters,
+    ):
         """
         Convenience method to load the original data directly.
 
@@ -696,6 +728,10 @@ class ExperimentCatalog:
         return_jax : bool, default True
             If True, return the data as a JAX numpy array. If False, return the
             original AnnData object with all preprocessing applied.
+        preprocessing : bool, default True
+            If True, replay the experiment's configured data pipeline when
+            loading. If False, bypass preprocessing/subsetting and load raw data
+            from the run's ``data.path``.
         **filters
             Key-value pairs to filter experiments by
 
@@ -726,7 +762,10 @@ class ExperimentCatalog:
             for exp in experiments:
                 print(f"  - {exp.path}")
 
-        return experiments[0].load_data(return_jax=return_jax)
+        return experiments[0].load_data(
+            return_jax=return_jax,
+            preprocessing=preprocessing,
+        )
 
     # --------------------------------------------------------------------------
 
