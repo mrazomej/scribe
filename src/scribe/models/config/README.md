@@ -87,6 +87,21 @@ cells can be mapped to datasets. In practice, that means passing
 mode. Single-dataset fits should use `hierarchical_p` and/or
 `hierarchical_gate` instead.
 
+When using the public `scribe.fit(...)` API, single-dataset `dataset_key`
+columns can be auto-downgraded via
+`auto_downgrade_single_dataset_hierarchy=True` (default):
+
+- `hierarchical_dataset_mu=True` -> `False`
+- `hierarchical_dataset_p='scalar'` -> `'none'`
+- `hierarchical_dataset_p in {'gene_specific', 'two_level'}` ->
+  `hierarchical_p=True` and `hierarchical_dataset_p='none'`
+- `hierarchical_dataset_gate=True` -> `hierarchical_gate=True` and
+  `hierarchical_dataset_gate=False`
+
+`scribe.fit(...)` emits a `UserWarning` whenever one or more of these
+single-dataset downgrades are applied. Setting
+`auto_downgrade_single_dataset_hierarchy=False` preserves strict validation.
+
 #### Joint Low-Rank Parameters
 
 For SVI with joint modeling of gene-specific parameters via a low-rank

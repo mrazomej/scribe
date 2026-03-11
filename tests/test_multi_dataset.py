@@ -2184,7 +2184,9 @@ class TestFitApiDatasetHierarchyValidation:
     """
 
     @staticmethod
-    def _make_adata(*, include_dataset_column: bool):
+    def _make_adata(
+        *, include_dataset_column: bool, single_dataset_column: bool = False
+    ):
         """Create a tiny AnnData object for fit API validation tests.
 
         Parameters
@@ -2192,6 +2194,10 @@ class TestFitApiDatasetHierarchyValidation:
         include_dataset_column : bool
             Whether to include an `obs["dataset"]` column used by
             `dataset_key` for multi-dataset indexing.
+        single_dataset_column : bool, optional
+            When True and ``include_dataset_column=True``, populates
+            ``obs["dataset"]`` with a single category across all cells.
+            When False, uses two categories (d0/d1). Default is False.
 
         Returns
         -------
@@ -2206,10 +2212,13 @@ class TestFitApiDatasetHierarchyValidation:
         rng = np.random.default_rng(123)
         x = rng.poisson(3, (n_cells, n_genes)).astype(np.float32)
 
-        # Optionally expose two datasets through adata.obs["dataset"].
+        # Optionally expose dataset labels through adata.obs["dataset"].
         obs = {"cell_type": ["A", "A", "A", "B", "B", "B"]}
         if include_dataset_column:
-            obs["dataset"] = ["d0", "d0", "d0", "d1", "d1", "d1"]
+            if single_dataset_column:
+                obs["dataset"] = ["d0", "d0", "d0", "d0", "d0", "d0"]
+            else:
+                obs["dataset"] = ["d0", "d0", "d0", "d1", "d1", "d1"]
         return anndata.AnnData(X=x, obs=pd.DataFrame(obs))
 
     def test_dataset_hierarchy_requires_dataset_key(self):
@@ -2267,3 +2276,123 @@ class TestFitApiDatasetHierarchyValidation:
             hierarchical_dataset_mu=True,
         )
         assert result.n_cells == adata.n_obs
+
+    def test_single_dataset_auto_downgrades_dataset_mu(self):
+        """Single-dataset columns downgrade hierarchical_dataset_mu safely."""
+        import scribe
+
+        adata = self._make_adata(
+            include_dataset_column=True, single_dataset_column=True
+        )
+
+        # Auto-downgrade should disable dataset-level mu and warn.
+        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
+            result = scribe.fit(
+                adata,
+                model="nbdm",
+                n_steps=1,
+                batch_size=3,
+                seed=0,
+                unconstrained=True,
+                dataset_key="dataset",
+                hierarchical_dataset_mu=True,
+            )
+        assert result.model_config.hierarchical_dataset_mu is False
+        assert result.model_config.n_datasets is None
+
+    @pytest.mark.parametrize("dataset_p_mode", ["gene_specific", "two_level"])
+    def test_single_dataset_auto_downgrades_dataset_p_to_gene_level(
+        self, dataset_p_mode
+    ):
+        """Single-dataset p hierarchy maps to gene-level hierarchical_p."""
+        import scribe
+
+        adata = self._make_adata(
+            include_dataset_column=True, single_dataset_column=True
+        )
+
+        # gene_specific/two_level are downgraded to hierarchical_p in 1-dataset.
+        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
+            result = scribe.fit(
+                adata,
+                model="nbdm",
+                n_steps=1,
+                batch_size=3,
+                seed=0,
+                unconstrained=True,
+                dataset_key="dataset",
+                hierarchical_dataset_p=dataset_p_mode,
+            )
+        assert result.model_config.hierarchical_p is True
+        assert result.model_config.hierarchical_dataset_p == "none"
+        assert result.model_config.n_datasets is None
+
+    def test_single_dataset_auto_downgrades_dataset_p_scalar_to_none(self):
+        """Single-dataset scalar p hierarchy downgrades without hierarchical_p."""
+        import scribe
+
+        adata = self._make_adata(
+            include_dataset_column=True, single_dataset_column=True
+        )
+
+        # scalar mode maps to shared p/phi and should not enable hierarchical_p.
+        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
+            result = scribe.fit(
+                adata,
+                model="nbdm",
+                n_steps=1,
+                batch_size=3,
+                seed=0,
+                unconstrained=True,
+                dataset_key="dataset",
+                hierarchical_dataset_p="scalar",
+            )
+        assert result.model_config.hierarchical_p is False
+        assert result.model_config.hierarchical_dataset_p == "none"
+        assert result.model_config.n_datasets is None
+
+    def test_single_dataset_auto_downgrades_dataset_gate_to_gene_level(self):
+        """Single-dataset gate hierarchy maps to gene-level hierarchical_gate."""
+        import scribe
+
+        adata = self._make_adata(
+            include_dataset_column=True, single_dataset_column=True
+        )
+
+        # Dataset gate hierarchy should downgrade to gene-level gate in 1-dataset.
+        with pytest.warns(UserWarning, match="automatic hierarchy downgrade"):
+            result = scribe.fit(
+                adata,
+                model="zinb",
+                n_steps=1,
+                batch_size=3,
+                seed=0,
+                unconstrained=True,
+                dataset_key="dataset",
+                hierarchical_dataset_gate=True,
+            )
+        assert result.model_config.hierarchical_gate is True
+        assert result.model_config.hierarchical_dataset_gate is False
+        assert result.model_config.n_datasets is None
+
+    def test_single_dataset_no_auto_downgrade_preserves_strict_error(self):
+        """Opt-out keeps strict dataset-level validation behavior."""
+        import scribe
+
+        adata = self._make_adata(
+            include_dataset_column=True, single_dataset_column=True
+        )
+
+        # Disabling auto-downgrade should preserve n_datasets > 1 validation.
+        with pytest.raises(Exception, match="greater than 1"):
+            scribe.fit(
+                adata,
+                model="nbdm",
+                n_steps=1,
+                batch_size=3,
+                seed=0,
+                unconstrained=True,
+                dataset_key="dataset",
+                hierarchical_dataset_mu=True,
+                auto_downgrade_single_dataset_hierarchy=False,
+            )

@@ -214,6 +214,7 @@ def fit(
     hierarchical_dataset_mu: bool = False,
     hierarchical_dataset_p: str = "none",
     hierarchical_dataset_gate: bool = False,
+    auto_downgrade_single_dataset_hierarchy: bool = True,
     # Horseshoe prior options
     horseshoe_p: bool = False,
     horseshoe_gate: bool = False,
@@ -435,6 +436,20 @@ def fit(
 
     layer : str, optional
         Layer in AnnData to use for counts. If None, uses .X.
+
+    auto_downgrade_single_dataset_hierarchy : bool, default=True
+        Whether to automatically downgrade dataset-level hierarchical flags
+        when ``dataset_key`` resolves to a single dataset.
+        When enabled and ``n_datasets == 1``:
+        - ``hierarchical_dataset_mu=True`` is downgraded to ``False``.
+        - ``hierarchical_dataset_p='scalar'`` is downgraded to ``'none'``.
+        - ``hierarchical_dataset_p in {'gene_specific', 'two_level'}`` is
+          downgraded to ``hierarchical_p=True`` with
+          ``hierarchical_dataset_p='none'``.
+        - ``hierarchical_dataset_gate=True`` is downgraded to
+          ``hierarchical_gate=True`` with
+          ``hierarchical_dataset_gate=False``.
+        A ``UserWarning`` is emitted when any downgrade is applied.
 
     seed : int, default=42
         Random seed for reproducibility.
@@ -662,6 +677,61 @@ def fit(
             )
         n_datasets = _inferred_n_datasets
         dataset_indices = jnp.asarray(np.asarray(ds_codes, dtype=np.int32))
+
+    # Normalize dataset-level hierarchical flags for the single-dataset edge
+    # case so callers can safely pass dataset-level options in mixed cohorts.
+    if (
+        auto_downgrade_single_dataset_hierarchy
+        and n_datasets == 1
+        and dataset_indices is not None
+    ):
+        downgrade_messages: List[str] = []
+
+        # Dataset-level mu has no meaningful single-dataset hierarchy, so
+        # disable it explicitly.
+        if hierarchical_dataset_mu:
+            hierarchical_dataset_mu = False
+            downgrade_messages.append(
+                "hierarchical_dataset_mu=True -> False"
+            )
+
+        # Map dataset-level p modes to their single-dataset equivalents:
+        # scalar -> shared p/phi; gene_specific/two_level -> gene-level hierarchy.
+        if hierarchical_dataset_p == "scalar":
+            hierarchical_dataset_p = "none"
+            downgrade_messages.append(
+                "hierarchical_dataset_p='scalar' -> 'none'"
+            )
+        elif hierarchical_dataset_p in {"gene_specific", "two_level"}:
+            hierarchical_p = True
+            hierarchical_dataset_p = "none"
+            downgrade_messages.append(
+                "hierarchical_dataset_p "
+                "in {'gene_specific','two_level'} -> "
+                "hierarchical_p=True and hierarchical_dataset_p='none'"
+            )
+
+        # Dataset-level gate also collapses to the gene-level hierarchy in
+        # the single-dataset setting.
+        if hierarchical_dataset_gate:
+            hierarchical_gate = True
+            hierarchical_dataset_gate = False
+            downgrade_messages.append(
+                "hierarchical_dataset_gate=True -> "
+                "hierarchical_gate=True and hierarchical_dataset_gate=False"
+            )
+
+        if downgrade_messages:
+            # Collapse back to single-dataset mode in ModelConfig, which uses
+            # n_datasets=None as the canonical non-multi-dataset state.
+            n_datasets = None
+            warnings.warn(
+                "Detected a single dataset from dataset_key "
+                f"'{dataset_key}'. Applied automatic hierarchy downgrade: "
+                + "; ".join(downgrade_messages),
+                UserWarning,
+                stacklevel=2,
+            )
 
     # Enforce that dataset-level hierarchical options are only used when
     # explicit cell-to-dataset mapping is available for indexing.
