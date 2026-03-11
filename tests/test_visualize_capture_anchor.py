@@ -10,8 +10,15 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
+from jax import random
+from numpyro.infer import SVI, Trace_ELBO
+from numpyro.optim import Adam
 
 import visualize
+from scribe.inference.preset_builder import build_config_from_preset
+from scribe.models import get_model_and_guide
+from scribe.svi.results import ScribeSVIResults
+from viz_utils.capture_anchor import plot_p_capture_scaling
 
 
 class _DummyResults:
@@ -357,3 +364,101 @@ def test_p_capture_scaling_receives_both_split_groupings(monkeypatch, tmp_path):
     assert captured["is_mixture"] is True
     assert captured["is_multi_dataset"] is True
     assert list(captured["dataset_names"]) == ["a", "b"]
+
+
+def test_plot_p_capture_scaling_joint_gate_results_no_gate_loc_error(
+    monkeypatch, tmp_path
+):
+    """Joint gate configs should render p-capture scaling without gate_loc keys.
+
+    This integration regression exercises MAP extraction plus component
+    assignment (`cell_type_probabilities_map`) with a fitted joint low-rank
+    model where gate variational parameters are stored as
+    ``joint_*_gate_{loc,W,raw_diag}``.
+    """
+    n_cells, n_genes = 24, 6
+    key = random.PRNGKey(123)
+    counts = random.poisson(key, lam=4.0, shape=(n_cells, n_genes))
+
+    config = build_config_from_preset(
+        model="zinbvcp",
+        parameterization="mean_odds",
+        unconstrained=True,
+        n_components=2,
+        hierarchical_p=True,
+        hierarchical_gate=True,
+        guide_rank=2,
+        joint_params=["mu", "phi", "gate"],
+        priors={"eta_capture": (11.51, 0.01)},
+    )
+    model_fn, guide_fn, config = get_model_and_guide(config)
+    model_kwargs = {
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "model_config": config,
+        "counts": counts,
+    }
+
+    # Use a few optimization steps to instantiate realistic joint guide params.
+    optimizer = Adam(1e-3)
+    svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+    svi_state = svi.init(random.PRNGKey(124), **model_kwargs)
+    for _ in range(3):
+        svi_state, _ = svi.update(svi_state, **model_kwargs)
+
+    results = ScribeSVIResults(
+        params=svi.get_params(svi_state),
+        loss_history=np.array([1.0, 0.5]),
+        n_cells=n_cells,
+        n_genes=n_genes,
+        model_type="zinbvcp",
+        model_config=config,
+        prior_params={},
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "inference": {"method": "svi", "n_steps": 100},
+            "parameterization": "mean_odds",
+            "model": "zinbvcp",
+            "n_components": 2,
+        }
+    )
+    viz_cfg = OmegaConf.create(
+        {
+            "format": "png",
+            "p_capture_scaling_opts": {
+                "n_bins": 6,
+                "min_cells_per_bin": 1,
+                "assignment_batch_size": 8,
+            },
+        }
+    )
+
+    # Keep assignment lightweight while still exercising MAP extraction used by
+    # component assignment workflows.
+    def _fake_component_probs(_results, *, counts, batch_size, use_mean):
+        _ = batch_size
+        map_estimates = _results.get_map(
+            use_mean=use_mean, canonical=True, verbose=False, counts=counts
+        )
+        assert "gate" in map_estimates
+        return np.tile(np.array([[0.6, 0.4]], dtype=float), (counts.shape[0], 1))
+
+    monkeypatch.setattr(
+        "viz_utils.capture_anchor._get_cell_assignment_probabilities_for_plot",
+        _fake_component_probs,
+    )
+
+    output_path = plot_p_capture_scaling(
+        results=results,
+        counts=counts,
+        figs_dir=str(tmp_path),
+        cfg=cfg,
+        viz_cfg=viz_cfg,
+        is_mixture=True,
+        is_multi_dataset=False,
+    )
+
+    assert output_path is not None
+    assert output_path.endswith("_p_capture_scaling.png")

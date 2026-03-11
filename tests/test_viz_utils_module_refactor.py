@@ -11,9 +11,14 @@ import jax.numpy as jnp
 from jax import random
 import numpy as np
 from omegaconf import OmegaConf
+from numpyro.infer import SVI, Trace_ELBO
+from numpyro.optim import Adam
 
 from scribe.mcmc.results import ScribeMCMCResults
+from scribe.inference.preset_builder import build_config_from_preset
+from scribe.models import get_model_and_guide
 from scribe.models.config import ModelConfig
+from scribe.svi.results import ScribeSVIResults
 from viz_utils import (
     _build_umap_cache_path,
     _get_config_values,
@@ -362,6 +367,78 @@ def test_plot_bio_ppc_aligns_counts_subset_with_results_order(
     expected = counts[:, sorted_idx]
     np.testing.assert_array_equal(captured["counts_for_denoise"], expected)
 
+
+def test_plot_bio_ppc_joint_gate_results_no_gate_loc_error(tmp_path):
+    """Bio-PPC should run for joint gate configs without gate_loc KeyErrors.
+
+    This regression exercises both biological PPC sampling and MAP denoising
+    with a fitted joint low-rank ZINBVCP model where ``gate`` is in
+    ``joint_params``.
+    """
+    n_cells, n_genes = 24, 6
+    key = random.PRNGKey(321)
+    counts = random.poisson(key, lam=4.0, shape=(n_cells, n_genes))
+
+    config = build_config_from_preset(
+        model="zinbvcp",
+        parameterization="mean_odds",
+        unconstrained=True,
+        n_components=2,
+        hierarchical_p=True,
+        hierarchical_gate=True,
+        guide_rank=2,
+        joint_params=["mu", "phi", "gate"],
+        priors={"eta_capture": (11.51, 0.01)},
+    )
+    model_fn, guide_fn, config = get_model_and_guide(config)
+    model_kwargs = {
+        "n_cells": n_cells,
+        "n_genes": n_genes,
+        "model_config": config,
+        "counts": counts,
+    }
+
+    # Fit briefly to construct realistic variational parameters for plotting.
+    optimizer = Adam(1e-3)
+    svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+    svi_state = svi.init(random.PRNGKey(322), **model_kwargs)
+    for _ in range(3):
+        svi_state, _ = svi.update(svi_state, **model_kwargs)
+
+    results = ScribeSVIResults(
+        params=svi.get_params(svi_state),
+        loss_history=jnp.array([1.0, 0.5]),
+        n_cells=n_cells,
+        n_genes=n_genes,
+        model_type="zinbvcp",
+        model_config=config,
+        prior_params={},
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "inference": {"method": "svi", "n_steps": 100},
+            "parameterization": "mean_odds",
+            "model": "zinbvcp",
+            "n_components": 2,
+        }
+    )
+    viz_cfg = OmegaConf.create(
+        {
+            "ppc_opts": {"n_rows": 1, "n_cols": 2, "n_samples": 2},
+            "bio_ppc_opts": {"denoise_cell_batch_size": 8},
+            "format": "png",
+        }
+    )
+
+    plot_bio_ppc(
+        results=results,
+        counts=counts,
+        figs_dir=str(tmp_path),
+        cfg=cfg,
+        viz_cfg=viz_cfg,
+    )
+    assert any(path.name.endswith("_bio_ppc.png") for path in tmp_path.iterdir())
 
 def test_plot_capture_anchor_saves_output(monkeypatch, tmp_path):
     """Capture-anchor plot should write an output file with expected suffix.

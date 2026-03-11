@@ -497,6 +497,9 @@ def get_posterior_distributions(
     if is_zero_inflated and not (
         hierarchical_dataset_gate or horseshoe_dataset_gate
     ):
+        # Joint low-rank guides can store gate parameters under
+        # `joint_{group}_gate_*` keys instead of `gate_loc/gate_scale`.
+        joint_gate_prefix = _find_joint_prefix(params, "gate")
         if horseshoe_gate:
             # Horseshoe gene-level gate: hyper_loc + horseshoe trio + raw z
             distributions.update(
@@ -516,17 +519,27 @@ def get_posterior_distributions(
                     params, "logit_gate_loc", "logit_gate_scale"
                 )
             )
-            distributions.update(
-                _build_gate_posterior(
-                    params, unconstrained, is_mixture, split
+            if joint_gate_prefix:
+                distributions["gate"] = _build_joint_low_rank_posterior(
+                    params, "gate", joint_gate_prefix, split
                 )
-            )
+            else:
+                distributions.update(
+                    _build_gate_posterior(
+                        params, unconstrained, is_mixture, split
+                    )
+                )
         else:
-            distributions.update(
-                _build_gate_posterior(
-                    params, unconstrained, is_mixture, split
+            if joint_gate_prefix:
+                distributions["gate"] = _build_joint_low_rank_posterior(
+                    params, "gate", joint_gate_prefix, split
                 )
-            )
+            else:
+                distributions.update(
+                    _build_gate_posterior(
+                        params, unconstrained, is_mixture, split
+                    )
+                )
 
     # -------------------------------------------------------------------------
     # Add capture probability if applicable
