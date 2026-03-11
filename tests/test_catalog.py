@@ -250,3 +250,149 @@ def test_filter_raises_type_error_for_non_callable_predicate():
 
     with pytest.raises(TypeError, match="predicate must be callable"):
         catalog.filter("not-a-callable")  # type: ignore[arg-type]
+
+
+def test_experiment_run_load_data_replays_pipeline_by_default(monkeypatch):
+    """Replay configured data pipeline by default in ExperimentRun.load_data.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to replace config loading and data loader calls.
+
+    Returns
+    -------
+    None
+        Asserts that preprocessing, subsetting, and filter_obs config fields are
+        forwarded to ``load_and_preprocess_anndata`` when preprocessing is left
+        at the default ``True``.
+    """
+    # Build a run with in-memory config so this stays unit-level.
+    run = ExperimentRun(path="/tmp/exp", metadata={})
+    mock_config = {
+        "data": {
+            "path": "relative/data.h5ad",
+            "preprocessing": {"filter_cells": {"min_counts": 1000}},
+            "subset_column": "condition",
+            "subset_value": "Sham",
+            "filter_obs": {"batch": ["A"]},
+        }
+    }
+
+    # Avoid touching real Hydra working directory state in the unit test.
+    monkeypatch.setattr(run, "load_config", lambda: mock_config)
+    monkeypatch.setattr(
+        "scribe.catalog.hydra.utils.to_absolute_path",
+        lambda p: f"/abs/{p}",
+    )
+
+    # Capture loader kwargs to verify the forwarding behavior.
+    captured: dict = {}
+
+    def _mock_loader(path, **kwargs):
+        captured["path"] = path
+        captured["kwargs"] = kwargs
+        return "sentinel"
+
+    monkeypatch.setattr(
+        "scribe.data_loader.load_and_preprocess_anndata",
+        _mock_loader,
+    )
+
+    result = run.load_data(return_jax=False)
+
+    assert result == "sentinel"
+    assert captured["path"] == "/abs/relative/data.h5ad"
+    assert captured["kwargs"]["prep_config"] == {
+        "filter_cells": {"min_counts": 1000}
+    }
+    assert captured["kwargs"]["return_jax"] is False
+    assert captured["kwargs"]["subset_column"] == "condition"
+    assert captured["kwargs"]["subset_value"] == "Sham"
+    assert captured["kwargs"]["filter_obs"] == {"batch": ["A"]}
+
+
+def test_experiment_run_load_data_skips_pipeline_when_disabled(monkeypatch):
+    """Skip configured pipeline when ``preprocessing=False`` is provided.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to replace config loading and data loader calls.
+
+    Returns
+    -------
+    None
+        Asserts pipeline-specific kwargs are set to ``None`` for raw loading.
+    """
+    # Reuse the same configuration shape as production Hydra configs.
+    run = ExperimentRun(path="/tmp/exp", metadata={})
+    mock_config = {
+        "data": {
+            "path": "relative/data.h5ad",
+            "preprocessing": {"filter_cells": {"min_counts": 1000}},
+            "subset_column": "condition",
+            "subset_value": "Sham",
+            "filter_obs": {"batch": ["A"]},
+        }
+    }
+
+    monkeypatch.setattr(run, "load_config", lambda: mock_config)
+    monkeypatch.setattr(
+        "scribe.catalog.hydra.utils.to_absolute_path",
+        lambda p: f"/abs/{p}",
+    )
+
+    captured: dict = {}
+
+    def _mock_loader(path, **kwargs):
+        captured["path"] = path
+        captured["kwargs"] = kwargs
+        return "sentinel"
+
+    monkeypatch.setattr(
+        "scribe.data_loader.load_and_preprocess_anndata",
+        _mock_loader,
+    )
+
+    result = run.load_data(return_jax=True, preprocessing=False)
+
+    assert result == "sentinel"
+    assert captured["path"] == "/abs/relative/data.h5ad"
+    assert captured["kwargs"]["return_jax"] is True
+    assert captured["kwargs"]["prep_config"] is None
+    assert captured["kwargs"]["subset_column"] is None
+    assert captured["kwargs"]["subset_value"] is None
+    assert captured["kwargs"]["filter_obs"] is None
+
+
+def test_catalog_load_data_forwards_preprocessing_flag():
+    """Forward preprocessing argument through ExperimentCatalog.load_data.
+
+    Returns
+    -------
+    None
+        Asserts ``ExperimentCatalog.load_data`` passes ``preprocessing`` and
+        ``return_jax`` through to the selected run.
+    """
+    # Build a catalog with one in-memory run to avoid filesystem scans.
+    run = ExperimentRun(path="/tmp/exp", metadata={"model": "zinbvcp"})
+    catalog = _build_catalog_with_experiments([run])
+
+    # Monkeypatch the bound method directly on this run instance.
+    captured: dict = {}
+
+    def _mock_run_load_data(return_jax, preprocessing):
+        captured["return_jax"] = return_jax
+        captured["preprocessing"] = preprocessing
+        return "sentinel"
+
+    run.load_data = _mock_run_load_data  # type: ignore[method-assign]
+
+    result = catalog.load_data(
+        return_jax=False, preprocessing=False, model="zinbvcp"
+    )
+
+    assert result == "sentinel"
+    assert captured["return_jax"] is False
+    assert captured["preprocessing"] is False

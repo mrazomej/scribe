@@ -571,6 +571,12 @@ For advanced selection logic, use the callable catalog filter API:
 `catalog.filter(lambda run: "annotation_key=cell-class" in run.path)`.
 This enables custom path/name filtering or arbitrary metadata predicates.
 
+`ExperimentRun.load_data()` and `ExperimentCatalog.load_data()` replay the run's
+configured data pipeline by default (`preprocessing=True`), including
+`filter_obs`, `subset_column`/`subset_value`, and `data.preprocessing` steps
+such as `filter_cells`. Pass `preprocessing=False` to load directly from
+`data.path` without applying these transformations.
+
 ## Dependencies
 
 ### Core Dependencies
