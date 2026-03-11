@@ -8,6 +8,7 @@ from .config import _get_config_values
 from .dispatch import _get_map_like_predictive_samples_for_plot
 from .gene_selection import _select_genes
 from .mixture_ppc import _plot_ppc_figure
+from .ppc_rendering import get_ppc_render_options
 
 
 def _reconstruct_label_map(cell_labels, component_order=None):
@@ -48,6 +49,7 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
     import pandas as pd
 
     console.print("[dim]Plotting annotation PPC...[/dim]")
+    render_opts = get_ppc_render_options(viz_cfg)
 
     n_components = results.n_components
     if n_components is None or n_components <= 1:
@@ -165,6 +167,7 @@ def plot_annotation_ppc(results, counts, cell_labels, figs_dir, cfg, viz_cfg):
             fname=f"{base_fname}_annotation_ppc_{safe_label}",
             output_format=output_format,
             cmap=cmap,
+            render_opts=render_opts,
         )
 
         del component_samples, component_samples_np

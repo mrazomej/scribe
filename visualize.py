@@ -285,7 +285,16 @@ def _load_default_viz_config():
                 "p_capture_scaling": False,
                 "format": "png",
                 "ecdf_opts": {"n_genes": 25},
-                "ppc_opts": {"n_rows": 6, "n_cols": 6, "n_samples": 1500},
+                "ppc_opts": {
+                    "n_rows": 6,
+                    "n_cols": 6,
+                    "n_samples": 512,
+                    "hist_max_bin_quantile": 0.99,
+                    "hist_max_bin_floor": 10,
+                    "render_auto_line_bin_threshold": 1000,
+                    "render_line_target_points": 200,
+                    "render_line_interpolate": True,
+                },
                 "umap_opts": {
                     "n_neighbors": 15,
                     "min_dist": 0.1,
@@ -312,7 +321,7 @@ def _load_default_viz_config():
                 "mixture_ppc_opts": {
                     "n_rows": 6,
                     "n_cols": 6,
-                    "n_samples": 1500,
+                    "n_samples": 512,
                 },
                 "mixture_composition_opts": {
                     "assignment_batch_size": 512,
@@ -320,7 +329,7 @@ def _load_default_viz_config():
                 "annotation_ppc_opts": {
                     "n_rows": 5,
                     "n_cols": 5,
-                    "n_samples": 1500,
+                    "n_samples": 512,
                 },
                 "capture_anchor_opts": {
                     "n_bins": 50,

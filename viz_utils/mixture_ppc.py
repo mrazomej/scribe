@@ -14,6 +14,12 @@ from .dispatch import (
     _get_map_like_predictive_samples_for_plot,
     _get_cell_assignment_probabilities_for_plot,
 )
+from .ppc_rendering import (
+    compute_adaptive_max_bin,
+    get_ppc_render_options,
+    plot_histogram_credible_regions_adaptive,
+    plot_observed_histogram_adaptive,
+)
 
 
 def _select_divergent_genes(results, counts, n_rows, n_cols):
@@ -273,9 +279,18 @@ def _plot_ppc_figure(
     fname,
     output_format="png",
     cmap="Blues",
+    render_opts=None,
 ):
     """Plot a PPC figure in the standard format."""
     import scribe
+    if render_opts is None:
+        render_opts = {
+            "hist_max_bin_quantile": 0.99,
+            "hist_max_bin_floor": 10,
+            "render_auto_line_bin_threshold": 1000,
+            "render_line_target_points": 200,
+            "render_line_interpolate": True,
+        }
 
     n_genes_selected = len(selected_idx)
 
@@ -305,32 +320,31 @@ def _plot_ppc_figure(
         gene_idx = selected_idx_sorted[i]
         subset_pos = subset_positions[gene_idx]
         true_counts = counts_np[:, gene_idx]
+        max_bin = compute_adaptive_max_bin(true_counts, render_opts)
 
         credible_regions = scribe.stats.compute_histogram_credible_regions(
             predictive_samples[:, :, subset_pos],
             credible_regions=[95, 68, 50],
+            max_bin=max_bin,
         )
 
         hist_results = np.histogram(
             true_counts, bins=credible_regions["bin_edges"], density=True
         )
 
-        cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
-        max_bin = np.max(
-            [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
+        render_meta = plot_histogram_credible_regions_adaptive(
+            ax,
+            credible_regions,
+            cmap=cmap,
+            alpha=0.5,
+            max_bin=max_bin,
+            render_opts=render_opts,
         )
-
-        scribe.viz.plot_histogram_credible_regions_stairs(
-            ax, credible_regions, cmap=cmap, alpha=0.5, max_bin=max_bin
-        )
-
-        max_bin_hist = (
-            max_bin if len(hist_results[0]) > max_bin else len(hist_results[0])
-        )
-        ax.step(
-            hist_results[1][:max_bin_hist],
-            hist_results[0][:max_bin_hist],
-            where="post",
+        plot_observed_histogram_adaptive(
+            ax,
+            hist_results,
+            max_bin=max_bin,
+            render_meta=render_meta,
             label="data",
             color="black",
         )
@@ -366,9 +380,18 @@ def _plot_ppc_comparison_figure(
     fname,
     output_format="png",
     component_cmaps=None,
+    render_opts=None,
 ):
     """Plot comparison figure with mixture and all component PPCs overlaid."""
     import scribe
+    if render_opts is None:
+        render_opts = {
+            "hist_max_bin_quantile": 0.99,
+            "hist_max_bin_floor": 10,
+            "render_auto_line_bin_threshold": 1000,
+            "render_line_target_points": 200,
+            "render_line_interpolate": True,
+        }
 
     if component_cmaps is None:
         component_cmaps = [
@@ -405,7 +428,7 @@ def _plot_ppc_comparison_figure(
         subset_pos = subset_positions[gene_idx]
         true_counts = counts_np[:, gene_idx]
 
-        x_max = max(int(np.percentile(true_counts, 99)), 10)
+        x_max = compute_adaptive_max_bin(true_counts, render_opts)
         obs_bins = np.arange(0, x_max + 2)
         hist_results = np.histogram(true_counts, bins=obs_bins, density=True)
         y_max = np.max(hist_results[0]) * 1.1
@@ -423,18 +446,28 @@ def _plot_ppc_comparison_figure(
                 max_bin=x_max,
             )
             cmap = component_cmaps[k % len(component_cmaps)]
-            scribe.viz.plot_histogram_credible_regions_stairs(
-                ax, comp_cr, cmap=cmap, alpha=0.4, max_bin=x_max
+            plot_histogram_credible_regions_adaptive(
+                ax,
+                comp_cr,
+                cmap=cmap,
+                alpha=0.4,
+                max_bin=x_max,
+                render_opts=render_opts,
             )
 
-        scribe.viz.plot_histogram_credible_regions_stairs(
-            ax, mixture_cr, cmap="Blues", alpha=0.3, max_bin=x_max
+        render_meta = plot_histogram_credible_regions_adaptive(
+            ax,
+            mixture_cr,
+            cmap="Blues",
+            alpha=0.3,
+            max_bin=x_max,
+            render_opts=render_opts,
         )
-
-        ax.step(
-            hist_results[1][:-1],
-            hist_results[0],
-            where="post",
+        plot_observed_histogram_adaptive(
+            ax,
+            hist_results,
+            max_bin=x_max,
+            render_meta=render_meta,
             label="data",
             color="black",
             linewidth=1.5,
@@ -471,6 +504,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
     console.print(
         "[dim]Plotting mixture model PPC (genes with highest CV across components)...[/dim]"
     )
+    render_opts = get_ppc_render_options(viz_cfg)
 
     n_components = results.n_components
     if n_components is None or n_components <= 1:
@@ -549,6 +583,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
         figs_dir=figs_dir,
         fname=f"{base_fname}_mixture_ppc",
         output_format=output_format,
+        render_opts=render_opts,
     )
 
     del mixture_samples
@@ -620,6 +655,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
             fname=f"{base_fname}_component{k+1}_ppc",
             output_format=output_format,
             cmap=cmap,
+            render_opts=render_opts,
         )
 
         del component_samples
@@ -637,6 +673,7 @@ def plot_mixture_ppc(results, counts, figs_dir, cfg, viz_cfg):
             fname=f"{base_fname}_ppc_comparison",
             output_format=output_format,
             component_cmaps=component_cmaps,
+            render_opts=render_opts,
         )
         n_plots = 2 + n_components
     else:

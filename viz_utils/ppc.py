@@ -10,11 +10,18 @@ from ._common import console, Progress, SpinnerColumn, BarColumn, TextColumn, Ti
 from .config import _get_config_values
 from .dispatch import _get_predictive_samples_for_plot
 from .gene_selection import _select_genes
+from .ppc_rendering import (
+    compute_adaptive_max_bin,
+    get_ppc_render_options,
+    plot_histogram_credible_regions_adaptive,
+    plot_observed_histogram_adaptive,
+)
 
 
 def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
     """Plot and save the posterior predictive checks."""
     console.print("[dim]Plotting PPC...[/dim]")
+    render_opts = get_ppc_render_options(viz_cfg)
 
     n_rows = viz_cfg.ppc_opts.n_rows
     n_cols = viz_cfg.ppc_opts.n_cols
@@ -77,34 +84,32 @@ def plot_ppc(results, counts, figs_dir, cfg, viz_cfg):
             gene_idx = selected_idx_sorted[i]
             subset_pos = subset_positions[gene_idx]
             true_counts = counts[:, gene_idx]
+            max_bin = compute_adaptive_max_bin(true_counts, render_opts)
 
             credible_regions = scribe.stats.compute_histogram_credible_regions(
                 results_subset.predictive_samples[:, :, subset_pos],
                 credible_regions=[95, 68, 50],
+                max_bin=max_bin,
             )
 
             hist_results = np.histogram(
                 true_counts, bins=credible_regions["bin_edges"], density=True
             )
-
-            cumsum_indices = np.where(np.cumsum(hist_results[0]) <= 0.99)[0]
-            max_bin = np.max(
-                [cumsum_indices[-1] if len(cumsum_indices) > 0 else 0, 10]
+            # Plot style is selected adaptively: stairs for moderate bin counts
+            # and line/fill for very large bin counts.
+            render_meta = plot_histogram_credible_regions_adaptive(
+                ax,
+                credible_regions,
+                cmap="Blues",
+                alpha=0.5,
+                max_bin=max_bin,
+                render_opts=render_opts,
             )
-
-            scribe.viz.plot_histogram_credible_regions_stairs(
-                ax, credible_regions, cmap="Blues", alpha=0.5, max_bin=max_bin
-            )
-
-            max_bin_hist = (
-                max_bin
-                if len(hist_results[0]) > max_bin
-                else len(hist_results[0])
-            )
-            ax.step(
-                hist_results[1][:max_bin_hist],
-                hist_results[0][:max_bin_hist],
-                where="post",
+            plot_observed_histogram_adaptive(
+                ax,
+                hist_results,
+                max_bin=max_bin,
+                render_meta=render_meta,
                 label="data",
                 color="black",
             )
