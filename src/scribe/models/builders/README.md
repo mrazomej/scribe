@@ -259,6 +259,30 @@ parameterizations and guide families, including **joint-aware** extraction for
 - **`_build_joint_full_distribution`**: Stacks loc/W/D from each parameter in
   the group into a single joint `LowRankMultivariateNormal`.
 
+### Joint-Parameter Compatibility Checklist
+
+When enabling a new parameter in `joint_params` (for example, adding `gate` to
+an existing `mu`/`phi` joint group), ensure the full MAP pipeline remains
+consistent end-to-end:
+
+1. **Posterior builder support**:
+   - Confirm `get_posterior_distributions()` resolves `joint_*_{name}_*` keys
+     for that parameter (not only `{name}_loc/{name}_scale` keys).
+2. **MAP extraction compatibility**:
+   - Confirm `results.get_map()` succeeds without key errors and returns finite
+     constrained values for the joint-modeled parameter.
+3. **MAP-dependent consumers**:
+   - Validate utilities that internally call `get_map()` (for example
+     cell-assignment probabilities, denoising, and MAP-based diagnostics).
+4. **Regression coverage**:
+   - Add/update tests in:
+     - `tests/test_builders.py` (posterior + MAP extraction)
+     - `tests/test_visualize_capture_anchor.py` (p-capture scaling path)
+     - `tests/test_viz_utils_module_refactor.py` (bio-PPC / denoising path)
+
+Without this checklist, a joint-parameter addition can appear to train
+correctly while failing later in diagnostics with missing-key errors.
+
 ## Performance Considerations
 
 ### Amortized Guides

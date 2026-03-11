@@ -50,6 +50,7 @@ from scribe.models.presets import create_model_from_params
 # Import main API
 from scribe.models import get_model_and_guide
 from scribe.inference.preset_builder import build_config_from_preset
+from scribe.svi.results import ScribeSVIResults
 
 # Import parameterizations
 from scribe.models.parameterizations import (
@@ -1933,6 +1934,105 @@ class TestJointLowRankIntegration:
         assert jnp.isfinite(map_estimates["phi"]).all()
         assert jnp.all(map_estimates["mu"] > 0)
         assert jnp.all(map_estimates["phi"] > 0)
+
+    def test_joint_gate_posterior_extraction_uses_joint_keys(self):
+        """Joint gate should build posterior without gate_loc/gate_scale keys.
+
+        This regression targets zero-inflated models where ``gate`` participates
+        in ``joint_params`` and variational params are stored under
+        ``joint_*_gate_*`` keys.
+        """
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        n_cells, n_genes = 40, 8
+        key = random.PRNGKey(7)
+        counts = random.poisson(key, lam=4.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            hierarchical_gate=True,
+            guide_rank=3,
+            joint_params=["mu", "phi", "gate"],
+            priors={"eta_capture": (11.51, 0.01)},
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(8), **model_kwargs)
+        for _ in range(3):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        # Build posterior distributions directly from learned variational params.
+        distributions = get_posterior_distributions(params, config)
+
+        # Gate should be reconstructed as a low-rank transformed posterior.
+        assert "gate" in distributions
+        gate_dist = distributions["gate"]
+        assert isinstance(gate_dist, dict)
+        assert "base" in gate_dist
+        assert "transform" in gate_dist
+
+    def test_joint_gate_get_map_returns_finite_gate(self):
+        """get_map should succeed and return finite gate for joint gate configs."""
+        n_cells, n_genes = 40, 8
+        key = random.PRNGKey(9)
+        counts = random.poisson(key, lam=4.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="zinbvcp",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            hierarchical_gate=True,
+            guide_rank=3,
+            joint_params=["mu", "phi", "gate"],
+            priors={"eta_capture": (11.51, 0.01)},
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_config=config,
+            counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(10), **model_kwargs)
+        for _ in range(3):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        # Use the public SVI results API so this guards the exact failing path.
+        results = ScribeSVIResults(
+            params=params,
+            loss_history=jnp.array([1.0, 0.5]),
+            n_cells=n_cells,
+            n_genes=n_genes,
+            model_type="zinbvcp",
+            model_config=config,
+            prior_params={},
+        )
+        map_estimates = results.get_map(
+            use_mean=False, canonical=True, verbose=False, counts=counts
+        )
+
+        assert "gate" in map_estimates
+        gate = map_estimates["gate"]
+        assert jnp.isfinite(gate).all()
+        assert jnp.all(gate > 0.0)
+        assert jnp.all(gate < 1.0)
 
     def test_mean_prob_parameterization_joint(self):
         """Joint guide works for mean_prob parameterization (mu + p)."""
