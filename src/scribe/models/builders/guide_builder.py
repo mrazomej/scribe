@@ -1856,6 +1856,25 @@ def setup_joint_guide(
         is_mixture=specs[0].is_mixture,
         is_dataset=specs[0].is_dataset,
     )
+
+    # All specs in a joint group must resolve to the same shape so that
+    # the shared low-rank factor W (rank k) and Woodbury conditioning
+    # operate on identically-sized gene vectors.
+    for spec in specs[1:]:
+        other_shape = resolve_shape(
+            spec.shape_dims,
+            dims,
+            is_mixture=spec.is_mixture,
+            is_dataset=spec.is_dataset,
+        )
+        if other_shape != resolved_shape:
+            raise ValueError(
+                f"Joint group '{guide.group}': spec '{spec.name}' resolves "
+                f"to shape {other_shape}, but '{specs[0].name}' resolves "
+                f"to {resolved_shape}. All specs in a joint group must "
+                f"share the same resolved shape."
+            )
+
     n_batch_dims = len(resolved_shape) - 1
 
     # Register per-parameter variational params for the joint

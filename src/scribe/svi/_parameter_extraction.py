@@ -558,8 +558,20 @@ class ParameterExtractionMixin:
                 # Check if any values are NaN
                 if jnp.any(jnp.isnan(value)):
                     replaced_nans = True
-                    # Get mean value
-                    mean_value = distributions[param].mean
+                    # Compute mean, handling dict-structured joint
+                    # distributions ({"base": ..., "transform": ...})
+                    # that lack a .mean attribute directly.
+                    dist_obj = distributions[param]
+                    if (
+                        isinstance(dist_obj, dict)
+                        and "base" in dist_obj
+                        and "transform" in dist_obj
+                    ):
+                        mean_value = dist_obj["transform"](
+                            dist_obj["base"].mean
+                        )
+                    else:
+                        mean_value = dist_obj.mean
                     # Replace NaN values with means
                     map_estimates[param] = jnp.where(
                         jnp.isnan(value), mean_value, value

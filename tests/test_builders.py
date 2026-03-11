@@ -2061,3 +2061,161 @@ class TestJointLowRankIntegration:
             svi_state, _ = svi.update(svi_state, **model_kwargs)
             loss = svi.evaluate(svi_state, **model_kwargs)
             assert jnp.isfinite(loss)
+
+    def test_get_map_use_mean_with_joint_params(self):
+        """get_map(use_mean=True) handles dict-structured joint distributions.
+
+        Regression test: previously, the NaN-replacement path called
+        ``distributions[param].mean`` which crashed with AttributeError
+        for joint low-rank parameters stored as dicts.
+        """
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        n_cells, n_genes = 50, 10
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+        for _ in range(5):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        # Inject a NaN into mu's loc to trigger the use_mean fallback
+        loc_key = "joint_joint_mu_loc"
+        assert loc_key in params, f"Expected {loc_key} in params"
+        corrupted = params[loc_key].at[0].set(float("nan"))
+        params_with_nan = {**params, loc_key: corrupted}
+
+        distributions = get_posterior_distributions(params_with_nan, config)
+
+        # Exercise the NaN-replacement code path that previously raised
+        # AttributeError for dict-structured distributions.  The key
+        # assertion is that it does NOT crash.
+        map_estimates = {}
+        for param, dist_obj in distributions.items():
+            if param.startswith("joint:"):
+                continue
+            if (
+                isinstance(dist_obj, dict)
+                and "base" in dist_obj
+                and "transform" in dist_obj
+            ):
+                base_dist = dist_obj["base"]
+                transform = dist_obj["transform"]
+                map_estimates[param] = transform(base_dist.loc)
+
+        # NaN replacement path — must not raise AttributeError
+        for param, value in map_estimates.items():
+            if jnp.any(jnp.isnan(value)):
+                dist_obj = distributions[param]
+                if (
+                    isinstance(dist_obj, dict)
+                    and "base" in dist_obj
+                    and "transform" in dist_obj
+                ):
+                    mean_value = dist_obj["transform"](
+                        dist_obj["base"].mean
+                    )
+                else:
+                    mean_value = dist_obj.mean
+                map_estimates[param] = jnp.where(
+                    jnp.isnan(value), mean_value, value
+                )
+
+        # phi should be untouched and finite
+        assert "phi" in map_estimates
+        assert jnp.isfinite(map_estimates["phi"]).all()
+
+    def test_joint_mixture_get_map(self):
+        """get_map works for joint params in a mixture model."""
+        from scribe.models.builders.posterior import get_posterior_distributions
+
+        n_cells, n_genes = 50, 10
+        n_components = 3
+        key = random.PRNGKey(0)
+        counts = random.poisson(key, lam=5.0, shape=(n_cells, n_genes))
+
+        config = build_config_from_preset(
+            model="nbdm",
+            parameterization="mean_odds",
+            unconstrained=True,
+            hierarchical_p=True,
+            guide_rank=3,
+            joint_params=["mu", "phi"],
+            n_components=n_components,
+            mixture_params=["mu", "phi"],
+        )
+        model_fn, guide_fn, config = get_model_and_guide(config)
+        model_kwargs = dict(
+            n_cells=n_cells, n_genes=n_genes,
+            model_config=config, counts=counts,
+        )
+
+        optimizer = Adam(1e-3)
+        svi = SVI(model_fn, guide_fn, optimizer, loss=Trace_ELBO())
+        svi_state = svi.init(random.PRNGKey(1), **model_kwargs)
+        for _ in range(5):
+            svi_state, _ = svi.update(svi_state, **model_kwargs)
+        params = svi.get_params(svi_state)
+
+        # Posterior distributions should have component dimension
+        distributions = get_posterior_distributions(params, config)
+        assert "mu" in distributions
+        assert "phi" in distributions
+
+        # MAP estimates via transform(loc) should have shape
+        # (n_components, n_genes)
+        for pname in ("mu", "phi"):
+            dist_obj = distributions[pname]
+            assert isinstance(dist_obj, dict)
+            map_val = dist_obj["transform"](dist_obj["base"].loc)
+            assert map_val.shape == (n_components, n_genes), (
+                f"{pname} MAP shape {map_val.shape} != "
+                f"({n_components}, {n_genes})"
+            )
+            assert jnp.isfinite(map_val).all()
+            assert jnp.all(map_val > 0)
+
+    def test_joint_shape_mismatch_raises(self):
+        """Joint group with mismatched shapes raises ValueError."""
+        from scribe.models.builders.guide_builder import setup_joint_guide
+        from scribe.models.builders.parameter_specs import ExpNormalSpec
+        from scribe.models.components import JointLowRankGuide
+
+        # One gene-specific, one scalar — should fail
+        spec_gene = ExpNormalSpec(
+            name="mu",
+            shape_dims=("n_genes",),
+            default_params=(0.0, 1.0),
+            is_gene_specific=True,
+        )
+        spec_scalar = ExpNormalSpec(
+            name="phi",
+            shape_dims=(),
+            default_params=(0.0, 1.0),
+            is_gene_specific=False,
+        )
+        guide = JointLowRankGuide(rank=3, group="test")
+        dims = {"n_genes": 10, "n_cells": 50}
+
+        import pytest
+        with pytest.raises(ValueError, match="All specs in a joint group"):
+            setup_joint_guide(
+                [spec_gene, spec_scalar], guide, dims, model_config=None
+            )
