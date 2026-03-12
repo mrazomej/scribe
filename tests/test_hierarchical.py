@@ -526,8 +526,14 @@ class TestDEWithGeneSpecificP:
         assert "delta_mean" in results
         assert len(results["lfsr"]) == D
 
-    def test_gene_mask_and_p_samples_raises(self, rng):
-        """Test that gene_mask + p_samples raises ValueError."""
+    def test_gene_mask_and_p_samples_combined(self, rng):
+        """gene_mask + p_samples works via deferred simplex aggregation.
+
+        When gene-specific p is provided, aggregation is deferred to
+        simplex space after Gamma-based composition sampling so that
+        each gene retains its own p during sampling.  The output should
+        have D_kept columns (one per kept gene).
+        """
         from scribe.de._empirical import compute_clr_differences
 
         N, D = 50, 5
@@ -536,14 +542,17 @@ class TestDEWithGeneSpecificP:
         p_A = jnp.full((N, D), 0.5)
         p_B = jnp.full((N, D), 0.5)
         mask = jnp.array([True, True, False, True, False])
+        D_kept = int(mask.sum())
 
-        with pytest.raises(ValueError, match="gene_mask and gene-specific"):
-            compute_clr_differences(
-                r_A, r_B,
-                gene_mask=mask,
-                p_samples_A=p_A,
-                p_samples_B=p_B,
-            )
+        delta = compute_clr_differences(
+            r_A, r_B,
+            gene_mask=mask,
+            p_samples_A=p_A,
+            p_samples_B=p_B,
+            rng_key=rng,
+        )
+
+        assert delta.shape == (N, D_kept)
 
     def test_mixture_p_samples_with_component_slicing(self, rng):
         """Test p_samples with 3D (mixture) arrays and component slicing."""
