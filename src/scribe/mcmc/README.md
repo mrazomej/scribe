@@ -236,20 +236,38 @@ samples from the biological prior, genuine NB zeros are kept at zero.
 **Exporting Denoised Counts as AnnData / h5ad:**
 
 ```python
-# Single denoised dataset (posterior-mean params, default ("mean", "sample"))
+# Single denoised dataset (default: individual MCMC draw, preserving correlations)
 adata_denoised = results.get_denoised_anndata(
     counts=observed_counts,
     rng_key=rng_key,
 )
 
-# Multiple datasets (first = posterior mean, rest = individual MCMC draws)
+# Multiple datasets — all use individual MCMC draws (cross-gene correlations preserved)
 adatas = results.get_denoised_anndata(
     counts=observed_counts,
     rng_key=rng_key,
     n_datasets=5,
     path="denoised.h5ad",  # writes denoised_0.h5ad .. denoised_4.h5ad
 )
+
+# Opt out: first dataset uses posterior mean (no cross-gene correlations), rest draws
+adatas = results.get_denoised_anndata(
+    counts=observed_counts,
+    rng_key=rng_key,
+    n_datasets=5,
+    preserve_correlations=False,
+)
 ```
+
+**Preserving Cross-Gene Correlations (`preserve_correlations`):**
+
+By default, `preserve_correlations=True` ensures that **all** denoised
+datasets use individual MCMC draws.  Since each MCMC draw is a full joint
+sample from the posterior, cross-gene correlations are automatically preserved
+in the denoised counts.  When `preserve_correlations=False`, the first dataset
+uses the posterior mean of parameters (averaging destroys correlations) and
+subsequent datasets use individual draws.  See `paper/_denoising.qmd`
+§"Cross-gene correlations in denoised counts" for the mathematical derivation.
 
 **Mixture Model Analysis:**
 ```python

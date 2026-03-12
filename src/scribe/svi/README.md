@@ -337,7 +337,7 @@ optionally writing the result to an h5ad file.  It copies cell/gene metadata
 from the original data and records denoising provenance in `.uns`.
 
 ```python
-# Single denoised dataset (MAP-based, default method=("mean", "sample"))
+# Single denoised dataset (default: posterior draw, preserving correlations)
 adata_denoised = results.get_denoised_anndata(
     counts=observed_counts,
     rng_key=rng_key,
@@ -346,11 +346,19 @@ adata_denoised = results.get_denoised_anndata(
 # adata_denoised.layers["original_counts"] → input counts
 # adata_denoised.uns["scribe_denoising"]   → provenance metadata
 
-# Multiple datasets (first = MAP, rest = posterior samples)
+# Multiple datasets — all use posterior draws (cross-gene correlations preserved)
 adatas = results.get_denoised_anndata(
     counts=observed_counts,
     rng_key=rng_key,
     n_datasets=5,
+)
+
+# Opt out: first dataset uses MAP (no cross-gene correlations), rest posterior
+adatas = results.get_denoised_anndata(
+    counts=observed_counts,
+    rng_key=rng_key,
+    n_datasets=5,
+    preserve_correlations=False,
 )
 # adatas[0] uses MAP estimates, adatas[1:] use posterior draws
 
@@ -361,6 +369,19 @@ adata_denoised = results.get_denoised_anndata(
     path="denoised.h5ad",      # write directly to disk
 )
 ```
+
+**Preserving Cross-Gene Correlations (`preserve_correlations`):**
+
+By default, `preserve_correlations=True` ensures that **all** denoised
+datasets (including the first) are generated from posterior parameter draws
+rather than MAP point estimates.  This propagates cross-gene correlations
+encoded in the joint parameter posterior into the denoised counts.  For models
+fitted with a joint low-rank guide (`joint_params` in the model config), these
+draws capture both within- and across-parameter correlations.  When
+`preserve_correlations=False`, the first dataset uses MAP estimates (no
+cross-gene correlation) and subsequent datasets use posterior draws.  See
+`paper/_denoising.qmd` §"Cross-gene correlations in denoised counts" for the
+mathematical derivation.
 
 **Amortized Capture Probability and PPC:**
 

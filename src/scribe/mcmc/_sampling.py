@@ -329,6 +329,7 @@ class SamplingMixin:
         rng_key: Optional[random.PRNGKey] = None,
         cell_batch_size: Optional[int] = None,
         include_original_counts: bool = True,
+        preserve_correlations: bool = True,
         path: Optional[str] = None,
         verbose: bool = True,
     ) -> Union["AnnData", List["AnnData"]]:
@@ -337,8 +338,18 @@ class SamplingMixin:
         Runs Bayesian denoising on the observed counts and packages the
         result into an :class:`~anndata.AnnData` object with the original
         cell/gene metadata.  Supports generating multiple denoised
-        realisations: dataset 1 uses the posterior mean of MCMC samples
-        and subsequent datasets each use a different MCMC draw.
+        realisations.
+
+        When ``preserve_correlations=True`` (the default), **all**
+        datasets — including the first — use individual MCMC draws.
+        Since each MCMC draw is a full joint sample from the posterior,
+        cross-gene correlations are automatically preserved in the
+        denoised counts (see ``paper/_denoising.qmd``,
+        @sec-denoising-correlations).
+
+        When ``preserve_correlations=False``, the first dataset uses the
+        posterior mean of MCMC parameters (averaging destroys cross-gene
+        correlations) and subsequent datasets use individual MCMC draws.
 
         Parameters
         ----------
@@ -358,9 +369,7 @@ class SamplingMixin:
             ``("mean", "sample")`` — posterior mean for non-zero
             positions, stochastic sample at ZINB zeros.
         n_datasets : int, optional
-            Number of denoised datasets to generate.  Dataset 1 uses the
-            posterior mean of MCMC parameters; datasets 2..N each use a
-            different MCMC draw.  Default: 1.
+            Number of denoised datasets to generate.  Default: 1.
         rng_key : random.PRNGKey or None, optional
             JAX PRNG key.  Defaults to ``random.PRNGKey(42)``.
         cell_batch_size : int or None, optional
@@ -368,6 +377,13 @@ class SamplingMixin:
         include_original_counts : bool, optional
             If ``True``, store the input counts in
             ``.layers["original_counts"]``.  Default: ``True``.
+        preserve_correlations : bool, optional
+            If ``True``, all datasets use individual MCMC draws so that
+            cross-gene correlations from the joint posterior are
+            propagated into the denoised counts.  If ``False``, the
+            first dataset uses the posterior mean of parameters (no
+            cross-gene correlation) and subsequent datasets use
+            individual draws.  Default: ``True``.
         path : str or None, optional
             If provided, write the AnnData to this h5ad path.  For
             multiple datasets, files are named
@@ -412,62 +428,79 @@ class SamplingMixin:
         mw_all = samples.get("mixing_weights")
 
         n_mcmc = r_all.shape[0]
+        is_mix = mw_all is not None
         results: List["AnnData"] = []
 
-        # --- Dataset 1: posterior-mean denoising ---
-        if verbose:
-            print(
-                f"Generating denoised dataset 1/{n_datasets} "
-                f"(posterior mean of {n_mcmc} MCMC samples)..."
-            )
+        # Determine whether dataset 1 uses posterior mean or an
+        # individual MCMC draw.
+        if preserve_correlations:
+            n_draw_datasets = n_datasets
+            mean_first = False
+        else:
+            n_draw_datasets = n_datasets - 1
+            mean_first = True
 
-        # Average parameters across MCMC draws for a "MAP-like" estimate
-        r_mean = jnp.mean(r_all, axis=0)
-        p_mean = jnp.mean(p_all, axis=0)
-        pc_mean = (
-            jnp.mean(pc_all, axis=0) if pc_all is not None else None
-        )
-        gate_mean = (
-            jnp.mean(gate_all, axis=0) if gate_all is not None else None
-        )
-        mw_mean = (
-            jnp.mean(mw_all, axis=0) if mw_all is not None else None
-        )
-
-        rng_key, map_key = random.split(rng_key)
-        denoised_mean = _denoise_counts_util(
-            counts=counts,
-            r=r_mean,
-            p=p_mean,
-            p_capture=pc_mean,
-            gate=gate_mean,
-            method=method,
-            rng_key=map_key,
-            mixing_weights=mw_mean,
-            cell_batch_size=cell_batch_size,
-        )
-
-        results.append(
-            _build_denoised_adata_mcmc(
-                denoised=denoised_mean,
-                counts=counts,
-                obs=obs,
-                var=var,
-                uns=uns,
-                method=method,
-                dataset_index=0,
-                parameter_source="posterior_mean",
-                include_original_counts=include_original_counts,
-            )
-        )
-
-        # --- Datasets 2..N: individual MCMC draw denoising ---
-        is_mix = mw_all is not None
-        for i in range(n_datasets - 1):
-            idx = i % n_mcmc
+        # --- Dataset 1 from posterior mean (only when not preserving) ---
+        if mean_first:
             if verbose:
                 print(
-                    f"Generating denoised dataset {i + 2}/{n_datasets} "
+                    f"Generating denoised dataset 1/{n_datasets} "
+                    f"(posterior mean of {n_mcmc} MCMC samples)..."
+                )
+
+            r_mean = jnp.mean(r_all, axis=0)
+            p_mean = jnp.mean(p_all, axis=0)
+            pc_mean = (
+                jnp.mean(pc_all, axis=0) if pc_all is not None else None
+            )
+            gate_mean = (
+                jnp.mean(gate_all, axis=0)
+                if gate_all is not None
+                else None
+            )
+            mw_mean = (
+                jnp.mean(mw_all, axis=0)
+                if mw_all is not None
+                else None
+            )
+
+            rng_key, map_key = random.split(rng_key)
+            denoised_mean = _denoise_counts_util(
+                counts=counts,
+                r=r_mean,
+                p=p_mean,
+                p_capture=pc_mean,
+                gate=gate_mean,
+                method=method,
+                rng_key=map_key,
+                mixing_weights=mw_mean,
+                cell_batch_size=cell_batch_size,
+            )
+
+            results.append(
+                _build_denoised_adata_mcmc(
+                    denoised=denoised_mean,
+                    counts=counts,
+                    obs=obs,
+                    var=var,
+                    uns=uns,
+                    method=method,
+                    dataset_index=0,
+                    parameter_source="posterior_mean",
+                    include_original_counts=include_original_counts,
+                )
+            )
+
+        # --- Datasets from individual MCMC draws ---
+        offset = 1 if mean_first else 0
+
+        for i in range(n_draw_datasets):
+            idx = i % n_mcmc
+            ds_num = i + offset
+            if verbose:
+                print(
+                    f"Generating denoised dataset "
+                    f"{ds_num + 1}/{n_datasets} "
                     f"(MCMC sample {idx})..."
                 )
 
@@ -515,7 +548,7 @@ class SamplingMixin:
                     var=var,
                     uns=uns,
                     method=method,
-                    dataset_index=i + 1,
+                    dataset_index=ds_num,
                     parameter_source=f"mcmc_sample_{idx}",
                     include_original_counts=include_original_counts,
                 )

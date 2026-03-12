@@ -1261,6 +1261,7 @@ class TestGetDenoisedAnnData:
         counts, n_cells, n_genes = dataset
         results = _fit_svi(model, counts)
 
+        # Default: preserve_correlations=True → posterior draw
         adata = results.get_denoised_anndata(
             counts=counts, rng_key=rng, verbose=False,
         )
@@ -1274,7 +1275,7 @@ class TestGetDenoisedAnnData:
         assert "scribe_denoising" in adata.uns
         meta = adata.uns["scribe_denoising"]
         assert meta["dataset_index"] == 0
-        assert meta["parameter_source"] == "map"
+        assert "posterior_sample" in meta["parameter_source"]
 
     def test_svi_no_original_counts_layer(self, dataset, rng):
         """include_original_counts=False omits the layer."""
@@ -1292,6 +1293,7 @@ class TestGetDenoisedAnnData:
         counts, n_cells, n_genes = dataset
         results = _fit_svi("nbvcp", counts)
 
+        # Default: preserve_correlations=True → all posterior draws
         adatas = results.get_denoised_anndata(
             counts=counts, rng_key=rng, n_datasets=3, verbose=False,
         )
@@ -1299,11 +1301,8 @@ class TestGetDenoisedAnnData:
         assert isinstance(adatas, list)
         assert len(adatas) == 3
 
-        # First dataset is MAP-based
-        assert adatas[0].uns["scribe_denoising"]["parameter_source"] == "map"
-
-        # Subsequent datasets are posterior-sample-based
-        for i in range(1, 3):
+        # All datasets are posterior-sample-based
+        for i in range(3):
             meta = adatas[i].uns["scribe_denoising"]
             assert meta["dataset_index"] == i
             assert "posterior_sample" in meta["parameter_source"]
@@ -1356,6 +1355,7 @@ class TestGetDenoisedAnnData:
         counts, n_cells, n_genes = dataset
         results = _fit_mcmc(model, counts)
 
+        # Default: preserve_correlations=True → individual MCMC draw
         adata = results.get_denoised_anndata(
             counts=counts, rng_key=rng, verbose=False,
         )
@@ -1365,21 +1365,25 @@ class TestGetDenoisedAnnData:
         assert "original_counts" in adata.layers
         assert "scribe_denoising" in adata.uns
         assert adata.uns["scribe_denoising"]["dataset_index"] == 0
+        assert "mcmc_sample" in adata.uns["scribe_denoising"][
+            "parameter_source"
+        ]
 
     def test_mcmc_multi_dataset(self, dataset, rng):
         """MCMC n_datasets > 1 returns a list."""
         counts, n_cells, n_genes = dataset
         results = _fit_mcmc("nbvcp", counts)
 
+        # Default: preserve_correlations=True → all MCMC draws
         adatas = results.get_denoised_anndata(
             counts=counts, rng_key=rng, n_datasets=2, verbose=False,
         )
 
         assert isinstance(adatas, list)
         assert len(adatas) == 2
-        assert adatas[0].uns["scribe_denoising"]["parameter_source"] == (
-            "posterior_mean"
-        )
+        assert "mcmc_sample" in adatas[0].uns["scribe_denoising"][
+            "parameter_source"
+        ]
         assert "mcmc_sample" in adatas[1].uns["scribe_denoising"][
             "parameter_source"
         ]
@@ -1412,3 +1416,149 @@ class TestGetDenoisedAnnData:
         assert list(out.obs.columns) == ["cell_type"]
         assert list(out.var.columns) == ["gene_name"]
         assert out.obs.index.tolist() == obs.index.tolist()
+
+
+# ==============================================================================
+# Tests for preserve_correlations flag
+# ==============================================================================
+
+
+class TestPreserveCorrelations:
+    """Tests for the ``preserve_correlations`` flag on ``get_denoised_anndata``.
+
+    Verifies that ``preserve_correlations=True`` (default) uses posterior
+    draws for all datasets, while ``preserve_correlations=False`` falls
+    back to MAP/posterior-mean for the first dataset.
+    """
+
+    def test_svi_preserve_true_single_uses_posterior(self, dataset, rng):
+        """With preserve_correlations=True, single dataset is a posterior draw."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng,
+            preserve_correlations=True, verbose=False,
+        )
+        meta = adata.uns["scribe_denoising"]
+        assert "posterior_sample" in meta["parameter_source"]
+        assert meta["dataset_index"] == 0
+        assert adata.X.shape == (n_cells, n_genes)
+
+    def test_svi_preserve_false_single_uses_map(self, dataset, rng):
+        """With preserve_correlations=False, single dataset uses MAP."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng,
+            preserve_correlations=False, verbose=False,
+        )
+        meta = adata.uns["scribe_denoising"]
+        assert meta["parameter_source"] == "map"
+        assert meta["dataset_index"] == 0
+
+    def test_svi_preserve_false_multi_first_is_map(self, dataset, rng):
+        """preserve_correlations=False: first=MAP, rest=posterior."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        adatas = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, n_datasets=3,
+            preserve_correlations=False, verbose=False,
+        )
+
+        assert len(adatas) == 3
+        assert adatas[0].uns["scribe_denoising"]["parameter_source"] == "map"
+        for i in range(1, 3):
+            assert "posterior_sample" in adatas[i].uns[
+                "scribe_denoising"
+            ]["parameter_source"]
+
+    def test_svi_preserve_true_multi_all_posterior(self, dataset, rng):
+        """preserve_correlations=True: all datasets are posterior draws."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_svi("nbvcp", counts)
+
+        adatas = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, n_datasets=3,
+            preserve_correlations=True, verbose=False,
+        )
+
+        assert len(adatas) == 3
+        for i in range(3):
+            meta = adatas[i].uns["scribe_denoising"]
+            assert "posterior_sample" in meta["parameter_source"]
+            assert meta["dataset_index"] == i
+            assert adatas[i].X.shape == (n_cells, n_genes)
+
+    def test_mcmc_preserve_true_single_uses_draw(self, dataset, rng):
+        """MCMC preserve_correlations=True: single dataset is an MCMC draw."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_mcmc("nbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng,
+            preserve_correlations=True, verbose=False,
+        )
+        meta = adata.uns["scribe_denoising"]
+        assert "mcmc_sample" in meta["parameter_source"]
+
+    def test_mcmc_preserve_false_single_uses_mean(self, dataset, rng):
+        """MCMC preserve_correlations=False: single dataset is posterior mean."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_mcmc("nbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng,
+            preserve_correlations=False, verbose=False,
+        )
+        meta = adata.uns["scribe_denoising"]
+        assert meta["parameter_source"] == "posterior_mean"
+
+    def test_mcmc_preserve_false_multi_first_is_mean(self, dataset, rng):
+        """MCMC preserve_correlations=False: first=mean, rest=draws."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_mcmc("nbvcp", counts)
+
+        adatas = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, n_datasets=2,
+            preserve_correlations=False, verbose=False,
+        )
+
+        assert len(adatas) == 2
+        assert adatas[0].uns["scribe_denoising"]["parameter_source"] == (
+            "posterior_mean"
+        )
+        assert "mcmc_sample" in adatas[1].uns["scribe_denoising"][
+            "parameter_source"
+        ]
+
+    def test_mcmc_preserve_true_multi_all_draws(self, dataset, rng):
+        """MCMC preserve_correlations=True: all datasets are MCMC draws."""
+        counts, n_cells, n_genes = dataset
+        results = _fit_mcmc("nbvcp", counts)
+
+        adatas = results.get_denoised_anndata(
+            counts=counts, rng_key=rng, n_datasets=2,
+            preserve_correlations=True, verbose=False,
+        )
+
+        assert len(adatas) == 2
+        for i in range(2):
+            meta = adatas[i].uns["scribe_denoising"]
+            assert "mcmc_sample" in meta["parameter_source"]
+            assert meta["dataset_index"] == i
+
+    def test_svi_preserve_correlations_denoised_non_negative(
+        self, dataset, rng
+    ):
+        """Correlated denoised .X values are non-negative."""
+        counts, _, _ = dataset
+        results = _fit_svi("zinbvcp", counts)
+
+        adata = results.get_denoised_anndata(
+            counts=counts, rng_key=rng,
+            preserve_correlations=True, verbose=False,
+        )
+        assert np.all(adata.X >= -1e-5)
