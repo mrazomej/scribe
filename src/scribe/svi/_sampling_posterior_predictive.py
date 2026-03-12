@@ -2,7 +2,7 @@
 Posterior and constrained predictive sampling mixin for SVI results.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import jax.numpy as jnp
 from jax import random
@@ -10,8 +10,71 @@ from jax import random
 from ..sampling import generate_predictive_samples, sample_variational_posterior
 
 
+def _merge_per_dataset_posterior_samples(
+    per_dataset_samples: List[Dict[str, jnp.ndarray]],
+    promoted_keys: set,
+) -> Dict[str, jnp.ndarray]:
+    """Re-stack per-dataset posterior samples into a single dict.
+
+    For keys that were promoted during ``concat`` (i.e. they carry a
+    dataset axis), stack the per-dataset arrays along axis 1 (after the
+    sample axis).  For shared keys (not promoted), take the value from
+    dataset 0.
+
+    Parameters
+    ----------
+    per_dataset_samples : list of dict
+        One posterior-sample dict per dataset, each with arrays of shape
+        ``(n_samples, ...)``.
+    promoted_keys : set
+        Parameter names that were stacked along a dataset axis during
+        ``concat``.  These get re-stacked at axis 1.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Merged posterior samples.  Promoted keys have shape
+        ``(n_samples, n_datasets, ...)``.
+    """
+    reference = per_dataset_samples[0]
+    merged: Dict[str, jnp.ndarray] = {}
+
+    for key in reference:
+        if key in promoted_keys:
+            # Stack along axis=1 (after the n_samples axis)
+            merged[key] = jnp.stack(
+                [ds_samples[key] for ds_samples in per_dataset_samples],
+                axis=1,
+            )
+        else:
+            # Shared parameter — identical across datasets, take from first
+            merged[key] = reference[key]
+
+    return merged
+
+
 class PosteriorPredictiveSamplingMixin:
     """Mixin providing posterior and constrained predictive sampling methods."""
+
+    def _is_concatenated_multi_dataset(self) -> bool:
+        """Check if this results object was produced by concatenating
+        independent single-dataset fits.
+
+        Concatenated results have ``_promoted_dataset_keys`` set to a
+        non-empty set by ``ScribeSVIResults.concat``.  Jointly
+        hierarchical multi-dataset models (fit with
+        ``hierarchical_dataset_*`` / ``horseshoe_dataset`` flags) have
+        ``_promoted_dataset_keys = None`` — their guide was built for
+        the multi-dataset structure natively and ``Predictive`` works.
+
+        Returns
+        -------
+        bool
+            True if per-dataset decomposition is required for posterior
+            sampling.
+        """
+        promoted = getattr(self, "_promoted_dataset_keys", None)
+        return promoted is not None and len(promoted) > 0
 
     def get_posterior_samples(
         self,
@@ -22,6 +85,13 @@ class PosteriorPredictiveSamplingMixin:
         counts: Optional[jnp.ndarray] = None,
     ) -> Dict:
         """Sample parameters from the variational posterior distribution.
+
+        For concatenated multi-dataset results (produced by
+        ``ScribeSVIResults.concat``), sampling is performed
+        independently on each dataset via ``get_dataset(d)`` and the
+        results are re-stacked.  For jointly hierarchical models (fit
+        with ``n_datasets > 1`` natively), the standard ``Predictive``
+        path is used directly.
 
         Parameters
         ----------
@@ -59,13 +129,45 @@ class PosteriorPredictiveSamplingMixin:
                     "probability. Please provide the observed count matrix of shape "
                     "(n_cells, n_genes) that was used during inference."
                 )
-            self._validate_counts_for_amortizer(counts, context="posterior sampling")
+            self._validate_counts_for_amortizer(
+                counts, context="posterior sampling"
+            )
 
         # Create default RNG key if not provided (lazy initialization)
         if rng_key is None:
             rng_key = random.PRNGKey(42)
 
-        # Get the guide function
+        # Concatenated multi-dataset results: Predictive cannot run
+        # on the stacked params because the guide was built for
+        # single-dataset models.  Decompose into per-dataset sampling.
+        if self._is_concatenated_multi_dataset():
+            posterior_samples = self._get_posterior_samples_per_dataset(
+                rng_key=rng_key,
+                n_samples=n_samples,
+                batch_size=batch_size,
+                counts=counts,
+            )
+        else:
+            posterior_samples = self._get_posterior_samples_standard(
+                rng_key=rng_key,
+                n_samples=n_samples,
+                batch_size=batch_size,
+                counts=counts,
+            )
+
+        if store_samples:
+            self.posterior_samples = posterior_samples
+
+        return posterior_samples
+
+    def _get_posterior_samples_standard(
+        self,
+        rng_key: random.PRNGKey,
+        n_samples: int,
+        batch_size: Optional[int],
+        counts: Optional[jnp.ndarray],
+    ) -> Dict:
+        """Standard posterior sampling via NumPyro Predictive."""
         model, guide = self._model_and_guide()
 
         if guide is None:
@@ -84,8 +186,7 @@ class PosteriorPredictiveSamplingMixin:
         if batch_size is not None:
             model_args["batch_size"] = batch_size
 
-        # Sample from posterior
-        posterior_samples = sample_variational_posterior(
+        return sample_variational_posterior(
             guide,
             self.params,
             model,
@@ -95,11 +196,48 @@ class PosteriorPredictiveSamplingMixin:
             counts=counts,
         )
 
-        # Store samples if requested
-        if store_samples:
-            self.posterior_samples = posterior_samples
+    def _get_posterior_samples_per_dataset(
+        self,
+        rng_key: random.PRNGKey,
+        n_samples: int,
+        batch_size: Optional[int],
+        counts: Optional[jnp.ndarray],
+    ) -> Dict:
+        """Posterior sampling for concatenated multi-dataset results.
 
-        return posterior_samples
+        Iterates over ``get_dataset(d)`` to produce single-dataset
+        views where ``Predictive`` works, then re-stacks promoted
+        keys along the dataset axis.
+        """
+        n_datasets = self.model_config.n_datasets
+        ds_indices = getattr(self, "_dataset_indices", None)
+        promoted = getattr(self, "_promoted_dataset_keys", None) or set()
+
+        per_dataset_samples: List[Dict[str, jnp.ndarray]] = []
+
+        for d in range(n_datasets):
+            rng_key, ds_key = random.split(rng_key)
+
+            ds_view = self.get_dataset(d)
+
+            # Subset counts to this dataset's cells if counts provided
+            ds_counts = None
+            if counts is not None and ds_indices is not None:
+                mask = ds_indices == d
+                ds_counts = counts[mask]
+
+            ds_samples = ds_view.get_posterior_samples(
+                rng_key=ds_key,
+                n_samples=n_samples,
+                batch_size=batch_size,
+                store_samples=False,
+                counts=ds_counts,
+            )
+            per_dataset_samples.append(ds_samples)
+
+        return _merge_per_dataset_posterior_samples(
+            per_dataset_samples, promoted
+        )
 
     def get_predictive_samples(
         self,

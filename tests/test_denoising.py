@@ -155,7 +155,12 @@ class TestDenoiseCountsCore:
 
         for method in ("mean", "mode", "sample"):
             result = denoise_counts(
-                counts, r, p, p_capture=nu, method=method, rng_key=rng,
+                counts,
+                r,
+                p,
+                p_capture=nu,
+                method=method,
+                rng_key=rng,
             )
             assert jnp.all(result >= 0), f"method={method}"
 
@@ -187,7 +192,11 @@ class TestDenoiseCountsCore:
 
         full = denoise_counts(counts, r, p, p_capture=nu)
         batched = denoise_counts(
-            counts, r, p, p_capture=nu, cell_batch_size=4,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            cell_batch_size=4,
         )
         np.testing.assert_allclose(full, batched, atol=1e-5)
 
@@ -218,7 +227,12 @@ class TestDenoiseCountsCore:
         nu = jnp.ones(n_cells) * 0.6
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, method="sample", rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method="sample",
+            rng_key=rng,
         )
         assert result.shape == (n_cells, n_genes)
 
@@ -271,16 +285,27 @@ class TestDenoiseZINB:
         gate = jnp.array([0.3, 0.3, 0.3])
 
         with_gate = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method="mean",
         )
         without_gate = denoise_counts(
-            counts, r, p, p_capture=nu, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method="mean",
         )
 
         # Non-zero positions should be identical
         nonzero_mask = counts > 0
         np.testing.assert_allclose(
-            with_gate[nonzero_mask], without_gate[nonzero_mask], atol=1e-5,
+            with_gate[nonzero_mask],
+            without_gate[nonzero_mask],
+            atol=1e-5,
         )
 
     def test_zinb_zero_mean_positive(self):
@@ -292,7 +317,12 @@ class TestDenoiseZINB:
         gate = jnp.array([0.5, 0.5, 0.5])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method="mean",
         )
         assert jnp.all(result > 0)
 
@@ -309,10 +339,19 @@ class TestDenoiseZINB:
         gate = jnp.array([0.3, 0.3, 0.3])
 
         nb_only = denoise_counts(
-            counts, r, p, p_capture=nu, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method="mean",
         )
         zinb = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method="mean",
         )
         assert jnp.all(zinb >= nb_only - 1e-5)
 
@@ -327,7 +366,9 @@ class TestDenoiseZINB:
 
         nonzero_mask = counts > 0
         np.testing.assert_allclose(
-            result[nonzero_mask], counts[nonzero_mask], atol=1e-5,
+            result[nonzero_mask],
+            counts[nonzero_mask],
+            atol=1e-5,
         )
 
 
@@ -393,10 +434,18 @@ class TestDenoiseLimits:
         p = jnp.float32(0.3)
 
         result_low = denoise_counts(
-            counts, r, p, p_capture=jnp.array([0.3]), method="mean",
+            counts,
+            r,
+            p,
+            p_capture=jnp.array([0.3]),
+            method="mean",
         )
         result_high = denoise_counts(
-            counts, r, p, p_capture=jnp.array([0.8]), method="mean",
+            counts,
+            r,
+            p,
+            p_capture=jnp.array([0.8]),
+            method="mean",
         )
 
         # Higher capture → less correction → closer to observed
@@ -422,7 +471,11 @@ class TestDenoiseMixture:
         mw = jnp.ones(n_components) / n_components
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, mixing_weights=mw,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=mw,
         )
         assert result.shape == (n_cells, n_genes)
 
@@ -437,8 +490,12 @@ class TestDenoiseMixture:
         comp = jnp.array([0, 0, 0, 1, 1, 1])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu,
-            mixing_weights=mw, component_assignment=comp,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=mw,
+            component_assignment=comp,
         )
         assert result.shape == (n_cells, n_genes)
 
@@ -452,7 +509,11 @@ class TestDenoiseMixture:
         mw = jnp.array([0.5, 0.5])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, mixing_weights=mw,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=mw,
         )
         assert result.shape == (n_cells, n_genes)
 
@@ -472,7 +533,11 @@ class TestDenoiseMixture:
         r_mix = r_flat[None, :]  # (1, n_genes)
         mw = jnp.ones(1)
         mixture = denoise_counts(
-            counts, r_mix, p, p_capture=nu, mixing_weights=mw,
+            counts,
+            r_mix,
+            p,
+            p_capture=nu,
+            mixing_weights=mw,
         )
 
         np.testing.assert_allclose(mixture, standard, atol=1e-5)
@@ -487,8 +552,13 @@ class TestDenoiseMixture:
         mw = jnp.array([0.5, 0.5])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu,
-            mixing_weights=mw, method="sample", rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=mw,
+            method="sample",
+            rng_key=rng,
         )
         assert result.shape == (n_cells, n_genes)
         assert jnp.all(result >= 0)
@@ -519,9 +589,10 @@ class TestDenoiseMixture:
         """Multi-sample mixture denoising returns expected 3D shape."""
         n_samples, n_cells, n_genes, n_components = 3, 8, 4, 2
         counts = jnp.ones((n_cells, n_genes), dtype=jnp.float32) * 3
-        r = jnp.ones(
-            (n_samples, n_components, n_genes), dtype=jnp.float32
-        ) * 5.0
+        r = (
+            jnp.ones((n_samples, n_components, n_genes), dtype=jnp.float32)
+            * 5.0
+        )
         p = jnp.array(
             [[0.25, 0.45], [0.30, 0.50], [0.35, 0.55]],
             dtype=jnp.float32,
@@ -562,7 +633,11 @@ class TestDenoiseVariance:
         nu = jnp.ones(3) * 0.5
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, return_variance=True,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            return_variance=True,
         )
         assert isinstance(result, dict)
         assert "denoised_counts" in result
@@ -577,7 +652,11 @@ class TestDenoiseVariance:
         nu = jnp.ones(n_cells) * 0.5
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, return_variance=True,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            return_variance=True,
         )
         assert result["denoised_counts"].shape == (n_cells, n_genes)
         assert result["variance"].shape == (n_cells, n_genes)
@@ -591,7 +670,12 @@ class TestDenoiseVariance:
         gate = jnp.array([0.3, 0.3, 0.3])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, return_variance=True,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            return_variance=True,
         )
         assert jnp.all(result["variance"] >= -1e-7)
 
@@ -603,7 +687,11 @@ class TestDenoiseVariance:
         nu = jnp.ones(1)
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, return_variance=True,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            return_variance=True,
         )
         np.testing.assert_allclose(result["variance"], 0.0, atol=1e-5)
 
@@ -617,10 +705,18 @@ class TestDenoiseVariance:
         counts_high = jnp.array([[100.0]])
 
         var_low = denoise_counts(
-            counts_low, r, p, p_capture=nu, return_variance=True,
+            counts_low,
+            r,
+            p,
+            p_capture=nu,
+            return_variance=True,
         )["variance"]
         var_high = denoise_counts(
-            counts_high, r, p, p_capture=nu, return_variance=True,
+            counts_high,
+            r,
+            p,
+            p_capture=nu,
+            return_variance=True,
         )["variance"]
 
         assert float(var_high[0, 0]) > float(var_low[0, 0])
@@ -634,7 +730,11 @@ class TestDenoiseVariance:
         nu = jnp.ones((n_samples, n_cells)) * 0.5
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, return_variance=True,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            return_variance=True,
         )
         assert result["denoised_counts"].shape == (n_samples, n_cells, n_genes)
         assert result["variance"].shape == (n_samples, n_cells, n_genes)
@@ -655,7 +755,9 @@ class TestSVIDenoising:
         results = _fit_svi(model, counts)
 
         denoised = results.denoise_counts_map(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
         assert denoised.shape == (n_cells, n_genes)
 
@@ -666,7 +768,10 @@ class TestSVIDenoising:
         results = _fit_svi(model, counts)
 
         denoised = results.denoise_counts_posterior(
-            counts=counts, rng_key=rng, n_samples=3, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_samples=3,
+            verbose=False,
         )
         assert denoised.shape[1:] == (n_cells, n_genes)
         assert denoised.shape[0] > 0
@@ -677,7 +782,10 @@ class TestSVIDenoising:
         results = _fit_svi("nbvcp", counts)
 
         results.denoise_counts_map(
-            counts=counts, rng_key=rng, store_result=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            store_result=True,
+            verbose=False,
         )
         assert results.denoised_counts is not None
 
@@ -687,7 +795,9 @@ class TestSVIDenoising:
         results = _fit_svi("zinbvcp", counts)
 
         denoised = results.denoise_counts_map(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
         assert jnp.all(denoised >= -1e-5)
 
@@ -697,7 +807,9 @@ class TestSVIDenoising:
         results = _fit_svi("nbdm", counts)
 
         denoised = results.denoise_counts_map(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
         np.testing.assert_allclose(denoised, counts, atol=1e-3)
 
@@ -707,7 +819,10 @@ class TestSVIDenoising:
         results = _fit_svi("nbvcp", counts)
 
         denoised = results.denoise_counts_map(
-            counts=counts, rng_key=rng, cell_batch_size=3, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            cell_batch_size=3,
+            verbose=False,
         )
         assert denoised.shape == (n_cells, n_genes)
 
@@ -717,7 +832,10 @@ class TestSVIDenoising:
         results = _fit_svi("nbvcp", counts)
 
         result = results.denoise_counts_map(
-            counts=counts, rng_key=rng, return_variance=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            return_variance=True,
+            verbose=False,
         )
         assert isinstance(result, dict)
         assert "denoised_counts" in result
@@ -729,8 +847,11 @@ class TestSVIDenoising:
         results = _fit_svi("nbvcp", counts)
 
         result = results.denoise_counts_posterior(
-            counts=counts, rng_key=rng, n_samples=2,
-            return_variance=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_samples=2,
+            return_variance=True,
+            verbose=False,
         )
         assert isinstance(result, dict)
         assert result["denoised_counts"].ndim == 3
@@ -752,7 +873,9 @@ class TestMCMCDenoising:
         results = _fit_mcmc(model, counts)
 
         denoised = results.denoise_counts(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
         assert denoised.shape[-1] == n_genes
         assert denoised.shape[-2] == n_cells
@@ -763,7 +886,10 @@ class TestMCMCDenoising:
         results = _fit_mcmc("nbvcp", counts)
 
         results.denoise_counts(
-            counts=counts, rng_key=rng, store_result=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            store_result=True,
+            verbose=False,
         )
         assert results.denoised_counts is not None
 
@@ -773,7 +899,10 @@ class TestMCMCDenoising:
         results = _fit_mcmc("nbvcp", counts)
 
         denoised = results.denoise_counts(
-            counts=counts, rng_key=rng, cell_batch_size=4, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            cell_batch_size=4,
+            verbose=False,
         )
         assert denoised.shape[-1] == n_genes
         assert denoised.shape[-2] == n_cells
@@ -784,12 +913,16 @@ class TestMCMCDenoising:
         results = _fit_mcmc("nbdm", counts)
 
         denoised = results.denoise_counts(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
         # Each posterior sample's denoised should ≈ counts
         for s in range(denoised.shape[0]):
             np.testing.assert_allclose(
-                denoised[s], counts, atol=1e-3,
+                denoised[s],
+                counts,
+                atol=1e-3,
             )
 
     def test_mcmc_denoise_variance(self, dataset, rng):
@@ -798,8 +931,10 @@ class TestMCMCDenoising:
         results = _fit_mcmc("nbvcp", counts)
 
         result = results.denoise_counts(
-            counts=counts, rng_key=rng,
-            return_variance=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            return_variance=True,
+            verbose=False,
         )
         assert isinstance(result, dict)
         assert "denoised_counts" in result
@@ -834,7 +969,9 @@ class TestDenoiseGeneSpecificP:
         """Gene-specific p denoised counts are non-negative."""
         n_cells, n_genes = 6, 4
         counts = jnp.array(
-            np.random.RandomState(99).negative_binomial(3, 0.4, (n_cells, n_genes)),
+            np.random.RandomState(99).negative_binomial(
+                3, 0.4, (n_cells, n_genes)
+            ),
             dtype=jnp.float32,
         )
         r = jnp.ones(n_genes) * 3.0
@@ -843,7 +980,12 @@ class TestDenoiseGeneSpecificP:
 
         for method in ("mean", "mode", "sample"):
             result = denoise_counts(
-                counts, r, p, p_capture=nu, method=method, rng_key=rng,
+                counts,
+                r,
+                p,
+                p_capture=nu,
+                method=method,
+                rng_key=rng,
             )
             assert jnp.all(result >= 0), f"method={method}"
 
@@ -851,7 +993,9 @@ class TestDenoiseGeneSpecificP:
         """Denoised mean with gene-specific p >= observed counts."""
         n_cells, n_genes = 4, 5
         counts = jnp.array(
-            np.random.RandomState(88).negative_binomial(5, 0.3, (n_cells, n_genes)),
+            np.random.RandomState(88).negative_binomial(
+                5, 0.3, (n_cells, n_genes)
+            ),
             dtype=jnp.float32,
         )
         r = jnp.ones(n_genes) * 4.0
@@ -907,7 +1051,11 @@ class TestDenoiseGeneSpecificP:
 
         full = denoise_counts(counts, r, p, p_capture=nu)
         batched = denoise_counts(
-            counts, r, p, p_capture=nu, cell_batch_size=4,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            cell_batch_size=4,
         )
         np.testing.assert_allclose(full, batched, atol=1e-5)
 
@@ -915,8 +1063,7 @@ class TestDenoiseGeneSpecificP:
         """Gene-specific p works correctly with zero-inflation gate."""
         n_cells, n_genes = 6, 3
         counts = jnp.array(
-            [[5, 0, 3], [0, 0, 0], [2, 1, 0],
-             [0, 3, 1], [4, 0, 2], [1, 0, 0]],
+            [[5, 0, 3], [0, 0, 0], [2, 1, 0], [0, 3, 1], [4, 0, 2], [1, 0, 0]],
             dtype=jnp.float32,
         )
         r = jnp.array([3.0, 2.0, 4.0])
@@ -925,7 +1072,12 @@ class TestDenoiseGeneSpecificP:
         gate = jnp.array([0.1, 0.2, 0.15])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method="mean",
         )
         assert result.shape == (n_cells, n_genes)
         assert jnp.all(result >= 0)
@@ -941,8 +1093,12 @@ class TestDenoiseGeneSpecificP:
         weights = jnp.array([0.6, 0.4])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu,
-            mixing_weights=weights, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=weights,
+            method="mean",
         )
         assert result.shape == (n_cells, n_genes)
         assert jnp.all(result >= 0)
@@ -958,9 +1114,13 @@ class TestDenoiseGeneSpecificP:
         assignment = jnp.array([0, 0, 1, 1, 0, 1, 0, 1])
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu,
+            counts,
+            r,
+            p,
+            p_capture=nu,
             mixing_weights=weights,
-            component_assignment=assignment, method="mean",
+            component_assignment=assignment,
+            method="mean",
         )
         assert result.shape == (n_cells, n_genes)
         assert jnp.all(result >= 0)
@@ -976,15 +1136,23 @@ class TestDenoiseGeneSpecificP:
         assignment = jnp.array([0, 0, 1, 1, 0, 1, 0, 1, 0, 1])
 
         full = denoise_counts(
-            counts, r, p, p_capture=nu,
-            mixing_weights=weights,
-            component_assignment=assignment, method="mean",
-        )
-        batched = denoise_counts(
-            counts, r, p, p_capture=nu,
+            counts,
+            r,
+            p,
+            p_capture=nu,
             mixing_weights=weights,
             component_assignment=assignment,
-            method="mean", cell_batch_size=3,
+            method="mean",
+        )
+        batched = denoise_counts(
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            mixing_weights=weights,
+            component_assignment=assignment,
+            method="mean",
+            cell_batch_size=3,
         )
         np.testing.assert_allclose(full, batched, atol=1e-5)
 
@@ -1009,7 +1177,11 @@ class TestDenoiseGeneSpecificP:
         nu = jnp.full(n_cells, 0.5)
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, return_variance=True,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            return_variance=True,
         )
         assert isinstance(result, dict)
         assert result["denoised_counts"].shape == (n_cells, n_genes)
@@ -1034,7 +1206,11 @@ class TestDenoiseTupleMethod:
 
         result_str = denoise_counts(counts, r, p, p_capture=nu, method="mean")
         result_tuple = denoise_counts(
-            counts, r, p, p_capture=nu, method=("mean", "mean"),
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method=("mean", "mean"),
         )
         np.testing.assert_allclose(result_str, result_tuple, atol=1e-5)
 
@@ -1047,10 +1223,20 @@ class TestDenoiseTupleMethod:
         gate = jnp.array([0.3, 0.3, 0.3])
 
         result_str = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method="mean",
         )
         result_tuple = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method=("mean", "mean"),
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method=("mean", "mean"),
         )
         np.testing.assert_allclose(result_str, result_tuple, atol=1e-5)
 
@@ -1065,16 +1251,28 @@ class TestDenoiseTupleMethod:
 
         # general_method="mean", zi_zero_method="sample"
         result_tuple = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate,
-            method=("mean", "sample"), rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method=("mean", "sample"),
+            rng_key=rng,
         )
         result_mean = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method="mean",
         )
 
         # Non-zero positions should be identical (both use "mean")
         np.testing.assert_allclose(
-            result_tuple[nonzero_mask], result_mean[nonzero_mask], atol=1e-5,
+            result_tuple[nonzero_mask],
+            result_mean[nonzero_mask],
+            atol=1e-5,
         )
 
     def test_tuple_mode_general_nonzero(self, rng):
@@ -1087,15 +1285,27 @@ class TestDenoiseTupleMethod:
         nonzero_mask = counts > 0
 
         result_tuple = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate,
-            method=("mode", "sample"), rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method=("mode", "sample"),
+            rng_key=rng,
         )
         result_mode = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate, method="mode",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method="mode",
         )
 
         np.testing.assert_allclose(
-            result_tuple[nonzero_mask], result_mode[nonzero_mask], atol=1e-5,
+            result_tuple[nonzero_mask],
+            result_mode[nonzero_mask],
+            atol=1e-5,
         )
 
     def test_tuple_sample_zi_zeros_stochastic(self, rng):
@@ -1108,12 +1318,22 @@ class TestDenoiseTupleMethod:
 
         key1, key2 = random.split(rng)
         r1 = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate,
-            method=("mean", "sample"), rng_key=key1,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method=("mean", "sample"),
+            rng_key=key1,
         )
         r2 = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate,
-            method=("mean", "sample"), rng_key=key2,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method=("mean", "sample"),
+            rng_key=key2,
         )
 
         # With high gate probability, at least some zeros should differ
@@ -1136,23 +1356,38 @@ class TestDenoiseTupleMethod:
         # (positive because capture loss hides real expression)
         gate_zero = jnp.array([0.0, 0.0, 0.0])
         result_vcp = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate_zero,
-            method=("mean", "sample"), rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate_zero,
+            method=("mean", "sample"),
+            rng_key=rng,
         )
         assert jnp.all(result_vcp >= 0)
 
         # gate = 0, WITHOUT VCP → genuine NB zeros stay at 0
         result_no_vcp = denoise_counts(
-            counts, r, p, p_capture=None, gate=gate_zero,
-            method=("mean", "sample"), rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=None,
+            gate=gate_zero,
+            method=("mean", "sample"),
+            rng_key=rng,
         )
         np.testing.assert_allclose(result_no_vcp, 0.0, atol=1e-5)
 
         # gate = 1 → all from dropout → should all be positive
         gate_one = jnp.array([1.0, 1.0, 1.0])
         result_all_gate = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate_one,
-            method=("mean", "sample"), rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate_one,
+            method=("mean", "sample"),
+            rng_key=rng,
         )
         assert jnp.all(result_all_gate >= 0)
 
@@ -1173,8 +1408,13 @@ class TestDenoiseTupleMethod:
             ("sample", "sample"),
         ]:
             result = denoise_counts(
-                counts, r, p, p_capture=nu, gate=gate,
-                method=method, rng_key=rng,
+                counts,
+                r,
+                p,
+                p_capture=nu,
+                gate=gate,
+                method=method,
+                rng_key=rng,
             )
             assert result.shape == (n_cells, n_genes), f"method={method}"
             assert jnp.all(result >= 0), f"method={method}"
@@ -1200,11 +1440,19 @@ class TestDenoiseTupleMethod:
         nu = jnp.array([0.5, 0.7])
 
         result_mean = denoise_counts(
-            counts, r, p, p_capture=nu, method="mean",
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method="mean",
         )
         result_tuple = denoise_counts(
-            counts, r, p, p_capture=nu,
-            method=("mean", "sample"), rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method=("mean", "sample"),
+            rng_key=rng,
         )
 
         np.testing.assert_allclose(result_mean, result_tuple, atol=1e-5)
@@ -1220,8 +1468,13 @@ class TestDenoiseTupleMethod:
         gate = jnp.ones(n_genes) * 0.3
 
         result = denoise_counts(
-            counts, r, p, p_capture=nu, gate=gate,
-            method=("mean", "sample"), rng_key=rng,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            gate=gate,
+            method=("mean", "sample"),
+            rng_key=rng,
         )
         assert result.shape == (n_samples, n_cells, n_genes)
         assert jnp.all(result >= 0)
@@ -1236,11 +1489,19 @@ class TestDenoiseTupleMethod:
 
         # No gate → deterministic for both components of the tuple
         full = denoise_counts(
-            counts, r, p, p_capture=nu, method=("mean", "mean"),
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method=("mean", "mean"),
         )
         batched = denoise_counts(
-            counts, r, p, p_capture=nu,
-            method=("mean", "mean"), cell_batch_size=4,
+            counts,
+            r,
+            p,
+            p_capture=nu,
+            method=("mean", "mean"),
+            cell_batch_size=4,
         )
         np.testing.assert_allclose(full, batched, atol=1e-5)
 
@@ -1263,14 +1524,17 @@ class TestGetDenoisedAnnData:
 
         # Default: preserve_correlations=True → posterior draw
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
 
         assert isinstance(adata, AnnData)
         assert adata.X.shape == (n_cells, n_genes)
         assert "original_counts" in adata.layers
         np.testing.assert_allclose(
-            adata.layers["original_counts"], np.asarray(counts),
+            adata.layers["original_counts"],
+            np.asarray(counts),
         )
         assert "scribe_denoising" in adata.uns
         meta = adata.uns["scribe_denoising"]
@@ -1283,8 +1547,10 @@ class TestGetDenoisedAnnData:
         results = _fit_svi("nbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng,
-            include_original_counts=False, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            include_original_counts=False,
+            verbose=False,
         )
         assert "original_counts" not in adata.layers
 
@@ -1295,7 +1561,10 @@ class TestGetDenoisedAnnData:
 
         # Default: preserve_correlations=True → all posterior draws
         adatas = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, n_datasets=3, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_datasets=3,
+            verbose=False,
         )
 
         assert isinstance(adatas, list)
@@ -1314,8 +1583,10 @@ class TestGetDenoisedAnnData:
         results = _fit_svi("zinbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng,
-            method=("mode", "sample"), verbose=False,
+            counts=counts,
+            rng_key=rng,
+            method=("mode", "sample"),
+            verbose=False,
         )
         assert adata.uns["scribe_denoising"]["method"] == ["mode", "sample"]
 
@@ -1325,7 +1596,10 @@ class TestGetDenoisedAnnData:
         results = _fit_svi("nbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, method="mean", verbose=False,
+            counts=counts,
+            rng_key=rng,
+            method="mean",
+            verbose=False,
         )
         assert isinstance(adata.X, np.ndarray)
 
@@ -1343,7 +1617,9 @@ class TestGetDenoisedAnnData:
         results = _fit_svi("zinbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
         assert np.all(adata.X >= -1e-5)
 
@@ -1357,7 +1633,9 @@ class TestGetDenoisedAnnData:
 
         # Default: preserve_correlations=True → individual MCMC draw
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            verbose=False,
         )
 
         assert isinstance(adata, AnnData)
@@ -1365,9 +1643,9 @@ class TestGetDenoisedAnnData:
         assert "original_counts" in adata.layers
         assert "scribe_denoising" in adata.uns
         assert adata.uns["scribe_denoising"]["dataset_index"] == 0
-        assert "mcmc_sample" in adata.uns["scribe_denoising"][
-            "parameter_source"
-        ]
+        assert (
+            "mcmc_sample" in adata.uns["scribe_denoising"]["parameter_source"]
+        )
 
     def test_mcmc_multi_dataset(self, dataset, rng):
         """MCMC n_datasets > 1 returns a list."""
@@ -1376,17 +1654,22 @@ class TestGetDenoisedAnnData:
 
         # Default: preserve_correlations=True → all MCMC draws
         adatas = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, n_datasets=2, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_datasets=2,
+            verbose=False,
         )
 
         assert isinstance(adatas, list)
         assert len(adatas) == 2
-        assert "mcmc_sample" in adatas[0].uns["scribe_denoising"][
-            "parameter_source"
-        ]
-        assert "mcmc_sample" in adatas[1].uns["scribe_denoising"][
-            "parameter_source"
-        ]
+        assert (
+            "mcmc_sample"
+            in adatas[0].uns["scribe_denoising"]["parameter_source"]
+        )
+        assert (
+            "mcmc_sample"
+            in adatas[1].uns["scribe_denoising"]["parameter_source"]
+        )
 
     def test_svi_adata_template(self, dataset, rng):
         """Passing adata as template copies obs/var metadata."""
@@ -1406,11 +1689,15 @@ class TestGetDenoisedAnnData:
             index=[f"gene_{g}" for g in range(n_genes)],
         )
         template = AnnData(
-            X=np.asarray(counts), obs=obs, var=var,
+            X=np.asarray(counts),
+            obs=obs,
+            var=var,
         )
 
         out = results.get_denoised_anndata(
-            adata=template, rng_key=rng, verbose=False,
+            adata=template,
+            rng_key=rng,
+            verbose=False,
         )
 
         assert list(out.obs.columns) == ["cell_type"]
@@ -1437,8 +1724,10 @@ class TestPreserveCorrelations:
         results = _fit_svi("nbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng,
-            preserve_correlations=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            preserve_correlations=True,
+            verbose=False,
         )
         meta = adata.uns["scribe_denoising"]
         assert "posterior_sample" in meta["parameter_source"]
@@ -1451,8 +1740,10 @@ class TestPreserveCorrelations:
         results = _fit_svi("nbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng,
-            preserve_correlations=False, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            preserve_correlations=False,
+            verbose=False,
         )
         meta = adata.uns["scribe_denoising"]
         assert meta["parameter_source"] == "map"
@@ -1464,16 +1755,20 @@ class TestPreserveCorrelations:
         results = _fit_svi("nbvcp", counts)
 
         adatas = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, n_datasets=3,
-            preserve_correlations=False, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_datasets=3,
+            preserve_correlations=False,
+            verbose=False,
         )
 
         assert len(adatas) == 3
         assert adatas[0].uns["scribe_denoising"]["parameter_source"] == "map"
         for i in range(1, 3):
-            assert "posterior_sample" in adatas[i].uns[
-                "scribe_denoising"
-            ]["parameter_source"]
+            assert (
+                "posterior_sample"
+                in adatas[i].uns["scribe_denoising"]["parameter_source"]
+            )
 
     def test_svi_preserve_true_multi_all_posterior(self, dataset, rng):
         """preserve_correlations=True: all datasets are posterior draws."""
@@ -1481,8 +1776,11 @@ class TestPreserveCorrelations:
         results = _fit_svi("nbvcp", counts)
 
         adatas = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, n_datasets=3,
-            preserve_correlations=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_datasets=3,
+            preserve_correlations=True,
+            verbose=False,
         )
 
         assert len(adatas) == 3
@@ -1498,8 +1796,10 @@ class TestPreserveCorrelations:
         results = _fit_mcmc("nbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng,
-            preserve_correlations=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            preserve_correlations=True,
+            verbose=False,
         )
         meta = adata.uns["scribe_denoising"]
         assert "mcmc_sample" in meta["parameter_source"]
@@ -1510,8 +1810,10 @@ class TestPreserveCorrelations:
         results = _fit_mcmc("nbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng,
-            preserve_correlations=False, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            preserve_correlations=False,
+            verbose=False,
         )
         meta = adata.uns["scribe_denoising"]
         assert meta["parameter_source"] == "posterior_mean"
@@ -1522,17 +1824,21 @@ class TestPreserveCorrelations:
         results = _fit_mcmc("nbvcp", counts)
 
         adatas = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, n_datasets=2,
-            preserve_correlations=False, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_datasets=2,
+            preserve_correlations=False,
+            verbose=False,
         )
 
         assert len(adatas) == 2
         assert adatas[0].uns["scribe_denoising"]["parameter_source"] == (
             "posterior_mean"
         )
-        assert "mcmc_sample" in adatas[1].uns["scribe_denoising"][
-            "parameter_source"
-        ]
+        assert (
+            "mcmc_sample"
+            in adatas[1].uns["scribe_denoising"]["parameter_source"]
+        )
 
     def test_mcmc_preserve_true_multi_all_draws(self, dataset, rng):
         """MCMC preserve_correlations=True: all datasets are MCMC draws."""
@@ -1540,8 +1846,11 @@ class TestPreserveCorrelations:
         results = _fit_mcmc("nbvcp", counts)
 
         adatas = results.get_denoised_anndata(
-            counts=counts, rng_key=rng, n_datasets=2,
-            preserve_correlations=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            n_datasets=2,
+            preserve_correlations=True,
+            verbose=False,
         )
 
         assert len(adatas) == 2
@@ -1558,7 +1867,74 @@ class TestPreserveCorrelations:
         results = _fit_svi("zinbvcp", counts)
 
         adata = results.get_denoised_anndata(
-            counts=counts, rng_key=rng,
-            preserve_correlations=True, verbose=False,
+            counts=counts,
+            rng_key=rng,
+            preserve_correlations=True,
+            verbose=False,
         )
         assert np.all(adata.X >= -1e-5)
+
+    def test_svi_preserve_correlations_concatenated_multi_dataset(
+        self, dataset, rng
+    ):
+        """preserve_correlations=True works on concatenated SVI results.
+
+        Two independent fits are concatenated via
+        ``ScribeSVIResults.concat``, producing a promoted multi-dataset
+        result.  ``get_posterior_samples`` should decompose into
+        per-dataset sampling and re-stack the results.
+        """
+        from scribe.svi.results import ScribeSVIResults
+
+        counts, n_cells, n_genes = dataset
+
+        # Fit the same model on two halves of the data to simulate
+        # two independent datasets.
+        mid = n_cells // 2
+        counts_a = counts[:mid]
+        counts_b = counts[mid:]
+
+        results_a = _fit_svi("nbvcp", counts_a)
+        results_b = _fit_svi("nbvcp", counts_b)
+
+        combined = ScribeSVIResults.concat(
+            [results_a, results_b], validation="var_only"
+        )
+
+        # This should not raise — the per-dataset decomposition path
+        # handles the promoted multi-dataset structure.
+        adata = combined.get_denoised_anndata(
+            counts=counts,
+            rng_key=rng,
+            preserve_correlations=True,
+            verbose=False,
+        )
+
+        assert adata.X.shape == (n_cells, n_genes)
+        assert np.all(adata.X >= -1e-5)
+        meta = adata.uns["scribe_denoising"]
+        assert "posterior_sample" in meta["parameter_source"]
+
+    def test_svi_preserve_false_concatenated_multi_dataset(self, dataset, rng):
+        """preserve_correlations=False still works (MAP) on concatenated."""
+        from scribe.svi.results import ScribeSVIResults
+
+        counts, n_cells, n_genes = dataset
+
+        mid = n_cells // 2
+        results_a = _fit_svi("nbvcp", counts[:mid])
+        results_b = _fit_svi("nbvcp", counts[mid:])
+
+        combined = ScribeSVIResults.concat(
+            [results_a, results_b], validation="var_only"
+        )
+
+        adata = combined.get_denoised_anndata(
+            counts=counts,
+            rng_key=rng,
+            preserve_correlations=False,
+            verbose=False,
+        )
+
+        assert adata.X.shape == (n_cells, n_genes)
+        assert adata.uns["scribe_denoising"]["parameter_source"] == "map"
