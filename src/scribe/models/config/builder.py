@@ -83,6 +83,7 @@ class ModelConfigBuilder:
         self._parameterization: Parameterization = Parameterization.STANDARD
         self._inference_method: InferenceMethod = InferenceMethod.SVI
         self._unconstrained: bool = False
+        self._hierarchical_mu: bool = False
         self._hierarchical_p: bool = False
         self._hierarchical_gate: bool = False
         self._n_datasets: Optional[int] = None
@@ -194,6 +195,20 @@ class ModelConfigBuilder:
         models (zinb, zinbvcp).
         """
         self._hierarchical_gate = True
+        self._unconstrained = True
+        return self
+
+    # --------------------------------------------------------------------------
+
+    def with_hierarchical_mu(self) -> "ModelConfigBuilder":
+        """Enable hierarchical prior on mu (or r) across mixture components.
+
+        Provides shrinkage so that per-component means are drawn from a
+        shared gene-level population distribution.  Automatically enables
+        unconstrained parameterization.  Requires a mixture model
+        (``n_components >= 2``).
+        """
+        self._hierarchical_mu = True
         self._unconstrained = True
         return self
 
@@ -616,6 +631,7 @@ class ModelConfigBuilder:
             parameterization=self._parameterization,
             inference_method=self._inference_method,
             unconstrained=self._unconstrained,
+            hierarchical_mu=self._hierarchical_mu,
             hierarchical_p=self._hierarchical_p,
             hierarchical_gate=self._hierarchical_gate,
             n_datasets=self._n_datasets,

@@ -554,6 +554,18 @@ def create_model(
         )
 
     # ==========================================================================
+    # Step 4.55: Apply hierarchical_mu flag (across-component shrinkage for mu)
+    # ==========================================================================
+    if model_config.hierarchical_mu:
+        param_specs = _hierarchicalize_mu(
+            param_specs=param_specs,
+            param_key=param_key,
+            guide_families=guide_families,
+            n_components=model_config.n_components,
+            mixture_params=effective_mixture_params,
+        )
+
+    # ==========================================================================
     # Step 4.6: Apply dataset-level hierarchy flags
     # horseshoe_dataset_* flags also trigger the corresponding hierarchy
     # ==========================================================================
@@ -920,6 +932,89 @@ def _hierarchicalize_p(
     new_specs = []
     for spec in param_specs:
         if spec.name == target_name:
+            new_specs.extend([hyper_loc, hyper_scale, hier_spec])
+        else:
+            new_specs.append(spec)
+    return new_specs
+
+
+# ------------------------------------------------------------------------------
+
+
+def _hierarchicalize_mu(
+    param_specs: List,
+    param_key: str,
+    guide_families,
+    n_components: Optional[int] = None,
+    mixture_params: Optional[List[str]] = None,
+) -> List:
+    """Replace the flat mu (or r) spec with a hierarchical triplet.
+
+    Adds population-level hyperparameters (per-gene loc and scalar scale)
+    and replaces the flat mu/r spec with a ``HierarchicalExpNormalSpec``
+    that draws per-component, per-gene values from the population prior.
+    This provides shrinkage across mixture components: most genes share
+    similar means across cell types, with only some deviating.
+
+    Parameters
+    ----------
+    param_specs : List[ParamSpec]
+        Current list of parameter specs (from parameterization strategy).
+    param_key : str
+        Parameterization registry key ("canonical", "mean_prob", "mean_odds").
+    guide_families : GuideFamilyConfig
+        Per-parameter guide family configuration.
+    n_components : int, optional
+        Number of mixture components.
+    mixture_params : List[str], optional
+        Parameters marked as mixture-specific.
+
+    Returns
+    -------
+    List[ParamSpec]
+        Updated parameter specs with the flat mu/r replaced by a
+        hierarchical triplet (hyper_loc, hyper_scale, hier_mu).
+    """
+    # Determine target parameter and hyperparameter names
+    if param_key in ("mean_odds", "mean_prob"):
+        target_name = "mu"
+        hyper_loc_name = "log_mu_loc"
+        hyper_scale_name = "log_mu_scale"
+    else:
+        target_name = "r"
+        hyper_loc_name = "log_r_loc"
+        hyper_scale_name = "log_r_scale"
+
+    target_family = guide_families.get(target_name)
+
+    # Population-level hyperparameters: per-gene location, scalar scale
+    hyper_loc = NormalWithTransformSpec(
+        name=hyper_loc_name,
+        shape_dims=("n_genes",),
+        default_params=(0.0, 1.0),
+        is_gene_specific=True,
+    )
+    hyper_scale = SoftplusNormalSpec(
+        name=hyper_scale_name,
+        shape_dims=(),
+        default_params=(-2.0, 0.5),
+    )
+
+    new_specs = []
+    for spec in param_specs:
+        if spec.name == target_name:
+            # Preserve is_mixture from the original spec
+            orig_is_mixture = getattr(spec, "is_mixture", False)
+            hier_spec = HierarchicalExpNormalSpec(
+                name=target_name,
+                shape_dims=("n_genes",),
+                default_params=(0.0, 1.0),
+                hyper_loc_name=hyper_loc_name,
+                hyper_scale_name=hyper_scale_name,
+                is_gene_specific=True,
+                is_mixture=orig_is_mixture,
+                guide_family=target_family,
+            )
             new_specs.extend([hyper_loc, hyper_scale, hier_spec])
         else:
             new_specs.append(spec)
