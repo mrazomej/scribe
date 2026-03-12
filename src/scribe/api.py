@@ -753,6 +753,7 @@ def fit(
     # Step 2c: Build annotation prior logits (if requested)
     # ==========================================================================
     annotation_prior_logits = None
+    effective_mixture_params = mixture_params
     if annotation_key is not None:
         if adata is None:
             raise ValueError(
@@ -762,6 +763,7 @@ def fit(
         # Resolve n_components — may come from explicit kwarg, from a
         # user-supplied model_config, or be inferred from annotations.
         _n_comp = n_components
+        _n_comp_inferred = False
         if _n_comp is None and model_config is not None:
             _n_comp = model_config.n_components
         _min_cells = annotation_min_cells or 0
@@ -770,18 +772,35 @@ def fit(
             _n_comp = _count_unique_labels(
                 adata, annotation_key, min_cells=_min_cells
             )
+            _n_comp_inferred = True
+
+        # If annotation-driven inference collapses to <=1 surviving class
+        # after min_cells filtering, downgrade to the canonical non-mixture
+        # path instead of raising from mixture validation.
+        if _n_comp_inferred and _n_comp <= 1:
+            n_components = None
+            effective_mixture_params = None
+            warnings.warn(
+                "annotation_key/annotation_min_cells left <=1 surviving "
+                "annotation class after filtering. "
+                "Auto-downgrading to non-mixture mode "
+                "(n_components=None, mixture_params ignored).",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
             n_components = _n_comp  # propagate so ModelConfig picks it up
-        annotation_prior_logits, _label_map = build_annotation_prior_logits(
-            adata=adata,
-            obs_key=annotation_key,
-            n_components=_n_comp,
-            confidence=annotation_confidence,
-            component_order=annotation_component_order,
-            min_cells=_min_cells,
-        )
-        validate_annotation_prior_logits(
-            annotation_prior_logits, n_cells, _n_comp
-        )
+            annotation_prior_logits, _label_map = build_annotation_prior_logits(
+                adata=adata,
+                obs_key=annotation_key,
+                n_components=_n_comp,
+                confidence=annotation_confidence,
+                component_order=annotation_component_order,
+                min_cells=_min_cells,
+            )
+            validate_annotation_prior_logits(
+                annotation_prior_logits, n_cells, _n_comp
+            )
 
     # ==========================================================================
     # Step 3: Build or use ModelConfig
@@ -829,7 +848,7 @@ def fit(
             guide_rank=guide_rank,
             joint_params=joint_params,
             n_components=n_components,
-            mixture_params=mixture_params,
+            mixture_params=effective_mixture_params,
             priors=priors,
             vae_latent_dim=vae_latent_dim,
             vae_encoder_hidden_dims=vae_encoder_hidden_dims,
