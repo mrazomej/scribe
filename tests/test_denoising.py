@@ -1879,7 +1879,7 @@ class TestPreserveCorrelations:
     ):
         """preserve_correlations=True works on concatenated SVI results.
 
-        Two independent fits are concatenated via
+        Two copies of the same fit are concatenated via
         ``ScribeSVIResults.concat``, producing a promoted multi-dataset
         result.  ``get_posterior_samples`` should decompose into
         per-dataset sampling and re-stack the results.
@@ -1888,53 +1888,60 @@ class TestPreserveCorrelations:
 
         counts, n_cells, n_genes = dataset
 
-        # Fit the same model on two halves of the data to simulate
-        # two independent datasets.
-        mid = n_cells // 2
-        counts_a = counts[:mid]
-        counts_b = counts[mid:]
-
-        results_a = _fit_svi("nbvcp", counts_a)
-        results_b = _fit_svi("nbvcp", counts_b)
+        # Use the same cached fit twice — simulates two independent
+        # datasets that share the same gene space.
+        results_a = _fit_svi("nbvcp", counts)
+        results_b = _fit_svi("nbvcp", counts)
 
         combined = ScribeSVIResults.concat(
             [results_a, results_b], validation="var_only"
         )
 
+        # Clear any stale posterior samples inherited from the cached
+        # fits — we want the new per-dataset sampling path to run.
+        combined.posterior_samples = None
+
+        # Duplicate counts to match the combined cell count
+        combined_counts = jnp.concatenate([counts, counts], axis=0)
+
         # This should not raise — the per-dataset decomposition path
         # handles the promoted multi-dataset structure.
         adata = combined.get_denoised_anndata(
-            counts=counts,
+            counts=combined_counts,
             rng_key=rng,
             preserve_correlations=True,
             verbose=False,
         )
 
-        assert adata.X.shape == (n_cells, n_genes)
+        assert adata.X.shape == (2 * n_cells, n_genes)
         assert np.all(adata.X >= -1e-5)
         meta = adata.uns["scribe_denoising"]
         assert "posterior_sample" in meta["parameter_source"]
 
-    def test_svi_preserve_false_concatenated_multi_dataset(self, dataset, rng):
+    def test_svi_preserve_false_concatenated_multi_dataset(
+        self, dataset, rng
+    ):
         """preserve_correlations=False still works (MAP) on concatenated."""
         from scribe.svi.results import ScribeSVIResults
 
         counts, n_cells, n_genes = dataset
 
-        mid = n_cells // 2
-        results_a = _fit_svi("nbvcp", counts[:mid])
-        results_b = _fit_svi("nbvcp", counts[mid:])
+        results_a = _fit_svi("nbvcp", counts)
+        results_b = _fit_svi("nbvcp", counts)
 
         combined = ScribeSVIResults.concat(
             [results_a, results_b], validation="var_only"
         )
+        combined.posterior_samples = None
+
+        combined_counts = jnp.concatenate([counts, counts], axis=0)
 
         adata = combined.get_denoised_anndata(
-            counts=counts,
+            counts=combined_counts,
             rng_key=rng,
             preserve_correlations=False,
             verbose=False,
         )
 
-        assert adata.X.shape == (n_cells, n_genes)
+        assert adata.X.shape == (2 * n_cells, n_genes)
         assert adata.uns["scribe_denoising"]["parameter_source"] == "map"
